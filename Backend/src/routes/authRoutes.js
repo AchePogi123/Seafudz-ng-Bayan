@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { generateSessionHashToken, verifySessionHashToken } from '../cryptography/index.js';
 
 const router = Router();
 
@@ -80,10 +81,15 @@ router.post('/auth/login', async (req, res) => {
     if (empParams.length > 0) {
       const empRes = await query(empSql, empParams);
       if (empRes.rows.length > 0) {
+        const emp = empRes.rows[0];
+        const cryptoSession = generateSessionHashToken({ userId: emp.id, email: emp.email, role: emp.role });
         return res.status(200).json({
           success: true,
-          message: `Login successful for ${empRes.rows[0].fullname}`,
-          data: empRes.rows[0],
+          message: `Login successful for ${emp.fullname}`,
+          data: emp,
+          sessionToken: cryptoSession.sessionToken,
+          hashToken: cryptoSession.hashToken,
+          sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
         });
       }
     }
@@ -103,10 +109,15 @@ router.post('/auth/login', async (req, res) => {
     if (custParams.length > 0) {
       const custRes = await query(custSql, custParams);
       if (custRes.rows.length > 0) {
+        const cust = custRes.rows[0];
+        const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
         return res.status(200).json({
           success: true,
-          message: `Login successful for ${custRes.rows[0].fullname}`,
-          data: { ...custRes.rows[0], role: 'customer' },
+          message: `Login successful for ${cust.fullname}`,
+          data: { ...cust, role: 'customer' },
+          sessionToken: cryptoSession.sessionToken,
+          hashToken: cryptoSession.hashToken,
+          sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
         });
       }
     }
@@ -146,7 +157,8 @@ router.post('/auth/register', async (req, res) => {
 
     // Staff/Employee account creation
     if (selectedRole !== 'customer') {
-      if (token && token.toUpperCase() !== 'SFB-STAFF-99') {
+      const validStaffToken = (process.env.STAFF_REGISTRATION_TOKEN || 'SFB-STAFF-99').toUpperCase();
+      if (token && token.trim().toUpperCase() !== validStaffToken) {
         return res.status(403).json({
           success: false,
           message: 'Access Denied: Invalid Employee Access Token for staff account.',
@@ -178,10 +190,16 @@ router.post('/auth/register', async (req, res) => {
         finalRole,
       ]);
 
+      const emp = rows[0];
+      const cryptoSession = generateSessionHashToken({ userId: emp.id, email: emp.email, role: emp.role });
+
       return res.status(201).json({
         success: true,
         message: `Staff profile provisioned successfully for ${cleanFullname}`,
-        data: rows[0],
+        data: emp,
+        sessionToken: cryptoSession.sessionToken,
+        hashToken: cryptoSession.hashToken,
+        sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
       });
     } else {
       // Customer account creation
@@ -204,10 +222,16 @@ router.post('/auth/register', async (req, res) => {
         address || null,
       ]);
 
+      const cust = rows[0];
+      const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
+
       return res.status(201).json({
         success: true,
         message: `Customer profile provisioned successfully for ${cleanFullname}`,
-        data: { ...rows[0], role: 'customer' },
+        data: { ...cust, role: 'customer' },
+        sessionToken: cryptoSession.sessionToken,
+        hashToken: cryptoSession.hashToken,
+        sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
       });
     }
   } catch (error) {
@@ -218,6 +242,29 @@ router.post('/auth/register', async (req, res) => {
       error: error.message,
     });
   }
+});
+
+/**
+ * GET /api/auth/verify-token
+ * Validates a cryptographic session hash token
+ */
+router.get('/auth/verify-token', (req, res) => {
+  const token = req.query.session_token || req.query.token;
+  const isValid = verifySessionHashToken(token);
+
+  if (!isValid) {
+    return res.status(400).json({
+      success: false,
+      valid: false,
+      message: 'Invalid or missing cryptographic session hash token',
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    valid: true,
+    message: 'Cryptographic session hash token is valid',
+  });
 });
 
 /**

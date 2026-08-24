@@ -111,7 +111,37 @@ export async function optionalAuth(req, res, next) {
   next();
 }
 
+/**
+ * Express Middleware: Enforces Role-Based Access Control (RBAC).
+ * Must be used after requireAuth or optionalAuth.
+ * @param {Array<string>} allowedRoles List of roles permitted to access endpoint
+ */
+export function requireRole(allowedRoles = []) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required. User context missing.',
+      });
+    }
+
+    const userRole = (req.user.role || 'customer').toLowerCase();
+    const normalizedAllowed = allowedRoles.map(r => r.toLowerCase());
+
+    if (userRole === 'admin' || normalizedAllowed.includes(userRole)) {
+      return next();
+    }
+
+    return res.status(403).json({
+      success: false,
+      message: `Access Denied: Role '${userRole}' is not authorized to access this feature resource.`,
+      requiredRoles: allowedRoles,
+    });
+  };
+}
+
 export default {
   requireAuth,
   optionalAuth,
+  requireRole,
 };

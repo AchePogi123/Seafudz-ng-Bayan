@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { getActiveUser, clearSession, getStoredSessionToken, hasRoutePermission, buildTokenizedUrl } from '../cryptography/cryptoSession'
 
 interface NavbarProps {
   searchQuery?: string
@@ -78,6 +79,17 @@ const NAV_ROLE_LINKS: NavRoleLink[] = [
     )
   },
   {
+    path: '/dashboard',
+    label: 'Admin Dashboard',
+    category: 'Management',
+    badge: 'Admin',
+    icon: (
+      <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+      </svg>
+    )
+  },
+  {
     path: '/account',
     label: 'Account Settings',
     category: 'Management',
@@ -104,6 +116,24 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const location = useLocation()
+  const navigate = useNavigate()
+
+  const activeUser = getActiveUser()
+  const sessionToken = getStoredSessionToken()
+  const userRole = (activeUser?.role || 'customer').toLowerCase()
+
+  // Filter links by RBAC role permissions
+  const isLinkAllowed = (path: string) => hasRoutePermission(userRole, path)
+
+  const operationalLinks = NAV_ROLE_LINKS.filter(
+    (item) => item.category === 'Operational' && isLinkAllowed(item.path)
+  )
+  const customerLinks = NAV_ROLE_LINKS.filter(
+    (item) => item.category === 'Customer' && isLinkAllowed(item.path)
+  )
+  const managementLinks = NAV_ROLE_LINKS.filter(
+    (item) => item.category === 'Management' && isLinkAllowed(item.path)
+  )
 
   // Close dropdown on click outside
   useEffect(() => {
@@ -116,9 +146,31 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
+  const handleLogout = () => {
+    clearSession()
+    navigate('/login')
+  }
+
   const getCurrentRoleName = () => {
     const match = NAV_ROLE_LINKS.find((link) => link.path === location.pathname)
     return match ? match.label : 'Restaurant Navigator'
+  }
+
+  const getRoleBadgeStyle = (roleStr: string) => {
+    switch (roleStr) {
+      case 'admin':
+        return 'bg-purple-100 text-purple-700 border-purple-200'
+      case 'cashier':
+        return 'bg-teal-100 text-teal-700 border-teal-200'
+      case 'kitchen':
+        return 'bg-amber-100 text-amber-700 border-amber-200'
+      case 'rider':
+        return 'bg-emerald-100 text-emerald-700 border-emerald-200'
+      case 'assistant':
+        return 'bg-cyan-100 text-cyan-700 border-cyan-200'
+      default:
+        return 'bg-orange-100 text-orange-700 border-orange-200'
+    }
   }
 
   return (
@@ -154,12 +206,10 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
                 <h1 className="font-extrabold text-slate-900 text-base sm:text-lg tracking-tight group-hover:text-orange-600 transition-colors">
                   Seafood ng Bayan
                 </h1>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-[10px] font-bold uppercase tracking-wider">
-                  Menu
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-bold uppercase tracking-wider ${getRoleBadgeStyle(userRole)}`}>
+                  {userRole}
                   <svg
-                    className={`w-3 h-3 text-slate-500 transition-transform duration-200 ${
-                      isMenuOpen ? 'rotate-180' : ''
-                    }`}
+                    className={`w-3 h-3 transition-transform duration-200 ${isMenuOpen ? 'rotate-180' : ''}`}
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -172,81 +222,120 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
             </div>
           </button>
 
-          {/* Categorized Pro Dropdown Menu */}
+          {/* Categorized Role-Filtered Dropdown Menu */}
           {isMenuOpen && (
             <div className="absolute left-0 mt-3 w-72 bg-white rounded-2xl shadow-2xl border border-slate-200/90 p-2 z-50 animate-in fade-in slide-in-from-top-2 duration-150 divide-y divide-slate-100">
               
-              {/* Operational Roles */}
-              <div className="py-1.5">
-                <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
-                  Operational Roles
-                </span>
-                {NAV_ROLE_LINKS.filter((item) => item.category === 'Operational').map((link) => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    onClick={() => setIsMenuOpen(false)}
-                    className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      location.pathname === link.path
-                        ? 'bg-orange-50 text-orange-600 font-bold'
-                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      {link.icon}
-                      <span>{link.label}</span>
+              {/* Active User Header */}
+              {activeUser && (
+                <div className="px-3 py-2.5 bg-slate-50 rounded-xl mb-1 border border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 truncate max-w-[160px]">
+                      {activeUser.fullname || activeUser.username || 'User Profile'}
+                    </span>
+                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-extrabold uppercase border ${getRoleBadgeStyle(userRole)}`}>
+                      {userRole}
+                    </span>
+                  </div>
+                  {sessionToken && (
+                    <div className="mt-1 flex items-center gap-1 text-[10px] text-slate-400 font-mono truncate" title={sessionToken}>
+                      <span className="text-emerald-500 font-bold">Token:</span>
+                      <span className="truncate">{sessionToken.slice(0, 16)}...</span>
                     </div>
-                    {link.badge && (
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
-                        {link.badge}
-                      </span>
-                    )}
-                  </Link>
-                ))}
-              </div>
+                  )}
+                </div>
+              )}
+
+              {/* Operational Roles */}
+              {operationalLinks.length > 0 && (
+                <div className="py-1.5">
+                  <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
+                    Operational Roles
+                  </span>
+                  {operationalLinks.map((link) => (
+                    <Link
+                      key={link.path}
+                      to={buildTokenizedUrl(link.path, sessionToken || '')}
+                      onClick={() => setIsMenuOpen(false)}
+                      className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                        location.pathname === link.path
+                          ? 'bg-orange-50 text-orange-600 font-bold'
+                          : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        {link.icon}
+                        <span>{link.label}</span>
+                      </div>
+                      {link.badge && (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                          {link.badge}
+                        </span>
+                      )}
+                    </Link>
+                  ))}
+                </div>
+              )}
 
               {/* Customer Portal */}
-              <div className="py-1.5">
-                <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
-                  Customer Portal
-                </span>
-                {NAV_ROLE_LINKS.filter((item) => item.category === 'Customer').map((link) => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    onClick={() => setIsMenuOpen(false)}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      location.pathname === link.path
-                        ? 'bg-orange-50 text-orange-600 font-bold'
-                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    {link.icon}
-                    <span>{link.label}</span>
-                  </Link>
-                ))}
-              </div>
+              {customerLinks.length > 0 && (
+                <div className="py-1.5">
+                  <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
+                    Customer Portal
+                  </span>
+                  {customerLinks.map((link) => (
+                    <Link
+                      key={link.path}
+                      to={buildTokenizedUrl(link.path, sessionToken || '')}
+                      onClick={() => setIsMenuOpen(false)}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                        location.pathname === link.path
+                          ? 'bg-orange-50 text-orange-600 font-bold'
+                          : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      {link.icon}
+                      <span>{link.label}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
 
               {/* Management */}
-              <div className="py-1.5">
-                <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
-                  Management
-                </span>
-                {NAV_ROLE_LINKS.filter((item) => item.category === 'Management').map((link) => (
-                  <Link
-                    key={link.path}
-                    to={link.path}
-                    onClick={() => setIsMenuOpen(false)}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
-                      location.pathname === link.path
-                        ? 'bg-orange-50 text-orange-600 font-bold'
-                        : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
-                    }`}
-                  >
-                    {link.icon}
-                    <span>{link.label}</span>
-                  </Link>
-                ))}
+              {managementLinks.length > 0 && (
+                <div className="py-1.5">
+                  <span className="px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-400 block">
+                    Management
+                  </span>
+                  {managementLinks.map((link) => (
+                    <Link
+                      key={link.path}
+                      to={buildTokenizedUrl(link.path, sessionToken || '')}
+                      onClick={() => setIsMenuOpen(false)}
+                      className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all ${
+                        location.pathname === link.path
+                          ? 'bg-orange-50 text-orange-600 font-bold'
+                          : 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
+                      }`}
+                    >
+                      {link.icon}
+                      <span>{link.label}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+
+              {/* Logout Action */}
+              <div className="pt-1.5">
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-all cursor-pointer"
+                >
+                  <svg className="w-4 h-4 text-rose-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  <span>Log Out Session</span>
+                </button>
               </div>
             </div>
           )}
@@ -255,21 +344,14 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
         {/* Mobile Quick Action Buttons */}
         <div className="flex md:hidden items-center gap-2">
           <button
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:bg-slate-200 active:scale-95 transition-all"
-            aria-label="User Profile"
+            onClick={handleLogout}
+            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:bg-rose-50 hover:text-rose-600 active:scale-95 transition-all"
+            aria-label="Logout"
+            title="Log Out"
           >
-            <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+            <svg className="w-4.5 h-4.5 text-rose-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
-          </button>
-          <button
-            className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 relative hover:bg-slate-200 active:scale-95 transition-all"
-            aria-label="Notifications"
-          >
-            <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-            </svg>
-            <span className="absolute top-2 right-2 w-2 h-2 bg-orange-600 rounded-full border-2 border-white" />
           </button>
         </div>
       </div>
@@ -320,23 +402,28 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
           </div>
         )}
 
-        {/* Desktop Profile & Notification Controls */}
+        {/* Desktop Profile & Logout Controls */}
         <div className="hidden md:flex items-center gap-2 flex-shrink-0">
-          <button
-            className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:bg-slate-200 hover:text-slate-900 active:scale-95 transition-all cursor-pointer"
-            aria-label="Notifications"
+          <Link
+            to={buildTokenizedUrl('/account', sessionToken || '')}
+            className="h-9 px-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center gap-2 text-slate-700 hover:bg-slate-200 hover:text-slate-900 active:scale-95 transition-all text-xs font-bold"
+            title="Account Settings"
           >
-            <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 20 20">
-              <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
-            </svg>
-          </button>
-          <button
-            className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:bg-slate-200 hover:text-slate-900 active:scale-95 transition-all cursor-pointer"
-            aria-label="User Account"
-          >
-            <svg className="w-4.5 h-4.5" fill="currentColor" viewBox="0 0 20 20">
+            <svg className="w-4 h-4 text-slate-500" fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
             </svg>
+            <span className="truncate max-w-[90px]">{activeUser?.fullname || activeUser?.username || 'Profile'}</span>
+          </Link>
+
+          <button
+            onClick={handleLogout}
+            className="h-9 px-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 active:scale-95 transition-all text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            title="Log Out"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span>Log Out</span>
           </button>
         </div>
       </div>

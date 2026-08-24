@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { Navbar } from '../components/Navbar'
 
 interface Transaction {
   id: string
@@ -199,17 +200,10 @@ export const SalesReportCashier: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#f0ece8] text-[#2c1810] font-sans pb-12">
-      {/* Top Navbar */}
-      <header className="flex items-center justify-between bg-white px-6 py-4 shadow-sm border-b border-[#e0d6cf]">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🍤</span>
-          <div>
-            <h1 className="font-bold text-lg leading-tight text-[#ff7b00]">Seafood ng Bayan</h1>
-            <p className="text-xs text-neutral-400 font-medium">Sales Dashboard</p>
-          </div>
-        </div>
-        <div className="text-2xl cursor-pointer">👤</div>
-      </header>
+      {/* Role-Based Navigation Bar */}
+      <div className="max-w-7xl mx-auto px-4 pt-4">
+        <Navbar />
+      </div>
 
       {/* Main Container */}
       <div className="max-w-7xl mx-auto px-6 pt-8">
@@ -221,11 +215,10 @@ export const SalesReportCashier: React.FC = () => {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-6 py-3 rounded-t-xl font-bold text-sm transition-all ${
-                activeTab === tab
+              className={`px-6 py-3 rounded-t-xl font-bold text-sm transition-all ${activeTab === tab
                   ? 'bg-[#ff7b00] text-white shadow-md'
                   : 'text-neutral-500 hover:text-neutral-800 hover:bg-white/50'
-              }`}
+                }`}
             >
               {tab}
             </button>
@@ -296,13 +289,12 @@ export const SalesReportCashier: React.FC = () => {
                       <td className="px-6 py-4 text-neutral-600 font-medium">{tx.customer}</td>
                       <td className="px-6 py-4 font-bold text-[#2c1810]">₱{tx.total.toLocaleString()}</td>
                       <td className="px-6 py-4">
-                        <span className={`text-xs font-extrabold px-3 py-1.5 rounded-full ${
-                          tx.type === 'Dine In'
+                        <span className={`text-xs font-extrabold px-3 py-1.5 rounded-full ${tx.type === 'Dine In'
                             ? 'bg-blue-50 text-blue-700 border border-blue-100'
                             : tx.type === 'Take Out'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-100'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                        }`}>
+                              ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                          }`}>
                           {tx.type}
                         </span>
                       </td>

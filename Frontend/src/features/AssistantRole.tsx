@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Navbar } from '../components/Navbar'
 
 export interface OrderItem {
   name: string;
@@ -251,28 +252,11 @@ export const AssistantRole: React.FC = () => {
   })
 
   return (
-    <div className="flex flex-col h-screen bg-[#f8f6f4] text-[#2c1810] font-sans overflow-hidden">
-      {/* Top Navbar styled for light seafood theme */}
-      <header className="flex items-center justify-between bg-white border-b border-[#e0d6cf] px-6 py-3 shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🍤</span>
-          <span className="text-xl font-bold text-[#2c1810] tracking-wide">
-            Seafood Palace <span className="text-[#ff7b00] font-medium">- Assistant Console</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => setNotification("🔔 Checking for new online orders...")}
-            className="text-2xl hover:scale-110 active:scale-95 transition-transform cursor-pointer"
-            title="Check Notifications"
-          >
-            🛎️
-          </button>
-          <div className="bg-[#c9a98f] w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold cursor-pointer shadow-sm hover:bg-[#b09177] transition-colors">
-            👤
-          </div>
-        </div>
-      </header>
+    <div className="flex flex-col min-h-screen bg-[#f8f6f4] text-[#2c1810] font-sans pb-8">
+      {/* Role-Based Navigation Bar */}
+      <div className="p-4 z-20">
+        <Navbar />
+      </div>
 
       {/* Pipeline View Workspace */}
       <div className="flex-1 flex flex-col lg:flex-row bg-[#f8f6f4] text-[#2c1810] overflow-hidden">
@@ -291,8 +275,8 @@ export const AssistantRole: React.FC = () => {
               <button
                 onClick={() => setActiveTab('pending')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'pending'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
+                  ? 'bg-[#ff7b00] text-white shadow'
+                  : 'text-neutral-500 hover:text-[#ff7b00]'
                   }`}
               >
                 Pending Verification ({orders.filter(o => o.status === 'pending' || o.status === 'flagged').length})
@@ -300,8 +284,8 @@ export const AssistantRole: React.FC = () => {
               <button
                 onClick={() => setActiveTab('kitchen')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'kitchen'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
+                  ? 'bg-[#ff7b00] text-white shadow'
+                  : 'text-neutral-500 hover:text-[#ff7b00]'
                   }`}
               >
                 Kitchen ({orders.filter(o => o.status === 'pending_preparation').length})
@@ -309,8 +293,8 @@ export const AssistantRole: React.FC = () => {
               <button
                 onClick={() => setActiveTab('dispatch')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'dispatch'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
+                  ? 'bg-[#ff7b00] text-white shadow'
+                  : 'text-neutral-500 hover:text-[#ff7b00]'
                   }`}
               >
                 Rider Dispatch ({orders.filter(o => o.status === 'preparing' || o.status === 'assigned').length})
@@ -318,8 +302,8 @@ export const AssistantRole: React.FC = () => {
               <button
                 onClick={() => setActiveTab('all')}
                 className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'all'
-                    ? 'bg-[#e0d6cf] text-[#2c1810]'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
+                  ? 'bg-[#e0d6cf] text-[#2c1810]'
+                  : 'text-neutral-500 hover:text-[#ff7b00]'
                   }`}
               >
                 All ({orders.length})
@@ -343,8 +327,8 @@ export const AssistantRole: React.FC = () => {
                     key={order.id}
                     onClick={() => setSelectedOrderId(order.id)}
                     className={`group relative bg-white border rounded-2xl p-4 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 ${isSelected
-                        ? 'border-[#ff7b00] ring-2 ring-[#ff7b00]/20 bg-[#fffbf9] shadow-sm'
-                        : 'border-[#e0d6cf] hover:border-[#ff7b00]/50 hover:bg-[#fffbf9]/40'
+                      ? 'border-[#ff7b00] ring-2 ring-[#ff7b00]/20 bg-[#fffbf9] shadow-sm'
+                      : 'border-[#e0d6cf] hover:border-[#ff7b00]/50 hover:bg-[#fffbf9]/40'
                       }`}
                   >
                     <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#e0d6cf]">
@@ -353,12 +337,12 @@ export const AssistantRole: React.FC = () => {
                         <span className="text-[10px] text-neutral-400 font-semibold">{order.createdAt}</span>
                       </div>
                       <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider ${order.status === 'pending'
-                          ? 'bg-amber-100 text-amber-800'
-                          : order.status === 'flagged'
-                            ? 'bg-rose-100 text-rose-800 animate-pulse'
-                            : order.status === 'pending_preparation'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-emerald-100 text-emerald-800'
+                        ? 'bg-amber-100 text-amber-800'
+                        : order.status === 'flagged'
+                          ? 'bg-rose-100 text-rose-800 animate-pulse'
+                          : order.status === 'pending_preparation'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-emerald-100 text-emerald-800'
                         }`}>
                         {order.status.replace('_', ' ').toUpperCase()}
                       </span>
@@ -399,12 +383,12 @@ export const AssistantRole: React.FC = () => {
                     <h3 className="text-2xl font-black text-white tracking-wide mt-0.5">{selectedOrder.ref}</h3>
                   </div>
                   <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase border ${selectedOrder.status === 'pending'
-                      ? 'bg-amber-100 text-amber-900 border-amber-200'
-                      : selectedOrder.status === 'flagged'
-                        ? 'bg-rose-100 text-rose-900 border-rose-200'
-                        : selectedOrder.status === 'pending_preparation'
-                          ? 'bg-blue-100 text-blue-900 border-blue-200'
-                          : 'bg-emerald-100 text-emerald-900 border-emerald-200'
+                    ? 'bg-amber-100 text-amber-900 border-amber-200'
+                    : selectedOrder.status === 'flagged'
+                      ? 'bg-rose-100 text-rose-900 border-rose-200'
+                      : selectedOrder.status === 'pending_preparation'
+                        ? 'bg-blue-100 text-blue-900 border-blue-200'
+                        : 'bg-emerald-100 text-emerald-900 border-emerald-200'
                     }`}>
                     {selectedOrder.status.replace('_', ' ').toUpperCase()}
                   </span>
@@ -418,20 +402,20 @@ export const AssistantRole: React.FC = () => {
               {/* Pipeline Stage Indicators */}
               <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
                 <div className={`p-2 rounded-lg border ${selectedOrder.status === 'pending' || selectedOrder.status === 'flagged'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
+                  ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
+                  : 'bg-black/10 text-white/50 border-white/10'
                   }`}>
                   1. Verification
                 </div>
                 <div className={`p-2 rounded-lg border ${selectedOrder.status === 'pending_preparation'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
+                  ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
+                  : 'bg-black/10 text-white/50 border-white/10'
                   }`}>
                   2. Kitchen Queue
                 </div>
                 <div className={`p-2 rounded-lg border ${selectedOrder.status === 'preparing' || selectedOrder.status === 'assigned'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
+                  ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
+                  : 'bg-black/10 text-white/50 border-white/10'
                   }`}>
                   3. Rider Dispatch
                 </div>

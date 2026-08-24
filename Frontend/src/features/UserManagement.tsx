@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import logo from '../assets/logoseafudsngbayan.png';
+import { Navbar } from '../components/Navbar';
 
 interface User {
     id: string;
@@ -16,7 +15,6 @@ const UserManagement = () => {
     const [users, setUsers] = useState<User[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
     // Form State
     const [formData, setFormData] = useState({
@@ -91,35 +89,11 @@ const UserManagement = () => {
     );
 
     return (
-        <div className="font-sans bg-[#f7fafc] min-h-screen text-[#2d3748]">
-            {/* Top Navbar */}
-            <nav className="flex justify-between items-center py-[0.8rem] px-[4%] bg-white shadow-[0_4px_20px_rgba(0,0,0,0.02)] sticky top-0 z-50 border-b border-black/5">
-                <div className="flex items-center gap-[1rem]">
-                    <div className="flex items-center">
-                        <img src={logo} alt="Logo" className="w-[45px] h-[45px] rounded-full object-cover shadow-[0_4px_10px_rgba(231,76,60,0.15)]" />
-                    </div>
-                    <div
-                        className="flex flex-col cursor-pointer select-none"
-                        onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    >
-                        <div className="text-[1.25rem] font-extrabold text-[#2d3748] flex items-center gap-[0.4rem]">
-                            Seafudz Ng Bayan <span className="text-[0.75rem] text-[#a0aec0] transition-transform duration-200">▼</span>
-                        </div>
-                        <div className="text-[0.8rem] font-semibold text-[#e74c3c] tracking-[0.5px] uppercase">Admin Portal</div>
-                    </div>
-                </div>
-
-                <div className="bg-[#edf2f7] py-[0.6rem] px-[1.2rem] rounded-[50px] font-semibold text-[0.9rem] text-[#4a5568] border border-[#e2e8f0]">👤 Admin</div>
-
-                {isDropdownOpen && (
-                    <div className="absolute top-[70px] left-[4%] bg-white rounded-[16px] shadow-[0_10px_30px_rgba(0,0,0,0.08)] border border-black/5 p-[0.6rem] flex flex-col w-[240px] animate-slide-down-menu">
-                        <Link to="/sales-report" className="no-underline text-[#4a5568] font-semibold p-[0.8rem_1rem] rounded-[10px] text-[0.95rem] transition-all duration-200 flex items-center gap-[0.8rem] hover:bg-[#f7fafc] hover:text-[#e74c3c]">💰 Sales Management</Link>
-                        <Link to="/users" className="no-underline text-[#4a5568] font-semibold p-[0.8rem_1rem] rounded-[10px] text-[0.95rem] transition-all duration-200 flex items-center gap-[0.8rem] hover:bg-[#f7fafc] hover:text-[#e74c3c] bg-[#e74c3c]/5 text-[#e74c3c]">👥 User Management</Link>
-                        <hr className="border-0 h-[1px] bg-[#edf2f7] my-[0.4rem]" />
-                        <Link to="/login" className="no-underline font-semibold p-[0.8rem_1rem] rounded-[10px] text-[0.95rem] transition-all duration-200 flex items-center gap-[0.8rem] hover:bg-[#f7fafc]" style={{ color: '#e53935' }}>🚪 Logout</Link>
-                    </div>
-                )}
-            </nav>
+        <div className="font-sans bg-[#f7fafc] min-h-screen text-[#2d3748] pb-12">
+            {/* Role-Based Navigation Bar */}
+            <div className="max-w-7xl mx-auto px-4 pt-4">
+                <Navbar />
+            </div>
 
             {/* Main Content Area */}
             <div className="max-w-[1200px] mx-auto py-[3rem] px-[2rem]">
@@ -178,19 +152,17 @@ const UserManagement = () => {
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[#4a5568]">{user.contact}</td>
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[#4a5568]">{user.email}</td>
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[#4a5568]">
-                                            <span className={`py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.78rem] font-bold inline-block tracking-[0.5px] ${
-                                                user.status === 'active' ? 'bg-[#e6fffa] text-[#319795]' : 'bg-[#fff5f5] text-[#e53e3e]'
-                                            }`}>
+                                            <span className={`py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.78rem] font-bold inline-block tracking-[0.5px] ${user.status === 'active' ? 'bg-[#e6fffa] text-[#319795]' : 'bg-[#fff5f5] text-[#e53e3e]'
+                                                }`}>
                                                 {user.status.toUpperCase()}
                                             </span>
                                         </td>
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[#4a5568]">
                                             <button
-                                                className={`bg-none border border-solid py-[0.5rem] px-[1rem] rounded-[8px] text-[0.85rem] font-bold font-sans cursor-pointer transition-all duration-200 ${
-                                                    user.status === 'active' 
-                                                        ? 'border-[#feb2b2] text-[#e53e3e] hover:bg-[#fff5f5]' 
-                                                        : 'border-[#b2f5ea] text-[#319795] hover:bg-[#e6fffa]'
-                                                }`}
+                                                className={`bg-none border border-solid py-[0.5rem] px-[1rem] rounded-[8px] text-[0.85rem] font-bold font-sans cursor-pointer transition-all duration-200 ${user.status === 'active'
+                                                    ? 'border-[#feb2b2] text-[#e53e3e] hover:bg-[#fff5f5]'
+                                                    : 'border-[#b2f5ea] text-[#319795] hover:bg-[#e6fffa]'
+                                                    }`}
                                                 onClick={() => toggleStatus(user.id)}
                                             >
                                                 {user.status === 'active' ? 'Deactivate' : 'Activate'}

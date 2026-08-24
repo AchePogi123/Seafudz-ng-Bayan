@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import logo from '../assets/logoseafudsngbayan.png';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
+import { saveSessionToken, saveActiveUser, generateClientHashToken, buildTokenizedUrl } from '../cryptography/cryptoSession';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
@@ -22,7 +23,7 @@ const Login = () => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
-  
+
   // UI states
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -31,14 +32,29 @@ const Login = () => {
   // Business role prevention code (Standard restaurant admin key)
   const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
 
-  const navigateByRole = (userRole?: string) => {
+  const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
-    if (normRole === 'cashier') navigate('/sales-report');
-    else if (normRole === 'kitchen') navigate('/kitchen');
-    else if (normRole === 'rider') navigate('/rider');
-    else if (normRole === 'assistant') navigate('/assistant');
-    else navigate('/customer');
+    const activeToken = token || generateClientHashToken();
+
+    saveActiveUser({
+      fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput,
+      username: (userData?.username as string) || loginInput.split('@')[0],
+      email: (userData?.email as string) || (loginInput.includes('@') ? loginInput : undefined),
+      role: normRole,
+      sessionToken: activeToken,
+    });
+    saveSessionToken(activeToken);
+
+    let targetPath = '/customer';
+    if (normRole === 'cashier') targetPath = '/sales-report';
+    else if (normRole === 'kitchen') targetPath = '/kitchen';
+    else if (normRole === 'rider') targetPath = '/rider';
+    else if (normRole === 'assistant') targetPath = '/assistant';
+    else if (normRole === 'admin') targetPath = '/dashboard';
+
+    navigate(buildTokenizedUrl(targetPath, activeToken));
   };
+
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,10 +129,11 @@ const Login = () => {
 
       const userRole = profileData?.data?.role || 'customer';
       const userName = profileData?.data?.fullname || supabaseUser?.email || loginInput;
+      const sessionToken = profileData?.sessionToken;
 
       setSuccessMessage(`Welcome back, ${userName}! Redirecting to workspace...`);
       setTimeout(() => {
-        navigateByRole(userRole);
+        navigateByRole(userRole, sessionToken, profileData?.data);
       }, 1200);
 
     } catch (err: unknown) {
@@ -173,10 +190,11 @@ const Login = () => {
       }
 
       const supabaseUserId = authData.user?.id;
+      let regSessionToken: string | undefined = undefined;
 
       // 2. Register profile in PostgreSQL Express Backend
       try {
-        await fetch(`${API_BASE_URL}/auth/register`, {
+        const regRes = await fetch(`${API_BASE_URL}/auth/register`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -188,13 +206,18 @@ const Login = () => {
             token: verificationCode,
           }),
         });
+
+        if (regRes.ok) {
+          const regJson = await regRes.json();
+          regSessionToken = regJson?.sessionToken;
+        }
       } catch (backendErr) {
         console.warn('Backend API profile sync note:', backendErr);
       }
 
       setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting...`);
       setTimeout(() => {
-        navigateByRole(role);
+        navigateByRole(role, regSessionToken);
       }, 1500);
 
     } catch (err: unknown) {
@@ -254,7 +277,7 @@ const Login = () => {
             <form onSubmit={handleLogin}>
               <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Welcome Back</h2>
               <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Sign in with your Supabase credentials</p>
-              
+
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
@@ -275,7 +298,7 @@ const Login = () => {
                   onChange={(e) => setLoginPassword(e.target.value)}
                 />
               </div>
-              
+
               <div className="flex justify-between items-center mb-[2rem] text-[0.9rem]">
                 <label className="flex items-center gap-[0.5rem] text-[#4a5568] cursor-pointer font-medium">
                   <input type="checkbox" className="accent-[#e74c3c]" defaultChecked /> Remember me
@@ -308,7 +331,7 @@ const Login = () => {
             <form onSubmit={handleRegister}>
               <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Create Account</h2>
               <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Join us to start ordering fresh seafood</p>
-              
+
               {/* Account Type / Role Selection */}
               <div className="mb-[1.8rem] text-left">
                 <label className="text-[0.9rem] font-bold text-[#4a5568] block mb-[0.7rem]">Register As:</label>
@@ -349,7 +372,7 @@ const Login = () => {
                   </small>
                 </div>
               )}
-              
+
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
@@ -418,7 +441,7 @@ const Login = () => {
               >
                 {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT'}
               </button>
-              
+
               <p className="text-center text-[0.9rem] text-[#718096] m-0">
                 Already have an Account? <span className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline" onClick={() => setShowCreateAccount(false)}>Login</span>
               </p>

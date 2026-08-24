@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import NavbarCashier from '../components/NavbarCashier'
 
 interface Transaction {
   id: string
@@ -178,8 +179,17 @@ const MOCK_TRANSACTIONS: Record<TabType, Transaction[]> = {
 
 export const SalesReportCashier: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('Today')
+  const [searchQuery, setSearchQuery] = useState('')
 
-  const currentTransactions = MOCK_TRANSACTIONS[activeTab]
+  const currentTransactions = MOCK_TRANSACTIONS[activeTab].filter((tx) => {
+    const query = searchQuery.toLowerCase()
+    return (
+      tx.ref.toLowerCase().includes(query) ||
+      tx.customer.toLowerCase().includes(query) ||
+      tx.items.toLowerCase().includes(query) ||
+      tx.type.toLowerCase().includes(query)
+    )
+  })
 
   // Calculate statistics
   const totalSales = currentTransactions.reduce((acc, curr) => acc + curr.total, 0)
@@ -198,34 +208,24 @@ export const SalesReportCashier: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f0ece8] text-[#2c1810] font-sans pb-12">
-      {/* Top Navbar */}
-      <header className="flex items-center justify-between bg-white px-6 py-4 shadow-sm border-b border-[#e0d6cf]">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🍤</span>
-          <div>
-            <h1 className="font-bold text-lg leading-tight text-[#ff7b00]">Seafood ng Bayan</h1>
-            <p className="text-xs text-neutral-400 font-medium">Sales Dashboard</p>
-          </div>
-        </div>
-        <div className="text-2xl cursor-pointer">👤</div>
-      </header>
+    <div className="min-h-screen bg-[#f8f6f4] text-[#2c1810] font-sans p-3 sm:p-4 lg:p-6 pb-12">
+      {/* Integrated Cashier Navbar */}
+      <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
 
       {/* Main Container */}
-      <div className="max-w-7xl mx-auto px-6 pt-8">
+      <div className="max-w-7xl mx-auto pt-6">
         <h1 className="text-3xl font-extrabold mb-6">Sales Reports</h1>
 
         {/* Tab Navigation */}
-        <div className="flex gap-2 border-b border-neutral-300 mb-8 pb-1">
+        <div className="flex gap-2 border-b border-neutral-300 mb-8 pb-1 overflow-x-auto">
           {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-6 py-3 rounded-t-xl font-bold text-sm transition-all ${
-                activeTab === tab
-                  ? 'bg-[#ff7b00] text-white shadow-md'
-                  : 'text-neutral-500 hover:text-neutral-800 hover:bg-white/50'
-              }`}
+              className={`px-6 py-3 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap cursor-pointer ${activeTab === tab
+                ? 'bg-orange-600 text-white shadow-md'
+                : 'text-neutral-500 hover:text-neutral-800 hover:bg-white/50'
+                }`}
             >
               {tab}
             </button>
@@ -234,30 +234,30 @@ export const SalesReportCashier: React.FC = () => {
 
         {/* Summary Statistics Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#e0d6cf] text-center hover:shadow-md transition-all">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center hover:shadow-md transition-all">
             <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400 mb-2">Total Sales</h3>
-            <div className="text-3xl font-black text-[#ff7b00]">
+            <div className="text-3xl font-black text-orange-600">
               ₱{totalSales.toLocaleString()}
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#e0d6cf] text-center hover:shadow-md transition-all">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center hover:shadow-md transition-all">
             <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400 mb-2">Total Orders</h3>
-            <div className="text-3xl font-black text-[#ff7b00]">
+            <div className="text-3xl font-black text-orange-600">
               {totalOrders}
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#e0d6cf] text-center hover:shadow-md transition-all">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center hover:shadow-md transition-all">
             <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400 mb-2">Average Order</h3>
-            <div className="text-3xl font-black text-[#ff7b00]">
+            <div className="text-3xl font-black text-orange-600">
               ₱{averageOrder.toLocaleString()}
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-[#e0d6cf] text-center hover:shadow-md transition-all">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 text-center hover:shadow-md transition-all">
             <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400 mb-2">Top Selling Item</h3>
-            <div className="text-3xl font-black text-[#ff7b00] truncate px-1">
+            <div className="text-3xl font-black text-orange-600 truncate px-1">
               {getTopSellingItem(activeTab)}
             </div>
           </div>
@@ -265,7 +265,7 @@ export const SalesReportCashier: React.FC = () => {
 
         {/* Transaction History Table */}
         <h2 className="text-xl font-extrabold mb-4">Transaction History</h2>
-        <div className="bg-white rounded-2xl border border-[#e0d6cf] shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-neutral-100">
               <thead className="bg-neutral-50 text-left text-xs uppercase font-extrabold tracking-wider text-neutral-500">
@@ -284,25 +284,24 @@ export const SalesReportCashier: React.FC = () => {
                     <td colSpan={6} className="px-6 py-16 text-center text-neutral-400">
                       <div className="text-3xl mb-2">📊</div>
                       <div className="font-bold text-neutral-600">No transactions recorded yet.</div>
-                      <div className="text-xs">Transactions will appear here once orders are completed.</div>
+                      <div className="text-xs">Transactions will appear here once orders are completed or matched by search.</div>
                     </td>
                   </tr>
                 ) : (
                   currentTransactions.map((tx) => (
                     <tr key={tx.id} className="hover:bg-neutral-50/50 transition-colors">
-                      <td className="px-6 py-4 font-bold text-[#ff7b00]">{tx.ref}</td>
+                      <td className="px-6 py-4 font-bold text-orange-600">{tx.ref}</td>
                       <td className="px-6 py-4 text-neutral-500 whitespace-nowrap">{tx.dateTime}</td>
                       <td className="px-6 py-4 font-medium text-neutral-800">{tx.items}</td>
                       <td className="px-6 py-4 text-neutral-600 font-medium">{tx.customer}</td>
                       <td className="px-6 py-4 font-bold text-[#2c1810]">₱{tx.total.toLocaleString()}</td>
                       <td className="px-6 py-4">
-                        <span className={`text-xs font-extrabold px-3 py-1.5 rounded-full ${
-                          tx.type === 'Dine In'
-                            ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                            : tx.type === 'Take Out'
+                        <span className={`text-xs font-extrabold px-3 py-1.5 rounded-full ${tx.type === 'Dine In'
+                          ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                          : tx.type === 'Take Out'
                             ? 'bg-amber-50 text-amber-700 border border-amber-100'
                             : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                        }`}>
+                          }`}>
                           {tx.type}
                         </span>
                       </td>
@@ -317,4 +316,5 @@ export const SalesReportCashier: React.FC = () => {
     </div>
   )
 }
+
 export default SalesReportCashier

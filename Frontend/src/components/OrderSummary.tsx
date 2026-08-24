@@ -4,10 +4,10 @@ import type { CartItem } from './OrderItemRow'
 
 interface OrderSummaryProps {
   cartItems: CartItem[]
-  tableLocation: string
-  setTableLocation: (table: string) => void
   orderType: string
   setOrderType: (type: string) => void
+  orderNotes: string
+  setOrderNotes: (notes: string) => void
   onIncrement: (itemId: string) => void
   onDecrement: (itemId: string) => void
   onRemove: (itemId: string) => void
@@ -17,10 +17,10 @@ interface OrderSummaryProps {
 
 export const OrderSummary: React.FC<OrderSummaryProps> = ({
   cartItems,
-  tableLocation,
-  setTableLocation,
   orderType,
   setOrderType,
+  orderNotes,
+  setOrderNotes,
   onIncrement,
   onDecrement,
   onRemove,
@@ -55,32 +55,8 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
         )}
       </div>
 
-      {/* Selectors */}
-      <div className="grid grid-cols-2 gap-3 mb-4 flex-shrink-0">
-        <div>
-          <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">
-            Table
-          </label>
-          <div className="relative">
-            <select
-              value={tableLocation}
-              onChange={(e) => setTableLocation(e.target.value)}
-              className="w-full bg-neutral-50 hover:bg-neutral-100/80 text-neutral-800 rounded-xl px-3 py-2 text-xs font-semibold appearance-none border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 cursor-pointer"
-            >
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((t) => (
-                <option key={t} value={`Table ${t}`}>
-                  Table {t}
-                </option>
-              ))}
-            </select>
-            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-neutral-400">
-              <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-
+      {/* Selectors - Single Full Width Container */}
+      <div className="mb-4 flex-shrink-0">
         <div>
           <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">
             Type
@@ -96,7 +72,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
             </select>
             <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-neutral-400">
               <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" />
               </svg>
             </div>
           </div>
@@ -104,14 +80,14 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
       </div>
 
       {/* Order Items List */}
-      <div className="flex-1 flex flex-col min-h-0 mb-4">
+      <div className="flex-1 flex flex-col min-h-0 mb-3">
         <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
           <label className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
             Items ({cartItems.reduce((a, b) => a + b.quantity, 0)})
           </label>
         </div>
-        
-        <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+
+        <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar min-h-[120px]">
           {cartItems.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center px-4 py-8 bg-neutral-50 rounded-xl border border-dashed border-neutral-200">
               <svg className="w-7 h-7 text-neutral-300 mb-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -131,6 +107,20 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
             ))
           )}
         </div>
+      </div>
+
+      {/* Always Visible Special Note Input */}
+      <div className="mb-3 flex-shrink-0">
+        <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">
+          Special Note / Kitchen Instruction
+        </label>
+        <textarea
+          value={orderNotes}
+          onChange={(e) => setOrderNotes(e.target.value)}
+          placeholder="e.g. Extra spicy, no garlic, less oil..."
+          rows={2}
+          className="w-full bg-neutral-50 hover:bg-neutral-100/80 text-neutral-800 rounded-xl p-2.5 text-xs font-medium border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 resize-none"
+        />
       </div>
 
       {/* Pricing Summary Card & Confirm Button */}

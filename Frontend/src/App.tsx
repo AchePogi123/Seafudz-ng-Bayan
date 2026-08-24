@@ -9,6 +9,8 @@ import { AccMan } from './features/AccMan'
 import AboutUs from './features/AboutUs'
 import Dashboard from './features/Dashboard'
 import Login from './features/Login'
+import ForgotPassword from './features/ForgotPassword'
+import CreateAccount from './features/CreateAccount'
 import UserManagement from './features/UserManagement'
 
 function App() {
@@ -17,6 +19,8 @@ function App() {
       <Routes>
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/create-account" element={<CreateAccount />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/users" element={<UserManagement />} />
         <Route path="/pos" element={<POS />} />
         <Route path="/kitchen" element={<KitchenMode />} />

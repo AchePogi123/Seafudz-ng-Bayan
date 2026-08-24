@@ -7,26 +7,32 @@ const router = Router();
 router.get('/kitchen/orders', async (req, res) => {
   try {
     const sql = `
-      SELECT o.*, t.name AS table_name,
+      SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
+             o.order_type, o.status AS order_status,
+             COALESCE(ko.status, o.status) AS status,
+             o.notes, o.created_at, o.updated_at,
+             t.name AS table_name,
              COALESCE(
                json_agg(
                  json_build_object(
                    'id', oi.id,
-                   'menu_item_id', oi.menu_item_id,
+                   'menu_item_id', oi.product_id,
+                   'product_id', oi.product_id,
                    'quantity', oi.quantity,
                    'unit_price', oi.unit_price,
-                   'subtotal', (oi.unit_price * oi.quantity),
+                   'subtotal', oi.subtotal,
                    'notes', oi.notes,
-                   'name', COALESCE(oi.snapshot_item_name, m.name)
+                   'name', COALESCE(oi.product_name_snapshot, p.name)
                  )
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
       FROM orders o
+      LEFT JOIN kitchen_orders ko ON o.id = ko.order_id
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
-      LEFT JOIN menu_items m ON oi.menu_item_id = m.id
-      WHERE LOWER(o.status) IN ('pending', 'in_kitchen', 'cooking', 'preparing')
-      GROUP BY o.id, t.name
+      LEFT JOIN products p ON oi.product_id = p.id
+      WHERE UPPER(COALESCE(ko.status, o.status)) IN ('PENDING', 'IN_PROCESS', 'COOKING', 'PREPARING')
+      GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
     `;
     const { rows } = await query(sql);
@@ -52,13 +58,27 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
     const { status } = req.body;
     const { id } = req.params;
 
+    const normalizedStatus = (status || '').toUpperCase();
+    const validStatuses = ['PENDING', 'IN_PROCESS', 'COMPLETED', 'CANCELLED'];
+    const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'IN_PROCESS';
+
+    // Update kitchen_orders status
+    await query(`
+      INSERT INTO kitchen_orders (order_id, status, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (order_id) DO UPDATE SET
+        status = EXCLUDED.status,
+        updated_at = NOW()
+    `, [id, finalStatus]);
+
+    // Also update order status
     const sql = `
       UPDATE orders
       SET status = $1, updated_at = NOW()
       WHERE id = $2
       RETURNING *
     `;
-    const { rows } = await query(sql, [status, id]);
+    const { rows } = await query(sql, [finalStatus, id]);
 
     if (rows.length === 0) {
       return res.status(404).json({
@@ -69,7 +89,7 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Kitchen ticket '${id}' updated to ${status}`,
+      message: `Kitchen ticket '${id}' updated to ${finalStatus}`,
       data: rows[0],
     });
   } catch (error) {
@@ -86,9 +106,16 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
 router.delete('/kitchen/orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    await query(`
+      UPDATE kitchen_orders
+      SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+      WHERE order_id = $1
+    `, [id]);
+
     const sql = `
       UPDATE orders
-      SET status = 'Cancelled', updated_at = NOW()
+      SET status = 'CANCELLED', updated_at = NOW()
       WHERE id = $1
       RETURNING id
     `;

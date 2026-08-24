@@ -11,35 +11,33 @@ router.get('/sales/summary', async (req, res) => {
         COUNT(id)::int AS "totalOrders",
         COALESCE(SUM(total), 0)::float AS "grossRevenue",
         COALESCE(SUM(subtotal), 0)::float AS "subtotalRevenue",
-        COALESCE(SUM(vat), 0)::float AS "vatCollected",
+        COALESCE(SUM(tax), 0)::float AS "vatCollected",
         COALESCE(AVG(total), 0)::float AS "averageOrderValue"
       FROM orders
-      WHERE LOWER(status) != 'cancelled'
+      WHERE UPPER(status) != 'CANCELLED'
     `;
     const summaryRes = await query(summarySql);
     const summary = summaryRes.rows[0];
 
     const paymentSql = `
-      SELECT payment_method, COALESCE(SUM(total), 0)::float AS total
-      FROM orders
-      WHERE LOWER(status) != 'cancelled'
+      SELECT payment_method, COALESCE(SUM(amount), 0)::float AS total
+      FROM payments
       GROUP BY payment_method
     `;
     const paymentRes = await query(paymentSql);
     const paymentMethods = {};
     paymentRes.rows.forEach((r) => {
-      paymentMethods[r.payment_method || 'Cash'] = r.total;
+      paymentMethods[r.payment_method || 'CASH'] = r.total;
     });
 
     const topDishesSql = `
-      SELECT COALESCE(oi.snapshot_item_name, m.name) AS name, 
+      SELECT oi.product_name_snapshot AS name, 
              SUM(oi.quantity)::int AS "quantitySold", 
-             SUM(oi.unit_price * oi.quantity)::float AS "revenue"
+             SUM(oi.subtotal)::float AS "revenue"
       FROM order_items oi
-      LEFT JOIN menu_items m ON oi.menu_item_id = m.id
       JOIN orders o ON oi.order_id = o.id
-      WHERE LOWER(o.status) != 'cancelled'
-      GROUP BY COALESCE(oi.snapshot_item_name, m.name)
+      WHERE UPPER(o.status) != 'CANCELLED'
+      GROUP BY oi.product_name_snapshot
       ORDER BY "quantitySold" DESC
       LIMIT 5
     `;
@@ -71,15 +69,20 @@ router.get('/sales/summary', async (req, res) => {
 router.get('/sales/transactions', async (req, res) => {
   try {
     const sql = `
-      SELECT id AS "orderId", 
-             id AS "transactionId", 
-             created_at AS "date", 
-             type AS "type", 
-             payment_method AS "paymentMethod", 
-             total AS "totalAmount",
-             status AS "status"
-      FROM orders
-      ORDER BY created_at DESC
+      SELECT o.id AS "orderId", 
+             o.id AS "transactionId", 
+             o.created_at AS "date", 
+             o.order_type AS "type", 
+             COALESCE(p.payment_method, 'CASH') AS "paymentMethod", 
+             o.total AS "totalAmount",
+             o.status AS "status"
+      FROM orders o
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, payment_method
+        FROM payments
+        ORDER BY order_id, created_at DESC
+      ) p ON o.id = p.order_id
+      ORDER BY o.created_at DESC
     `;
     const { rows } = await query(sql);
 

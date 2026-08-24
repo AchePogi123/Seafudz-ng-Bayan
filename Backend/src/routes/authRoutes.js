@@ -31,7 +31,7 @@ router.get('/auth/me', requireAuth, async (req, res) => {
 router.get('/users', async (req, res) => {
   try {
     const sql = `
-      SELECT id, supabase_user_id, fullname, username, email, role, shift_status, is_active, created_at
+      SELECT id, supabase_user_id, fullname, username, email, role, is_active, created_at
       FROM employees
       ORDER BY created_at DESC
     `;
@@ -55,11 +55,11 @@ router.get('/users', async (req, res) => {
 /**
  * POST /api/auth/login
  * Validates login credentials against employees or customers in PostgreSQL
- * Accepts supabaseUserId, email, or username + pinCode
+ * Accepts supabaseUserId, email, or username
  */
 router.post('/auth/login', async (req, res) => {
   try {
-    const { username, pinCode, supabaseUserId, email } = req.body;
+    const { username, supabaseUserId, email } = req.body;
     const searchValue = (email || username || '').trim();
 
     // 1. Search employees table
@@ -75,10 +75,6 @@ router.post('/auth/login', async (req, res) => {
     } else if (username) {
       empSql = `SELECT * FROM employees WHERE LOWER(username) = LOWER($1)`;
       empParams = [username.trim()];
-      if (pinCode) {
-        empSql += ` AND pin_code = $2`;
-        empParams.push(pinCode.trim());
-      }
     }
 
     if (empParams.length > 0) {
@@ -135,7 +131,7 @@ router.post('/auth/login', async (req, res) => {
  */
 router.post('/auth/register', async (req, res) => {
   try {
-    const { fullname, username, email, role, pinCode, supabaseUserId, token, phone, address } = req.body;
+    const { fullname, username, email, role, token, phone, address } = req.body;
 
     if (!fullname || !email) {
       return res.status(400).json({
@@ -157,28 +153,29 @@ router.post('/auth/register', async (req, res) => {
         });
       }
 
+      // Ensure role is valid according to schema CHECK constraint
+      const validRoles = ['admin', 'cashier', 'assistant', 'kitchen', 'rider'];
+      const finalRole = validRoles.includes(selectedRole) ? selectedRole : 'cashier';
+
       // Generate clean unique username if not supplied
       const cleanUsername = (username || cleanEmail.split('@')[0] + '_' + Math.floor(100 + Math.random() * 900)).trim().toLowerCase();
-      const defaultPin = pinCode || '1234';
 
       const sql = `
-        INSERT INTO employees (supabase_user_id, fullname, username, email, pin_code, role)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO employees (supabase_user_id, fullname, username, email, role)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (email) DO UPDATE SET
           supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, employees.supabase_user_id),
           fullname = EXCLUDED.fullname,
-          role = EXCLUDED.role,
-          pin_code = COALESCE(EXCLUDED.pin_code, employees.pin_code)
-        RETURNING id, supabase_user_id, fullname, username, email, role, shift_status, is_active, created_at
+          role = EXCLUDED.role
+        RETURNING id, supabase_user_id, fullname, username, email, role, is_active, created_at
       `;
 
       const { rows } = await query(sql, [
-        supabaseUserId || null,
+        req.body.supabaseUserId || null,
         cleanFullname,
         cleanUsername,
         cleanEmail,
-        defaultPin,
-        selectedRole,
+        finalRole,
       ]);
 
       return res.status(201).json({
@@ -200,7 +197,7 @@ router.post('/auth/register', async (req, res) => {
       `;
 
       const { rows } = await query(sql, [
-        supabaseUserId || null,
+        req.body.supabaseUserId || null,
         cleanFullname,
         cleanEmail,
         phone || null,

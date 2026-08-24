@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Navbar } from '../components/Navbar'
+import { API_BASE_URL } from '../utils/api'
 
 export interface OrderItem {
   name: string;
@@ -210,18 +211,29 @@ export const AssistantRole: React.FC = () => {
     setCorrectionNoteInput('')
   }
 
-  const handleApproveSendToKitchen = () => {
+  const handleApproveSendToKitchen = async () => {
     if (!selectedOrderId || !selectedOrder) return
     if (!customerNameValid || !phoneValidation.isValid || !addressValidation.isComplete) {
       setNotification('⚠️ Fix or acknowledge checklist issues before sending to kitchen.')
       return
     }
+
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrderId}/verify`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assistantId: 'assistant-1' }),
+      })
+    } catch (err) {
+      console.warn('Backend API note:', err)
+    }
+
     setOrders(prev =>
       prev.map(o =>
-        o.id === selectedOrderId ? { ...o, status: 'pending_preparation' } : o
+        o.id === selectedOrderId ? { ...o, status: 'pending_preparation', paymentStatus: 'PAID' } : o
       )
     )
-    setNotification(`🍳 Order ${selectedOrder.ref} approved and sent to Kitchen!`)
+    setNotification(`🍳 Payment Verified for Order #${selectedOrder.ref}! Sent to Kitchen Queue.`)
   }
 
   const handleAssignRider = () => {

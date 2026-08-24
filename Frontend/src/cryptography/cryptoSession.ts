@@ -107,11 +107,23 @@ export function getStoredSessionToken(): string | null {
  * Generates client-side hash token fallback if offline
  */
 export function generateClientHashToken(userId: string = 'user'): string {
-  const rand = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-  const timestamp = Date.now().toString(16);
-  const userTag = userId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
-  const fakeHash = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-  return `${rand}${timestamp}${userTag}.${fakeHash}`;
+  const timestamp = Date.now();
+  const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  const fakeHash = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  
+  const payloadObj = {
+    userId: userId.slice(0, 16),
+    email: null,
+    role: 'customer',
+    ts: timestamp,
+    nonce,
+  };
+  
+  const payloadEncoded = typeof btoa === 'function'
+    ? btoa(JSON.stringify(payloadObj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    : 'eyJ1c2VySWQiOiJ1c2VyIiwidHMiOjF9';
+
+  return `${payloadEncoded}.${fakeHash}`;
 }
 
 /**

@@ -179,46 +179,56 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      // 1. Create User in Supabase Auth Provider
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email,
-        password: password,
-      });
+      let supabaseUserId: string | undefined = undefined;
 
-      if (authError) {
-        throw new Error(authError.message);
-      }
-
-      const supabaseUserId = authData.user?.id;
-      let regSessionToken: string | undefined = undefined;
-
-      // 2. Register profile in PostgreSQL Express Backend
+      // 1. Attempt User Registration in Supabase Auth Provider
       try {
-        const regRes = await fetch(`${API_BASE_URL}/auth/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            supabaseUserId,
-            fullname,
-            username,
-            email,
-            role,
-            token: verificationCode,
-          }),
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password: password,
         });
 
-        if (regRes.ok) {
-          const regJson = await regRes.json();
-          regSessionToken = regJson?.sessionToken;
+        if (authError) {
+          console.warn('Supabase Auth SignUp note:', authError.message);
+        } else if (authData?.user?.id) {
+          supabaseUserId = authData.user.id;
         }
-      } catch (backendErr) {
-        console.warn('Backend API profile sync note:', backendErr);
+      } catch (sErr) {
+        console.warn('Supabase Auth SignUp exception note:', sErr);
       }
 
-      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting...`);
+      // 2. Register profile in PostgreSQL Express Backend
+      const regRes = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabaseUserId,
+          fullname: fullname.trim(),
+          username: username.trim(),
+          email: email.trim(),
+          role,
+          token: verificationCode.trim(),
+        }),
+      });
+
+      const regJson = await regRes.json();
+
+      if (!regRes.ok || !regJson.success) {
+        throw new Error(regJson.message || 'Account registration failed. Please try again.');
+      }
+
+      const regSessionToken = regJson?.sessionToken;
+      const regUserData = regJson?.data;
+
+      // Clear input fields
+      setPassword('');
+      setConfirmPassword('');
+      setVerificationCode('');
+
+      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
       setTimeout(() => {
-        navigateByRole(role, regSessionToken);
-      }, 1500);
+        navigateByRole(role, regSessionToken, regUserData);
+      }, 1200);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';

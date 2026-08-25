@@ -22,6 +22,8 @@ function App() {
       <Routes>
         {/* Public Landing Page & Public Information Routes */}
         <Route path="/" element={<LandingPage />} />
+        <Route path="/landingpage" element={<LandingPage />} />
+        <Route path="/landing-page" element={<LandingPage />} />
         <Route path="/landing" element={<LandingPage />} />
         <Route path="/dashboard" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />

@@ -50,7 +50,7 @@ const Login = () => {
     else if (normRole === 'kitchen') targetPath = '/kitchen';
     else if (normRole === 'rider') targetPath = '/rider';
     else if (normRole === 'assistant') targetPath = '/assistant';
-    else if (normRole === 'admin') targetPath = '/dashboard';
+    else if (normRole === 'admin') targetPath = '/admin-dashboard';
 
     navigate(buildTokenizedUrl(targetPath, activeToken));
   };
@@ -261,7 +261,7 @@ const Login = () => {
         </div>
 
         <div className="flex items-center gap-6">
-          <Link to="/dashboard" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">Dashboard</Link>
+          <Link to="/landingpage" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">Landing Page</Link>
           <Link to="/about" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">About Us</Link>
           <Link to="/pos" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">Menu & POS</Link>
         </div>

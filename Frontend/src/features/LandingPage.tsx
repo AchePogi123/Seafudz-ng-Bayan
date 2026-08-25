@@ -93,7 +93,7 @@ const ARCHIVED_ITEMS: ArchivedItem[] = [
   }
 ];
 
-const Dashboard: React.FC = () => {
+export const LandingPage: React.FC = () => {
   const [selectedItem, setSelectedItem] = useState<ArchivedItem | null>(null);
   const [isArchiveVisible, setIsArchiveVisible] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -864,4 +864,4 @@ const FAQ_ITEMS = [
   }
 ];
 
-export default Dashboard;
+export default LandingPage;

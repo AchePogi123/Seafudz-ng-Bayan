@@ -8,7 +8,7 @@ import { OnlineCustomer } from './features/OnlineCustomer'
 import { AccMan } from './features/AccMan'
 import CustomerDashboard from './features/CustomerDashboard'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
-import Dashboard from './features/Dashboard'
+import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
 import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
@@ -21,8 +21,9 @@ function App() {
     <BrowserRouter>
       <Routes>
         {/* Public Landing Page & Public Information Routes */}
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/landing" element={<LandingPage />} />
+        <Route path="/dashboard" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
         <Route path="/about" element={<AboutUs />} />
 

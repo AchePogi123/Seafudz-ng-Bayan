@@ -20,7 +20,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public Routes */}
+        {/* Public Routes & Landing Page */}
+        <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/about" element={<AboutUs />} />
 
@@ -102,14 +103,6 @@ function App() {
 
         {/* Admin Management Dashboard Routes */}
         <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/admin-dashboard"
           element={
             <ProtectedRoute allowedRoles={['admin']}>
@@ -142,10 +135,10 @@ function App() {
           }
         />
 
-        {/* Redirect root to /customer */}
-        <Route path="/" element={<Navigate to="/customer" replace />} />
-        {/* Fallback redirect to /customer */}
-        <Route path="*" element={<Navigate to="/customer" replace />} />
+        {/* Redirect root to Landing Page (/dashboard) */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        {/* Fallback redirect to /dashboard */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>
   )

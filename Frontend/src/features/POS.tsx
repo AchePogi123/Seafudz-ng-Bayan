@@ -1,73 +1,44 @@
-import React, { useState, useMemo, useEffect } from 'react'
-import { Navbar } from '../components/Navbar'
+import React, { useState, useMemo } from 'react'
 import { CategoryTabs } from '../components/CategoryTabs'
 import { MenuGrid } from '../components/MenuGrid'
 import { OrderSummary } from '../components/OrderSummary'
 import { SuccessModal } from '../components/SuccessModal'
 import { ReceiptModal } from './ReceiptModal'
+import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
 import { API_BASE_URL } from '../utils/api'
+import { useMenuPrices } from '../utils/menuPriceManager'
+import { NavbarCashier } from '../components/NavbarCashier'
 
 export const POS: React.FC = () => {
-  // State variables
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
-  const [categories, setCategories] = useState<string[]>(['All Menu'])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // Price manager hook
+  const { getEffectivePrice, updatePrice } = useMenuPrices()
+
+  // Client menu items and categories
+  const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
+  const [categories] = useState<string[]>(CLIENT_CATEGORIES)
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All Menu')
   const [cartItems, setCartItems] = useState<CartItem[]>([])
-  const [tableLocation, setTableLocation] = useState('Table 1')
   const [orderType, setOrderType] = useState('Take Out')
+  const [orderNotes, setOrderNotes] = useState('')
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
+
+  // Explicitly require table as string to match SuccessModal and ReceiptModal props
   const [lastOrderDetails, setLastOrderDetails] = useState<{
     table: string
     type: string
     total: number
     cartItems: CartItem[]
+    notes?: string
     cashReceived?: string
     change?: number | null
     paymentMethod?: string
   } | null>(null)
-
-  // Fetch Menu Items & Categories from Express Backend
-  const fetchBackendData = async () => {
-    setIsLoading(true)
-    setError(null)
-    try {
-      const [menuRes, categoriesRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/menu`),
-        fetch(`${API_BASE_URL}/categories`),
-      ])
-
-      if (!menuRes.ok) throw new Error('Failed to fetch menu items from backend')
-
-      const menuData = await menuRes.json()
-      setMenuItems(menuData.data || [])
-
-      if (categoriesRes.ok) {
-        const catData = await categoriesRes.json()
-        const catList = ['All Menu', ...catData.data.map((c: { name: string }) => c.name)]
-        setCategories(catList)
-      }
-    } catch (err: unknown) {
-      console.error('Backend Menu Fetch Error:', err)
-      setError('Could not connect to Backend Server (http://localhost:5000). Please start the Express server.')
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      void fetchBackendData()
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [])
 
   const totalCartCount = useMemo(() => {
     return cartItems.reduce((acc, item) => acc + item.quantity, 0)
@@ -78,19 +49,34 @@ export const POS: React.FC = () => {
     return Math.round(rawSubtotal * 1.12)
   }, [cartItems])
 
-  // Filter items based on search query and category selection
+  // Filter items based on search query, category selection, and dynamic price
   const filteredItems = useMemo(() => {
-    return menuItems.filter((item) => {
-      const matchesSearch =
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.description.toLowerCase().includes(searchQuery.toLowerCase())
+    return menuItems
+      .map((item) => ({
+        ...item,
+        price: getEffectivePrice(item.id, item.price),
+      }))
+      .filter((item) => {
+        const matchesSearch =
+          item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.description.toLowerCase().includes(searchQuery.toLowerCase())
 
-      const matchesCategory =
-        selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+        const matchesCategory =
+          selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
 
-      return matchesSearch && matchesCategory
-    })
-  }, [menuItems, searchQuery, selectedCategory])
+        return matchesSearch && matchesCategory
+      })
+  }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
+
+  // Custom price update from POS
+  const handlePriceUpdate = (item: MenuItem, newPrice: number) => {
+    updatePrice(item.id, newPrice)
+    setCartItems((prev) =>
+      prev.map((ci) =>
+        ci.item.id === item.id ? { ...ci, item: { ...ci.item, price: newPrice } } : ci
+      )
+    )
+  }
 
   // Cart Handlers
   const handleAddToCart = (item: MenuItem) => {
@@ -131,13 +117,14 @@ export const POS: React.FC = () => {
     if (cartItems.length === 0) return
 
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
-    const totalWithVat = rawSubtotal * 1.12
+    const totalWithVat = Math.round(rawSubtotal * 1.12)
 
     setLastOrderDetails({
-      table: tableLocation,
+      table: 'N/A',
       type: orderType,
       total: totalWithVat,
       cartItems: [...cartItems],
+      notes: orderNotes,
     })
     setIsMobileCartOpen(false)
     setIsSuccessModalOpen(true)
@@ -145,6 +132,7 @@ export const POS: React.FC = () => {
 
   const handleCloseSuccessModal = () => {
     setCartItems([])
+    setOrderNotes('')
     setIsSuccessModalOpen(false)
     setLastOrderDetails(null)
   }
@@ -153,58 +141,69 @@ export const POS: React.FC = () => {
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
     const vat = rawSubtotal * 0.12
     const total = Math.round(rawSubtotal + vat)
+    const orderId = `POS-${Date.now().toString().slice(-4)}`
 
-    const newOrderObj = {
-      id: `ORD-${Date.now().toString().slice(-4)}`,
-      table: tableLocation,
+    const posOrderPayload = {
+      isPosOrder: true,
+      status: 'In Kitchen',
       type: orderType,
-      status: 'Pending',
-      paymentStatus: 'Paid',
-      paymentMethod,
+      customerName: 'Walk-In',
+      notes: orderNotes,
       subtotal: rawSubtotal,
       vat: Math.round(vat),
+      deliveryFee: 0,
       total,
-      createdAt: new Date().toISOString(),
-      cartItems: [...cartItems],
+      paymentMethod,
+      cartItems,
     }
 
-    // Save to localStorage for instant client & cross-tab sync
-    try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = [newOrderObj, ...existing]
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch (e) {
-      console.warn('localStorage save error:', e)
-    }
-
-    // Also post to Express Backend API
+    // 1. Post to Express Backend API
     try {
       await fetch(`${API_BASE_URL}/orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tableId: tableLocation,
-          table: tableLocation,
-          type: orderType,
-          cartItems,
-          paymentMethod,
-        }),
+        body: JSON.stringify(posOrderPayload),
       })
     } catch (err) {
-      console.error('Failed to post order to backend API:', err)
+      console.error('POS order API error:', err)
     }
 
-    setLastOrderDetails((prev) =>
-      prev
-        ? {
-            ...prev,
-            cashReceived,
-            change,
-            paymentMethod,
-          }
-        : null
-    )
+    // 2. LocalStorage Sync
+    const localOrderObj = {
+      id: orderId,
+      ref: orderId,
+      dateTime: new Date().toLocaleString(),
+      type: orderType,
+      status: 'In Kitchen',
+      paymentStatus: 'Paid',
+      customer: 'Walk-In',
+      items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
+      total,
+      paymentMethod,
+      cartItems: [...cartItems],
+    }
+
+    try {
+      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      localStorage.setItem('seafudz_orders', JSON.stringify([localOrderObj, ...existing]))
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch (e) {
+      console.warn('LocalStorage save warning:', e)
+    }
+
+    // 3. Store full state for ReceiptModal display
+    setLastOrderDetails({
+      table: 'N/A',
+      type: orderType,
+      total,
+      cartItems: [...cartItems],
+      notes: orderNotes,
+      cashReceived,
+      change,
+      paymentMethod,
+    })
+
+    // 4. Close success modal and launch receipt
     setIsSuccessModalOpen(false)
     setIsReceiptModalOpen(true)
   }
@@ -212,7 +211,7 @@ export const POS: React.FC = () => {
   const handleCloseReceiptModal = () => {
     setIsReceiptModalOpen(false)
     setCartItems([])
-    setTableLocation('Table 1')
+    setOrderNotes('')
     setOrderType('Take Out')
     setLastOrderDetails(null)
   }
@@ -220,52 +219,34 @@ export const POS: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 transition-all duration-300 pb-24 lg:pb-6">
       <div className="w-full flex flex-col gap-4 sm:gap-6">
-        {/* Full-Width Header/Navbar */}
-        <Navbar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+        <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
 
-        {/* Layout Grid: Left Menu Content (3 cols) & Rightmost Order Summary (1 col) */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-start">
-          {/* Main Left Content Area */}
           <main className="lg:col-span-3 flex flex-col gap-4 sm:gap-6">
-            {/* Category Tabs */}
             <CategoryTabs
               selectedCategory={selectedCategory}
               setSelectedCategory={setSelectedCategory}
               categories={categories}
             />
 
-            {/* Menu Items Grid / Loading / Error */}
             <section className="flex-grow">
-              {isLoading ? (
-                <div className="flex flex-col items-center justify-center py-20 bg-white rounded-2xl border border-neutral-200/80">
-                  <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-                  <p className="text-sm font-semibold text-neutral-600">Loading live 100-item menu from Express backend...</p>
-                </div>
-              ) : error ? (
-                <div className="flex flex-col items-center justify-center py-16 px-6 bg-red-50/50 rounded-2xl border border-red-200 text-center">
-                  <p className="text-sm font-bold text-red-600 mb-2">⚠️ Backend Connection Warning</p>
-                  <p className="text-xs text-neutral-600 max-w-md mb-4 leading-relaxed">{error}</p>
-                  <button
-                    onClick={fetchBackendData}
-                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold px-4 py-2 rounded-xl transition-all cursor-pointer"
-                  >
-                    Retry Connection
-                  </button>
-                </div>
-              ) : (
-                <MenuGrid items={filteredItems} onAddToCart={handleAddToCart} />
-              )}
+              <MenuGrid
+                items={filteredItems}
+                onAddToCart={handleAddToCart}
+                showAvailabilityToggle={true}
+                allowPriceEdit={true}
+                onUpdatePrice={handlePriceUpdate}
+              />
             </section>
           </main>
 
-          {/* Rightmost Sidebar Summary Area */}
           <div className="hidden lg:block lg:col-span-1 lg:sticky lg:top-6 h-full">
             <OrderSummary
               cartItems={cartItems}
-              tableLocation={tableLocation}
-              setTableLocation={setTableLocation}
               orderType={orderType}
               setOrderType={setOrderType}
+              orderNotes={orderNotes}
+              setOrderNotes={setOrderNotes}
               onIncrement={handleIncrement}
               onDecrement={handleDecrement}
               onRemove={handleRemove}
@@ -275,7 +256,6 @@ export const POS: React.FC = () => {
         </div>
       </div>
 
-      {/* Mobile Floating Bottom Cart Bar */}
       {cartItems.length > 0 && (
         <div className="fixed bottom-3 left-3 right-3 lg:hidden z-40">
           <button
@@ -295,16 +275,15 @@ export const POS: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile Bottom Slide-Up Drawer Overlay */}
       {isMobileCartOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 lg:hidden flex flex-col justify-end p-0 sm:p-4 animate-fade-in">
           <div className="w-full max-h-[85vh] h-[85vh] rounded-t-3xl sm:rounded-3xl overflow-hidden shadow-2xl animate-slide-up">
             <OrderSummary
               cartItems={cartItems}
-              tableLocation={tableLocation}
-              setTableLocation={setTableLocation}
               orderType={orderType}
               setOrderType={setOrderType}
+              orderNotes={orderNotes}
+              setOrderNotes={setOrderNotes}
               onIncrement={handleIncrement}
               onDecrement={handleDecrement}
               onRemove={handleRemove}
@@ -315,7 +294,6 @@ export const POS: React.FC = () => {
         </div>
       )}
 
-      {/* Confirmation success popup */}
       <SuccessModal
         isOpen={isSuccessModalOpen}
         onClose={handleCloseSuccessModal}
@@ -323,7 +301,6 @@ export const POS: React.FC = () => {
         orderDetails={lastOrderDetails}
       />
 
-      {/* Receipt popup */}
       <ReceiptModal
         isOpen={isReceiptModalOpen}
         onClose={handleCloseReceiptModal}
@@ -332,4 +309,5 @@ export const POS: React.FC = () => {
     </div>
   )
 }
+
 export default POS

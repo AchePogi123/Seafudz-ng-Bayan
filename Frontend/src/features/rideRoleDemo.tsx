@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Navbar } from '../components/Navbar'
+import { NavbarRider } from '../components/Navbarrider'
 
 interface DeliveryItem {
   name: string
@@ -95,9 +95,9 @@ export const RideRoleDemo: React.FC = () => {
         address: o.address || o.table || 'Metro Manila Address',
         items: o.cartItems
           ? o.cartItems.map((ci) => ({
-              name: ci.item?.name || ci.name || 'Seafood Dish',
-              quantity: ci.quantity || 1,
-            }))
+            name: ci.item?.name || ci.name || 'Seafood Dish',
+            quantity: ci.quantity || 1,
+          }))
           : o.items || [],
         total: o.total || 0,
         status: o.status || 'Pending',
@@ -137,9 +137,9 @@ export const RideRoleDemo: React.FC = () => {
               address: raw.address || raw.table || 'Delivery Location',
               items: raw.cartItems
                 ? raw.cartItems.map((ci) => ({
-                    name: ci.item?.name || ci.name || 'Food Item',
-                    quantity: ci.quantity || 1,
-                  }))
+                  name: ci.item?.name || ci.name || 'Food Item',
+                  quantity: ci.quantity || 1,
+                }))
                 : raw.items || [],
               total: raw.total || 0,
               status: raw.status || 'Ready',
@@ -241,7 +241,7 @@ export const RideRoleDemo: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
       <div className="w-full flex flex-col gap-4 sm:gap-6">
-        <Navbar />
+        <NavbarRider />
 
         {/* Header Action Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between bg-white px-5 py-4 rounded-2xl border border-neutral-200/80 shadow-2xs gap-3">
@@ -277,11 +277,10 @@ export const RideRoleDemo: React.FC = () => {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shadow-2xs ${
-                activeTab === tab
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap shadow-2xs ${activeTab === tab
                   ? 'bg-neutral-900 text-white'
                   : 'bg-white text-neutral-600 border border-neutral-200/80 hover:bg-neutral-100'
-              }`}
+                }`}
             >
               {tab === 'All' && `All (${deliveries.length})`}
               {tab === 'Ready' && `Ready for Pickup (${readyCount})`}
@@ -315,15 +314,14 @@ export const RideRoleDemo: React.FC = () => {
                       <div className="text-xs text-neutral-400 font-medium mt-0.5">{order.paymentMethod}</div>
                     </div>
                     <span
-                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                        order.status === 'Ready'
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${order.status === 'Ready'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                           : order.status === 'Out for Delivery'
-                          ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                          : order.status === 'Completed' || order.status === 'Served'
-                          ? 'bg-neutral-100 text-neutral-700 border border-neutral-200'
-                          : 'bg-amber-100 text-amber-800 border border-amber-200'
-                      }`}
+                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                            : order.status === 'Completed' || order.status === 'Served'
+                              ? 'bg-neutral-100 text-neutral-700 border border-neutral-200'
+                              : 'bg-amber-100 text-amber-800 border border-amber-200'
+                        }`}
                     >
                       {order.status === 'Ready' && 'Ready for Pickup'}
                       {order.status === 'Out for Delivery' && 'Out for Delivery'}

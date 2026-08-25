@@ -12,7 +12,6 @@ DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS order_items CASCADE;
 DROP TABLE IF EXISTS orders CASCADE;
 DROP TABLE IF EXISTS assistant_calls CASCADE;
-DROP TABLE IF EXISTS tables CASCADE;
 DROP TABLE IF EXISTS products CASCADE;
 DROP TABLE IF EXISTS menu_items CASCADE;
 DROP TABLE IF EXISTS categories CASCADE;
@@ -95,24 +94,7 @@ CREATE TABLE products (
 
 
 -- ============================================
--- 5. TABLES (RESTING/FLOOR SEATING LAYOUT)
--- ============================================
-
-CREATE TABLE tables (
-    id VARCHAR(100) PRIMARY KEY,
-    name VARCHAR(100) NOT NULL UNIQUE,
-    seats INT NOT NULL DEFAULT 4,
-    section VARCHAR(100) NOT NULL DEFAULT 'Main Dining',
-    status VARCHAR(50) NOT NULL DEFAULT 'Available'
-        CHECK (status IN ('Available', 'Occupied', 'Reserved', 'Cleaning')),
-    shape VARCHAR(50) DEFAULT 'square',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-
--- ============================================
--- 6. ORDERS
+-- 5. ORDERS
 -- ============================================
 
 CREATE TABLE orders (
@@ -125,9 +107,6 @@ CREATE TABLE orders (
         ON DELETE SET NULL,
     assistant_id UUID
         REFERENCES employees(id)
-        ON DELETE SET NULL,
-    table_id VARCHAR(100)
-        REFERENCES tables(id)
         ON DELETE SET NULL,
     order_type VARCHAR(50) NOT NULL
         CHECK (order_type IN (
@@ -156,7 +135,7 @@ CREATE TABLE orders (
 
 
 -- ============================================
--- 7. ORDER ITEMS
+-- 6. ORDER ITEMS
 -- ============================================
 
 CREATE TABLE order_items (
@@ -180,7 +159,7 @@ CREATE TABLE order_items (
 
 
 -- ============================================
--- 8. PAYMENTS
+-- 7. PAYMENTS
 -- ============================================
 
 CREATE TABLE payments (
@@ -211,7 +190,7 @@ CREATE TABLE payments (
 
 
 -- ============================================
--- 9. DELIVERIES
+-- 8. DELIVERIES
 -- ============================================
 
 CREATE TABLE deliveries (
@@ -241,7 +220,7 @@ CREATE TABLE deliveries (
 
 
 -- ============================================
--- 10. KITCHEN ORDERS
+-- 9. KITCHEN ORDERS
 -- ============================================
 
 CREATE TABLE kitchen_orders (
@@ -265,12 +244,11 @@ CREATE TABLE kitchen_orders (
 
 
 -- ============================================
--- 11. ASSISTANT CALLS
+-- 10. ASSISTANT CALLS
 -- ============================================
 
 CREATE TABLE assistant_calls (
     id VARCHAR(100) PRIMARY KEY,
-    table_id VARCHAR(100) REFERENCES tables(id) ON DELETE CASCADE,
     assistant_id UUID REFERENCES employees(id) ON DELETE SET NULL,
     type VARCHAR(100) NOT NULL DEFAULT 'Call Waiter',
     status VARCHAR(50) NOT NULL DEFAULT 'Pending',
@@ -287,7 +265,6 @@ CREATE INDEX idx_products_category ON products(category_id);
 CREATE INDEX idx_orders_customer ON orders(customer_id);
 CREATE INDEX idx_orders_cashier ON orders(cashier_id);
 CREATE INDEX idx_orders_assistant ON orders(assistant_id);
-CREATE INDEX idx_orders_table ON orders(table_id);
 CREATE INDEX idx_orders_status ON orders(status);
 CREATE INDEX idx_orders_type ON orders(order_type);
 CREATE INDEX idx_order_items_order ON order_items(order_id);
@@ -296,7 +273,6 @@ CREATE INDEX idx_payments_order ON payments(order_id);
 CREATE INDEX idx_deliveries_rider ON deliveries(rider_id);
 CREATE INDEX idx_deliveries_status ON deliveries(status);
 CREATE INDEX idx_kitchen_orders_status ON kitchen_orders(status);
-CREATE INDEX idx_assistant_calls_table ON assistant_calls(table_id);
 
 
 -- ============================================
@@ -321,9 +297,6 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_products_modtime') THEN
         CREATE TRIGGER update_products_modtime BEFORE UPDATE ON products FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_tables_modtime') THEN
-        CREATE TRIGGER update_tables_modtime BEFORE UPDATE ON tables FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'update_orders_modtime') THEN
         CREATE TRIGGER update_orders_modtime BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION update_timestamp_column();
@@ -358,47 +331,80 @@ INSERT INTO customers (id, supabase_user_id, fullname, email, phone, delivery_ad
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO categories (id, name, description) VALUES
-(1, 'Seafood', 'Seafood Mixes, Paellas, and Bilao Feasts'),
-(2, 'Shrimp', 'Freshly caught Tiger Prawns and Buttered Shrimp'),
-(3, 'Crab', 'Mud Crabs and Soft-Shell Crabs'),
-(4, 'Drinks', 'Refreshing Juices, Shakes, and Soft Drinks'),
-(5, 'Sides', 'Rice Bowls, Sauces, and Dips')
-ON CONFLICT (id) DO NOTHING;
+(1, 'Seafood Mixes', 'Signature Seafood Bilaos, Trays, Tubs, and Ala Carte Mixes'),
+(2, 'Shrimp Specials', 'Fresh Shrimp Ala Carte, Bowls, and Family Trays'),
+(3, 'Crabs & Shellfish', 'Fresh Crabs, Mud Crabs, and Specialty Shellfish Dishes'),
+(4, 'Beverages & Shakes', 'Refreshing Sodas, Natural Shakes, Coffee, and Pitchers'),
+(5, 'Value Meals & Add-ons', 'Rice Bowls, Siomai, Pastil, Desserts, and Extra Sides')
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description;
 
 INSERT INTO products (id, category_id, name, description, price, image, is_available, preparation_time_mins) VALUES
-('item-001', 1, 'Seafood Bilao Feast', 'Generous combination of grilled prawns, crabs, clams, and squid over garlic butter rice.', 2400.00, 'https://images.unsplash.com/photo-1559737671-6386bb0b5f14?w=500&auto=format&fit=crop&q=60', true, 20),
-('item-002', 1, 'Seafood Cajun Boil', 'Cajun-spiced seafood bucket with corn on the cob, potatoes, sausage, and mixed shellfish.', 1850.00, 'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=500&auto=format&fit=crop&q=60', true, 18),
-('item-003', 1, 'Classic Seafood Paella', 'Rich Spanish rice dish loaded with mussels, shrimp, squid rings, and saffron seasoning.', 1650.00, 'https://images.unsplash.com/photo-1534080564583-6be75777b70a?w=500&auto=format&fit=crop&q=60', true, 25),
-('item-004', 1, 'Grilled Seafood Platter', 'Assorted charcoal-grilled pompano, prawns, stuffed squid, and buttered clams.', 2100.00, 'https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?w=500&auto=format&fit=crop&q=60', true, 20),
-('item-005', 1, 'Crispy Seafood Basket', 'Deep-fried golden fish fillet, calamari rings, and butterfly shrimp served with tartar dip.', 980.00, 'https://images.unsplash.com/photo-1579712267685-42da233cb09b?w=500&auto=format&fit=crop&q=60', true, 15),
-('item-006', 2, 'Garlic Butter Prawns', 'Sauteed jumbo prawns drenched in garlic butter sauce topped with toasted garlic chips.', 1250.00, 'https://images.unsplash.com/photo-1565680018434-b513d5e5fd47?w=500&auto=format&fit=crop&q=60', true, 15),
-('item-007', 3, 'Sweet & Chili Crab Bucket', 'Fresh mud crabs simmered in sweet & spicy garlic tomato glaze.', 1950.00, 'https://images.unsplash.com/photo-1559737671-6386bb0b5f14?w=500&auto=format&fit=crop&q=60', true, 25),
-('item-008', 4, 'Fresh Calamansi Juice Pitcher', 'Chilled fresh local calamansi juice infused with honey.', 280.00, 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500&auto=format&fit=crop&q=60', true, 5)
-ON CONFLICT (id) DO NOTHING;
+-- Mixed Seafoods
+('item-001', 1, 'Mixed Seafoods Alacarte', 'Signature mixed seafoods platter.', 99.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_99 pesos.JPG', true, 15),
+('item-002', 1, 'Mixed Seafoods Alacarte Tub', 'Signature mixed seafoods served in a tub.', 189.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_Tub_189 pesos.JPG', true, 15),
+('item-003', 1, 'Mixed Seafoods Alacarte Bowl', 'Signature mixed seafoods serving bowl.', 699.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_Bowl_699 pesos.JPG', true, 20),
+('item-004', 1, 'Mixed Seafoods Alacarte Tray', 'Signature mixed seafoods feast tray.', 1199.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_Tray_1199 pesos.png', true, 25),
+-- Shrimp Specials
+('item-005', 2, 'All Shrimp Alacarte', 'Freshly prepared all-shrimp dish.', 199.00, '/src/assets/menu/ALL SHRIMP_Alacarte_199 pesos.JPG', true, 15),
+('item-006', 2, 'All Shrimp Bowl', 'Generous all-shrimp bowl platter.', 699.00, '/src/assets/menu/ALL SHRIMP_Bowl_699 pesos.JPG', true, 20),
+('item-007', 2, 'All Shrimp Tray', 'Family-style all-shrimp tray.', 1099.00, '/src/assets/menu/ALL SHRIMP_Tray_1099 pesos.JPG', true, 25),
+-- Value Meals & Fried Rice
+('item-008', 5, 'Chao Fan', 'Flavorful fried rice meal.', 35.00, '/src/assets/menu/chao_fan_VALUE MEALS_35 pesos.JPG', true, 10),
+('item-009', 5, 'Chicken Pastil', 'Traditional chicken pastil over rice.', 35.00, '/src/assets/menu/Chicken-Pastil_VALUE MEALS_35 pesos.JPG', true, 10),
+('item-010', 5, 'Fried Noodles', 'Savory stir-fried noodles.', 35.00, '/src/assets/menu/Fried_Noodles_VALUE MEALS_35 pesos.JPG', true, 10),
+-- Siomai
+('item-011', 5, 'Pork Siomai', 'Steamed pork siomai per piece.', 5.00, '/src/assets/menu/pork_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-012', 5, 'Beef Siomai', 'Steamed beef siomai per piece.', 5.00, '/src/assets/menu/beef_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-013', 5, 'Chicken Siomai', 'Steamed chicken siomai per piece.', 5.00, '/src/assets/menu/chicken_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-014', 5, 'Sharksfin Siomai', 'Steamed sharksfin siomai per piece.', 5.00, '/src/assets/menu/sharksfin_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-015', 5, 'Japanese Siomai', 'Nori-wrapped Japanese siomai per piece.', 6.00, '/src/assets/menu/japanese_siomai_SIOMAI_6 pesos.JPG', true, 5),
+-- Drinks
+('item-016', 4, 'Mineral Water 500ml', 'Bottled drinking water.', 15.00, '/src/assets/menu/Mineral Wate_500ml_DRINKS_15 pesos.JPG', true, 2),
+('item-017', 4, 'Coke Mismo 250ml', 'Chilled Coke 250ml.', 25.00, '/src/assets/menu/cokemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-018', 4, 'Sprite Mismo 250ml', 'Chilled Sprite 250ml.', 25.00, '/src/assets/menu/spritemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-019', 4, 'Royal Mismo 250ml', 'Chilled Royal 250ml.', 25.00, '/src/assets/menu/royalmismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-020', 4, 'Black Coffee', 'Hot black coffee.', 30.00, '/src/assets/menu/blackcoffee_Black Coffee_30 pesos.JPG', true, 5),
+('item-021', 4, 'Coke 1.5L', 'Coke 1.5 Liters bottle.', 110.00, '/src/assets/menu/coke_1.5liters_DRINKS_110 pesos.JPG', true, 2),
+('item-022', 4, 'Sprite 1.5L', 'Sprite 1.5 Liters bottle.', 100.00, '/src/assets/menu/sprite_1.5_DRINKS_100 pesos.JPG', true, 2),
+('item-023', 4, 'Royal 1.5L', 'Royal 1.5 Liters bottle.', 100.00, '/src/assets/menu/royal_1.5_DRINKS_100 pesos.JPG', true, 2),
+-- Shakes & Lemonade
+('item-024', 4, 'Snakes Small', 'Specialty beverage (Small).', 40.00, '/src/assets/menu/snakes_small_SHAKE&LEMONADE_40 peso.JPG', true, 5),
+('item-025', 4, 'Lemonade Small', 'Fresh lemonade juice (Small).', 40.00, '/src/assets/menu/Lemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
+('item-026', 4, 'Lemonade Big', 'Fresh lemonade juice (Big).', 50.00, '/src/assets/menu/Lemonade_big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
+('item-027', 4, 'Cucumber Lemonade Small', 'Cucumber lemonade blend (Small).', 40.00, '/src/assets/menu/cucumberlemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
+('item-028', 4, 'Cucumber Lemonade Big', 'Cucumber lemonade blend (Big).', 50.00, '/src/assets/menu/cucumberLemonade big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
+-- Desserts
+('item-029', 5, 'Banana Con Yelo', 'Sweetened banana with shaved ice and milk.', 50.00, '/src/assets/menu/bananaconyelo_DESSERTS_50 pesos.JPG', true, 8),
+('item-030', 5, 'Ice Cream', 'Chilled sweet ice cream.', 50.00, '/src/assets/menu/icecream_DESSERTS_50 pesos.JPG', true, 3),
+('item-031', 5, 'Mango Pudding', 'Creamy mango pudding dessert.', 50.00, '/src/assets/menu/Mango Pudding_DESSERTS_50 pesos.JPG', true, 3),
+-- Seafood Add-ons & Sides
+('item-032', 5, 'One Cup Rice', 'Extra steamed white rice.', 20.00, '/src/assets/menu/Rice_one cup_SEAFOODS ADD ONS_20 pesos.JPG', true, 3),
+('item-033', 5, 'Corn Add-on', 'Sweet corn cob portion.', 20.00, '/src/assets/menu/Corn_SEAFOODS ADD ONS_20 pesos.JPEG', true, 5),
+('item-034', 5, 'Iced Tea Glass', 'Iced tea add-on per glass.', 20.00, '/src/assets/menu/icetea_ADD ONS_DRINKS_20 pesos.JPG', true, 2),
+('item-035', 5, 'Shrimp Regular Add-on', 'Regular shrimp add-on portion.', 20.00, '/src/assets/menu/Shrimp Regular_SEAFOODS ADD ONS_20 pesos.JPG', true, 10),
+('item-036', 5, 'Shrimp Jumbo Add-on', 'Jumbo shrimp add-on portion.', 30.00, '/src/assets/menu/Shrimp Jumbo_SEAFOODS ADD ONS 30 pesos.JPG', true, 10),
+('item-037', 5, 'Tahong Add-on', 'Fresh mussels add-on portion.', 30.00, '/src/assets/menu/Tahong_SEAFOODS ADD ONS_30 pesos.JPG', true, 10),
+('item-038', 5, 'Special Sauce', 'Extra house special sauce.', 30.00, '/src/assets/menu/specailsauce_SEAFOODS ADD ONS_30 pesos.JPG', true, 2),
+('item-039', 5, 'Sausage Add-on', 'Sausage portion add-on.', 50.00, '/src/assets/menu/sausage_SEAFOODS ADD ONS_50 pesos.JPEG', true, 8),
+('item-040', 5, 'Iced Tea Pitcher', 'Full iced tea pitcher.', 100.00, '/src/assets/menu/icetea_SEAFOODS ADD ONS_100 pesos.JPG', true, 3)
+ON CONFLICT (id) DO UPDATE SET
+  name = EXCLUDED.name,
+  description = EXCLUDED.description,
+  price = EXCLUDED.price,
+  image = EXCLUDED.image,
+  category_id = EXCLUDED.category_id,
+  preparation_time_mins = EXCLUDED.preparation_time_mins;
 
-INSERT INTO tables (id, name, seats, section, status, shape) VALUES
-('Table 1', 'Table 1', 4, 'Main Dining', 'Available', 'square'),
-('Table 2', 'Table 2', 2, 'Main Dining', 'Available', 'round'),
-('Table 3', 'Table 3', 6, 'Main Dining', 'Available', 'rectangle'),
-('Table 4', 'Table 4', 4, 'Main Dining', 'Available', 'square'),
-('Table 5', 'Table 5', 8, 'VIP Family Alcove', 'Available', 'rectangle'),
-('Table 6', 'Table 6', 4, 'VIP Family Alcove', 'Available', 'round'),
-('Table 7', 'Table 7', 2, 'Alfresco Patio', 'Available', 'round'),
-('Table 8', 'Table 8', 4, 'Alfresco Patio', 'Available', 'square'),
-('Table 9', 'Table 9', 6, 'Alfresco Patio', 'Available', 'rectangle'),
-('Table 10', 'Table 10', 4, 'Main Dining', 'Available', 'square'),
-('Table 11', 'Table 11', 2, 'Main Dining', 'Available', 'round'),
-('Table 12', 'Table 12', 8, 'VIP Bilao Party', 'Available', 'rectangle')
-ON CONFLICT (id) DO NOTHING;
-
-INSERT INTO orders (id, customer_id, cashier_id, assistant_id, table_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at) VALUES
-('ORD-1001', 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'Table 1', 'ON_SITE', 'COMPLETED', 2400.00, 288.00, 0.00, 2688.00, 'Dine-in Table 1', NOW() - INTERVAL '1 hour'),
-('ORD-1002', 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', NULL, NULL, 'ONLINE', 'IN_PROCESS', 1850.00, 222.00, 100.00, 2172.00, 'Deliver ASAP', NOW() - INTERVAL '30 minutes')
+INSERT INTO orders (id, customer_id, cashier_id, assistant_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at) VALUES
+('ORD-1001', 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'ON_SITE', 'COMPLETED', 2400.00, 288.00, 0.00, 2688.00, 'Dine-in Order', NOW() - INTERVAL '1 hour'),
+('ORD-1002', 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380b22', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', NULL, 'ONLINE', 'IN_PROCESS', 1850.00, 222.00, 100.00, 2172.00, 'Deliver ASAP', NOW() - INTERVAL '30 minutes')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO order_items (id, order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, notes) VALUES
-(1, 'ORD-1001', 'item-001', 'Seafood Bilao Feast', 2400.00, 1, 2400.00, 'Garlic rice bed'),
-(2, 'ORD-1002', 'item-002', 'Seafood Cajun Boil', 1850.00, 1, 1850.00, 'Medium spicy')
+(1, 'ORD-1001', 'item-001', 'Mixed Seafoods Alacarte', 99.00, 1, 99.00, 'Extra sauce'),
+(2, 'ORD-1002', 'item-005', 'All Shrimp Alacarte', 199.00, 1, 199.00, 'Medium spicy')
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO payments (id, order_id, payment_method, amount, status, reference_number, paid_at) VALUES
@@ -415,7 +421,7 @@ INSERT INTO kitchen_orders (id, order_id, status, started_at, completed_at) VALU
 ('e0eebc99-9c0b-4ef8-bb6d-6bb9bd380e22', 'ORD-1002', 'IN_PROCESS', NOW() - INTERVAL '25 minutes', NULL)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO assistant_calls (id, table_id, assistant_id, type, status, created_at) VALUES
-('CALL-001', 'Table 3', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'Water Refill', 'Pending', NOW() - INTERVAL '5 minutes'),
-('CALL-002', 'Table 7', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'Request Bill', 'Pending', NOW() - INTERVAL '2 minutes')
+INSERT INTO assistant_calls (id, assistant_id, type, status, created_at) VALUES
+('CALL-001', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'Water Refill', 'Pending', NOW() - INTERVAL '5 minutes'),
+('CALL-002', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44', 'Request Bill', 'Pending', NOW() - INTERVAL '2 minutes')
 ON CONFLICT (id) DO NOTHING;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Navbar } from '../components/Navbar'
+import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 
 interface OrderItem {
@@ -46,9 +46,9 @@ interface RawOrder {
 const mapRawToKitchenOrder = (raw: RawOrder): KitchenOrder => {
   const items = raw.cartItems
     ? raw.cartItems.map((ci) => ({
-        name: ci.item?.name || ci.name || 'Food Item',
-        quantity: ci.quantity || 1,
-      }))
+      name: ci.item?.name || ci.name || 'Food Item',
+      quantity: ci.quantity || 1,
+    }))
     : raw.items || []
 
   return {
@@ -278,7 +278,7 @@ export const KitchenMode: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
       <div className="w-full flex flex-col gap-4 sm:gap-6">
-        <Navbar />
+        <NavbarKitchen />
 
         {/* Top Header Action Bar with Upper Rightmost Order History Button */}
         <div className="flex items-center justify-between bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
@@ -309,7 +309,7 @@ export const KitchenMode: React.FC = () => {
 
         {/* 3-Column Kanban Board: Queue | Processing | Done */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 items-start">
-          
+
           {/* Column 1: Queue (Waiting Orders) */}
           <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
             <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
@@ -333,7 +333,7 @@ export const KitchenMode: React.FC = () => {
                     key={order.id}
                     className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-neutral-200/80 transition-all duration-150 flex flex-col justify-between"
                   >
-                    <div 
+                    <div
                       onClick={() => setSelectedOrderId(order.id)}
                       className="cursor-pointer"
                     >
@@ -426,7 +426,7 @@ export const KitchenMode: React.FC = () => {
                     key={order.id}
                     className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-orange-200/80 transition-all duration-150 flex flex-col justify-between"
                   >
-                    <div 
+                    <div
                       onClick={() => setSelectedOrderId(order.id)}
                       className="cursor-pointer"
                     >
@@ -519,7 +519,7 @@ export const KitchenMode: React.FC = () => {
                     key={order.id}
                     className="bg-[#faf9f6] rounded-xl p-4 border border-neutral-200/80 transition-all duration-150 flex flex-col justify-between"
                   >
-                    <div 
+                    <div
                       onClick={() => setSelectedOrderId(order.id)}
                       className="cursor-pointer"
                     >
@@ -597,7 +597,7 @@ export const KitchenMode: React.FC = () => {
       {isHistoryModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 animate-fade-in">
           <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col animate-scale-up max-h-[92vh]">
-            
+
             {/* Modal Header */}
             <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between">
               <div>
@@ -663,13 +663,12 @@ export const KitchenMode: React.FC = () => {
                             </td>
                             <td className="px-6 py-3.5">
                               <span
-                                className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full ${
-                                  tx.type === 'Dine In'
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                                    : tx.type === 'Take Out'
+                                className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full ${tx.type === 'Dine In'
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-100'
+                                  : tx.type === 'Take Out'
                                     ? 'bg-amber-50 text-amber-700 border border-amber-100'
                                     : 'bg-purple-50 text-purple-700 border border-purple-100'
-                                }`}
+                                  }`}
                               >
                                 {tx.type}
                               </span>
@@ -756,7 +755,7 @@ export const KitchenMode: React.FC = () => {
                 <h3 className="text-lg font-bold">Order #{selectedOrder.queue}</h3>
                 <p className="text-xs font-normal opacity-80 mt-0.5">{selectedOrder.category}</p>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedOrderId(null)}
                 className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center font-bold text-sm leading-none transition-colors cursor-pointer"
               >
@@ -766,7 +765,7 @@ export const KitchenMode: React.FC = () => {
 
             {/* Modal Body */}
             <div className="p-6 space-y-5">
-              
+
               {/* Order Items */}
               <div>
                 <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2.5">Order Items</h4>
@@ -793,9 +792,8 @@ export const KitchenMode: React.FC = () => {
               {/* Prep Timer */}
               <div className="flex justify-between items-center bg-[#faf9f6] border border-neutral-200/80 rounded-xl p-3.5">
                 <span className="text-xs font-semibold text-neutral-500">Preparation Time</span>
-                <span className={`text-sm font-bold ${
-                  selectedOrder.status === 'Preparing' ? 'text-orange-600' : 'text-neutral-600'
-                }`}>
+                <span className={`text-sm font-bold ${selectedOrder.status === 'Preparing' ? 'text-orange-600' : 'text-neutral-600'
+                  }`}>
                   {getPrepTimeDisplay(selectedOrder)}
                 </span>
               </div>

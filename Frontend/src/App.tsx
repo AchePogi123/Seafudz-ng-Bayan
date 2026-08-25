@@ -6,9 +6,13 @@ import { RideRoleDemo } from './features/rideRoleDemo'
 import { SalesReportCashier } from './features/salesReportCashier'
 import { OnlineCustomer } from './features/OnlineCustomer'
 import { AccMan } from './features/AccMan'
-import AboutUs from './features/AboutUs'
+import CustomerDashboard from './features/CustomerDashboard'
+import AdminCustomerView from './features/AdminCustomerViewTemp'
 import Dashboard from './features/Dashboard'
+import AdminDashboard from './features/AdminDashboard'
+import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
+import AboutUs from './features/AboutUs'
 import UserManagement from './features/UserManagement'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -20,12 +24,20 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/about" element={<AboutUs />} />
 
-        {/* Customer Store Route */}
+        {/* Customer Routes */}
         <Route
           path="/customer"
           element={
             <ProtectedRoute allowedRoles={['admin', 'customer', 'cashier', 'kitchen', 'rider', 'assistant']}>
               <OnlineCustomer />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customer-dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'customer', 'cashier', 'kitchen', 'rider', 'assistant']}>
+              <CustomerDashboard />
             </ProtectedRoute>
           }
         />
@@ -98,10 +110,34 @@ function App() {
           }
         />
         <Route
+          path="/admin-dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin-sales-report"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <SalesReportAdmin />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/users"
           element={
             <ProtectedRoute allowedRoles={['admin']}>
               <UserManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin-customers"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminCustomerView />
             </ProtectedRoute>
           }
         />
@@ -116,5 +152,3 @@ function App() {
 }
 
 export default App
-
-

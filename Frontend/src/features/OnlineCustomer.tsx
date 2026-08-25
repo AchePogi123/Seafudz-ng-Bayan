@@ -1,15 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react'
-import { Navbar } from '../components/Navbar'
+import React, { useState, useMemo } from 'react'
+import NavbarCustomer from '../components/NavbarCustomer'
+import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
+import type { MenuItem } from '../components/MenuCard'
 import { API_BASE_URL } from '../utils/api'
-
-interface MenuItem {
-    id: string
-    name: string
-    description: string
-    price: number
-    category: string
-    image: string
-}
+import { useMenuAvailability } from '../utils/menuAvailability'
+import { useMenuPrices } from '../utils/menuPriceManager'
 
 interface CartItem {
     item: MenuItem
@@ -23,6 +18,7 @@ interface OnlineOrderState {
     phone: string
     address: string
     paymentMethod: string
+    notes?: string
     items: CartItem[]
     subtotal: number
     vat: number
@@ -33,43 +29,20 @@ interface OnlineOrderState {
 }
 
 export const OnlineCustomer: React.FC = () => {
+    // Availability & Price sync
+    const { isAvailable } = useMenuAvailability()
+    const { getEffectivePrice } = useMenuPrices()
+
     // Navigation states
     const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>('menu')
 
-    // Menu state
-    const [menuItems, setMenuItems] = useState<MenuItem[]>([])
-    const [categories, setCategories] = useState<string[]>(['All Menu'])
+    // Menu state using client items
+    const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
+    const [categories] = useState<string[]>(CLIENT_CATEGORIES)
 
     // Menu filter states
     const [searchQuery, setSearchQuery] = useState('')
     const [selectedCategory, setSelectedCategory] = useState('All Menu')
-
-    // Fetch dynamic menu from backend API
-    useEffect(() => {
-        const fetchBackendMenu = async () => {
-            try {
-                const [menuRes, catRes] = await Promise.all([
-                    fetch(`${API_BASE_URL}/menu`),
-                    fetch(`${API_BASE_URL}/categories`)
-                ])
-                if (menuRes.ok) {
-                    const menuData = await menuRes.json()
-                    if (menuData.data) {
-                        setMenuItems(menuData.data)
-                    }
-                }
-                if (catRes.ok) {
-                    const catData = await catRes.json()
-                    if (catData.data) {
-                        setCategories(['All Menu', ...catData.data.map((c: { name: string }) => c.name)])
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to fetch menu items from API:', err)
-            }
-        }
-        void fetchBackendMenu()
-    }, [])
 
     // Cart state
     const [cartItems, setCartItems] = useState<CartItem[]>([])
@@ -82,6 +55,7 @@ export const OnlineCustomer: React.FC = () => {
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
     const [paymentMethod, setPaymentMethod] = useState('GCash')
+    const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
 
     // Submitted Order tracking state
     const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(null)
@@ -94,20 +68,27 @@ export const OnlineCustomer: React.FC = () => {
     const deliveryFee = useMemo(() => (subtotal > 0 ? 50 : 0), [subtotal])
     const total = useMemo(() => subtotal + vat + deliveryFee, [subtotal, vat, deliveryFee])
 
-    // Filters
+    // Filters with effective price applied
     const filteredItems = useMemo(() => {
-        return menuItems.filter((item) => {
-            const matchesSearch =
-                item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                item.description.toLowerCase().includes(searchQuery.toLowerCase())
-            const matchesCategory =
-                selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
-            return matchesSearch && matchesCategory
-        })
-    }, [menuItems, searchQuery, selectedCategory])
+        return menuItems
+            .map((item) => ({
+                ...item,
+                price: getEffectivePrice(item.id, item.price),
+            }))
+            .filter((item) => {
+                const matchesSearch =
+                    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    item.description.toLowerCase().includes(searchQuery.toLowerCase())
+                const matchesCategory =
+                    selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+                return matchesSearch && matchesCategory
+            })
+    }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
 
     // Handlers
     const handleAddToCart = (item: MenuItem) => {
+        if (!isAvailable(item.id)) return
+
         setCartItems((prev) => {
             const existing = prev.find((ci) => ci.item.id === item.id)
             if (existing) {
@@ -133,7 +114,6 @@ export const OnlineCustomer: React.FC = () => {
         )
     }
 
-
     const handleSaveNote = (itemId: string) => {
         setCartItems((prev) =>
             prev.map((ci) => (ci.item.id === itemId ? { ...ci, specialNote: tempNote } : ci))
@@ -150,26 +130,27 @@ export const OnlineCustomer: React.FC = () => {
         e.preventDefault()
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
-        try {
-            const orderPayload = {
-                type: 'Delivery',
-                customerName,
-                phone,
-                deliveryAddress: address,
-                paymentMethod,
-                subtotal,
-                vat,
-                deliveryFee,
-                total,
-                items: cartItems.map((ci) => ({
-                    id: ci.item.id,
-                    name: ci.item.name,
-                    quantity: ci.quantity,
-                    price: ci.item.price,
-                    specialNote: ci.specialNote || '',
-                })),
-            }
+        const orderPayload = {
+            type: 'Delivery',
+            customerName,
+            phone,
+            deliveryAddress: address,
+            paymentMethod,
+            notes: orderNotes,
+            subtotal,
+            vat,
+            deliveryFee,
+            total,
+            items: cartItems.map((ci) => ({
+                id: ci.item.id,
+                name: ci.item.name,
+                quantity: ci.quantity,
+                price: ci.item.price,
+                specialNote: ci.specialNote || '',
+            })),
+        }
 
+        try {
             const res = await fetch(`${API_BASE_URL}/orders`, {
                 method: 'POST',
                 headers: {
@@ -187,6 +168,7 @@ export const OnlineCustomer: React.FC = () => {
                 phone,
                 address,
                 paymentMethod,
+                notes: orderNotes,
                 items: [...cartItems],
                 subtotal,
                 vat,
@@ -196,19 +178,29 @@ export const OnlineCustomer: React.FC = () => {
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }
 
+            try {
+                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                localStorage.setItem('seafudz_orders', JSON.stringify([newOrder, ...existing]))
+                window.dispatchEvent(new Event('seafudz_order_created'))
+            } catch {
+                /* ignore */
+            }
+
             setActiveOrder(newOrder)
             setCartItems([])
+            setOrderNotes('')
             setActiveTab('tracking')
             setIsMobileCartOpen(false)
         } catch (err) {
             console.error('Error sending order to backend API:', err)
-            // Local fallback order state to keep UX seamless
+
             const newOrder: OnlineOrderState = {
                 id: `SFB-${Math.floor(1000 + Math.random() * 9000)}`,
                 customerName,
                 phone,
                 address,
                 paymentMethod,
+                notes: orderNotes,
                 items: [...cartItems],
                 subtotal,
                 vat,
@@ -217,8 +209,18 @@ export const OnlineCustomer: React.FC = () => {
                 status: 'confirmed',
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }
+
+            try {
+                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                localStorage.setItem('seafudz_orders', JSON.stringify([newOrder, ...existing]))
+                window.dispatchEvent(new Event('seafudz_order_created'))
+            } catch {
+                /* ignore */
+            }
+
             setActiveOrder(newOrder)
             setCartItems([])
+            setOrderNotes('')
             setActiveTab('tracking')
             setIsMobileCartOpen(false)
         }
@@ -246,6 +248,7 @@ export const OnlineCustomer: React.FC = () => {
         setCustomerName('')
         setPhone('')
         setAddress('')
+        setOrderNotes('')
         setCartItems([])
         setActiveTab('menu')
     }
@@ -253,16 +256,16 @@ export const OnlineCustomer: React.FC = () => {
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
-                {/* Reuse general custom-styled Navbar */}
-                <Navbar searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+                {/* Integrated Customer Navbar */}
+                <NavbarCustomer searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
 
                 {/* Tab Navigation header */}
-                <div className="flex bg-white p-1.5 rounded-2xl border border-neutral-100 shadow-sm self-start gap-1">
+                <div className="flex bg-white p-1.5 rounded-2xl border border-neutral-100 shadow-xs self-start gap-1">
                     <button
                         onClick={() => setActiveTab('menu')}
                         className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${activeTab === 'menu'
-                                ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                : 'text-neutral-600 hover:bg-neutral-50'
+                            ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                            : 'text-neutral-600 hover:bg-neutral-50'
                             }`}
                     >
                         🍽️ Browse Menu
@@ -284,8 +287,8 @@ export const OnlineCustomer: React.FC = () => {
                         <button
                             onClick={() => setActiveTab('tracking')}
                             className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${activeTab === 'tracking'
-                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                    : 'text-neutral-600 hover:bg-neutral-50'
+                                ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                : 'text-neutral-600 hover:bg-neutral-50'
                                 }`}
                         >
                             📍 Track Status
@@ -305,8 +308,8 @@ export const OnlineCustomer: React.FC = () => {
                                         key={cat}
                                         onClick={() => setSelectedCategory(cat)}
                                         className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 ${selectedCategory === cat
-                                                ? 'bg-neutral-900 border-neutral-900 text-white shadow-sm'
-                                                : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                                            ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
+                                            : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
                                             }`}
                                     >
                                         {cat}
@@ -316,55 +319,87 @@ export const OnlineCustomer: React.FC = () => {
 
                             {/* Grid of Dishes */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {filteredItems.map((item) => (
-                                    <div
-                                        key={item.id}
-                                        className="bg-white rounded-2xl border border-neutral-100 shadow-sm overflow-hidden flex flex-col justify-between hover:shadow-md transition-shadow group"
-                                    >
-                                        <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-50">
-                                            <img
-                                                src={item.image}
-                                                alt={item.name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                                onError={(e) => {
-                                                    (e.target as HTMLImageElement).src =
-                                                        'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="55" x="35" font-size="30">🦀</text></svg>'
-                                                }}
-                                            />
-                                            <span className="absolute top-3 right-3 bg-white/90 backdrop-blur-sm text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50">
-                                                {item.category}
-                                            </span>
-                                        </div>
-
-                                        <div className="p-5 flex-grow flex flex-col justify-between gap-4">
-                                            <div>
-                                                <h3 className="font-bold text-neutral-800 text-lg leading-snug">
-                                                    {item.name}
-                                                </h3>
-                                                <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
-                                                    {item.description}
-                                                </p>
-                                            </div>
-
-                                            <div className="flex items-center justify-between mt-auto">
-                                                <span className="font-extrabold text-orange-600 text-lg">
-                                                    ₱{item.price.toLocaleString()}
+                                {filteredItems.map((item) => {
+                                    const available = isAvailable(item.id)
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
+                                                ? 'border-rose-200 bg-neutral-50/70 opacity-80'
+                                                : 'border-neutral-100 shadow-xs hover:shadow-md'
+                                                }`}
+                                        >
+                                            <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                                                <img
+                                                    src={item.image}
+                                                    alt={item.name}
+                                                    className={`w-full h-full object-cover transition-transform duration-300 ${!available
+                                                        ? 'grayscale-75 opacity-60 contrast-125'
+                                                        : 'group-hover:scale-105'
+                                                        }`}
+                                                    onError={(e) => {
+                                                        ; (e.target as HTMLImageElement).src =
+                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="55" x="35" font-size="30">🦀</text></svg>'
+                                                    }}
+                                                />
+                                                <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                                                    {item.category}
                                                 </span>
-                                                <button
-                                                    onClick={() => handleAddToCart(item)}
-                                                    className="bg-orange-55 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200"
-                                                >
-                                                    <span>+</span> Add
-                                                </button>
+
+                                                {!available && (
+                                                    <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
+                                                        <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
+                                                            <span>🚫</span> Unavailable / Sold Out
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="p-5 flex-grow flex flex-col justify-between gap-4">
+                                                <div>
+                                                    <h3
+                                                        className={`font-bold text-lg leading-snug transition-colors ${!available
+                                                            ? 'text-neutral-500 line-through'
+                                                            : 'text-neutral-800'
+                                                            }`}
+                                                    >
+                                                        {item.name}
+                                                    </h3>
+                                                    <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
+                                                        {item.description}
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex items-center justify-between mt-auto">
+                                                    <span
+                                                        className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
+                                                            }`}
+                                                    >
+                                                        ₱{item.price.toLocaleString()}
+                                                    </span>
+
+                                                    {available ? (
+                                                        <button
+                                                            onClick={() => handleAddToCart(item)}
+                                                            className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
+                                                        >
+                                                            <span>+</span> Add
+                                                        </button>
+                                                    ) : (
+                                                        <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
+                                                            Sold Out
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    )
+                                })}
                             </div>
                         </main>
 
                         {/* Desktop Side Cart Drawer */}
-                        <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto">
+                        <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto">
                             <div>
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
                                     <span>🛒</span> Your Cart
@@ -490,7 +525,7 @@ export const OnlineCustomer: React.FC = () => {
                         {/* Customer Details Form */}
                         <form
                             onSubmit={handlePlaceOrder}
-                            className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 space-y-6"
+                            className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
                         >
                             <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
                                 📍 Delivery & Billing Details
@@ -540,6 +575,19 @@ export const OnlineCustomer: React.FC = () => {
                                 />
                             </div>
 
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                    Special Instructions / Kitchen Notes
+                                </label>
+                                <textarea
+                                    rows={2}
+                                    placeholder="e.g. Please ring doorbell, less spicy, extra garlic..."
+                                    value={orderNotes}
+                                    onChange={(e) => setOrderNotes(e.target.value)}
+                                    className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
+                                />
+                            </div>
+
                             {/* Payment Type Selection */}
                             <div className="flex flex-col gap-3">
                                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
@@ -548,8 +596,8 @@ export const OnlineCustomer: React.FC = () => {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     <label
                                         className={`flex items-center justify-between border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${paymentMethod === 'GCash'
-                                                ? 'border-orange-500 bg-orange-50/50'
-                                                : 'border-neutral-200 hover:border-neutral-300'
+                                            ? 'border-orange-500 bg-orange-50/50'
+                                            : 'border-neutral-200 hover:border-neutral-300'
                                             }`}
                                     >
                                         <div className="flex items-center gap-3">
@@ -571,8 +619,8 @@ export const OnlineCustomer: React.FC = () => {
 
                                     <label
                                         className={`flex items-center justify-between border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${paymentMethod === 'COD'
-                                                ? 'border-orange-500 bg-orange-50/50'
-                                                : 'border-neutral-200 hover:border-neutral-300'
+                                            ? 'border-orange-500 bg-orange-50/50'
+                                            : 'border-neutral-200 hover:border-neutral-300'
                                             }`}
                                     >
                                         <div className="flex items-center gap-3">
@@ -612,7 +660,7 @@ export const OnlineCustomer: React.FC = () => {
                         </form>
 
                         {/* Right Summary Billing Panel */}
-                        <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 space-y-6">
+                        <div className="bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6">
                             <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
                                 Final Order Summary
                             </h3>
@@ -634,6 +682,13 @@ export const OnlineCustomer: React.FC = () => {
                                     </div>
                                 ))}
                             </div>
+
+                            {orderNotes && (
+                                <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100 text-xs">
+                                    <p className="font-bold text-neutral-500 uppercase text-[10px]">Special Instructions:</p>
+                                    <p className="text-neutral-700 italic mt-0.5">{orderNotes}</p>
+                                </div>
+                            )}
 
                             <div className="border-t border-neutral-100 pt-4 space-y-2">
                                 <div className="flex justify-between text-xs text-neutral-500">
@@ -659,8 +714,7 @@ export const OnlineCustomer: React.FC = () => {
 
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
-                    <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 lg:p-8 space-y-8">
-                        {/* Top section status Header */}
+                    <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-neutral-100 pb-5 gap-4">
                             <div>
                                 <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
@@ -672,19 +726,18 @@ export const OnlineCustomer: React.FC = () => {
                                 <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
                             </div>
 
-                            {/* Status Simulation button to demonstrate status transitions */}
                             <div className="flex items-center gap-2">
                                 {activeOrder.status !== 'delivered' ? (
                                     <button
                                         onClick={simulateNextStatus}
-                                        className="bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-sm flex items-center gap-1.5"
+                                        className="bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs flex items-center gap-1.5"
                                     >
                                         <span>🔄</span> Simulate Next Step
                                     </button>
                                 ) : (
                                     <button
                                         onClick={handleStartNewOrder}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-sm"
+                                        className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs"
                                     >
                                         🛒 Place New Order
                                     </button>
@@ -692,10 +745,9 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* REAL-TIME PROGRESS BAR */}
+                        {/* Progress Bar */}
                         <div className="py-6">
                             <div className="relative flex items-center justify-between w-full">
-                                {/* Horizontal line */}
                                 <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-neutral-100 z-0 rounded-full" />
                                 <div
                                     className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
@@ -711,7 +763,6 @@ export const OnlineCustomer: React.FC = () => {
                                     }}
                                 />
 
-                                {/* Steps */}
                                 {[
                                     { key: 'confirmed', label: 'Confirmed', desc: 'Order received', icon: '📝' },
                                     { key: 'preparing', label: 'Preparing', desc: 'In the kitchen', icon: '🍳' },
@@ -726,11 +777,11 @@ export const OnlineCustomer: React.FC = () => {
                                     return (
                                         <div key={step.key} className="flex flex-col items-center z-10 relative">
                                             <div
-                                                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg border-2 shadow-sm transition-all duration-300 ${isCurrent
-                                                        ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
-                                                        : isCompleted
-                                                            ? 'bg-orange-500 border-orange-500 text-white'
-                                                            : 'bg-white border-neutral-200 text-neutral-400'
+                                                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg border-2 shadow-xs transition-all duration-300 ${isCurrent
+                                                    ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
+                                                    : isCompleted
+                                                        ? 'bg-orange-500 border-orange-500 text-white'
+                                                        : 'bg-white border-neutral-200 text-neutral-400'
                                                     }`}
                                             >
                                                 {step.icon}
@@ -750,7 +801,6 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Info Cards details */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
                                 <h4 className="font-bold text-neutral-800 text-sm">📋 Delivery Info</h4>
@@ -767,6 +817,12 @@ export const OnlineCustomer: React.FC = () => {
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
                                         {activeOrder.address}
                                     </p>
+                                    {activeOrder.notes && (
+                                        <p className="leading-relaxed text-orange-600">
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
+                                            {activeOrder.notes}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
 
@@ -791,7 +847,7 @@ export const OnlineCustomer: React.FC = () => {
                     </div>
                 )}
 
-                {/* Mobile floating Cart Bar */}
+                {/* Mobile Floating Cart Bar */}
                 {activeTab === 'menu' && cartItems.length > 0 && (
                     <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-neutral-900 text-white rounded-2xl shadow-xl p-4 flex items-center justify-between border border-neutral-800">
                         <div className="flex flex-col">
@@ -811,9 +867,9 @@ export const OnlineCustomer: React.FC = () => {
                     </div>
                 )}
 
-                {/* Mobile slide-up Cart modal */}
+                {/* Mobile Cart Modal */}
                 {isMobileCartOpen && (
-                    <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end animate-in fade-in duration-250">
+                    <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end animate-in fade-in duration-250">
                         <div className="bg-white w-full max-h-[85vh] rounded-t-[2.5rem] p-6 flex flex-col justify-between overflow-y-auto space-y-4 animate-in slide-in-from-bottom duration-300">
                             <div>
                                 <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
@@ -859,7 +915,6 @@ export const OnlineCustomer: React.FC = () => {
                                                 </div>
                                             </div>
 
-                                            {/* Special Note edit */}
                                             <div className="mt-2">
                                                 {editingNoteItemId === ci.item.id ? (
                                                     <div className="flex gap-2 mt-1">
@@ -933,4 +988,5 @@ export const OnlineCustomer: React.FC = () => {
         </div>
     )
 }
+
 export default OnlineCustomer

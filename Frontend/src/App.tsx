@@ -20,7 +20,8 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Public Routes & Landing Page */}
+        {/* Public Landing Page & Public Information Routes */}
+        <Route path="/" element={<Dashboard />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/login" element={<Login />} />
         <Route path="/about" element={<AboutUs />} />
@@ -135,10 +136,8 @@ function App() {
           }
         />
 
-        {/* Redirect root to Landing Page (/dashboard) */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        {/* Fallback redirect to /dashboard */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        {/* Fallback redirect to Landing Page */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

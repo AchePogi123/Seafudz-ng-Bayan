@@ -21,39 +21,7 @@ interface DeliveryOrder {
 
 import { API_BASE_URL } from '../utils/api'
 
-// Fallback initial delivery orders matching POS theme
-const INITIAL_DELIVERIES: DeliveryOrder[] = [
-  {
-    id: 'ORD-1003',
-    ref: 'ORD-1003',
-    customer: 'Leonora Rivera',
-    phone: '0915-777-6655',
-    address: '88 Diamond Rd, Ortigas Center, Pasig City',
-    items: [
-      { name: 'Garlic Butter Crab Bucket', quantity: 1 },
-      { name: 'Fresh Juice', quantity: 2 },
-    ],
-    total: 2800,
-    status: 'Ready',
-    createdAt: new Date(Date.now() - 20 * 60000).toISOString(),
-    paymentMethod: 'GCash',
-  },
-  {
-    id: 'ORD-1004',
-    ref: 'ORD-1004',
-    customer: 'Juan dela Cruz',
-    phone: '0917-123-4567',
-    address: '123 Ocean St., Brgy. San Roque, Manila',
-    items: [
-      { name: 'Seafood Bilao Feast', quantity: 1 },
-      { name: 'Spicy Shrimp', quantity: 1 },
-    ],
-    total: 3200,
-    status: 'Out for Delivery',
-    createdAt: new Date(Date.now() - 35 * 60000).toISOString(),
-    paymentMethod: 'Cash',
-  },
-]
+const INITIAL_DELIVERIES: DeliveryOrder[] = []
 
 export const RideRoleDemo: React.FC = () => {
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>(INITIAL_DELIVERIES)
@@ -61,103 +29,57 @@ export const RideRoleDemo: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'All' | 'Ready' | 'Out for Delivery' | 'Completed'>('All')
   const [notification, setNotification] = useState<string | null>(null)
 
-  // Fetch live delivery orders from backend & localStorage
+  // Fetch live delivery orders from backend user flow
   const fetchDeliveries = async () => {
-    let localOrdersRaw: Array<{
-      id: string
-      type?: string
-      category?: string
-      customer?: string
-      phone?: string
-      address?: string
-      table?: string
-      cartItems?: Array<{ item?: { name?: string }; name?: string; quantity?: number }>
-      items?: Array<{ name: string; quantity: number }>
-      total?: number
-      status?: string
-      createdAt?: string
-      paymentMethod?: string
-    }> = []
     try {
-      localOrdersRaw = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-    } catch {
-      /* ignore */
-    }
-
-    // Filter local delivery orders
-    const localDeliveries = localOrdersRaw
-      .filter((o) => o.type === 'Delivery' || o.category?.includes('Delivery'))
-      .map((o) => ({
-        id: o.id,
-        ref: o.id,
-        customer: o.customer || 'Customer',
-        phone: o.phone || '0917-000-0000',
-        address: o.address || o.table || 'Metro Manila Address',
-        items: o.cartItems
-          ? o.cartItems.map((ci) => ({
-            name: ci.item?.name || ci.name || 'Seafood Dish',
-            quantity: ci.quantity || 1,
-          }))
-          : o.items || [],
-        total: o.total || 0,
-        status: o.status || 'Pending',
-        createdAt: o.createdAt || new Date().toISOString(),
-        paymentMethod: o.paymentMethod || 'Cash',
-      }))
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/rider/deliveries`)
+      const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
       if (res.ok) {
         const data = await res.json()
-        if (Array.isArray(data.data) && data.data.length > 0) {
-          const apiMap = new Map(data.data.map((raw: { id: string }) => [raw.id, raw]))
-          localDeliveries.forEach((ld) => {
-            if (!apiMap.has(ld.id)) apiMap.set(ld.id, ld)
-          })
-
-          const combined = Array.from(apiMap.values()).map((rawItem) => {
-            const raw = rawItem as {
+        if (Array.isArray(data.data)) {
+          const mappedDeliveries: DeliveryOrder[] = data.data
+            .filter((o: { status?: string }) => {
+              const s = (o.status || '').toUpperCase()
+              return s === 'READY' || s === 'OUT_FOR_DELIVERY' || s === 'COMPLETED' || s === 'DELIVERED'
+            })
+            .map((o: {
               id: string
               customer?: string
+              customerName?: string
               phone?: string
               address?: string
-              table?: string
-              cartItems?: Array<{ item?: { name?: string }; name?: string; quantity?: number }>
+              deliveryAddress?: string
               items?: Array<{ name: string; quantity: number }>
               total?: number
               status?: string
               createdAt?: string
               paymentMethod?: string
-            }
-            return {
-              id: raw.id,
-              ref: raw.id,
-              customer: raw.customer || 'Customer',
-              phone: raw.phone || '0917-888-9999',
-              address: raw.address || raw.table || 'Delivery Location',
-              items: raw.cartItems
-                ? raw.cartItems.map((ci) => ({
-                  name: ci.item?.name || ci.name || 'Food Item',
-                  quantity: ci.quantity || 1,
-                }))
-                : raw.items || [],
-              total: raw.total || 0,
-              status: raw.status || 'Ready',
-              createdAt: raw.createdAt || new Date().toISOString(),
-              paymentMethod: raw.paymentMethod || 'Cash',
-            }
-          })
+            }) => {
+              const rawStatus = (o.status || '').toUpperCase()
+              let displayStatus = 'Ready'
+              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
+              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
+              else displayStatus = 'Ready'
 
-          setDeliveries(combined)
+              return {
+                id: o.id,
+                ref: o.id,
+                customer: o.customer || o.customerName || 'Online Customer',
+                phone: o.phone || '0917-000-0000',
+                address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                items: o.items || [],
+                total: o.total || 0,
+                status: displayStatus,
+                createdAt: o.createdAt || new Date().toISOString(),
+                paymentMethod: o.paymentMethod || 'GCash',
+              }
+            })
+
+          setDeliveries(mappedDeliveries)
           return
         }
       }
     } catch (err) {
-      console.warn('Backend connection unavailable, using local deliveries:', err)
-    }
-
-    if (localDeliveries.length > 0) {
-      setDeliveries(localDeliveries)
+      console.warn('Backend connection note in rideRoleDemo:', err)
     }
   }
 
@@ -165,16 +87,11 @@ export const RideRoleDemo: React.FC = () => {
     const initTimer = setTimeout(() => {
       void fetchDeliveries()
     }, 0)
-    const interval = setInterval(fetchDeliveries, 3000)
-    const handleStorageEvent = () => void fetchDeliveries()
-    window.addEventListener('storage', handleStorageEvent)
-    window.addEventListener('seafudz_order_created', handleStorageEvent)
+    const interval = setInterval(fetchDeliveries, 2000)
 
     return () => {
       clearTimeout(initTimer)
       clearInterval(interval)
-      window.removeEventListener('storage', handleStorageEvent)
-      window.removeEventListener('seafudz_order_created', handleStorageEvent)
     }
   }, [])
 
@@ -189,6 +106,8 @@ export const RideRoleDemo: React.FC = () => {
   const updateDeliveryStatus = async (id: string, newStatus: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
 
+    const targetNormStatus = newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : (newStatus === 'Completed' ? 'COMPLETED' : newStatus.toUpperCase())
+
     setDeliveries((prev) =>
       prev.map((o) => (o.id === id ? { ...o, status: newStatus } : o))
     )
@@ -197,24 +116,14 @@ export const RideRoleDemo: React.FC = () => {
       setSelectedOrder((prev) => (prev ? { ...prev, status: newStatus } : null))
     }
 
-    // Update localStorage
+    // Persist to Express Backend User Flow API
     try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: { id: string; status: string }) =>
-        o.id === id ? { ...o, status: newStatus } : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-    } catch {
-      /* ignore */
-    }
-
-    // Persist to Express Backend API
-    try {
-      await fetch(`${API_BASE_URL}/rider/deliveries/${id}/status`, {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, riderName: 'Rider Alex' }),
+        body: JSON.stringify({ status: targetNormStatus, riderName: 'Rider Alex' }),
       })
+      await fetchDeliveries()
     } catch (err) {
       console.warn('Could not persist status to backend:', err)
     }

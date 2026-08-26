@@ -2,8 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import AccordionGallery from '../components/AccordionGallery';
 import ClickStack from '../components/ClickStack';
-import ScrollBubbles from '../components/ScrollBubbles';
-import { OceanCreatures, ArchiveCreatures } from '../components/OceanCreatures';
 import Footer from '../components/Footer';
 
 import seafoodBilaoImg from '../assets/seafood_bilao.png';
@@ -95,11 +93,9 @@ const ARCHIVED_ITEMS: ArchivedItem[] = [
 
 export const LandingPage: React.FC = () => {
   const [selectedItem, setSelectedItem] = useState<ArchivedItem | null>(null);
-  const [isArchiveVisible, setIsArchiveVisible] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [activeNav, setActiveNav] = useState<'home' | 'story' | 'archive' | 'faq'>('home');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const archiveRef = useRef<HTMLDivElement>(null);
   const isNavClickRef = useRef(false);
 
   useEffect(() => {
@@ -135,29 +131,12 @@ export const LandingPage: React.FC = () => {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsArchiveVisible(true);
-        }
-      },
-      { threshold: 0.15 }
-    );
-
-    if (archiveRef.current) {
-      observer.observe(archiveRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, []);
-
   const scrollToHome = (e: React.MouseEvent) => {
     e.preventDefault();
     setActiveNav('home');
     setIsMobileMenuOpen(false);
     isNavClickRef.current = true;
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
     setTimeout(() => { isNavClickRef.current = false; }, 800);
   };
 
@@ -166,7 +145,7 @@ export const LandingPage: React.FC = () => {
     setActiveNav('story');
     setIsMobileMenuOpen(false);
     isNavClickRef.current = true;
-    document.getElementById('our-story')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('our-story')?.scrollIntoView({ behavior: 'auto' });
     setTimeout(() => { isNavClickRef.current = false; }, 800);
   };
 
@@ -175,7 +154,7 @@ export const LandingPage: React.FC = () => {
     setActiveNav('archive');
     setIsMobileMenuOpen(false);
     isNavClickRef.current = true;
-    document.getElementById('seafood-archive')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('seafood-archive')?.scrollIntoView({ behavior: 'auto' });
     setTimeout(() => { isNavClickRef.current = false; }, 800);
   };
 
@@ -184,18 +163,15 @@ export const LandingPage: React.FC = () => {
     setActiveNav('faq');
     setIsMobileMenuOpen(false);
     isNavClickRef.current = true;
-    document.getElementById('faq-section')?.scrollIntoView({ behavior: 'smooth' });
+    document.getElementById('faq-section')?.scrollIntoView({ behavior: 'auto' });
     setTimeout(() => { isNavClickRef.current = false; }, 800);
   };
 
   return (
     <div className="font-sans text-neutral-800 bg-[#faf9f6] min-h-screen relative">
-      {/* Scroll-Triggered Floating Ocean Bubbles */}
-      <ScrollBubbles />
-
       {/* Dynamic Adaptive Topbar */}
-      <header className="fixed top-4 inset-x-0 z-50 flex flex-col items-center px-4 pointer-events-none transition-all duration-300">
-        <nav className={`pointer-events-auto flex items-center justify-between w-full max-w-5xl px-4 sm:px-5 py-3 rounded-2xl transition-all duration-500 ${!isScrolled
+      <header className="fixed top-4 inset-x-0 z-50 flex flex-col items-center px-4 pointer-events-none">
+        <nav className={`pointer-events-auto flex items-center justify-between w-full max-w-5xl px-4 sm:px-5 py-3 rounded-2xl duration-500 ${!isScrolled
           ? 'bg-black/25 backdrop-blur-md border border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.2)]'
           : activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
             ? 'bg-gradient-to-r from-black/70 via-[#001e28]/80 to-black/70 backdrop-blur-md border border-white/20 shadow-[0_10px_30px_rgba(0,0,0,0.4)]'
@@ -206,14 +182,14 @@ export const LandingPage: React.FC = () => {
             <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center text-white font-bold text-sm shadow-md group-hover:scale-105 transition-transform">
               S
             </div>
-            <span className={`text-sm font-bold tracking-tight font-serif transition-colors duration-300 ${!isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq' ? 'text-white drop-shadow-md' : 'text-neutral-900'
+            <span className={`text-sm font-bold tracking-tight font-serif ${!isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq' ? 'text-white drop-shadow-md' : 'text-neutral-900'
               }`}>
               Seafudz Ng Bayan
             </span>
           </Link>
 
           {/* Centered Nav Links (Desktop) */}
-          <div className={`hidden md:flex items-center gap-7 px-5 py-1.5 rounded-xl transition-all duration-300 ${!isScrolled
+          <div className={`hidden md:flex items-center gap-7 px-5 py-1.5 rounded-xl ${!isScrolled
             ? 'bg-white/10 backdrop-blur-sm border border-white/20'
             : activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
               ? 'bg-white/10 backdrop-blur-md border border-white/15'
@@ -222,7 +198,7 @@ export const LandingPage: React.FC = () => {
             <a
               href="#"
               onClick={scrollToHome}
-              className={`relative text-xs font-bold py-1 transition-all duration-300 ease-out hover:scale-105 active:scale-95 ${activeNav === 'home'
+              className={`relative text-xs font-bold py-1 ease-out ${activeNav === 'home'
                 ? 'text-orange-500 font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
                   ? 'text-neutral-200 hover:text-white'
@@ -230,13 +206,13 @@ export const LandingPage: React.FC = () => {
                 }`}
             >
               Home
-              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-orange-500 rounded-full transition-all duration-300 ease-out ${activeNav === 'home' ? 'w-full opacity-100' : 'w-0 opacity-0'
+              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-orange-500 rounded-full ease-out ${activeNav === 'home' ? 'w-full opacity-100' : 'w-0 opacity-0'
                 }`} />
             </a>
             <a
               href="#our-story"
               onClick={scrollToStory}
-              className={`relative text-xs font-bold py-1 transition-all duration-300 ease-out hover:scale-105 active:scale-95 ${activeNav === 'story'
+              className={`relative text-xs font-bold py-1 ease-out ${activeNav === 'story'
                 ? 'text-[#00b4d8] font-extrabold'
                 : !isScrolled || activeNav === 'archive' || activeNav === 'faq'
                   ? 'text-neutral-200 hover:text-white'
@@ -244,13 +220,13 @@ export const LandingPage: React.FC = () => {
                 }`}
             >
               Our Story
-              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full transition-all duration-300 ease-out ${activeNav === 'story' ? 'w-full opacity-100' : 'w-0 opacity-0'
+              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full ease-out ${activeNav === 'story' ? 'w-full opacity-100' : 'w-0 opacity-0'
                 }`} />
             </a>
             <a
               href="#seafood-archive"
               onClick={scrollToArchive}
-              className={`relative text-xs font-bold py-1 transition-all duration-300 ease-out hover:scale-105 active:scale-95 ${activeNav === 'archive'
+              className={`relative text-xs font-bold py-1 ease-out ${activeNav === 'archive'
                 ? 'text-[#00b4d8] font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'faq'
                   ? 'text-neutral-200 hover:text-white'
@@ -258,13 +234,13 @@ export const LandingPage: React.FC = () => {
                 }`}
             >
               Archive
-              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full transition-all duration-300 ease-out ${activeNav === 'archive' ? 'w-full opacity-100' : 'w-0 opacity-0'
+              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full ease-out ${activeNav === 'archive' ? 'w-full opacity-100' : 'w-0 opacity-0'
                 }`} />
             </a>
             <a
               href="#faq-section"
               onClick={scrollToFaq}
-              className={`relative text-xs font-bold py-1 transition-all duration-300 ease-out hover:scale-105 active:scale-95 ${activeNav === 'faq'
+              className={`relative text-xs font-bold py-1 ease-out ${activeNav === 'faq'
                 ? 'text-[#00b4d8] font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'archive'
                   ? 'text-neutral-200 hover:text-white'
@@ -272,7 +248,7 @@ export const LandingPage: React.FC = () => {
                 }`}
             >
               FAQ
-              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full transition-all duration-300 ease-out ${activeNav === 'faq' ? 'w-full opacity-100' : 'w-0 opacity-0'
+              <span className={`absolute -bottom-1 left-0 right-0 h-0.5 bg-[#00b4d8] rounded-full ease-out ${activeNav === 'faq' ? 'w-full opacity-100' : 'w-0 opacity-0'
                 }`} />
             </a>
           </div>
@@ -281,7 +257,7 @@ export const LandingPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <Link
               to="/login"
-              className={`hidden md:flex items-center gap-2 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-all duration-300 shadow-md hover:scale-105 active:scale-95 ${activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
+              className={`hidden md:flex items-center gap-2 text-white text-xs font-bold px-5 py-2.5 rounded-xl shadow-md ${activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
                 ? 'bg-gradient-to-r from-[#00b4d8] to-[#0077b6] hover:from-[#0077b6] hover:to-[#00b4d8] shadow-[0_4px_20px_rgba(0,180,216,0.4)]'
                 : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 shadow-orange-500/25'
                 }`}
@@ -291,7 +267,7 @@ export const LandingPage: React.FC = () => {
 
             <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className={`p-2 focus:outline-none rounded-xl border transition-all cursor-pointer md:hidden ${!isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
+              className={`p-2 focus:outline-none rounded-xl border cursor-pointer md:hidden ${!isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
                 ? 'text-white bg-white/20 border-white/30 hover:bg-white/30'
                 : 'text-neutral-800 bg-neutral-100 border-neutral-300 hover:bg-neutral-200'
                 }`}
@@ -310,7 +286,7 @@ export const LandingPage: React.FC = () => {
 
         {/* Mobile Smooth-Sliding Navigation Panel */}
         <div
-          className={`pointer-events-auto md:hidden w-full max-w-5xl transition-all duration-300 ease-in-out overflow-hidden ${isMobileMenuOpen
+          className={`pointer-events-auto md:hidden w-full max-w-5xl ease-in-out overflow-hidden ${isMobileMenuOpen
             ? 'max-h-96 opacity-100 mt-2 py-4 px-4 translate-y-0'
             : 'max-h-0 opacity-0 mt-0 py-0 px-4 -translate-y-2 pointer-events-none'
             } rounded-2xl text-left border ${!isScrolled
@@ -324,7 +300,7 @@ export const LandingPage: React.FC = () => {
             <a
               href="#"
               onClick={scrollToHome}
-              className={`block px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'home'
+              className={`block px-4 py-2.5 rounded-xl text-xs font-bold ${activeNav === 'home'
                 ? 'bg-orange-500/20 text-orange-500 border border-orange-500/30 font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
                   ? 'text-white/90 hover:bg-white/10'
@@ -336,7 +312,7 @@ export const LandingPage: React.FC = () => {
             <a
               href="#our-story"
               onClick={scrollToStory}
-              className={`block px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'story'
+              className={`block px-4 py-2.5 rounded-xl text-xs font-bold ${activeNav === 'story'
                 ? 'bg-[#00b4d8]/20 text-[#00b4d8] border border-[#00b4d8]/30 font-extrabold'
                 : !isScrolled || activeNav === 'archive' || activeNav === 'faq'
                   ? 'text-white/90 hover:bg-white/10'
@@ -348,7 +324,7 @@ export const LandingPage: React.FC = () => {
             <a
               href="#seafood-archive"
               onClick={scrollToArchive}
-              className={`block px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'archive'
+              className={`block px-4 py-2.5 rounded-xl text-xs font-bold ${activeNav === 'archive'
                 ? 'bg-[#00b4d8]/20 text-[#00b4d8] border border-[#00b4d8]/30 font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'faq'
                   ? 'text-white/90 hover:bg-white/10'
@@ -360,7 +336,7 @@ export const LandingPage: React.FC = () => {
             <a
               href="#faq-section"
               onClick={scrollToFaq}
-              className={`block px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${activeNav === 'faq'
+              className={`block px-4 py-2.5 rounded-xl text-xs font-bold ${activeNav === 'faq'
                 ? 'bg-[#00b4d8]/20 text-[#00b4d8] border border-[#00b4d8]/30 font-extrabold'
                 : !isScrolled || activeNav === 'story' || activeNav === 'archive'
                   ? 'text-white/90 hover:bg-white/10'
@@ -373,7 +349,7 @@ export const LandingPage: React.FC = () => {
               <Link
                 to="/login"
                 onClick={() => setIsMobileMenuOpen(false)}
-                className={`block text-center text-white text-xs font-bold py-2.5 rounded-xl shadow-md transition-all ${activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
+                className={`block text-center text-white text-xs font-bold py-2.5 rounded-xl shadow-md ${activeNav === 'story' || activeNav === 'archive' || activeNav === 'faq'
                   ? 'bg-gradient-to-r from-[#00b4d8] to-[#0077b6] hover:from-[#0077b6] hover:to-[#00b4d8]'
                   : 'bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700'
                   }`}
@@ -396,14 +372,14 @@ export const LandingPage: React.FC = () => {
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-black/60 pointer-events-none z-10" />
 
         {/* Hero Content */}
-        <div className="max-w-[750px] animate-fade-in-up relative z-20">
+        <div className="max-w-[750px] relative z-20">
           <h1 className="text-3xl md:text-5xl font-extrabold mb-4 tracking-tight leading-tight">Welcome to Seafudz Ng Bayan</h1>
           <p className="text-base md:text-lg font-normal tracking-wide mb-8 text-neutral-100">Fresh Seafood • Dine-in • Take-out • Delivery</p>
           <div className="flex gap-4 justify-center flex-wrap">
-            <Link to="/customer" className="py-3.5 px-8 rounded-xl font-semibold text-sm transition-all bg-orange-600 hover:bg-orange-700 text-white shadow-md hover:scale-105 active:scale-95">
+            <Link to="/customer" className="py-3.5 px-8 rounded-xl font-semibold text-sm bg-orange-600 hover:bg-orange-700 text-white shadow-md">
               Order Now
             </Link>
-            <a href="#seafood-archive" onClick={scrollToArchive} className="py-3.5 px-8 rounded-xl font-semibold text-sm transition-all bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:scale-105 active:scale-95">
+            <a href="#seafood-archive" onClick={scrollToArchive} className="py-3.5 px-8 rounded-xl font-semibold text-sm bg-white/10 text-white border border-white/20 hover:bg-white/20">
               Seafood Archive
             </a>
           </div>
@@ -428,13 +404,13 @@ export const LandingPage: React.FC = () => {
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {/* Card 1 */}
-            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left transition-all duration-300 hover:-translate-y-2 relative overflow-hidden">
-              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#0a9396] group-hover:text-white transition-all duration-300">
+            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left relative overflow-hidden">
+              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:bg-[#0a9396] group-hover:text-white transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396] transition-colors">
+              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396]">
                 Fresh Catch Daily
               </h3>
               <p className="text-xs text-neutral-600 leading-relaxed">
@@ -443,14 +419,14 @@ export const LandingPage: React.FC = () => {
             </div>
 
             {/* Card 2 */}
-            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left transition-all duration-300 hover:-translate-y-2 relative overflow-hidden">
-              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#0a9396] group-hover:text-white transition-all duration-300">
+            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left relative overflow-hidden">
+              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:bg-[#0a9396] group-hover:text-white transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396] transition-colors">
+              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396]">
                 6 Prime Branches
               </h3>
               <p className="text-xs text-neutral-600 leading-relaxed">
@@ -459,13 +435,13 @@ export const LandingPage: React.FC = () => {
             </div>
 
             {/* Card 3 */}
-            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left transition-all duration-300 hover:-translate-y-2 relative overflow-hidden">
-              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#0a9396] group-hover:text-white transition-all duration-300">
+            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left relative overflow-hidden">
+              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:bg-[#0a9396] group-hover:text-white transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396] transition-colors">
+              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396]">
                 Fast Hot Delivery
               </h3>
               <p className="text-xs text-neutral-600 leading-relaxed">
@@ -474,14 +450,14 @@ export const LandingPage: React.FC = () => {
             </div>
 
             {/* Card 4 */}
-            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left transition-all duration-300 hover:-translate-y-2 relative overflow-hidden">
-              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:scale-110 group-hover:bg-[#0a9396] group-hover:text-white transition-all duration-300">
+            <div className="group bg-white/90 backdrop-blur-sm p-8 rounded-3xl border border-white/60 shadow-sm hover:shadow-xl hover:border-[#0a9396]/40 text-left relative overflow-hidden">
+              <div className="w-12 h-12 rounded-2xl bg-[#0a9396]/10 border border-[#0a9396]/20 text-[#0a9396] flex items-center justify-center mb-6 group-hover:bg-[#0a9396] group-hover:text-white transition-colors">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 10h47M4 14h16M4 18h12M14.828 14.828a4 4 0 015.656 0l4.242 4.242a4 4 0 01-5.656 5.656l-4.242-4.242a4 4 0 010-5.656z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
                 </svg>
               </div>
-              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396] transition-colors">
+              <h3 className="text-lg font-bold text-[#002d3c] mb-2.5 tracking-tight group-hover:text-[#0a9396]">
                 Warm Hospitality
               </h3>
               <p className="text-xs text-neutral-600 leading-relaxed">
@@ -499,9 +475,6 @@ export const LandingPage: React.FC = () => {
       <section id="our-story" className="pt-28 pb-36 px-6 md:px-[8%] bg-gradient-to-b from-[#00b4d8] via-[#0096c7] to-[#0081a7] text-white relative overflow-hidden z-20">
 
 
-        {/* Animated Background Sea Life Component */}
-        <OceanCreatures />
-
         {/* Ambient Radial Spotlight Background */}
         <div className="absolute top-1/4 -right-20 w-[600px] h-[600px] bg-gradient-to-br from-white/20 via-[#caf0f8]/20 to-transparent blur-[140px] rounded-full pointer-events-none" />
         <div className="absolute -bottom-20 -left-20 w-[500px] h-[500px] bg-gradient-to-tr from-[#90e0ef]/20 via-[#00b4d8]/20 to-transparent blur-[120px] rounded-full pointer-events-none" />
@@ -512,7 +485,7 @@ export const LandingPage: React.FC = () => {
             <div className="lg:col-span-6 space-y-7 text-left">
               {/* Floating Pill Tag */}
               <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-white/20 border border-white/40 backdrop-blur-md text-white text-xs font-bold tracking-wider uppercase shadow-md">
-                <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                <span className="w-2 h-2 rounded-full bg-white" />
                 Our Story & Business Impact
               </div>
 
@@ -535,7 +508,7 @@ export const LandingPage: React.FC = () => {
 
               {/* Glowing Impact Stats Cards */}
               <div className="pt-2 grid grid-cols-3 gap-4">
-                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white transition-all duration-300 hover:-translate-y-1 shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
+                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
                   <span className="text-3xl sm:text-4xl font-extrabold text-[#0077b6] font-serif block group-hover:scale-105 transition-transform">
                     250K+
                   </span>
@@ -544,7 +517,7 @@ export const LandingPage: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white transition-all duration-300 hover:-translate-y-1 shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
+                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
                   <span className="text-3xl sm:text-4xl font-extrabold text-[#00b4d8] font-serif block group-hover:scale-105 transition-transform">
                     6
                   </span>
@@ -553,7 +526,7 @@ export const LandingPage: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white transition-all duration-300 hover:-translate-y-1 shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
+                <div className="group bg-white/90 backdrop-blur-xl border border-white/70 p-5 rounded-2xl hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)]">
                   <span className="text-3xl sm:text-4xl font-extrabold text-[#0077b6] font-serif block group-hover:scale-105 transition-transform">
                     50+
                   </span>
@@ -567,14 +540,14 @@ export const LandingPage: React.FC = () => {
             {/* Right Interactive Milestone Cards Grid */}
             <div className="lg:col-span-6 grid grid-cols-1 sm:grid-cols-2 gap-5 pt-4 lg:pt-0">
               {/* Milestone 1 */}
-              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white transition-all duration-300 hover:-translate-y-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
-                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0077b6] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0077b6] group-hover:text-white transition-all">
+              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
+                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0077b6] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0077b6] group-hover:text-white">
                   01
                 </div>
                 <span className="text-[11px] font-mono text-[#0077b6] font-bold tracking-widest block mb-1">
                   2021 • THE HUMBLE BEGINNING
                 </span>
-                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0077b6] transition-colors font-serif">
+                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0077b6] font-serif">
                   First Street Stall
                 </h4>
                 <p className="text-xs text-neutral-600 leading-relaxed font-normal">
@@ -583,14 +556,14 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* Milestone 2 */}
-              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white transition-all duration-300 hover:-translate-y-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden sm:translate-y-6">
-                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0096c7] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0096c7] group-hover:text-white transition-all">
+              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
+                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0096c7] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0096c7] group-hover:text-white">
                   02
                 </div>
                 <span className="text-[11px] font-mono text-[#0096c7] font-bold tracking-widest block mb-1">
                   2022 • EXPANSION
                 </span>
-                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0096c7] transition-colors font-serif">
+                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0096c7] font-serif">
                   Bilao Feast Concept
                 </h4>
                 <p className="text-xs text-neutral-600 leading-relaxed font-normal">
@@ -599,14 +572,14 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* Milestone 3 */}
-              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white transition-all duration-300 hover:-translate-y-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
-                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0077b6] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0077b6] group-hover:text-white transition-all">
+              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
+                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0077b6] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0077b6] group-hover:text-white">
                   03
                 </div>
                 <span className="text-[11px] font-mono text-[#0077b6] font-bold tracking-widest block mb-1">
                   2024 • DIGITAL TRANSFORMATION
                 </span>
-                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0077b6] transition-colors font-serif">
+                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0077b6] font-serif">
                   Cloud POS & Express Delivery
                 </h4>
                 <p className="text-xs text-neutral-600 leading-relaxed font-normal">
@@ -615,14 +588,14 @@ export const LandingPage: React.FC = () => {
               </div>
 
               {/* Milestone 4 */}
-              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white transition-all duration-300 hover:-translate-y-1.5 shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden sm:translate-y-6">
-                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0096c7] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0096c7] group-hover:text-white transition-all">
+              <div className="group bg-white/90 backdrop-blur-xl p-7 rounded-3xl border border-white/70 text-left hover:border-white shadow-[0_15px_35px_rgba(0,0,0,0.1)] relative overflow-hidden">
+                <div className="w-10 h-10 rounded-xl bg-[#00b4d8]/15 border border-[#00b4d8]/30 text-[#0096c7] flex items-center justify-center text-xs font-bold font-mono mb-4 group-hover:bg-[#0096c7] group-hover:text-white">
                   04
                 </div>
                 <span className="text-[11px] font-mono text-[#0096c7] font-bold tracking-widest block mb-1">
                   TODAY & BEYOND
                 </span>
-                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0096c7] transition-colors font-serif">
+                <h4 className="text-lg font-bold text-[#03045e] mb-2 group-hover:text-[#0096c7] font-serif">
                   6 Branches & Growing
                 </h4>
                 <p className="text-xs text-neutral-600 leading-relaxed font-normal">
@@ -636,41 +609,17 @@ export const LandingPage: React.FC = () => {
 
       {/* Seafood Archive Section */}
       <div
-        ref={archiveRef}
         id="seafood-archive"
         className="py-28 px-6 md:px-[8%] bg-gradient-to-b from-[#0081a7] via-25% via-[#002d3c] to-[#001a24] text-white relative overflow-hidden z-30"
       >
 
-        <style>{`
-          @keyframes swimRight {
-            0% { transform: translateX(-15vw) translateY(0) rotate(0deg); }
-            25% { transform: translateX(20vw) translateY(-18px) rotate(-4deg); }
-            50% { transform: translateX(50vw) translateY(-30px) rotate(2deg); }
-            75% { transform: translateX(80vw) translateY(12px) rotate(5deg); }
-            100% { transform: translateX(115vw) translateY(0) rotate(0deg); }
-          }
-          @keyframes swimLeft {
-            0% { transform: translateX(115vw) translateY(0) scaleX(-1) rotate(0deg); }
-            25% { transform: translateX(80vw) translateY(20px) scaleX(-1) rotate(4deg); }
-            50% { transform: translateX(50vw) translateY(30px) scaleX(-1) rotate(-3deg); }
-            75% { transform: translateX(20vw) translateY(-15px) scaleX(-1) rotate(-5deg); }
-            100% { transform: translateX(-15vw) translateY(0) scaleX(-1) rotate(0deg); }
-          }
-          @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(30px); }
-            to { opacity: 1; transform: translateY(0); }
-          }
-        `}</style>
 
         {/* Subtle ambient spotlight background effect */}
-        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] bg-gradient-to-tr from-[#94d2bd]/20 via-[#0a9396]/10 to-transparent rounded-full blur-3xl pointer-events-none transition-opacity duration-1000 ${isArchiveVisible ? 'opacity-100' : 'opacity-0'}`}></div>
-
-        {/* Animated Background Pawikan & Manta Ray Component */}
-        <ArchiveCreatures />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[500px] bg-gradient-to-tr from-[#94d2bd]/20 via-[#0a9396]/10 to-transparent rounded-full blur-3xl pointer-events-none"></div>
 
         <div className="max-w-[1200px] mx-auto relative z-10">
-          {/* Header with scroll reveal */}
-          <div className={`flex flex-col md:flex-row md:items-end justify-between gap-6 mb-14 pb-8 border-b border-white/20 transition-all duration-700 ease-out ${isArchiveVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-14 pb-8 border-b border-white/20">
             <div>
               <span className="text-[11px] font-medium tracking-[0.25em] text-[#e4dec3] uppercase block mb-2 font-mono">
                 Exhibition Gallery
@@ -703,11 +652,11 @@ export const LandingPage: React.FC = () => {
           {selectedItem && (
             <div
               onClick={() => setSelectedItem(null)}
-              className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 transition-all duration-300 animate-in fade-in"
+              className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 fade-in"
             >
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="bg-[#002d3c] border border-[#0a9396]/40 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl relative text-left animate-in zoom-in-95 duration-300"
+                className="bg-[#002d3c] border border-[#0a9396]/40 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl relative text-left zoom-in-95"
               >
                 <div className="relative h-80 md:h-96 bg-black">
                   <img src={selectedItem.image} alt={selectedItem.name} className="w-full h-full object-cover" />
@@ -715,7 +664,7 @@ export const LandingPage: React.FC = () => {
 
                   <button
                     onClick={() => setSelectedItem(null)}
-                    className="absolute top-4 right-4 bg-black/70 text-neutral-400 hover:text-white rounded-full w-8 h-8 flex items-center justify-center border border-neutral-800 text-xs transition-colors cursor-pointer"
+                    className="absolute top-4 right-4 bg-black/70 text-neutral-400 hover:text-white rounded-full w-8 h-8 flex items-center justify-center border border-neutral-800 text-xs cursor-pointer"
                   >
                     ✕
                   </button>
@@ -741,7 +690,7 @@ export const LandingPage: React.FC = () => {
                   <div className="pt-2 flex justify-end">
                     <button
                       onClick={() => setSelectedItem(null)}
-                      className="bg-[#0a9396] text-white hover:bg-[#005f73] text-xs font-semibold px-6 py-2.5 rounded-xl transition-colors cursor-pointer"
+                      className="bg-[#0a9396] text-white hover:bg-[#005f73] text-xs font-semibold px-6 py-2.5 rounded-xl cursor-pointer"
                     >
                       Close Exhibit
                     </button>
@@ -774,7 +723,7 @@ export const LandingPage: React.FC = () => {
 
               <div className="pt-6 hidden lg:block">
                 <div className="inline-flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/10 border border-[#94d2bd]/30 backdrop-blur-md text-[#94d2bd] text-xs font-medium font-mono">
-                  <span className="w-2 h-2 rounded-full bg-[#94d2bd] animate-ping" />
+                  <span className="w-2 h-2 rounded-full bg-[#94d2bd]" />
                   Scroll to view stacked answers
                 </div>
               </div>
@@ -813,19 +762,19 @@ export const LandingPage: React.FC = () => {
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left">
-            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd] transition-all">
+            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd]">
               <span className="text-xs font-mono text-[#94d2bd] font-bold block mb-2">01 • MAIN BRANCH</span>
               <h3 className="text-xl font-bold text-white mb-2">Seafudz Central Bay</h3>
               <p className="text-xs text-neutral-300">Harbor Drive, Manila Bay Shoreline. Open daily from 10:00 AM to 10:00 PM.</p>
             </div>
 
-            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd] transition-all">
+            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd]">
               <span className="text-xs font-mono text-[#e4dec3] font-bold block mb-2">02 • EXPRESS HUB</span>
               <h3 className="text-xl font-bold text-white mb-2">Quezon City Hub</h3>
               <p className="text-xs text-neutral-300">Timog Avenue, Quezon City. Express Bilao Dispatch & Cloud Kitchen POS.</p>
             </div>
 
-            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd] transition-all">
+            <div className="bg-[#001e28]/90 border border-[#0a9396]/30 p-8 rounded-2xl hover:border-[#94d2bd]">
               <span className="text-xs font-mono text-[#94d2bd] font-bold block mb-2">03 • SOUTH BRANCH</span>
               <h3 className="text-xl font-bold text-white mb-2">Alabang Coastal</h3>
               <p className="text-xs text-neutral-300">Filinvest City, Alabang. Family Dining & Outdoor Cajun Boil Pavilion.</p>

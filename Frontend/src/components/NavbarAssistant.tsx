@@ -1,7 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
-export const NavbarAssistant: React.FC = () => {
+interface NavbarAssistantProps {
+    searchQuery?: string
+    setSearchQuery?: (query: string) => void
+}
+
+export const NavbarAssistant: React.FC<NavbarAssistantProps> = ({ searchQuery, setSearchQuery }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const menuRef = useRef<HTMLDivElement>(null)
     const location = useLocation()
@@ -20,6 +25,7 @@ export const NavbarAssistant: React.FC = () => {
     const handleLogout = () => {
         localStorage.removeItem('seafudz_user')
         localStorage.removeItem('seafudz_token')
+        sessionStorage.clear()
         setIsMenuOpen(false)
         navigate('/login')
     }
@@ -32,6 +38,20 @@ export const NavbarAssistant: React.FC = () => {
                         onClick={() => setIsMenuOpen(!isMenuOpen)}
                         className="flex items-center gap-3 cursor-pointer select-none group text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 rounded-xl p-1 -m-1 transition-all"
                     >
+                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-600 p-0.5 shadow-md shadow-purple-500/20 group-hover:scale-105 transition-transform duration-200 flex-shrink-0">
+                            <div className="w-full h-full bg-white rounded-[14px] overflow-hidden flex items-center justify-center">
+                                <img
+                                    src="/src/assets/hero.png"
+                                    alt="Seafood ng Bayan Logo"
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                        ; (e.target as HTMLImageElement).src =
+                                            "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23faf5ff'/><text y='68' x='18' font-size='55'>🦞</text></svg>"
+                                    }}
+                                />
+                            </div>
+                        </div>
+
                         <div>
                             <div className="flex items-center gap-2">
                                 <h1 className="font-extrabold text-slate-900 text-base sm:text-lg tracking-tight group-hover:text-purple-600 transition-colors">
@@ -82,6 +102,20 @@ export const NavbarAssistant: React.FC = () => {
                                         Live
                                     </span>
                                 </Link>
+
+                                {/* Kitchen Mode Link */}
+                                <Link
+                                    to="/kitchen"
+                                    onClick={() => setIsMenuOpen(false)}
+                                    className="flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-all"
+                                >
+                                    <div className="flex items-center gap-2.5">
+                                        <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                        <span>Kitchen Display</span>
+                                    </div>
+                                </Link>
                             </div>
 
                             {/* Logout */}
@@ -101,15 +135,37 @@ export const NavbarAssistant: React.FC = () => {
                 </div>
             </div>
 
-            {/* Live badge */}
-            <div className="hidden md:flex items-center">
-                <span className="text-purple-700 font-bold text-xs bg-purple-50 px-3.5 py-1.5 rounded-full border border-purple-200 flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500" />
-                    </span>
-                    Assistant Mode
-                </span>
+            {/* Right side search bar or live badge */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-end w-full md:w-auto">
+                {searchQuery !== undefined && setSearchQuery !== undefined ? (
+                    <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 w-full md:w-[300px] lg:w-[360px] focus-within:border-purple-500 focus-within:ring-2 focus-within:ring-purple-500/20 transition-all">
+                        <svg className="w-4 h-4 text-slate-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search orders, customers, ref #..."
+                            className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full"
+                        />
+                        {searchQuery && (
+                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs">
+                                ✕
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <div className="hidden md:flex items-center">
+                        <span className="text-purple-700 font-bold text-xs bg-purple-50 px-3.5 py-1.5 rounded-full border border-purple-200 flex items-center gap-2">
+                            <span className="relative flex h-2 w-2">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-2 w-2 bg-purple-500" />
+                            </span>
+                            Assistant Mode
+                        </span>
+                    </div>
+                )}
             </div>
         </header>
     )

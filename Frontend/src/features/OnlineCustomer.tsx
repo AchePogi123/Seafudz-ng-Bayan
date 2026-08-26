@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
@@ -24,7 +24,7 @@ interface OnlineOrderState {
     vat: number
     deliveryFee: number
     total: number
-    status: 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered'
+    status: 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | string
     createdAt: string
 }
 
@@ -59,6 +59,35 @@ export const OnlineCustomer: React.FC = () => {
 
     // Submitted Order tracking state
     const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(null)
+
+    // Poll Backend API for real-time status changes: PENDING -> CONFIRMED -> PREPARING -> READY -> OUT_FOR_DELIVERY -> COMPLETED
+    useEffect(() => {
+        if (!activeOrder?.id) return
+
+        const fetchStatus = async () => {
+            try {
+                const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}`)
+                if (res.ok) {
+                    const data = await res.json()
+                    if (data.data && data.data.status) {
+                        const newStatus = data.data.status.toUpperCase()
+                        if (newStatus !== activeOrder.status.toUpperCase()) {
+                            setActiveOrder((prev) => (prev ? { ...prev, status: newStatus } : null))
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn('Backend order polling note:', err)
+            }
+        }
+
+        void fetchStatus()
+        const interval = setInterval(() => {
+            void fetchStatus()
+        }, 2000)
+
+        return () => clearInterval(interval)
+    }, [activeOrder?.id, activeOrder?.status])
 
     // Calculations
     const subtotal = useMemo(() => {
@@ -151,7 +180,7 @@ export const OnlineCustomer: React.FC = () => {
         }
 
         try {
-            const res = await fetch(`${API_BASE_URL}/orders`, {
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -174,16 +203,8 @@ export const OnlineCustomer: React.FC = () => {
                 vat,
                 deliveryFee,
                 total,
-                status: 'confirmed',
+                status: 'PENDING',
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            }
-
-            try {
-                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-                localStorage.setItem('seafudz_orders', JSON.stringify([newOrder, ...existing]))
-                window.dispatchEvent(new Event('seafudz_order_created'))
-            } catch {
-                /* ignore */
             }
 
             setActiveOrder(newOrder)
@@ -194,8 +215,9 @@ export const OnlineCustomer: React.FC = () => {
         } catch (err) {
             console.error('Error sending order to backend API:', err)
 
+            const fallbackId = `SFB-${Math.floor(1000 + Math.random() * 9000)}`
             const newOrder: OnlineOrderState = {
-                id: `SFB-${Math.floor(1000 + Math.random() * 9000)}`,
+                id: fallbackId,
                 customerName,
                 phone,
                 address,
@@ -206,16 +228,8 @@ export const OnlineCustomer: React.FC = () => {
                 vat,
                 deliveryFee,
                 total,
-                status: 'confirmed',
+                status: 'PENDING',
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            }
-
-            try {
-                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-                localStorage.setItem('seafudz_orders', JSON.stringify([newOrder, ...existing]))
-                window.dispatchEvent(new Event('seafudz_order_created'))
-            } catch {
-                /* ignore */
             }
 
             setActiveOrder(newOrder)
@@ -753,31 +767,38 @@ export const OnlineCustomer: React.FC = () => {
                                     className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
                                     style={{
                                         width:
-                                            activeOrder.status === 'confirmed'
+                                            activeOrder.status === 'PENDING'
                                                 ? '0%'
-                                                : activeOrder.status === 'preparing'
-                                                    ? '33.33%'
-                                                    : activeOrder.status === 'out_for_delivery'
-                                                        ? '66.66%'
-                                                        : '100%',
+                                                : activeOrder.status === 'CONFIRMED'
+                                                    ? '20%'
+                                                    : activeOrder.status === 'PREPARING'
+                                                        ? '40%'
+                                                        : activeOrder.status === 'READY'
+                                                            ? '60%'
+                                                            : activeOrder.status === 'OUT_FOR_DELIVERY'
+                                                                ? '80%'
+                                                                : '100%',
                                     }}
                                 />
 
                                 {[
-                                    { key: 'confirmed', label: 'Confirmed', desc: 'Order received', icon: '📝' },
-                                    { key: 'preparing', label: 'Preparing', desc: 'In the kitchen', icon: '🍳' },
-                                    { key: 'out_for_delivery', label: 'Out for Delivery', desc: 'Rider is on the way', icon: '🛵' },
-                                    { key: 'delivered', label: 'Delivered', desc: 'Enjoy your meal!', icon: '✨' },
+                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification', icon: '📝' },
+                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue', icon: '✅' },
+                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen', icon: '🍳' },
+                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider', icon: '📦' },
+                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route', icon: '🛵' },
+                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed', icon: '✨' },
                                 ].map((step) => {
-                                    const statusOrder = ['confirmed', 'preparing', 'out_for_delivery', 'delivered']
-                                    const isCurrent = activeOrder.status === step.key
+                                    const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
+                                    const currUpper = (activeOrder.status || 'PENDING').toUpperCase()
+                                    const isCurrent = currUpper === step.key
                                     const isCompleted =
-                                        statusOrder.indexOf(activeOrder.status) >= statusOrder.indexOf(step.key)
+                                        statusOrder.indexOf(currUpper) >= statusOrder.indexOf(step.key)
 
                                     return (
                                         <div key={step.key} className="flex flex-col items-center z-10 relative">
                                             <div
-                                                className={`w-12 h-12 rounded-full flex items-center justify-center text-lg border-2 shadow-xs transition-all duration-300 ${isCurrent
+                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-sm sm:text-lg border-2 shadow-xs transition-all duration-300 ${isCurrent
                                                     ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
                                                     : isCompleted
                                                         ? 'bg-orange-500 border-orange-500 text-white'
@@ -787,12 +808,12 @@ export const OnlineCustomer: React.FC = () => {
                                                 {step.icon}
                                             </div>
                                             <p
-                                                className={`text-xs font-bold mt-2.5 transition-colors duration-200 ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
+                                                className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
                                                     }`}
                                             >
                                                 {step.label}
                                             </p>
-                                            <p className="text-[10px] text-neutral-400 font-medium hidden md:block">
+                                            <p className="text-[9px] sm:text-[10px] text-neutral-400 font-medium hidden md:block text-center max-w-[100px]">
                                                 {step.desc}
                                             </p>
                                         </div>

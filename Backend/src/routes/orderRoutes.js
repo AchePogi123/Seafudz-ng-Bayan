@@ -235,13 +235,15 @@ router.post('/orders', async (req, res) => {
       'PAID',
     ]);
 
-    // Create kitchen order ticket
-    const kitchenSql = `
-      INSERT INTO kitchen_orders (order_id, status)
-      VALUES ($1, 'PENDING')
-      ON CONFLICT (order_id) DO NOTHING
-    `;
-    await client.query(kitchenSql, [createdOrder.id]);
+    // Create kitchen order ticket for on-site orders (online orders wait for assistant confirmation)
+    if (normalizedOrderType !== 'ONLINE') {
+      const kitchenSql = `
+        INSERT INTO kitchen_orders (order_id, status)
+        VALUES ($1, 'PENDING')
+        ON CONFLICT (order_id) DO NOTHING
+      `;
+      await client.query(kitchenSql, [createdOrder.id]);
+    }
 
     // Create delivery entry if online delivery
     if (normalizedOrderType === 'ONLINE' || deliveryAddress) {

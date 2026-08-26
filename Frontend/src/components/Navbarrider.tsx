@@ -20,6 +20,7 @@ export const NavbarRider: React.FC = () => {
     const handleLogout = () => {
         localStorage.removeItem('seafudz_user')
         localStorage.removeItem('seafudz_token')
+        sessionStorage.clear()
         setIsMenuOpen(false)
         navigate('/login')
     }

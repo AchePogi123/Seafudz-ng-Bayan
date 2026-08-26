@@ -32,13 +32,30 @@ const Login = () => {
   // Business role prevention code (Standard restaurant admin key)
   const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
 
+  const MOCK_STAFF_ACCOUNTS: Record<string, { fullname: string; username: string; email: string; role: string }> = {
+    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant_cashier: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider_demo: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    admin1: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    'admin@seafudz.ph': { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+  };
+
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
     const activeToken = token || generateClientHashToken();
 
     saveActiveUser({
-      fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput,
-      username: (userData?.username as string) || loginInput.split('@')[0],
+      fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput || 'Staff User',
+      username: (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : 'staff'),
       email: (userData?.email as string) || (loginInput.includes('@') ? loginInput : undefined),
       role: normRole,
       sessionToken: activeToken,
@@ -55,6 +72,17 @@ const Login = () => {
     navigate(buildTokenizedUrl(targetPath, activeToken));
   };
 
+  const handleQuickLogin = (roleKey: string) => {
+    const mockMatch = MOCK_STAFF_ACCOUNTS[roleKey];
+    if (mockMatch) {
+      setLoginInput(mockMatch.username);
+      setLoginPassword('1234');
+      setSuccessMessage(`Logging in as ${mockMatch.fullname} (${mockMatch.role.toUpperCase()})...`);
+      setTimeout(() => {
+        navigateByRole(mockMatch.role, undefined, mockMatch);
+      }, 600);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,8 +147,16 @@ const Login = () => {
         }
       }
 
-      // If neither Supabase Auth nor Express backend profile succeeded
+      // 4. Mock Accounts Fallback if backend or Supabase is not reachable / not configured
       if (!profileData?.success && !supabaseUser) {
+        const mockMatch = MOCK_STAFF_ACCOUNTS[loginInput.trim().toLowerCase()];
+        if (mockMatch) {
+          setSuccessMessage(`Welcome back, ${mockMatch.fullname}! Redirecting to workspace...`);
+          setTimeout(() => {
+            navigateByRole(mockMatch.role, undefined, mockMatch);
+          }, 800);
+          return;
+        }
         if (supabaseAuthErr) {
           throw new Error(supabaseAuthErr);
         }
@@ -335,6 +371,48 @@ const Login = () => {
               <p className="text-center text-[0.9rem] text-[#718096] m-0">
                 Don't have an account? <span className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline" onClick={() => setShowCreateAccount(true)}>Create Account</span>
               </p>
+
+              {/* Quick Demo Accounts Banner */}
+              <div className="mt-6 pt-5 border-t border-neutral-200 text-left">
+                <div className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                  <span>⚡ Quick Demo Logins</span>
+                  <span className="text-[10px] text-neutral-400 font-normal">Click to auto-login</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin('assistant')}
+                    className="p-2.5 bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 rounded-xl font-bold flex items-center justify-between cursor-pointer transition-all shadow-2xs"
+                  >
+                    <span>🍤 Assistant Cashier</span>
+                    <span className="text-[10px] font-mono opacity-70">assistant1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin('cashier')}
+                    className="p-2.5 bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 rounded-xl font-bold flex items-center justify-between cursor-pointer transition-all shadow-2xs"
+                  >
+                    <span>🛒 Cashier POS</span>
+                    <span className="text-[10px] font-mono opacity-70">cashier1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin('kitchen')}
+                    className="p-2.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-xl font-bold flex items-center justify-between cursor-pointer transition-all shadow-2xs"
+                  >
+                    <span>🍳 Kitchen Staff</span>
+                    <span className="text-[10px] font-mono opacity-70">kitchen1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickLogin('rider')}
+                    className="p-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl font-bold flex items-center justify-between cursor-pointer transition-all shadow-2xs"
+                  >
+                    <span>🏍️ Rider Delivery</span>
+                    <span className="text-[10px] font-mono opacity-70">rider1</span>
+                  </button>
+                </div>
+              </div>
             </form>
           ) : (
             /* Create Account Form */

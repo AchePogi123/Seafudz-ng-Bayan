@@ -43,7 +43,7 @@ interface RawOrder {
   items?: Array<{ name: string; quantity: number }>
 }
 
-const mapRawToKitchenOrder = (raw: RawOrder): KitchenOrder => {
+export const mapRawToKitchenOrder = (raw: RawOrder): KitchenOrder => {
   const items = raw.cartItems
     ? raw.cartItems.map((ci) => ({
       name: ci.item?.name || ci.name || 'Food Item',
@@ -73,58 +73,64 @@ export const KitchenMode: React.FC = () => {
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
 
-  // Fetch live orders from backend API & localStorage fallback
+  // Fetch live orders from backend API & user flow endpoint
   const fetchKitchenOrders = async () => {
-    let localOrdersRaw: RawOrder[] = []
     try {
-      localOrdersRaw = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/kitchen/orders`)
+      const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
       if (res.ok) {
         const data = await res.json()
         if (Array.isArray(data.data)) {
-          // Combine backend orders with local orders (preventing duplicate IDs)
-          const apiMap = new Map(data.data.map((o: { id: string }) => [o.id, o]))
-          localOrdersRaw.forEach((o: { id: string }) => {
-            if (!apiMap.has(o.id)) {
-              apiMap.set(o.id, o)
+          const mappedOrders: KitchenOrder[] = data.data.map((o: {
+            id: string
+            status?: string
+            items?: Array<{ name: string; quantity: number }>
+            notes?: string
+            total?: number
+            createdAt?: string
+            paymentMethod?: string
+          }) => {
+            const raw = (o.status || '').toUpperCase()
+            let norm = 'Unconfirmed'
+            if (raw === 'PREPARING' || raw === 'COOKING' || raw === 'IN_PROCESS') norm = 'Preparing'
+            else if (raw === 'READY' || raw === 'PREPARED') norm = 'Ready'
+            else if (raw === 'COMPLETED' || raw === 'SERVED' || raw === 'DELIVERED') norm = 'Completed'
+            else if (raw === 'CONFIRMED' || raw === 'PENDING_PREPARATION' || raw === 'IN_KITCHEN' || raw === 'APPROVED') norm = 'Confirmed'
+            else norm = 'Unconfirmed'
+
+            return {
+              id: o.id,
+              queue: o.id,
+              type: 'Delivery',
+              category: 'Online Order',
+              status: norm,
+              items: o.items || [],
+              notes: o.notes || '',
+              total: o.total || 0,
+              createdAt: o.createdAt || new Date().toISOString(),
+              paymentMethod: o.paymentMethod || 'GCash',
+              startTime: (raw === 'PREPARING' || raw === 'COOKING' || raw === 'IN_PROCESS') ? Date.now() - 60000 : null,
             }
           })
-          const combined = Array.from(apiMap.values())
-          const mappedOrders: KitchenOrder[] = combined.map((o) => mapRawToKitchenOrder(o as RawOrder))
+
           setOrders(mappedOrders)
           return
         }
       }
     } catch (err) {
-      console.warn('Backend connection error, falling back to localStorage:', err)
+      console.warn('Backend connection note in KitchenMode:', err)
     }
-
-    // Fallback to localStorage
-    const mappedOrders: KitchenOrder[] = localOrdersRaw.map(mapRawToKitchenOrder)
-    setOrders(mappedOrders)
   }
 
-  // Initial load, polling, and listening for order creation events
+  // Initial load, polling
   useEffect(() => {
     const initTimer = setTimeout(() => {
       void fetchKitchenOrders()
     }, 0)
     const pollTimer = setInterval(fetchKitchenOrders, 2000)
 
-    const handleStorageEvent = () => void fetchKitchenOrders()
-    window.addEventListener('storage', handleStorageEvent)
-    window.addEventListener('seafudz_order_created', handleStorageEvent)
-
     return () => {
       clearTimeout(initTimer)
       clearInterval(pollTimer)
-      window.removeEventListener('storage', handleStorageEvent)
-      window.removeEventListener('seafudz_order_created', handleStorageEvent)
     }
   }, [])
 
@@ -140,13 +146,13 @@ export const KitchenMode: React.FC = () => {
 
   // Helper to format elapsed time
   const getPrepTimeDisplay = (order: KitchenOrder): string => {
-    if (order.status === 'Pending' || order.status === 'waiting') {
+    if (order.status === 'Pending' || order.status === 'waiting' || order.status === 'CONFIRMED') {
       return 'Waiting'
     }
     if (order.status === 'Ready' || order.status === 'Completed' || order.status === 'Served') {
       return order.completedTimeElapsed || '4:15sec'
     }
-    if ((order.status === 'Preparing' || order.status === 'preparing') && order.startTime) {
+    if ((order.status === 'Preparing' || order.status === 'PREPARING' || order.status === 'preparing') && order.startTime) {
       const elapsedSeconds = Math.floor((now - order.startTime) / 1000)
       const mins = Math.floor(elapsedSeconds / 60)
       const secs = elapsedSeconds % 60
@@ -157,12 +163,13 @@ export const KitchenMode: React.FC = () => {
 
   // Update order status handler
   const updateOrderStatus = async (id: string, newStatus: string) => {
-    let finalTime = '0:00sec'
+    const normalizedTarget = newStatus.toUpperCase() === 'PREPARING' ? 'PREPARING' : (newStatus.toUpperCase() === 'READY' ? 'READY' : newStatus.toUpperCase())
+
     setOrders((prevOrders) =>
       prevOrders.map((order) => {
         if (order.id !== id) return order
 
-        if (newStatus === 'Preparing') {
+        if (newStatus === 'Preparing' || newStatus === 'PREPARING') {
           return {
             ...order,
             status: 'Preparing',
@@ -170,26 +177,11 @@ export const KitchenMode: React.FC = () => {
           }
         }
 
-        if (newStatus === 'Ready') {
-          if (order.startTime) {
-            const elapsedSeconds = Math.floor((Date.now() - order.startTime) / 1000)
-            const mins = Math.floor(elapsedSeconds / 60)
-            const secs = elapsedSeconds % 60
-            finalTime = `${mins}:${secs.toString().padStart(2, '0')}sec`
-          } else {
-            finalTime = '4:30sec'
-          }
+        if (newStatus === 'Ready' || newStatus === 'READY') {
           return {
             ...order,
             status: 'Ready',
-            completedTimeElapsed: finalTime,
-          }
-        }
-
-        if (newStatus === 'Completed' || newStatus === 'Served') {
-          return {
-            ...order,
-            status: 'Completed',
+            completedTimeElapsed: '4:30sec',
           }
         }
 
@@ -197,25 +189,14 @@ export const KitchenMode: React.FC = () => {
       })
     )
 
-    // Update localStorage & broadcast update event
+    // Persist to Express Backend User Flow API
     try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: { id: string; status: string }) =>
-        o.id === id ? { ...o, status: newStatus } : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch {
-      /* ignore */
-    }
-
-    // Persist to Express Backend
-    try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: normalizedTarget }),
       })
+      await fetchKitchenOrders()
     } catch (err) {
       console.warn('Could not persist status change to backend:', err)
     }
@@ -238,7 +219,7 @@ export const KitchenMode: React.FC = () => {
 
     // Delete from Backend API
     try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${id}`, {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${id}`, {
         method: 'DELETE',
       })
     } catch (err) {
@@ -254,22 +235,26 @@ export const KitchenMode: React.FC = () => {
   }
 
   // Filter orders by status for Kanban columns & History table
-  const queueOrders = orders.filter(
-    (o) => o.status === 'Pending' || o.status === 'waiting'
-  )
-  const processingOrders = orders.filter(
-    (o) => o.status === 'Preparing' || o.status === 'preparing'
-  )
-  const doneOrders = orders.filter(
-    (o) => o.status === 'Ready'
-  )
+  const queueOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING'
+  })
+  const processingOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
+  })
+  const doneOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP'
+  })
 
   const [historyPage, setHistoryPage] = useState(1)
   const ITEMS_PER_PAGE = 5
 
-  const historyOrders = orders.filter(
-    (o) => o.status === 'Completed' || o.status === 'Served'
-  )
+  const historyOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED'
+  })
 
   const totalPages = Math.max(1, Math.ceil(historyOrders.length / ITEMS_PER_PAGE))
   const startIndex = (historyPage - 1) * ITEMS_PER_PAGE

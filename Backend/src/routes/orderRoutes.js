@@ -235,12 +235,12 @@ router.post('/orders', async (req, res) => {
       'PAID',
     ]);
 
-    // Create kitchen order ticket for on-site orders (online orders wait for assistant confirmation)
-    if (normalizedOrderType !== 'ONLINE') {
+    // Create kitchen order ticket for POS and on-site orders
+    if (normalizedOrderType !== 'ONLINE' || req.body.isPosOrder) {
       const kitchenSql = `
-        INSERT INTO kitchen_orders (order_id, status)
-        VALUES ($1, 'PENDING')
-        ON CONFLICT (order_id) DO NOTHING
+        INSERT INTO kitchen_orders (order_id, status, updated_at)
+        VALUES ($1, 'PENDING', NOW())
+        ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()
       `;
       await client.query(kitchenSql, [createdOrder.id]);
     }
@@ -285,7 +285,7 @@ router.patch('/orders/:id/status', async (req, res) => {
     const { id } = req.params;
 
     const normalizedStatus = (status || '').toUpperCase();
-    const validStatuses = ['PENDING', 'IN_PROCESS', 'COMPLETED', 'CANCELLED'];
+    const validStatuses = ['PENDING', 'IN_PROCESS', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'];
     const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'PENDING';
 
     const sql = `

@@ -31,8 +31,10 @@ router.get('/kitchen/orders', async (req, res) => {
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
-      WHERE (ko.status IS NOT NULL AND UPPER(ko.status) IN ('PENDING', 'IN_PROCESS', 'COOKING', 'PREPARING'))
-         OR (ko.status IS NULL AND UPPER(o.status) IN ('CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN', 'IN_PROCESS', 'COOKING', 'PREPARING'))
+      WHERE UPPER(COALESCE(ko.status, o.status)) IN (
+        'PENDING', 'CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN', 
+        'IN_PROCESS', 'COOKING', 'PREPARING', 'READY', 'PREPARED', 'COMPLETED'
+      )
       GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
     `;
@@ -60,7 +62,7 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
     const { id } = req.params;
 
     const normalizedStatus = (status || '').toUpperCase();
-    const validStatuses = ['PENDING', 'IN_PROCESS', 'COMPLETED', 'CANCELLED'];
+    const validStatuses = ['PENDING', 'IN_PROCESS', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'];
     const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'IN_PROCESS';
 
     // Update kitchen_orders status
@@ -72,7 +74,7 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
         updated_at = NOW()
     `, [id, finalStatus]);
 
-    // Also update order status
+    // Also update main order status
     const sql = `
       UPDATE orders
       SET status = $1, updated_at = NOW()

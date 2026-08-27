@@ -1,17 +1,16 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
-
-// Import split routers and controller handlers
-import customerRouter from './customerFlowRoutes.js';
-import { handleAssistantStatusUpdate } from './assistantFlowRoutes.js';
-import { handleKitchenStatusUpdate } from './kitchenFlowRoutes.js';
-import { handleRiderStatusUpdate, handleDeleteOrder } from './riderFlowRoutes.js';
+import { handleAssistantStatusUpdate } from './assistantRoutes.js';
+import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
+import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
+import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
 
 const router = Router();
 
-// Mount Customer routes directly
-router.use(customerRouter);
+// Online customer endpoints
+router.post('/user-flow/orders', handleCreateCustomerFlowOrder);
+router.get('/user-flow/orders/:id', handleGetCustomerFlowOrder);
 
 /**
  * Common GET /api/user-flow/orders

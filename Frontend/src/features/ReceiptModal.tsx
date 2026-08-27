@@ -36,30 +36,105 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
   const handlePrint = () => {
     const printWindow = window.open('', '_blank')
     if (printWindow) {
-      const receiptHtml = document.getElementById('thermal-receipt-content')?.innerHTML || ''
       printWindow.document.write(`
+        <!DOCTYPE html>
         <html>
           <head>
-            <title>Print Receipt</title>
+            <title>Print Receipt - Seafudz Ng Bayan</title>
             <style>
+              @page {
+                size: 80mm auto;
+                margin: 0;
+              }
               body {
                 font-family: 'Courier New', Courier, monospace;
-                padding: 10px;
-                background: white;
-                color: #000;
                 width: 280px;
                 margin: 0 auto;
+                padding: 15px 10px;
+                color: #000;
+                font-size: 12px;
+                line-height: 1.4;
               }
-              .center { text-align: center; }
-              .right { text-align: right; }
-              .bold { font-weight: bold; }
+              .text-center { text-align: center; }
+              .text-right { text-align: right; }
+              .font-bold { font-weight: bold; }
+              .uppercase { text-transform: uppercase; }
               .divider { border-top: 1px dashed #000; margin: 8px 0; }
-              .row { display: flex; justify-content: space-between; font-size: 13px; margin: 3px 0; }
-              .flex-grow { flex-grow: 1; }
+              .flex-row { display: flex; justify-content: space-between; align-items: center; }
+              .item-table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+              .item-table th { text-align: left; font-size: 10px; font-weight: bold; padding-bottom: 4px; border-bottom: 1px dashed #000; }
+              .item-table td { font-size: 11px; padding: 3px 0; vertical-align: top; }
+              .total-row { font-size: 14px; font-weight: bold; margin-top: 4px; }
             </style>
           </head>
           <body>
-            ${receiptHtml}
+            <div class="text-center">
+              <div class="font-bold uppercase" style="font-size: 15px;">Seafood ng Bayan</div>
+              <div style="font-size: 10px;">RESTAURANT & GRILL</div>
+              <div style="font-size: 11px; margin-top: 2px;">Caloocan City, Metro Manila, Philippines</div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div>
+              <div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>
+              <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
+              <div class="flex-row"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
+            </div>
+
+            <div class="divider"></div>
+
+            <table class="item-table">
+              <thead>
+                <tr>
+                  <th style="width: 55%;">ITEM</th>
+                  <th style="width: 15%; text-align: center;">QTY</th>
+                  <th style="width: 30%; text-align: right;">PRICE</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${cartItems
+          .map(
+            (ci) => `
+                  <tr>
+                    <td>${ci.item.name}</td>
+                    <td class="text-center">x${ci.quantity}</td>
+                    <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString()}</td>
+                  </tr>
+                `
+          )
+          .join('')}
+              </tbody>
+            </table>
+
+            <div class="divider"></div>
+
+            <div>
+              <div class="flex-row"><span>Subtotal:</span><span>₱${Math.round(rawSubtotal).toLocaleString()}</span></div>
+              <div class="flex-row"><span>VAT (12%):</span><span>₱${Math.round(vatAmount).toLocaleString()}</span></div>
+              <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${formattedTotal.toLocaleString()}</span></div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div>
+              <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
+              ${paymentMethod === 'Cash' && cashReceived
+          ? `
+                <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString()}</span></div>
+                <div class="flex-row font-bold"><span>Change Due:</span><span>₱${change ? Math.round(change).toLocaleString() : '0'}</span></div>
+              `
+          : ''
+        }
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="text-center" style="font-size: 11px; margin-top: 8px;">
+              Thank you for dining with us!<br/>
+              Please come again!
+            </div>
+
             <script>
               window.onload = function() {
                 window.print();
@@ -71,7 +146,6 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
       `)
       printWindow.document.close()
     }
-    // Automatically close receipt modal & reset POS order summary
     onClose()
   }
 
@@ -98,15 +172,15 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
         {/* Receipt Paper Container */}
         <div className="flex-1 overflow-y-auto mb-6 bg-white p-6 rounded-2xl shadow-inner border border-neutral-300/60 flex flex-col items-center">
           {/* Thermal Receipt Body */}
-          <div 
-            id="thermal-receipt-content" 
+          <div
+            id="thermal-receipt-content"
             className="w-full max-w-[280px] bg-white text-[#2c1810] font-mono text-xs select-none p-2"
           >
             {/* Header */}
             <div className="text-center space-y-1 mb-3">
               <div className="text-sm font-black tracking-widest uppercase">Seafood ng Bayan</div>
               <div className="text-[10px] text-neutral-500 font-semibold">RESTAURANT & GRILL</div>
-              <div className="text-[9px] text-neutral-400 font-medium">Cavite City, Philippines</div>
+              <p className="text-xs text-neutral-500">Caloocan City, Metro Manila, Philippines</p>
             </div>
 
             <div className="border-t border-dashed border-neutral-300 my-2"></div>
@@ -220,4 +294,5 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
     </div>
   )
 }
+
 export default ReceiptModal

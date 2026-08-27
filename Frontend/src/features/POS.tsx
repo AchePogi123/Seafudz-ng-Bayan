@@ -12,10 +12,8 @@ import { useMenuPrices } from '../utils/menuPriceManager'
 import { NavbarCashier } from '../components/NavbarCashier'
 
 export const POS: React.FC = () => {
-  // Price manager hook
   const { getEffectivePrice, updatePrice } = useMenuPrices()
 
-  // Client menu items and categories
   const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
 
@@ -28,7 +26,6 @@ export const POS: React.FC = () => {
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
 
-  // Explicitly require table as string to match SuccessModal and ReceiptModal props
   const [lastOrderDetails, setLastOrderDetails] = useState<{
     table: string
     type: string
@@ -49,7 +46,6 @@ export const POS: React.FC = () => {
     return Math.round(rawSubtotal * 1.12)
   }, [cartItems])
 
-  // Filter items based on search query, category selection, and dynamic price
   const filteredItems = useMemo(() => {
     return menuItems
       .map((item) => ({
@@ -68,7 +64,6 @@ export const POS: React.FC = () => {
       })
   }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
 
-  // Custom price update from POS
   const handlePriceUpdate = (item: MenuItem, newPrice: number) => {
     updatePrice(item.id, newPrice)
     setCartItems((prev) =>
@@ -78,7 +73,6 @@ export const POS: React.FC = () => {
     )
   }
 
-  // Cart Handlers
   const handleAddToCart = (item: MenuItem) => {
     setCartItems((prevItems) => {
       const existing = prevItems.find((ci) => ci.item.id === item.id)
@@ -145,19 +139,25 @@ export const POS: React.FC = () => {
 
     const posOrderPayload = {
       isPosOrder: true,
-      status: 'In Kitchen',
+      status: 'PENDING',
+      orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
       type: orderType,
-      customerName: 'Walk-In',
-      notes: orderNotes,
+      paymentMethod,
+      notes: orderNotes, // Pass special kitchen notes (e.g., "Extra Spicy")
       subtotal: rawSubtotal,
       vat: Math.round(vat),
       deliveryFee: 0,
       total,
-      paymentMethod,
-      cartItems,
+      cartItems: cartItems.map((ci) => ({
+        productId: ci.item.id,
+        name: ci.item.name,
+        unit_price: ci.item.price,
+        quantity: ci.quantity,
+        notes: orderNotes || null,
+        item: ci.item
+      })),
     }
 
-    // 1. Post to Express Backend API
     try {
       await fetch(`${API_BASE_URL}/orders`, {
         method: 'POST',
@@ -168,7 +168,7 @@ export const POS: React.FC = () => {
       console.error('POS order API error:', err)
     }
 
-    // 2. LocalStorage Sync
+    // Save to local storage with special notes included
     const localOrderObj = {
       id: orderId,
       ref: orderId,
@@ -178,6 +178,7 @@ export const POS: React.FC = () => {
       paymentStatus: 'Paid',
       customer: 'Walk-In',
       items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
+      notes: orderNotes,
       total,
       paymentMethod,
       cartItems: [...cartItems],
@@ -191,7 +192,6 @@ export const POS: React.FC = () => {
       console.warn('LocalStorage save warning:', e)
     }
 
-    // 3. Store full state for ReceiptModal display
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
@@ -203,7 +203,6 @@ export const POS: React.FC = () => {
       paymentMethod,
     })
 
-    // 4. Close success modal and launch receipt
     setIsSuccessModalOpen(false)
     setIsReceiptModalOpen(true)
   }

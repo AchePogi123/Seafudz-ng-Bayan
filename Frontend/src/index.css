@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Ocean Coastal Palette Custom Properties */
+    --ocean-deep: #005f73;
+    --ocean-cyan: #0a9396;
+    --ocean-teal: #94d2bd;
+    --ocean-foam: #e9d8a6;
+    --ocean-sand: #ee9b00;
+  }
+}
+
+/* Custom Palette Utility Classes */
+.bg-ocean-deep { background-color: #005f73; }
+.text-ocean-deep { color: #005f73; }
+.border-ocean-deep { border-color: #005f73; }
+
+.bg-ocean-cyan { background-color: #0a9396; }
+.text-ocean-cyan { color: #0a9396; }
+.border-ocean-cyan { border-color: #0a9396; }
+
+.bg-ocean-teal { background-color: #94d2bd; }
+.text-ocean-teal { color: #94d2bd; }
+.border-ocean-teal { border-color: #94d2bd; }
+
+.bg-ocean-foam { background-color: #b0d3ce; }
+.text-ocean-foam { color: #b0d3ce; }
+.border-ocean-foam { border-color: #b0d3ce; }
+
+.bg-ocean-sand { background-color: #e4dec3; }
+.text-ocean-sand { color: #e4dec3; }
+.border-ocean-sand { border-color: #e4dec3; }

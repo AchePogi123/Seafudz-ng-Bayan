@@ -1,0 +1,21 @@
+# Environment variables
+.env
+.env.*
+*.env
+
+# Dependencies
+node_modules/
+
+# Build & Log files
+dist/
+*.log
+firebase-debug.log
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/
+
+# Agent skills
+gemini-cli-agent-skills/
+

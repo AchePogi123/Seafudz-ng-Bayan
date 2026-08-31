@@ -86,7 +86,6 @@ export const AdminCustomerView: React.FC = () => {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-3xl border border-neutral-100 shadow-xs gap-4">
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="text-2xl">🛍️</span>
                             <h1 className="text-2xl font-black text-slate-800 tracking-tight">
                                 Customer Directory
                             </h1>
@@ -166,8 +165,8 @@ export const AdminCustomerView: React.FC = () => {
                                             <td className="p-4">
                                                 <span
                                                     className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${customer.status === 'active'
-                                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                                            : 'bg-rose-50 text-rose-600 border border-rose-200'
+                                                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                                        : 'bg-rose-50 text-rose-600 border border-rose-200'
                                                         }`}
                                                 >
                                                     {customer.status}
@@ -178,8 +177,8 @@ export const AdminCustomerView: React.FC = () => {
                                                     <button
                                                         onClick={(e) => toggleAccountStatus(customer.id, e)}
                                                         className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${customer.status === 'active'
-                                                                ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
-                                                                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                                                            ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
+                                                            : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                                                             }`}
                                                     >
                                                         {customer.status === 'active' ? 'Suspend' : 'Activate'}

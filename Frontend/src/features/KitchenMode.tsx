@@ -34,25 +34,42 @@ export const KitchenMode: React.FC = () => {
       const stored = localStorage.getItem('seafudz_orders')
       if (!stored) return []
       const parsed = JSON.parse(stored)
-      return parsed.map((o: any) => {
-        let mappedStatus = o.status || 'Confirmed'
-        if (o.status === 'In Kitchen' || o.status === 'PENDING') mappedStatus = 'Confirmed'
-        if (o.status === 'COMPLETED' || o.status === 'Completed') mappedStatus = 'Completed'
+      return parsed
+        .filter((o: any) => {
+          const rawStatus = (o.status || '').toUpperCase()
+          const orderType = (o.type || '').toLowerCase()
+          const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.customer !== 'Walk-In')
 
-        return {
-          id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
-          queue: o.id || o.ref || 'POS',
-          type: o.type || 'Take Out',
-          category: o.table ? `Dine In - ${o.table}` : (o.type || 'Take Out'),
-          status: mappedStatus,
-          items: (o.cartItems || []).map((ci: any) => ({
-            name: ci.item?.name || ci.name || 'Food Item',
-            quantity: ci.quantity || 1,
-          })),
-          notes: o.notes || '',
-          createdAt: o.dateTime || new Date().toISOString(),
-        }
-      })
+          // If it is an online delivery order, it MUST NOT appear in kitchen while it is still PENDING / UNVERIFIED!
+          // It will ONLY appear in kitchen after Assistant approves/sends it (CONFIRMED / PREPARING / READY / COMPLETED).
+          if (isDelivery && (rawStatus === 'PENDING' || rawStatus === 'FLAGGED' || rawStatus === 'UNCONFIRMED')) {
+            return false
+          }
+
+          return true
+        })
+        .map((o: any) => {
+          const rawStatus = (o.status || '').toUpperCase()
+          let mappedStatus = 'Confirmed'
+          if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(rawStatus)) mappedStatus = 'Preparing'
+          else if (['READY', 'PREPARED'].includes(rawStatus)) mappedStatus = 'Ready'
+          else if (['COMPLETED', 'SERVED', 'DELIVERED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(rawStatus)) mappedStatus = 'Completed'
+          else mappedStatus = 'Confirmed'
+
+          return {
+            id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
+            queue: o.id || o.ref || 'POS',
+            type: o.type || 'Take Out',
+            category: o.table ? `Dine In - ${o.table}` : (o.type || 'Take Out'),
+            status: mappedStatus,
+            items: (o.cartItems || []).map((ci: any) => ({
+              name: ci.item?.name || ci.name || 'Food Item',
+              quantity: ci.quantity || 1,
+            })),
+            notes: o.notes || '',
+            createdAt: o.dateTime || new Date().toISOString(),
+          }
+        })
     } catch {
       return []
     }
@@ -67,28 +84,40 @@ export const KitchenMode: React.FC = () => {
       if (res.ok) {
         const result = await res.json()
         if (Array.isArray(result.data)) {
-          fetchedApiOrders = result.data.map((o: any) => {
-            const raw = (o.status || o.order_status || '').toUpperCase()
-            let norm = 'Unconfirmed'
-            if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
-            else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
-            else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED'].includes(raw)) norm = 'Completed'
-            else if (['PENDING', 'CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN'].includes(raw)) norm = 'Confirmed'
+          fetchedApiOrders = result.data
+            .filter((o: any) => {
+              const raw = (o.status || o.order_status || '').toUpperCase()
+              const orderType = (o.order_type || o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress
 
-            return {
-              id: o.id,
-              queue: o.id,
-              type: o.order_type || 'Take Out',
-              category: o.table_name ? `Dine In - ${o.table_name}` : (o.order_type || 'Take Out'),
-              status: norm,
-              items: (o.items || []).map((item: any) => ({
-                name: item.name || item.product_name_snapshot || 'Food Item',
-                quantity: item.quantity || 1,
-              })),
-              notes: o.notes || '',
-              createdAt: o.created_at || new Date().toISOString(),
-            }
-          })
+              // Online delivery orders won't show in kitchen until verified & confirmed by Assistant
+              if (isDelivery && (raw === 'PENDING' || raw === 'FLAGGED' || raw === 'UNCONFIRMED')) {
+                return false
+              }
+              return true
+            })
+            .map((o: any) => {
+              const raw = (o.status || o.order_status || '').toUpperCase()
+              let norm = 'Confirmed'
+              if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
+              else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
+              else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
+              else norm = 'Confirmed'
+
+              return {
+                id: o.id,
+                queue: o.id,
+                type: o.order_type || 'Take Out',
+                category: o.table_name ? `Dine In - ${o.table_name}` : (o.order_type || 'Take Out'),
+                status: norm,
+                items: (o.items || []).map((item: any) => ({
+                  name: item.name || item.product_name_snapshot || 'Food Item',
+                  quantity: item.quantity || 1,
+                })),
+                notes: o.notes || '',
+                createdAt: o.created_at || new Date().toISOString(),
+              }
+            })
         }
       }
     } catch (err) {
@@ -98,8 +127,20 @@ export const KitchenMode: React.FC = () => {
     const fetchedLocalOrders = getLocalOrders()
     const mergedMap = new Map<string, KitchenOrder>()
 
-    fetchedLocalOrders.forEach((item) => mergedMap.set(item.id, item))
-    fetchedApiOrders.forEach((item) => mergedMap.set(item.id, item))
+    // Priority to local updates (most real-time for live interactions)
+    fetchedLocalOrders.forEach((item) => {
+      mergedMap.set(item.id, item)
+    })
+
+    // Merge API orders without duplicating already existing local tickets
+    fetchedApiOrders.forEach((apiItem) => {
+      const exists = Array.from(mergedMap.values()).some(
+        (local) => local.id === apiItem.id || local.queue === apiItem.queue || local.queue === apiItem.id || local.id === apiItem.queue
+      )
+      if (!exists) {
+        mergedMap.set(apiItem.id, apiItem)
+      }
+    })
 
     setOrders(Array.from(mergedMap.values()))
   }
@@ -465,12 +506,18 @@ export const KitchenMode: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'Completed')}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                    >
-                      Customer Received
-                    </button>
+                    {order.type?.toLowerCase().includes('delivery') || order.category?.toLowerCase().includes('delivery') ? (
+                      <div className="w-full bg-amber-50 border border-amber-200 text-amber-800 font-bold py-2.5 rounded-lg text-xs text-center flex items-center justify-center gap-1.5">
+                        <span>🛵</span> Ready for Rider Pickup
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => updateOrderStatus(order.id, 'Completed')}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
+                      >
+                        Customer Received
+                      </button>
+                    )}
                   </div>
                 ))
               )}

@@ -33,8 +33,17 @@ export const OnlineCustomer: React.FC = () => {
     const { isAvailable } = useMenuAvailability()
     const { getEffectivePrice } = useMenuPrices()
 
-    // Navigation states
-    const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>('menu')
+    // Navigation states (automatically open tracking tab if there is an ongoing uncompleted order)
+    const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() => {
+        try {
+            const saved = localStorage.getItem('seafudz_active_online_order')
+            if (saved) {
+                const parsed = JSON.parse(saved)
+                if (parsed && parsed.id) return 'tracking'
+            }
+        } catch { }
+        return 'menu'
+    })
 
     // Menu state using client items
     const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
@@ -57,45 +66,118 @@ export const OnlineCustomer: React.FC = () => {
     const [paymentMethod, setPaymentMethod] = useState('GCash')
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
 
-    // Submitted Order tracking state
-    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(null)
+    // Submitted Order tracking state initialized from localStorage
+    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(() => {
+        try {
+            const saved = localStorage.getItem('seafudz_active_online_order')
+            return saved ? JSON.parse(saved) : null
+        } catch {
+            return null
+        }
+    })
 
-    // Poll Backend API for real-time status changes: PENDING -> CONFIRMED -> PREPARING -> READY -> OUT_FOR_DELIVERY -> COMPLETED
+    // Real-time synchronization for customer order tracking
     useEffect(() => {
         if (!activeOrder?.id) return
 
-        const fetchStatus = async () => {
+        const checkOrderStatus = async () => {
+            // 1. Check LocalStorage sync
+            try {
+                const stored = localStorage.getItem('seafudz_orders')
+                if (stored) {
+                    const parsed = JSON.parse(stored)
+                    if (Array.isArray(parsed)) {
+                        const current = parsed.find((o: any) => o.id === activeOrder.id || o.ref === activeOrder.id)
+                        if (current && current.status) {
+                            const raw = current.status.toUpperCase()
+                            let normalized = 'PENDING'
+                            if (['CONFIRMED', 'UNCONFIRMED', 'VERIFIED'].includes(raw)) normalized = 'CONFIRMED'
+                            else if (['PREPARING', 'COOKING', 'IN_PROCESS', 'IN_KITCHEN'].includes(raw)) normalized = 'PREPARING'
+                            else if (['READY', 'PREPARED'].includes(raw)) normalized = 'READY'
+                            else if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) normalized = 'OUT_FOR_DELIVERY'
+                            else if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(raw)) normalized = 'COMPLETED'
+                            else normalized = raw
+
+                            if (normalized !== activeOrder.status.toUpperCase()) {
+                                setActiveOrder((prev) => {
+                                    if (!prev) return null
+                                    const updated = { ...prev, status: normalized }
+                                    try {
+                                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
+                                    } catch { }
+                                    return updated
+                                })
+                                return
+                            }
+                        }
+                    }
+                }
+            } catch (storageErr) {
+                console.warn('Local order check error:', storageErr)
+            }
+
+            // 2. Poll Backend API (user-flow/orders endpoint)
             try {
                 const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}`)
                 if (res.ok) {
                     const data = await res.json()
-                    if (data.data && data.data.status) {
-                        const newStatus = data.data.status.toUpperCase()
-                        if (newStatus !== activeOrder.status.toUpperCase()) {
-                            setActiveOrder((prev) => (prev ? { ...prev, status: newStatus } : null))
+                    const orderData = data.data || data
+                    if (orderData && orderData.status) {
+                        const raw = orderData.status.toUpperCase()
+                        let normalized = 'PENDING'
+                        if (['CONFIRMED', 'UNCONFIRMED', 'VERIFIED'].includes(raw)) normalized = 'CONFIRMED'
+                        else if (['PREPARING', 'COOKING', 'IN_PROCESS', 'IN_KITCHEN'].includes(raw)) normalized = 'PREPARING'
+                        else if (['READY', 'PREPARED'].includes(raw)) normalized = 'READY'
+                        else if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) normalized = 'OUT_FOR_DELIVERY'
+                        else if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(raw)) normalized = 'COMPLETED'
+                        else normalized = raw
+
+                        if (normalized !== activeOrder.status.toUpperCase()) {
+                            setActiveOrder((prev) => {
+                                if (!prev) return null
+                                const updated = { ...prev, status: normalized }
+                                try {
+                                    localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
+                                } catch { }
+                                return updated
+                            })
                         }
                     }
                 }
             } catch (err) {
-                console.warn('Backend order polling note:', err)
+                // Ignore if backend offline
             }
         }
 
-        void fetchStatus()
+        void checkOrderStatus()
         const interval = setInterval(() => {
-            void fetchStatus()
-        }, 2000)
+            void checkOrderStatus()
+        }, 1000)
 
-        return () => clearInterval(interval)
+        const handleSync = () => {
+            void checkOrderStatus()
+        }
+
+        window.addEventListener('seafudz_order_created', handleSync)
+        window.addEventListener('storage', handleSync)
+
+        return () => {
+            clearInterval(interval)
+            window.removeEventListener('seafudz_order_created', handleSync)
+            window.removeEventListener('storage', handleSync)
+        }
     }, [activeOrder?.id, activeOrder?.status])
 
-    // Calculations
+    // Calculations with live effective prices
     const subtotal = useMemo(() => {
-        return cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
-    }, [cartItems])
+        return cartItems.reduce((acc, ci) => {
+            const effectivePrice = getEffectivePrice(ci.item.id, ci.item.price)
+            return acc + effectivePrice * ci.quantity
+        }, 0)
+    }, [cartItems, getEffectivePrice])
     const vat = useMemo(() => subtotal * 0.12, [subtotal])
     const deliveryFee = useMemo(() => (subtotal > 0 ? 50 : 0), [subtotal])
-    const total = useMemo(() => subtotal + vat + deliveryFee, [subtotal, vat, deliveryFee])
+    const total = useMemo(() => Math.round(subtotal + vat + deliveryFee), [subtotal, vat, deliveryFee])
 
     // Filters with effective price applied
     const filteredItems = useMemo(() => {
@@ -118,14 +200,19 @@ export const OnlineCustomer: React.FC = () => {
     const handleAddToCart = (item: MenuItem) => {
         if (!isAvailable(item.id)) return
 
+        const effectiveItem = {
+            ...item,
+            price: getEffectivePrice(item.id, item.price)
+        }
+
         setCartItems((prev) => {
             const existing = prev.find((ci) => ci.item.id === item.id)
             if (existing) {
                 return prev.map((ci) =>
-                    ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci
+                    ci.item.id === item.id ? { ...ci, item: effectiveItem, quantity: ci.quantity + 1 } : ci
                 )
             }
-            return [...prev, { item, quantity: 1, specialNote: '' }]
+            return [...prev, { item: effectiveItem, quantity: 1, specialNote: '' }]
         })
     }
 
@@ -208,10 +295,38 @@ export const OnlineCustomer: React.FC = () => {
             }
 
             setActiveOrder(newOrder)
+            try {
+                localStorage.setItem('seafudz_active_online_order', JSON.stringify(newOrder))
+            } catch { }
             setCartItems([])
             setOrderNotes('')
             setActiveTab('tracking')
             setIsMobileCartOpen(false)
+
+            // Save to shared store order history
+            try {
+                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const syncRecord = {
+                    id: orderId,
+                    ref: orderId,
+                    dateTime: new Date().toLocaleString(),
+                    type: 'Delivery',
+                    status: 'Pending',
+                    paymentStatus: 'Paid',
+                    customer: customerName,
+                    phone,
+                    address,
+                    items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
+                    notes: orderNotes,
+                    total,
+                    paymentMethod,
+                    cartItems: [...cartItems],
+                }
+                localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
+                window.dispatchEvent(new Event('seafudz_order_created'))
+            } catch (storageErr) {
+                console.warn('Could not sync to local order history:', storageErr)
+            }
         } catch (err) {
             console.error('Error sending order to backend API:', err)
 
@@ -233,31 +348,45 @@ export const OnlineCustomer: React.FC = () => {
             }
 
             setActiveOrder(newOrder)
+            try {
+                localStorage.setItem('seafudz_active_online_order', JSON.stringify(newOrder))
+            } catch { }
             setCartItems([])
             setOrderNotes('')
             setActiveTab('tracking')
             setIsMobileCartOpen(false)
-        }
-    }
 
-    const simulateNextStatus = () => {
-        if (!activeOrder) return
-        const statusSequence: OnlineOrderState['status'][] = [
-            'confirmed',
-            'preparing',
-            'out_for_delivery',
-            'delivered',
-        ]
-        const currentIndex = statusSequence.indexOf(activeOrder.status)
-        if (currentIndex < statusSequence.length - 1) {
-            setActiveOrder({
-                ...activeOrder,
-                status: statusSequence[currentIndex + 1],
-            })
+            // Save to shared store order history
+            try {
+                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const syncRecord = {
+                    id: fallbackId,
+                    ref: fallbackId,
+                    dateTime: new Date().toLocaleString(),
+                    type: 'Delivery',
+                    status: 'Pending',
+                    paymentStatus: 'Paid',
+                    customer: customerName,
+                    phone,
+                    address,
+                    items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
+                    notes: orderNotes,
+                    total,
+                    paymentMethod,
+                    cartItems: [...cartItems],
+                }
+                localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
+                window.dispatchEvent(new Event('seafudz_order_created'))
+            } catch (storageErr) {
+                console.warn('Could not sync to local order history:', storageErr)
+            }
         }
     }
 
     const handleStartNewOrder = () => {
+        try {
+            localStorage.removeItem('seafudz_active_online_order')
+        } catch { }
         setActiveOrder(null)
         setCustomerName('')
         setPhone('')
@@ -741,17 +870,10 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             <div className="flex items-center gap-2">
-                                {activeOrder.status !== 'delivered' ? (
-                                    <button
-                                        onClick={simulateNextStatus}
-                                        className="bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs flex items-center gap-1.5"
-                                    >
-                                        <span>🔄</span> Simulate Next Step
-                                    </button>
-                                ) : (
+                                {((activeOrder.status || '').toLowerCase() === 'completed' || (activeOrder.status || '').toLowerCase() === 'delivered') && (
                                     <button
                                         onClick={handleStartNewOrder}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs"
+                                        className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs flex items-center gap-1.5"
                                     >
                                         🛒 Place New Order
                                     </button>

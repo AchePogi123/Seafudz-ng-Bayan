@@ -138,12 +138,14 @@ export const POS: React.FC = () => {
     const orderId = `POS-${Date.now().toString().slice(-4)}`
 
     const posOrderPayload = {
+      id: orderId,
+      ref: orderId,
       isPosOrder: true,
-      status: 'PENDING',
+      status: 'CONFIRMED',
       orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
       type: orderType,
       paymentMethod,
-      notes: orderNotes, // Pass special kitchen notes (e.g., "Extra Spicy")
+      notes: orderNotes,
       subtotal: rawSubtotal,
       vat: Math.round(vat),
       deliveryFee: 0,

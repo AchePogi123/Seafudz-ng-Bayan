@@ -344,9 +344,6 @@ const AdminDashboard: React.FC = () => {
                                     <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-1">
                                         {totalOnlineOrdersCount}
                                     </h3>
-                                    <p className="text-[11px] font-bold text-indigo-600 mt-1 flex items-center gap-1">
-                                        <span>{orders.length > 0 ? `${Math.round((totalOnlineOrdersCount / orders.length) * 100)}% of total orders` : 'Waiting for orders'}</span>
-                                    </p>
                                 </div>
                                 <div className="w-13 h-13 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-2xl shadow-inner group-hover:scale-110 group-hover:bg-indigo-100 transition-all">
                                     📦

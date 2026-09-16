@@ -65,7 +65,7 @@ export const OnlineCustomer: React.FC = () => {
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
-    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'Maya'>('GCash')
+    const paymentMethod = 'GCash'
     const [paymentReceipt, setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
 
@@ -744,38 +744,16 @@ export const OnlineCustomer: React.FC = () => {
                                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
                                     Payment Method (Online Digital Transfer)
                                 </label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => setPaymentMethod('GCash')}
-                                        className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left ${
-                                            paymentMethod === 'GCash'
-                                                ? 'border-blue-500 bg-blue-50/50 shadow-xs'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                                        }`}
+                                <div className="grid grid-cols-1">
+                                    <div
+                                        className="flex items-center gap-3 p-3.5 rounded-xl border-2 border-blue-500 bg-blue-50/50 shadow-xs"
                                     >
                                         <span className="text-2xl">💙</span>
                                         <div>
                                             <p className="font-black text-neutral-800 text-sm">GCash</p>
                                             <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
                                         </div>
-                                    </button>
-
-                                    <button
-                                        type="button"
-                                        onClick={() => setPaymentMethod('Maya')}
-                                        className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left ${
-                                            paymentMethod === 'Maya'
-                                                ? 'border-emerald-500 bg-emerald-50/50 shadow-xs'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                                        }`}
-                                    >
-                                        <span className="text-2xl">💚</span>
-                                        <div>
-                                            <p className="font-black text-neutral-800 text-sm">Maya</p>
-                                            <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
-                                        </div>
-                                    </button>
+                                    </div>
                                 </div>
 
                                 {/* Payment Transfer Instructions */}
@@ -786,7 +764,7 @@ export const OnlineCustomer: React.FC = () => {
                                     </div>
                                     <p className="text-[11px] text-neutral-500">
                                         Account Name: <strong className="text-neutral-800">SEAFUDZ RESTAURANT PH</strong> •{' '}
-                                        {paymentMethod === 'GCash' ? 'GCash' : 'Maya'}: <strong className="text-neutral-800">0917-888-7323</strong>
+                                        GCash: <strong className="text-neutral-800">0917-888-7323</strong>
                                     </p>
                                 </div>
 

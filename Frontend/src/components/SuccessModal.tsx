@@ -14,13 +14,13 @@ interface SuccessModalProps {
 }
 
 export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onConfirm, orderDetails }) => {
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Maya' | 'Hybrid'>('Cash')
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Hybrid'>('Cash')
   const [cashReceived, setCashReceived] = useState<string>('')
   
   // Hybrid split inputs
   const [hybridCash, setHybridCash] = useState<string>('')
   const [hybridEwallet, setHybridEwallet] = useState<string>('')
-  const [hybridWalletType, setHybridWalletType] = useState<'GCash' | 'Maya'>('GCash')
+  const [hybridWalletType, setHybridWalletType] = useState<'GCash'>('GCash')
 
   const totalAmount = orderDetails ? Math.round(orderDetails.total) : 0
 
@@ -110,8 +110,8 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
         </p>
 
         {/* Payment Method Selector Tabs */}
-        <div className="grid grid-cols-4 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
-          {(['Cash', 'GCash', 'Maya', 'Hybrid'] as const).map((method) => (
+        <div className="grid grid-cols-3 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
+          {(['Cash', 'GCash', 'Hybrid'] as const).map((method) => (
             <button
               key={method}
               type="button"
@@ -141,20 +141,21 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
               </span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
+            {/* Split Input Row */}
+            <div className="grid grid-cols-2 gap-3">
               {/* Cash Portion */}
               <div>
                 <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
-                  1. Cash Amount
+                  Cash Amount
                 </label>
                 <div className="relative flex items-center">
-                  <span className="absolute left-2.5 text-neutral-500 font-bold text-xs">₱</span>
+                  <span className="absolute left-2.5 text-neutral-400 font-bold text-xs">₱</span>
                   <input
                     type="number"
                     value={hybridCash}
                     onChange={(e) => setHybridCash(e.target.value)}
-                    placeholder="Cash part"
-                    className="w-full pl-6 pr-2 py-2 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white text-neutral-800"
+                    placeholder="0"
+                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
                   />
                 </div>
               </div>
@@ -163,55 +164,36 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
-                    2. E-Wallet Amount
+                    E-Wallet (GCash)
                   </label>
                   <button
                     type="button"
                     onClick={handleAutoFillEwallet}
-                    className="text-[9px] font-bold text-purple-600 hover:underline cursor-pointer"
+                    className="text-[10px] font-bold text-purple-600 hover:text-purple-800 underline cursor-pointer"
                   >
-                    Auto Fill
+                    Auto-Fill
                   </button>
                 </div>
                 <div className="relative flex items-center">
-                  <span className="absolute left-2.5 text-neutral-500 font-bold text-xs">₱</span>
+                  <span className="absolute left-2.5 text-neutral-400 font-bold text-xs">₱</span>
                   <input
                     type="number"
                     value={hybridEwallet}
                     onChange={(e) => setHybridEwallet(e.target.value)}
-                    placeholder="Wallet part"
-                    className="w-full pl-6 pr-2 py-2 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white text-neutral-800"
+                    placeholder="0"
+                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
                   />
                 </div>
               </div>
             </div>
 
-            {/* Choose E-Wallet Type */}
+            {/* E-wallet Type selector */}
             <div className="flex items-center gap-2 pt-1">
-              <span className="text-[10px] font-bold text-neutral-500 uppercase">E-Wallet Used:</span>
+              <span className="text-[10px] font-bold text-neutral-500 uppercase">E-Wallet:</span>
               <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setHybridWalletType('GCash')}
-                  className={`px-2.5 py-1 text-[10px] font-black rounded-lg border transition-all cursor-pointer ${
-                    hybridWalletType === 'GCash'
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-neutral-600 border-neutral-200'
-                  }`}
-                >
+                <span className="px-2.5 py-1 text-[10px] font-black rounded-lg border bg-blue-600 text-white border-blue-600">
                   GCash
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setHybridWalletType('Maya')}
-                  className={`px-2.5 py-1 text-[10px] font-black rounded-lg border transition-all cursor-pointer ${
-                    hybridWalletType === 'Maya'
-                      ? 'bg-emerald-600 text-white border-emerald-600'
-                      : 'bg-white text-neutral-600 border-neutral-200'
-                  }`}
-                >
-                  Maya
-                </button>
+                </span>
               </div>
             </div>
 

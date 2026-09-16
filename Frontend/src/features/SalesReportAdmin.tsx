@@ -268,7 +268,7 @@ const SalesReportAdmin: React.FC = () => {
                 </div>
 
                 {/* Analytics Metric Cards (Clickable for Filtering) */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4 print:hidden">
+                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4 print:hidden">
                     {/* Total Revenue - Clickable to reset to All */}
                     <div
                         onClick={() => setPaymentFilter('All')}
@@ -324,8 +324,8 @@ const SalesReportAdmin: React.FC = () => {
                     >
                         <div>
                             <div className="flex items-center gap-1.5">
-                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-700">GCash</p>
-                                <span className="text-[10px] bg-blue-50 text-blue-700 font-extrabold px-1.5 py-0.2 rounded-full border border-blue-200">
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-600">GCash</p>
+                                <span className="text-[10px] bg-blue-50 text-blue-600 font-extrabold px-1.5 py-0.2 rounded-full border border-blue-200">
                                     {paymentBreakdown.gcash.count}
                                 </span>
                             </div>
@@ -338,33 +338,6 @@ const SalesReportAdmin: React.FC = () => {
                         </div>
                         <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-inner">
                             📱
-                        </div>
-                    </div>
-
-                    {/* Maya Breakdown - Clickable */}
-                    <div
-                        onClick={() => setPaymentFilter('Maya')}
-                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
-                            paymentFilter === 'Maya' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-slate-200/80 hover:border-emerald-300'
-                        }`}
-                        title="Click to filter Maya transactions"
-                    >
-                        <div>
-                            <div className="flex items-center gap-1.5">
-                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">Maya</p>
-                                <span className="text-[10px] bg-emerald-50 text-emerald-700 font-extrabold px-1.5 py-0.2 rounded-full border border-emerald-200">
-                                    {paymentBreakdown.maya.count}
-                                </span>
-                            </div>
-                            <h3 className="text-xl sm:text-2xl font-black text-emerald-600 mt-1">
-                                ₱{paymentBreakdown.maya.total.toLocaleString()}
-                            </h3>
-                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
-                                Digital e-wallet
-                            </p>
-                        </div>
-                        <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner">
-                            💳
                         </div>
                     </div>
 
@@ -387,7 +360,7 @@ const SalesReportAdmin: React.FC = () => {
                                 ₱{paymentBreakdown.hybrid.total.toLocaleString()}
                             </h3>
                             <p className="text-[11px] text-slate-400 mt-1 font-medium">
-                                Split (Cash + E-Wallet)
+                                Split (Cash + GCash)
                             </p>
                         </div>
                         <div className="w-11 h-11 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-xl shadow-inner">
@@ -403,8 +376,8 @@ const SalesReportAdmin: React.FC = () => {
                         <h1 className="text-2xl font-bold text-orange-600">Seafudz Ng Bayan</h1>
                         <p className="text-sm text-gray-600">Bagong Silang Phase 1, Brgy. 176</p>
                         <p className="text-sm text-gray-600">Open 24/7</p>
-                        <p className="text-sm font-semibold mt-2">Transaction Report — {activeTab}</p>
-                        <p className="text-xs text-gray-500">Printed on: {new Date().toLocaleString()}</p>
+                        <p className="text-sm font-semibold text-gray-800 mt-2">SALES SUMMARY REPORT</p>
+                        <p className="text-xs text-gray-500">Period: {activeTab.toUpperCase()} | Generated: {new Date().toLocaleString()}</p>
                         <div className="border-t border-dashed border-gray-400 my-4"></div>
                     </div>
 
@@ -442,7 +415,7 @@ const SalesReportAdmin: React.FC = () => {
 
                                 {/* Payment Method Filter */}
                                 <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-2xl border border-slate-200 text-xs font-bold">
-                                    {['All', 'Cash', 'GCash', 'Maya', 'Hybrid', 'Card'].map((pm) => (
+                                    {['All', 'Cash', 'GCash', 'Hybrid'].map((pm) => (
                                         <button
                                             key={pm}
                                             onClick={() => setPaymentFilter(pm)}

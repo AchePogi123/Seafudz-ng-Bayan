@@ -15,6 +15,8 @@ export interface OnlineOrder {
   phone: string
   address: string
   paymentMethod: string
+  paymentReference?: string
+  paymentReceipt?: string
   status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | string
   items: OrderItem[]
   total: number
@@ -49,6 +51,7 @@ export const AssistantRole: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
   const [riders] = useState<Rider[]>(INITIAL_MOCK_RIDERS)
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
 
   useEffect(() => {
     if (notification) {
@@ -116,6 +119,8 @@ export const AssistantRole: React.FC = () => {
               phone: o.phone || '0917-000-0000',
               address: o.address || 'Delivery Address',
               paymentMethod: o.paymentMethod || 'GCash',
+              paymentReference: o.paymentReference || o.paymentRef,
+              paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
               status: rawStatus,
               items,
               total: Number(o.total || 0),
@@ -151,6 +156,8 @@ export const AssistantRole: React.FC = () => {
                 phone: o.phone || '0917-000-0000',
                 address: o.address || o.deliveryAddress || 'Metro Manila Address',
                 paymentMethod: o.paymentMethod || 'GCash',
+                paymentReference: o.paymentReference || o.paymentRef,
+                paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
                 status: (o.status || 'PENDING').toLowerCase(),
                 items: o.items || [],
                 total: o.total || 0,
@@ -449,7 +456,19 @@ export const AssistantRole: React.FC = () => {
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                        <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                            ord.paymentMethod?.toLowerCase().includes('maya')
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {ord.paymentMethod || 'GCash'}
+                          </span>
+                          {ord.paymentReceipt && (
+                            <span className="text-[10px]" title="Receipt photo attached">📸</span>
+                          )}
+                        </div>
                         <span className="text-neutral-400 font-medium text-[11px]">🕒 {ord.createdAt}</span>
                       </div>
                     </div>
@@ -502,11 +521,71 @@ export const AssistantRole: React.FC = () => {
                 <div className="bg-orange-50/60 p-3.5 rounded-2xl border border-orange-200 space-y-1">
                   <div className="flex justify-between items-center">
                     <span className="font-black text-orange-600 text-sm">{selectedOrder.ref}</span>
-                    <span className="bg-white px-2 py-0.5 rounded font-bold text-[10px] text-neutral-600 uppercase border border-orange-200">{selectedOrder.paymentMethod}</span>
+                    <span className={`px-2 py-0.5 rounded font-black text-[10px] uppercase border ${
+                      selectedOrder.paymentMethod?.toLowerCase().includes('maya')
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                        : 'bg-blue-50 text-blue-700 border-blue-300'
+                    }`}>
+                      {selectedOrder.paymentMethod || 'GCash'} Transfer
+                    </span>
                   </div>
                   <p className="font-bold text-neutral-800">{selectedOrder.customer}</p>
                   <p className="text-neutral-500">{selectedOrder.phone}</p>
                   <p className="text-neutral-600 mt-1">{selectedOrder.address}</p>
+                </div>
+
+                {/* Digital Payment Verification Panel */}
+                <div className="bg-gradient-to-br from-neutral-50 to-orange-50/30 p-3.5 rounded-2xl border border-neutral-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-neutral-600 flex items-center gap-1.5">
+                      <span>💳</span> Payment Verification
+                    </span>
+                    <span className="font-black text-neutral-800 text-xs">₱{selectedOrder.total.toLocaleString()}</span>
+                  </div>
+
+                  <div className="space-y-1 bg-white p-2.5 rounded-xl border border-neutral-200/80">
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-neutral-500 font-bold">Payment Mode:</span>
+                      <span className="font-black text-neutral-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
+                    </div>
+                    {selectedOrder.paymentReference && (
+                      <div className="flex justify-between text-[11px] items-center pt-1 border-t border-neutral-100">
+                        <span className="text-neutral-500 font-bold">Reference No:</span>
+                        <span className="font-mono font-black text-neutral-800 bg-neutral-100 px-1.5 py-0.5 rounded text-[11px]">
+                          {selectedOrder.paymentReference}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Receipt / Screenshot */}
+                  {selectedOrder.paymentReceipt ? (
+                    <div className="bg-white p-2.5 rounded-xl border border-neutral-200 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={selectedOrder.paymentReceipt}
+                          alt="Receipt Preview"
+                          onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
+                          className="w-12 h-12 object-cover rounded-lg border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-emerald-700 truncate">📸 Receipt Attached</p>
+                          <p className="text-[10px] text-neutral-400">Click to view full image</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
+                        className="px-2.5 py-1.5 text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors cursor-pointer shadow-2xs"
+                      >
+                        View Photo
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-2 text-center text-[11px] text-amber-700">
+                      ℹ️ Customer did not upload a receipt screenshot.
+                    </div>
+                  )}
                 </div>
 
                 {/* Validation checklist */}
@@ -590,6 +669,52 @@ export const AssistantRole: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Payment Receipt Image Preview Modal */}
+      {previewReceiptUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setPreviewReceiptUrl(null)}
+        >
+          <div
+            className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl relative flex flex-col items-center gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🧾</span>
+                <h4 className="font-black text-sm text-neutral-800">Customer Payment Receipt</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewReceiptUrl(null)}
+                className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="w-full max-h-[70vh] overflow-auto rounded-2xl bg-neutral-50 flex items-center justify-center p-2 border border-neutral-200">
+              <img
+                src={previewReceiptUrl}
+                alt="Full Payment Receipt"
+                className="max-h-[65vh] w-auto object-contain rounded-xl shadow-xs"
+              />
+            </div>
+
+            <div className="w-full flex items-center justify-between text-xs text-neutral-500 pt-1">
+              <span>Verify transaction reference & amount</span>
+              <button
+                type="button"
+                onClick={() => setPreviewReceiptUrl(null)}
+                className="bg-neutral-900 hover:bg-black text-white px-5 py-2 rounded-xl font-bold cursor-pointer transition-colors"
+              >
+                Done / Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

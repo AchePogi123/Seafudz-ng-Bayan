@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import { NavbarAdmin } from '../components/NavbarAdmin'
 import { API_BASE_URL } from '../utils/api'
 
@@ -17,7 +18,10 @@ export interface LiveTransaction {
 type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
 
 const SalesReportAdmin: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<TabType>('Today')
+    const location = useLocation()
+    const navState = location.state as { channel?: string; tab?: TabType; payment?: string } | null
+
+    const [activeTab, setActiveTab] = useState<TabType>(navState?.tab || 'Today')
     const [transactions, setTransactions] = useState<LiveTransaction[]>([])
     const [searchQuery, setSearchQuery] = useState('')
 
@@ -73,7 +77,7 @@ const SalesReportAdmin: React.FC = () => {
                     })
                 }
             }
-        } catch (err) {}
+        } catch (err) { }
 
         setTransactions(combined)
     }, [])
@@ -97,7 +101,17 @@ const SalesReportAdmin: React.FC = () => {
         }
     }, [loadOrders])
 
-    // Filter by Date Tab and Search
+    const [paymentFilter, setPaymentFilter] = useState<string>(navState?.payment || 'All')
+    const [channelFilter, setChannelFilter] = useState<string>(navState?.channel || 'All')
+
+    // If navigated from dashboard with specific state, sync them
+    useEffect(() => {
+        if (navState?.channel) setChannelFilter(navState.channel)
+        if (navState?.tab) setActiveTab(navState.tab)
+        if (navState?.payment) setPaymentFilter(navState.payment)
+    }, [navState])
+
+    // Filter by Date Tab, Payment Method, Channel, and Search
     const filteredTransactions = useMemo(() => {
         const now = new Date()
 
@@ -124,19 +138,77 @@ const SalesReportAdmin: React.FC = () => {
                 }
             }
 
-            return matchesSearch && matchesTab
+            const method = (t.paymentMethod || '').toLowerCase()
+            const matchesPayment =
+                paymentFilter === 'All' ||
+                (paymentFilter === 'Hybrid'
+                    ? (method.includes('hybrid') || method.includes('split'))
+                    : method.includes(paymentFilter.toLowerCase()))
+
+            const matchesChannel =
+                channelFilter === 'All' ||
+                (channelFilter === 'Online'
+                    ? (t.type || '').toLowerCase().includes('delivery')
+                    : !(t.type || '').toLowerCase().includes('delivery'))
+
+            return matchesSearch && matchesTab && matchesPayment && matchesChannel
         })
-    }, [transactions, searchQuery, activeTab])
+    }, [transactions, searchQuery, activeTab, paymentFilter, channelFilter])
+
+    // Compute metrics based on activeTab date filter
+    const currentTabTransactions = useMemo(() => {
+        const now = new Date()
+        return transactions.filter((t) => {
+            const tDate = new Date(t.dateTime)
+            if (isNaN(tDate.getTime())) return true
+            if (activeTab === 'Today') return tDate.toDateString() === now.toDateString()
+            if (activeTab === 'This Week') return (now.getTime() - tDate.getTime()) / (1000 * 3600 * 24) <= 7
+            if (activeTab === 'This Month') return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear()
+            if (activeTab === 'This Year') return tDate.getFullYear() === now.getFullYear()
+            return true
+        })
+    }, [transactions, activeTab])
 
     const totalSales = useMemo(() => {
-        return filteredTransactions.reduce((acc, t) => acc + Number(t.total || 0), 0)
-    }, [filteredTransactions])
+        return currentTabTransactions.reduce((acc, t) => acc + Number(t.total || 0), 0)
+    }, [currentTabTransactions])
 
-    const totalOrders = filteredTransactions.length
+    // Payment breakdown for current active tab period
+    const paymentBreakdown = useMemo(() => {
+        let cashTotal = 0
+        let cashCount = 0
+        let gcashTotal = 0
+        let gcashCount = 0
+        let mayaTotal = 0
+        let mayaCount = 0
+        let hybridTotal = 0
+        let hybridCount = 0
 
-    const averageOrder = useMemo(() => {
-        return totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0
-    }, [totalSales, totalOrders])
+        currentTabTransactions.forEach((t) => {
+            const method = (t.paymentMethod || '').toLowerCase()
+            const amt = Number(t.total || 0)
+            if (method.includes('hybrid') || method.includes('split')) {
+                hybridTotal += amt
+                hybridCount += 1
+            } else if (method.includes('gcash')) {
+                gcashTotal += amt
+                gcashCount += 1
+            } else if (method.includes('maya')) {
+                mayaTotal += amt
+                mayaCount += 1
+            } else {
+                cashTotal += amt
+                cashCount += 1
+            }
+        })
+
+        return {
+            cash: { total: cashTotal, count: cashCount },
+            gcash: { total: gcashTotal, count: gcashCount },
+            maya: { total: mayaTotal, count: mayaCount },
+            hybrid: { total: hybridTotal, count: hybridCount },
+        }
+    }, [currentTabTransactions])
 
     const handlePrintAll = () => {
         window.print()
@@ -154,10 +226,10 @@ const SalesReportAdmin: React.FC = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-3xl border border-[#e0d6cf] shadow-xs print:hidden">
                     <div>
                         <h1 className="text-2xl sm:text-3xl font-black text-[#2c1810] tracking-tight flex items-center gap-2">
-                            <span>💰</span> Admin Live Sales Management
+                            <span>💰</span> Admin Sales Management
                         </h1>
                         <p className="text-xs sm:text-sm text-neutral-500 font-medium mt-0.5">
-                            Accurate live audit across all store POS and Online Customer channels
+                            Accurate audit across all store POS and Online Customer channels
                         </p>
                     </div>
 
@@ -166,7 +238,7 @@ const SalesReportAdmin: React.FC = () => {
                             onClick={loadOrders}
                             className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                         >
-                            <span>🔄</span> Live Sync
+                            <span>🔄</span> Sync
                         </button>
                         <button
                             onClick={handlePrintAll}
@@ -193,64 +265,138 @@ const SalesReportAdmin: React.FC = () => {
                             </button>
                         ))}
                     </div>
-
-                    <div className="flex items-center gap-2 text-xs font-bold text-neutral-500 bg-white px-3.5 py-2 rounded-xl border border-neutral-200">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span>Total Live Stream: {transactions.length} Orders</span>
-                    </div>
                 </div>
 
-                {/* Analytics Metric Cards - 100% Real Live Computed */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 print:hidden">
-                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#e0d6cf] flex items-center justify-between">
+                {/* Analytics Metric Cards (Clickable for Filtering) */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4 print:hidden">
+                    {/* Total Revenue - Clickable to reset to All */}
+                    <div
+                        onClick={() => setPaymentFilter('All')}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
+                            paymentFilter === 'All' ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200/80 hover:border-orange-300'
+                        }`}
+                        title="Click to view All payments"
+                    >
                         <div>
-                            <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400">Total Live Revenue</h3>
-                            <div className="text-3xl font-black text-[#ff7b00] mt-1">₱{totalSales.toLocaleString()}</div>
-                            <p className="text-[11px] font-bold text-neutral-400 mt-1">Exact sum of placed orders</p>
+                            <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Total Revenue</p>
+                            <h3 className="text-xl sm:text-2xl font-black text-orange-600 mt-1">₱{totalSales.toLocaleString()}</h3>
+                            <p className="text-[11px] text-slate-500 mt-1 font-semibold">{currentTabTransactions.length} Total orders</p>
                         </div>
-                        <div className="w-13 h-13 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center text-2xl">
+                        <div className="w-11 h-11 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center text-xl shadow-inner">
                             💰
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#e0d6cf] flex items-center justify-between">
+                    {/* Cash Breakdown - Clickable */}
+                    <div
+                        onClick={() => setPaymentFilter('Cash')}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
+                            paymentFilter === 'Cash' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-200/80 hover:border-amber-300'
+                        }`}
+                        title="Click to filter Cash transactions"
+                    >
                         <div>
-                            <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400">Total Orders</h3>
-                            <div className="text-3xl font-black text-neutral-800 mt-1">{totalOrders}</div>
-                            <p className="text-[11px] font-bold text-neutral-400 mt-1">Live recorded checkouts</p>
+                            <div className="flex items-center gap-1.5">
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-amber-700">Cash</p>
+                                <span className="text-[10px] bg-amber-50 text-amber-700 font-extrabold px-1.5 py-0.2 rounded-full border border-amber-200">
+                                    {paymentBreakdown.cash.count}
+                                </span>
+                            </div>
+                            <h3 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
+                                ₱{paymentBreakdown.cash.total.toLocaleString()}
+                            </h3>
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                                Physical cash
+                            </p>
                         </div>
-                        <div className="w-13 h-13 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-2xl">
-                            📦
+                        <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center text-xl shadow-inner">
+                            💵
                         </div>
                     </div>
 
-                    <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#e0d6cf] flex items-center justify-between">
+                    {/* GCash Breakdown - Clickable */}
+                    <div
+                        onClick={() => setPaymentFilter('GCash')}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
+                            paymentFilter === 'GCash' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200/80 hover:border-blue-300'
+                        }`}
+                        title="Click to filter GCash transactions"
+                    >
                         <div>
-                            <h3 className="text-xs uppercase font-extrabold tracking-wider text-neutral-400">Average Ticket</h3>
-                            <div className="text-3xl font-black text-emerald-600 mt-1">₱{averageOrder.toLocaleString()}</div>
-                            <p className="text-[11px] font-bold text-neutral-400 mt-1">Average per customer</p>
+                            <div className="flex items-center gap-1.5">
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-blue-700">GCash</p>
+                                <span className="text-[10px] bg-blue-50 text-blue-700 font-extrabold px-1.5 py-0.2 rounded-full border border-blue-200">
+                                    {paymentBreakdown.gcash.count}
+                                </span>
+                            </div>
+                            <h3 className="text-xl sm:text-2xl font-black text-blue-600 mt-1">
+                                ₱{paymentBreakdown.gcash.total.toLocaleString()}
+                            </h3>
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                                Digital e-wallet
+                            </p>
                         </div>
-                        <div className="w-13 h-13 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-2xl">
-                            📈
+                        <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-inner">
+                            📱
+                        </div>
+                    </div>
+
+                    {/* Maya Breakdown - Clickable */}
+                    <div
+                        onClick={() => setPaymentFilter('Maya')}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
+                            paymentFilter === 'Maya' ? 'border-emerald-500 ring-2 ring-emerald-500/20' : 'border-slate-200/80 hover:border-emerald-300'
+                        }`}
+                        title="Click to filter Maya transactions"
+                    >
+                        <div>
+                            <div className="flex items-center gap-1.5">
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700">Maya</p>
+                                <span className="text-[10px] bg-emerald-50 text-emerald-700 font-extrabold px-1.5 py-0.2 rounded-full border border-emerald-200">
+                                    {paymentBreakdown.maya.count}
+                                </span>
+                            </div>
+                            <h3 className="text-xl sm:text-2xl font-black text-emerald-600 mt-1">
+                                ₱{paymentBreakdown.maya.total.toLocaleString()}
+                            </h3>
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                                Digital e-wallet
+                            </p>
+                        </div>
+                        <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shadow-inner">
+                            💳
+                        </div>
+                    </div>
+
+                    {/* Hybrid Breakdown - Clickable */}
+                    <div
+                        onClick={() => setPaymentFilter('Hybrid')}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
+                            paymentFilter === 'Hybrid' ? 'border-purple-500 ring-2 ring-purple-500/20' : 'border-slate-200/80 hover:border-purple-300'
+                        }`}
+                        title="Click to filter Hybrid / Split transactions"
+                    >
+                        <div>
+                            <div className="flex items-center gap-1.5">
+                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-purple-700">Hybrid</p>
+                                <span className="text-[10px] bg-purple-50 text-purple-700 font-extrabold px-1.5 py-0.2 rounded-full border border-purple-200">
+                                    {paymentBreakdown.hybrid.count}
+                                </span>
+                            </div>
+                            <h3 className="text-xl sm:text-2xl font-black text-purple-600 mt-1">
+                                ₱{paymentBreakdown.hybrid.total.toLocaleString()}
+                            </h3>
+                            <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                                Split (Cash + E-Wallet)
+                            </p>
+                        </div>
+                        <div className="w-11 h-11 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-xl shadow-inner">
+                            🔄
                         </div>
                     </div>
                 </div>
 
-                {/* Search Bar - Hidden on Print */}
-                <div className="flex justify-between items-center bg-white p-4 rounded-3xl border border-[#e0d6cf] shadow-xs print:hidden">
-                    <div className="relative w-full sm:w-80">
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search Order Reference, Customer or Items..."
-                            className="w-full bg-neutral-50 border border-neutral-200 rounded-2xl pl-9 pr-4 py-2 text-xs font-medium focus:outline-none focus:border-orange-500 focus:bg-white transition-all"
-                        />
-                        <span className="absolute left-3 top-2 text-neutral-400">🔍</span>
-                    </div>
-                </div>
-
-                {/* PRINT ONLY & LIVE TABLE SECTION */}
+                {/* PRINT ONLY & TABLE SECTION */}
                 <div id="print-area">
                     {/* Print Report Header */}
                     <div className="hidden print:block text-center mb-6">
@@ -262,54 +408,124 @@ const SalesReportAdmin: React.FC = () => {
                         <div className="border-t border-dashed border-gray-400 my-4"></div>
                     </div>
 
-                    <div className="bg-white rounded-3xl border border-[#e0d6cf] shadow-sm overflow-hidden print:shadow-none print:border print:rounded-none">
-                        <div className="p-4 border-b border-neutral-100 flex items-center justify-between print:hidden">
-                            <h2 className="font-extrabold text-sm text-neutral-800">
-                                Live Invoices & Transactions ({filteredTransactions.length})
-                            </h2>
-                            <span className="text-xs text-neutral-400 font-medium">Timeline: {activeTab}</span>
+                    {/* Sales Register & Orders Card Matching AdminDashboard */}
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-5 print:shadow-none print:border print:rounded-none">
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-2 border-b border-slate-100 print:hidden">
+                            <div>
+                                <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
+                                    <span>💰</span> Sales Register & Orders
+                                </h2>
+                                <p className="text-xs text-slate-400 mt-0.5">Filter by payment method or search by reference item</p>
+                            </div>
+
+                            <div className="flex items-center gap-3 flex-wrap">
+                                {/* Order Channel Filter */}
+                                <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-2xl border border-slate-200 text-xs font-bold">
+                                    {[
+                                        { label: 'All Orders', val: 'All' },
+                                        { label: 'Online Orders', val: 'Online' },
+                                        { label: 'Walk-In / POS', val: 'POS' }
+                                    ].map((item) => (
+                                        <button
+                                            key={item.val}
+                                            onClick={() => setChannelFilter(item.val)}
+                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                                                channelFilter === item.val
+                                                    ? 'bg-slate-900 text-white shadow-2xs'
+                                                    : 'text-slate-600 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {item.label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Payment Method Filter */}
+                                <div className="flex items-center gap-1 bg-slate-50 p-1 rounded-2xl border border-slate-200 text-xs font-bold">
+                                    {['All', 'Cash', 'GCash', 'Maya', 'Hybrid', 'Card'].map((pm) => (
+                                        <button
+                                            key={pm}
+                                            onClick={() => setPaymentFilter(pm)}
+                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                                                paymentFilter === pm
+                                                    ? 'bg-orange-500 text-white shadow-2xs'
+                                                    : 'text-slate-600 hover:bg-slate-200'
+                                            }`}
+                                        >
+                                            {pm}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Search Input */}
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search Order ID, customer..."
+                                        className="bg-slate-50 border border-slate-200 rounded-2xl pl-9 pr-4 py-2 text-xs font-medium focus:outline-none focus:border-orange-500"
+                                    />
+                                    <svg className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                </div>
+                            </div>
                         </div>
 
+                        {/* Detailed Sales Register Table */}
                         <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-neutral-100 text-left text-xs font-medium">
-                                <thead className="bg-neutral-50 text-[11px] uppercase font-extrabold tracking-wider text-neutral-500">
-                                    <tr>
-                                        <th className="px-6 py-4">Reference #</th>
-                                        <th className="px-6 py-4">Date & Time</th>
-                                        <th className="px-6 py-4">Items Ordered</th>
-                                        <th className="px-6 py-4">Customer</th>
-                                        <th className="px-6 py-4 text-right">Total Amount</th>
-                                        <th className="px-6 py-4 text-center">Order Channel</th>
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-slate-50 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 border-b border-slate-100">
+                                        <th className="p-3.5 rounded-l-2xl">Order Reference #</th>
+                                        <th className="p-3.5">Customer & Type</th>
+                                        <th className="p-3.5">Ordered Items</th>
+                                        <th className="p-3.5">Date & Time</th>
+                                        <th className="p-3.5">Payment Method</th>
+                                        <th className="p-3.5">Total Paid</th>
+                                        <th className="p-3.5 rounded-r-2xl text-center">Status</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-neutral-100">
+                                <tbody className="divide-y divide-slate-50 text-xs font-medium text-slate-700">
                                     {filteredTransactions.length === 0 ? (
                                         <tr>
-                                            <td colSpan={6} className="px-6 py-16 text-center text-neutral-400">
-                                                <div className="text-3xl mb-2">📊</div>
-                                                <div className="font-bold text-neutral-600">No transactions recorded for this period.</div>
-                                                <div className="text-xs mt-1">Orders placed via POS or Online Customers will appear here automatically.</div>
+                                            <td colSpan={7} className="text-center py-12 text-slate-400">
+                                                <p className="text-2xl mb-1">🧾</p>
+                                                <p className="font-bold text-slate-600">No transactions recorded for this period.</p>
+                                                <p className="text-xs mt-0.5">Orders placed via POS or Online Customers will appear here automatically.</p>
                                             </td>
                                         </tr>
                                     ) : (
                                         filteredTransactions.map((tx) => (
-                                            <tr key={tx.id} className="hover:bg-orange-50/30 transition-colors">
-                                                <td className="px-6 py-4 font-bold text-neutral-900">{tx.ref}</td>
-                                                <td className="px-6 py-4 text-neutral-500 text-[11px]">{tx.dateTime}</td>
-                                                <td className="px-6 py-4 max-w-xs truncate text-neutral-700" title={tx.items}>
+                                            <tr key={tx.id || tx.ref} className="hover:bg-orange-50/30 transition-colors">
+                                                <td className="p-3.5 font-bold text-slate-900">{tx.ref || tx.id}</td>
+                                                <td className="p-3.5">
+                                                    <span className="font-bold text-slate-800 block">{tx.customer || 'Walk-In'}</span>
+                                                    <span className="text-[10px] text-slate-400">{tx.type}</span>
+                                                </td>
+                                                <td className="p-3.5 text-slate-700 max-w-xs truncate" title={tx.items}>
                                                     {tx.items}
                                                 </td>
-                                                <td className="px-6 py-4 font-bold text-neutral-800">{tx.customer}</td>
-                                                <td className="px-6 py-4 text-right font-extrabold text-[#ff7b00]">
-                                                    ₱{tx.total.toLocaleString()}
+                                                <td className="p-3.5 text-slate-500 text-[11px]">{tx.dateTime}</td>
+                                                <td className="p-3.5 font-bold">
+                                                    <span className={`px-2.5 py-1 rounded-full text-[10px] ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') || (tx.paymentMethod || '').toLowerCase().includes('split')
+                                                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                                            : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                                ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                        }`}>
+                                                        {tx.paymentMethod || 'Cash'}
+                                                    </span>
                                                 </td>
-                                                <td className="px-6 py-4 text-center">
-                                                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                                        tx.type === 'Delivery'
-                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200'
-                                                            : 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                                    }`}>
-                                                        {tx.type}
+                                                <td className="p-3.5 font-extrabold text-orange-600">
+                                                    ₱{Number(tx.total || 0).toLocaleString()}
+                                                </td>
+                                                <td className="p-3.5 text-center">
+                                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-600 border border-emerald-200">
+                                                        ● {tx.status || 'Completed'}
                                                     </span>
                                                 </td>
                                             </tr>

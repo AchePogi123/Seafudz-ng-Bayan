@@ -297,6 +297,7 @@ export const SalesReportCashier: React.FC = () => {
                   <th className="px-6 py-4">Ordered Dishes</th>
                   <th className="px-6 py-4">Date & Time</th>
                   <th className="px-6 py-4">Channel</th>
+                  <th className="px-6 py-4">Payment Method</th>
                   <th className="px-6 py-4 text-right">Amount</th>
                   <th className="px-6 py-4 text-center">Status</th>
                 </tr>
@@ -304,7 +305,7 @@ export const SalesReportCashier: React.FC = () => {
               <tbody className="divide-y divide-neutral-100">
                 {filteredTransactions.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-16 text-center text-neutral-400">
+                    <td colSpan={8} className="px-6 py-16 text-center text-neutral-400">
                       <div className="text-3xl mb-2">📊</div>
                       <div className="font-bold text-neutral-600">No transactions recorded for this period.</div>
                       <div className="text-xs mt-1">Orders placed in POS or by Online Customers will appear here automatically.</div>
@@ -332,6 +333,21 @@ export const SalesReportCashier: React.FC = () => {
                           }`}
                         >
                           {tx.type}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                            (tx.paymentMethod || '').toLowerCase().includes('hybrid')
+                              ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                              : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : 'bg-neutral-100 text-neutral-700 border border-neutral-200'
+                          }`}
+                        >
+                          {tx.paymentMethod || 'Cash'}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-right font-extrabold text-[#ff7b00]">

@@ -18,6 +18,8 @@ interface OnlineOrderState {
     phone: string
     address: string
     paymentMethod: string
+    paymentReference?: string
+    paymentReceipt?: string // Base64 or image data URL
     notes?: string
     items: CartItem[]
     subtotal: number
@@ -63,7 +65,8 @@ export const OnlineCustomer: React.FC = () => {
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
-    const [paymentMethod, setPaymentMethod] = useState('GCash')
+    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'Maya'>('GCash')
+    const [paymentReceipt, setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
 
     // Submitted Order tracking state initialized from localStorage
@@ -252,6 +255,7 @@ export const OnlineCustomer: React.FC = () => {
             phone,
             deliveryAddress: address,
             paymentMethod,
+            paymentReceipt: paymentReceipt || undefined,
             notes: orderNotes,
             subtotal,
             vat,
@@ -284,6 +288,7 @@ export const OnlineCustomer: React.FC = () => {
                 phone,
                 address,
                 paymentMethod,
+                paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
                 items: [...cartItems],
                 subtotal,
@@ -320,6 +325,7 @@ export const OnlineCustomer: React.FC = () => {
                     notes: orderNotes,
                     total,
                     paymentMethod,
+                    paymentReceipt: paymentReceipt || undefined,
                     cartItems: [...cartItems],
                 }
                 localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
@@ -337,6 +343,7 @@ export const OnlineCustomer: React.FC = () => {
                 phone,
                 address,
                 paymentMethod,
+                paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
                 items: [...cartItems],
                 subtotal,
@@ -373,12 +380,13 @@ export const OnlineCustomer: React.FC = () => {
                     notes: orderNotes,
                     total,
                     paymentMethod,
+                    paymentReceipt: paymentReceipt || undefined,
                     cartItems: [...cartItems],
                 }
                 localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
                 window.dispatchEvent(new Event('seafudz_order_created'))
             } catch (storageErr) {
-                console.warn('Could not sync to local order history:', storageErr)
+                console.warn('Could not sync to fallback local storage:', storageErr)
             }
         }
     }
@@ -734,54 +742,104 @@ export const OnlineCustomer: React.FC = () => {
                             {/* Payment Type Selection */}
                             <div className="flex flex-col gap-3">
                                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                    Payment Method
+                                    Payment Method (Online Digital Transfer)
                                 </label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    <label
-                                        className={`flex items-center justify-between border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${paymentMethod === 'GCash'
-                                            ? 'border-orange-500 bg-orange-50/50'
-                                            : 'border-neutral-200 hover:border-neutral-300'
-                                            }`}
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMethod('GCash')}
+                                        className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left ${
+                                            paymentMethod === 'GCash'
+                                                ? 'border-blue-500 bg-blue-50/50 shadow-xs'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                        }`}
                                     >
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-xl">📱</span>
-                                            <div>
-                                                <p className="font-bold text-neutral-800 text-sm">Digital GCash</p>
-                                                <p className="text-xs text-neutral-400">GCash / Maya mobile transfer</p>
-                                            </div>
+                                        <span className="text-2xl">💙</span>
+                                        <div>
+                                            <p className="font-black text-neutral-800 text-sm">GCash</p>
+                                            <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
                                         </div>
-                                        <input
-                                            type="radio"
-                                            name="paymentType"
-                                            value="GCash"
-                                            checked={paymentMethod === 'GCash'}
-                                            onChange={() => setPaymentMethod('GCash')}
-                                            className="text-orange-500 focus:ring-orange-500"
-                                        />
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMethod('Maya')}
+                                        className={`flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all text-left ${
+                                            paymentMethod === 'Maya'
+                                                ? 'border-emerald-500 bg-emerald-50/50 shadow-xs'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                        }`}
+                                    >
+                                        <span className="text-2xl">💚</span>
+                                        <div>
+                                            <p className="font-black text-neutral-800 text-sm">Maya</p>
+                                            <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
+                                        </div>
+                                    </button>
+                                </div>
+
+                                {/* Payment Transfer Instructions */}
+                                <div className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-3.5 text-xs text-neutral-600 space-y-1">
+                                    <div className="flex justify-between items-center font-bold text-neutral-800">
+                                        <span>Send exact amount:</span>
+                                        <span className="text-orange-600 text-sm font-black">₱{total.toLocaleString()}</span>
+                                    </div>
+                                    <p className="text-[11px] text-neutral-500">
+                                        Account Name: <strong className="text-neutral-800">SEAFUDZ RESTAURANT PH</strong> •{' '}
+                                        {paymentMethod === 'GCash' ? 'GCash' : 'Maya'}: <strong className="text-neutral-800">0917-888-7323</strong>
+                                    </p>
+                                </div>
+
+                                {/* Upload Receipt / Payment Screenshot */}
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-neutral-600 flex items-center justify-between">
+                                        <span>Upload Payment Receipt / Screenshot</span>
+                                        <span className="text-[11px] font-normal text-neutral-400">(Photo for Assistant verification)</span>
                                     </label>
 
-                                    <label
-                                        className={`flex items-center justify-between border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${paymentMethod === 'COD'
-                                            ? 'border-orange-500 bg-orange-50/50'
-                                            : 'border-neutral-200 hover:border-neutral-300'
-                                            }`}
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-xl">💵</span>
-                                            <div>
-                                                <p className="font-bold text-neutral-800 text-sm">Cash on Delivery</p>
-                                                <p className="text-xs text-neutral-400">Pay cash upon rider arrival</p>
+                                    {!paymentReceipt ? (
+                                        <label className="border-2 border-dashed border-neutral-200 hover:border-orange-400 bg-neutral-50/50 hover:bg-orange-50/30 rounded-xl p-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-all">
+                                            <span className="text-2xl">📸</span>
+                                            <span className="text-xs font-bold text-neutral-700">Click to upload payment screenshot</span>
+                                            <span className="text-[10px] text-neutral-400">PNG, JPG, JPEG accepted</span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0]
+                                                    if (file) {
+                                                        const reader = new FileReader()
+                                                        reader.onloadend = () => {
+                                                            setPaymentReceipt(reader.result as string)
+                                                        }
+                                                        reader.readAsDataURL(file)
+                                                    }
+                                                }}
+                                            />
+                                        </label>
+                                    ) : (
+                                        <div className="relative rounded-xl border border-neutral-200 overflow-hidden bg-neutral-900/5 p-2 flex items-center gap-3">
+                                            <img
+                                                src={paymentReceipt}
+                                                alt="Payment Receipt"
+                                                className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-bold text-emerald-700 flex items-center gap-1">
+                                                    <span>✅</span> Receipt Attached
+                                                </p>
+                                                <p className="text-[10px] text-neutral-500 truncate">Ready for Assistant review</p>
                                             </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setPaymentReceipt(null)}
+                                                className="px-2.5 py-1 text-xs font-bold bg-neutral-200 hover:bg-rose-100 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                                            >
+                                                Change
+                                            </button>
                                         </div>
-                                        <input
-                                            type="radio"
-                                            name="paymentType"
-                                            value="COD"
-                                            checked={paymentMethod === 'COD'}
-                                            onChange={() => setPaymentMethod('COD')}
-                                            className="text-orange-500 focus:ring-orange-500"
-                                        />
-                                    </label>
+                                    )}
                                 </div>
                             </div>
 
@@ -970,16 +1028,53 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">💳 Billing Summary</h4>
+                                <h4 className="font-bold text-neutral-800 text-sm">💳 Billing & Payment Details</h4>
                                 <div className="text-xs space-y-1.5 text-neutral-600">
                                     <p>
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Payment Type:</span>{' '}
-                                        {activeOrder.paymentMethod === 'GCash' ? 'Digital GCash' : 'Cash on Delivery'}
+                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Payment Mode:</span>{' '}
+                                        <span className="font-bold text-neutral-800">{activeOrder.paymentMethod} Transfer</span>
                                     </p>
-                                    <p>
+                                    {activeOrder.paymentReference && (
+                                        <p>
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Reference No:</span>{' '}
+                                            <span className="font-mono font-bold text-neutral-800 bg-neutral-200/70 px-1.5 py-0.5 rounded text-[11px]">{activeOrder.paymentReference}</span>
+                                        </p>
+                                    )}
+                                    {activeOrder.paymentReceipt && (
+                                        <div className="pt-1">
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px] block mb-1">Receipt Uploaded:</span>
+                                            <img
+                                                src={activeOrder.paymentReceipt}
+                                                alt="Receipt"
+                                                className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
+                                            />
+                                        </div>
+                                    )}
+                                    <p className="pt-1">
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Items ordered:</span>{' '}
                                         {activeOrder.items.reduce((acc, ci) => acc + ci.quantity, 0)} items
                                     </p>
+                                    
+                                    {/* Itemized Price & VAT Breakdown */}
+                                    <div className="pt-2 border-t border-neutral-200/70 space-y-1 text-[11px] text-neutral-500">
+                                        <div className="flex justify-between">
+                                            <span>Subtotal:</span>
+                                            <span className="font-semibold text-neutral-700">
+                                                ₱{(activeOrder.subtotal || Math.round(activeOrder.total / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between text-orange-600 font-medium">
+                                            <span>VAT (12%):</span>
+                                            <span className="font-bold">
+                                                ₱{(activeOrder.vat || Math.round((activeOrder.subtotal || (activeOrder.total - (activeOrder.deliveryFee || 50)) / 1.12) * 0.12)).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>Delivery Fee:</span>
+                                            <span className="font-semibold text-neutral-700">₱{(activeOrder.deliveryFee ?? 50).toLocaleString()}</span>
+                                        </div>
+                                    </div>
+
                                     <p className="font-bold text-neutral-800 border-t border-dashed border-neutral-200 pt-1.5 flex justify-between">
                                         <span>Paid Total:</span>
                                         <span className="text-orange-600">₱{activeOrder.total.toLocaleString()}</span>

@@ -24,6 +24,7 @@ const SalesReportAdmin: React.FC = () => {
     const [activeTab, setActiveTab] = useState<TabType>(navState?.tab || 'Today')
     const [transactions, setTransactions] = useState<LiveTransaction[]>([])
     const [searchQuery, setSearchQuery] = useState('')
+    const [selectedTransaction, setSelectedTransaction] = useState<LiveTransaction | null>(null)
 
     // Real Live Orders fetching
     const loadOrders = useCallback(async () => {
@@ -214,6 +215,15 @@ const SalesReportAdmin: React.FC = () => {
         window.print()
     }
 
+    const getOrderedItems = (items: string) => {
+        if (!items) return []
+
+        return items
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+    }
+
     return (
         <div className="min-h-screen bg-[#f0ece8] text-[#2c1810] font-sans pb-12 transition-all">
             {/* Navbar - Hidden on Print */}
@@ -226,7 +236,7 @@ const SalesReportAdmin: React.FC = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-6 rounded-3xl border border-[#e0d6cf] shadow-xs print:hidden">
                     <div>
                         <h1 className="text-2xl sm:text-3xl font-black text-[#2c1810] tracking-tight flex items-center gap-2">
-                            <span>💰</span> Admin Sales Management
+                            Admin Sales Management
                         </h1>
                         <p className="text-xs sm:text-sm text-neutral-500 font-medium mt-0.5">
                             Accurate audit across all store POS and Online Customer channels
@@ -238,13 +248,13 @@ const SalesReportAdmin: React.FC = () => {
                             onClick={loadOrders}
                             className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                         >
-                            <span>🔄</span> Sync
+                            Sync
                         </button>
                         <button
                             onClick={handlePrintAll}
                             className="bg-[#ff7b00] hover:bg-[#e66f00] text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-md shadow-orange-500/25 transition-all cursor-pointer hover:scale-102"
                         >
-                            🖨️ Print All Invoices
+                            Print All Invoices
                         </button>
                     </div>
                 </div>
@@ -272,9 +282,8 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Total Revenue - Clickable to reset to All */}
                     <div
                         onClick={() => setPaymentFilter('All')}
-                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
-                            paymentFilter === 'All' ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200/80 hover:border-orange-300'
-                        }`}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center cursor-pointer transition-all hover:shadow-md ${paymentFilter === 'All' ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200/80 hover:border-orange-300'
+                            }`}
                         title="Click to view All payments"
                     >
                         <div>
@@ -282,17 +291,13 @@ const SalesReportAdmin: React.FC = () => {
                             <h3 className="text-xl sm:text-2xl font-black text-orange-600 mt-1">₱{totalSales.toLocaleString()}</h3>
                             <p className="text-[11px] text-slate-500 mt-1 font-semibold">{currentTabTransactions.length} Total orders</p>
                         </div>
-                        <div className="w-11 h-11 rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center text-xl shadow-inner">
-                            💰
-                        </div>
                     </div>
 
                     {/* Cash Breakdown - Clickable */}
                     <div
                         onClick={() => setPaymentFilter('Cash')}
-                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
-                            paymentFilter === 'Cash' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-200/80 hover:border-amber-300'
-                        }`}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center cursor-pointer transition-all hover:shadow-md ${paymentFilter === 'Cash' ? 'border-amber-500 ring-2 ring-amber-500/20' : 'border-slate-200/80 hover:border-amber-300'
+                            }`}
                         title="Click to filter Cash transactions"
                     >
                         <div>
@@ -309,17 +314,13 @@ const SalesReportAdmin: React.FC = () => {
                                 Physical cash
                             </p>
                         </div>
-                        <div className="w-11 h-11 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center text-xl shadow-inner">
-                            💵
-                        </div>
                     </div>
 
                     {/* GCash Breakdown - Clickable */}
                     <div
                         onClick={() => setPaymentFilter('GCash')}
-                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
-                            paymentFilter === 'GCash' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200/80 hover:border-blue-300'
-                        }`}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center cursor-pointer transition-all hover:shadow-md ${paymentFilter === 'GCash' ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200/80 hover:border-blue-300'
+                            }`}
                         title="Click to filter GCash transactions"
                     >
                         <div>
@@ -336,17 +337,13 @@ const SalesReportAdmin: React.FC = () => {
                                 Digital e-wallet
                             </p>
                         </div>
-                        <div className="w-11 h-11 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl shadow-inner">
-                            📱
-                        </div>
                     </div>
 
                     {/* Hybrid Breakdown - Clickable */}
                     <div
                         onClick={() => setPaymentFilter('Hybrid')}
-                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center justify-between cursor-pointer transition-all hover:shadow-md ${
-                            paymentFilter === 'Hybrid' ? 'border-purple-500 ring-2 ring-purple-500/20' : 'border-slate-200/80 hover:border-purple-300'
-                        }`}
+                        className={`bg-white p-4.5 rounded-3xl border shadow-xs flex items-center cursor-pointer transition-all hover:shadow-md ${paymentFilter === 'Hybrid' ? 'border-purple-500 ring-2 ring-purple-500/20' : 'border-slate-200/80 hover:border-purple-300'
+                            }`}
                         title="Click to filter Hybrid / Split transactions"
                     >
                         <div>
@@ -362,9 +359,6 @@ const SalesReportAdmin: React.FC = () => {
                             <p className="text-[11px] text-slate-400 mt-1 font-medium">
                                 Split (Cash + GCash)
                             </p>
-                        </div>
-                        <div className="w-11 h-11 rounded-2xl bg-purple-50 text-purple-600 flex items-center justify-center text-xl shadow-inner">
-                            🔄
                         </div>
                     </div>
                 </div>
@@ -386,7 +380,7 @@ const SalesReportAdmin: React.FC = () => {
                         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 pb-2 border-b border-slate-100 print:hidden">
                             <div>
                                 <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                                    <span>💰</span> Sales Register & Orders
+                                    Sales Register & Orders
                                 </h2>
                                 <p className="text-xs text-slate-400 mt-0.5">Filter by payment method or search by reference item</p>
                             </div>
@@ -402,11 +396,10 @@ const SalesReportAdmin: React.FC = () => {
                                         <button
                                             key={item.val}
                                             onClick={() => setChannelFilter(item.val)}
-                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                                                channelFilter === item.val
-                                                    ? 'bg-slate-900 text-white shadow-2xs'
-                                                    : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${channelFilter === item.val
+                                                ? 'bg-slate-900 text-white shadow-2xs'
+                                                : 'text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {item.label}
                                         </button>
@@ -419,11 +412,10 @@ const SalesReportAdmin: React.FC = () => {
                                         <button
                                             key={pm}
                                             onClick={() => setPaymentFilter(pm)}
-                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
-                                                paymentFilter === pm
-                                                    ? 'bg-orange-500 text-white shadow-2xs'
-                                                    : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${paymentFilter === pm
+                                                ? 'bg-orange-500 text-white shadow-2xs'
+                                                : 'text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {pm}
                                         </button>
@@ -464,7 +456,6 @@ const SalesReportAdmin: React.FC = () => {
                                     {filteredTransactions.length === 0 ? (
                                         <tr>
                                             <td colSpan={7} className="text-center py-12 text-slate-400">
-                                                <p className="text-2xl mb-1">🧾</p>
                                                 <p className="font-bold text-slate-600">No transactions recorded for this period.</p>
                                                 <p className="text-xs mt-0.5">Orders placed via POS or Online Customers will appear here automatically.</p>
                                             </td>
@@ -477,18 +468,25 @@ const SalesReportAdmin: React.FC = () => {
                                                     <span className="font-bold text-slate-800 block">{tx.customer || 'Walk-In'}</span>
                                                     <span className="text-[10px] text-slate-400">{tx.type}</span>
                                                 </td>
-                                                <td className="p-3.5 text-slate-700 max-w-xs truncate" title={tx.items}>
-                                                    {tx.items}
+                                                <td className="p-3.5 max-w-xs">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedTransaction(tx)}
+                                                        className="text-left text-orange-600 font-bold hover:underline cursor-pointer truncate block max-w-xs"
+                                                        title="Click to view all ordered items"
+                                                    >
+                                                        {tx.items}
+                                                    </button>
                                                 </td>
                                                 <td className="p-3.5 text-slate-500 text-[11px]">{tx.dateTime}</td>
                                                 <td className="p-3.5 font-bold">
                                                     <span className={`px-2.5 py-1 rounded-full text-[10px] ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') || (tx.paymentMethod || '').toLowerCase().includes('split')
-                                                            ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                                                            : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                ? 'bg-blue-50 text-blue-600 border border-blue-200'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                                                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                        ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                                        : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                                                            : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                                                : 'bg-amber-50 text-amber-700 border border-amber-200'
                                                         }`}>
                                                         {tx.paymentMethod || 'Cash'}
                                                     </span>
@@ -498,7 +496,7 @@ const SalesReportAdmin: React.FC = () => {
                                                 </td>
                                                 <td className="p-3.5 text-center">
                                                     <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-600 border border-emerald-200">
-                                                        ● {tx.status || 'Completed'}
+                                                        {tx.status || 'Completed'}
                                                     </span>
                                                 </td>
                                             </tr>
@@ -517,6 +515,111 @@ const SalesReportAdmin: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Ordered Items Modal */}
+            {selectedTransaction && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+                    onClick={() => setSelectedTransaction(null)}
+                >
+                    <div
+                        className="w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-6 py-5 border-b border-slate-200">
+                            <div>
+                                <h2 className="text-xl font-black text-slate-900">
+                                    Ordered Items
+                                </h2>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Reference: {selectedTransaction.ref || selectedTransaction.id}
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => setSelectedTransaction(null)}
+                                className="text-slate-400 hover:text-slate-700 text-xl font-bold p-1 cursor-pointer"
+                                aria-label="Close"
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-[10px] uppercase font-extrabold text-slate-400">
+                                        Customer
+                                    </p>
+                                    <p className="text-sm font-bold text-slate-800 mt-1">
+                                        {selectedTransaction.customer || 'Walk-In Customer'}
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <p className="text-[10px] uppercase font-extrabold text-slate-400">
+                                        Order Type
+                                    </p>
+                                    <p className="text-sm font-bold text-slate-800 mt-1">
+                                        {selectedTransaction.type}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-5 max-h-80 overflow-y-auto">
+                            <p className="text-xs uppercase font-extrabold tracking-wider text-slate-400 mb-3">
+                                Items in this order
+                            </p>
+
+                            <div className="space-y-2">
+                                {getOrderedItems(selectedTransaction.items).map((item, index) => {
+                                    const match = item.match(/^(.*?)\s*x(\d+)$/i)
+                                    const itemName = match ? match[1].trim() : item
+                                    const quantity = match ? match[2] : null
+
+                                    return (
+                                        <div
+                                            key={`${selectedTransaction.id}-item-${index}`}
+                                            className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3"
+                                        >
+                                            <span className="font-bold text-sm text-slate-800">
+                                                {itemName}
+                                            </span>
+
+                                            {quantity && (
+                                                <span className="text-xs font-extrabold text-orange-600 whitespace-nowrap">
+                                                    Qty: {quantity}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between">
+                            <span className="text-sm font-bold text-slate-500">
+                                Order Total
+                            </span>
+                            <span className="text-xl font-black text-orange-600">
+                                ₱{Number(selectedTransaction.total || 0).toLocaleString()}
+                            </span>
+                        </div>
+
+                        <div className="px-6 pb-6">
+                            <button
+                                type="button"
+                                onClick={() => setSelectedTransaction(null)}
+                                className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl transition-all cursor-pointer"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Print Specific CSS Overrides */}
             <style>{`

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { handleAssistantStatusUpdate } from './assistantRoutes.js';
 import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
@@ -9,7 +10,7 @@ import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './ord
 const router = Router();
 
 // Online customer endpoints
-router.post('/user-flow/orders', handleCreateCustomerFlowOrder);
+router.post('/user-flow/orders', optionalAuth, handleCreateCustomerFlowOrder);
 router.get('/user-flow/orders/:id', handleGetCustomerFlowOrder);
 
 /**

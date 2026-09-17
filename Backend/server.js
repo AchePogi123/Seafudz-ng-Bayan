@@ -10,6 +10,7 @@ import assistantRoutes from './src/routes/assistantRoutes.js';
 import salesRoutes from './src/routes/salesRoutes.js';
 import authRoutes from './src/routes/authRoutes.js';
 import userFlowRoutes from './src/routes/userFlowRoutes.js';
+import tableRoutes from './src/routes/tableRoutes.js';
 import { runMigrations } from './src/migrations/migrate.js';
 
 dotenv.config();

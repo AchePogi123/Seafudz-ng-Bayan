@@ -333,10 +333,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       notes,
       items,
       cartItems,
-      subtotal,
-      vat,
-      deliveryFee,
-      total,
     } = req.body;
 
     const rawItems = items || cartItems || [];
@@ -347,17 +343,22 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
-    const orderId = `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
-    const calcSubtotal = subtotal || rawItems.reduce((acc, i) => acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0);
-    const calcVat = vat || Math.round(calcSubtotal * 0.12 * 100) / 100;
-    const calcFee = deliveryFee || 50;
-    const calcTotal = total || (calcSubtotal + calcVat + calcFee);
-    const cleanAddress = deliveryAddress || address || 'Metro Manila Address';
-    const cleanPhone = phone || '0917-000-0000';
-    const cleanCustomer = customerName || 'Online Customer';
+    // Authoritative Server-side Calculations
+    const calcSubtotal = rawItems.reduce((acc, i) => acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0);
+    const calcVat = Math.round(calcSubtotal * 0.12 * 100) / 100;
+    const calcFee = (req.body.orderType === 'ONLINE' || req.body.type === 'Delivery' || deliveryAddress || address) ? 50 : 0;
+    const calcTotal = Math.round((calcSubtotal + calcVat + calcFee) * 100) / 100;
+
+    const cleanCustomer = (req.user && req.user.fullname) ? req.user.fullname : (customerName || 'Online Customer');
+    const cleanPhone = (req.user && req.user.phone) ? req.user.phone : (phone || '0917-000-0000');
+    const cleanAddress = (req.user && req.user.delivery_address) ? req.user.delivery_address : (deliveryAddress || address || 'Metro Manila Address');
+    const customerId = (req.user && req.user.id) ? req.user.id : null;
+
+    const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const orderRecord = {
       id: orderId,
+      customer_id: customerId,
       customer_name: cleanCustomer,
       customerName: cleanCustomer,
       customer_phone: cleanPhone,
@@ -383,27 +384,27 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       })),
     };
 
-    // Store in Backend Memory
+    // Store in Central Backend Memory
     inMemoryOrders.set(orderId, orderRecord);
 
-    // Try saving to PostgreSQL DB if DB is active
+    // Persist in PostgreSQL DB
     try {
       await query(
-        `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
-         VALUES ($1, 'ONLINE', 'PENDING', $2, $3, $4, $5, $6, NOW())
+        `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
+         VALUES ($1, $2, 'ONLINE', 'PENDING', $3, $4, $5, $6, $7, NOW())
          ON CONFLICT (id) DO UPDATE SET status = 'PENDING'`,
-        [orderId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null]
+        [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null]
       );
     } catch (dbErr) {
-      console.warn('DB query note (using central memory fallback):', dbErr.message);
+      console.warn('DB query note (using central memory store):', dbErr.message);
     }
 
     const formatted = formatOrderResponse(orderRecord);
-    console.log(`🛒 [Order Flow] Customer placed order ${orderId} -> Status: PENDING`);
+    console.log(`🛒 [Order Flow] Customer order created ${orderId} -> Status: PENDING | Total: ₱${calcTotal}`);
 
     return res.status(201).json({
       success: true,
-      message: `Order ${orderId} created successfully with status PENDING`,
+      message: `Order ${orderId} created successfully`,
       data: formatted,
     });
   } catch (error) {

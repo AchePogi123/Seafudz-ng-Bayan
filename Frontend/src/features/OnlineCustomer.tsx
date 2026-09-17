@@ -271,31 +271,33 @@ export const OnlineCustomer: React.FC = () => {
         }
 
         try {
+            const token = localStorage.getItem('seafudz_token')
             const res = await fetch(`${API_BASE_URL}/user-flow/orders`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
                 body: JSON.stringify(orderPayload),
             })
 
             const responseData = await res.json().catch(() => ({}))
-            const orderId = responseData?.data?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`
+            const serverOrder = responseData?.data || responseData
 
             const newOrder: OnlineOrderState = {
-                id: orderId,
-                customerName,
-                phone,
-                address,
-                paymentMethod,
+                id: serverOrder?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`,
+                customerName: serverOrder?.customerName || serverOrder?.customer_name || customerName,
+                phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
+                address: serverOrder?.address || serverOrder?.delivery_address || address,
+                paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
                 items: [...cartItems],
-                subtotal,
-                vat,
-                deliveryFee,
-                total,
-                status: 'PENDING',
+                subtotal: serverOrder?.subtotal ?? subtotal,
+                vat: serverOrder?.vat ?? vat,
+                deliveryFee: serverOrder?.deliveryFee ?? deliveryFee,
+                total: serverOrder?.total ?? total,
+                status: (serverOrder?.status || 'PENDING').toUpperCase(),
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }
 
@@ -303,91 +305,14 @@ export const OnlineCustomer: React.FC = () => {
             try {
                 localStorage.setItem('seafudz_active_online_order', JSON.stringify(newOrder))
             } catch { }
+
             setCartItems([])
             setOrderNotes('')
             setActiveTab('tracking')
             setIsMobileCartOpen(false)
-
-            // Save to shared store order history
-            try {
-                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-                const syncRecord = {
-                    id: orderId,
-                    ref: orderId,
-                    dateTime: new Date().toLocaleString(),
-                    type: 'Delivery',
-                    status: 'Pending',
-                    paymentStatus: 'Paid',
-                    customer: customerName,
-                    phone,
-                    address,
-                    items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
-                    notes: orderNotes,
-                    total,
-                    paymentMethod,
-                    paymentReceipt: paymentReceipt || undefined,
-                    cartItems: [...cartItems],
-                }
-                localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
-                window.dispatchEvent(new Event('seafudz_order_created'))
-            } catch (storageErr) {
-                console.warn('Could not sync to local order history:', storageErr)
-            }
+            window.dispatchEvent(new Event('seafudz_order_created'))
         } catch (err) {
             console.error('Error sending order to backend API:', err)
-
-            const fallbackId = `SFB-${Math.floor(1000 + Math.random() * 9000)}`
-            const newOrder: OnlineOrderState = {
-                id: fallbackId,
-                customerName,
-                phone,
-                address,
-                paymentMethod,
-                paymentReceipt: paymentReceipt || undefined,
-                notes: orderNotes,
-                items: [...cartItems],
-                subtotal,
-                vat,
-                deliveryFee,
-                total,
-                status: 'PENDING',
-                createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            }
-
-            setActiveOrder(newOrder)
-            try {
-                localStorage.setItem('seafudz_active_online_order', JSON.stringify(newOrder))
-            } catch { }
-            setCartItems([])
-            setOrderNotes('')
-            setActiveTab('tracking')
-            setIsMobileCartOpen(false)
-
-            // Save to shared store order history
-            try {
-                const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-                const syncRecord = {
-                    id: fallbackId,
-                    ref: fallbackId,
-                    dateTime: new Date().toLocaleString(),
-                    type: 'Delivery',
-                    status: 'Pending',
-                    paymentStatus: 'Paid',
-                    customer: customerName,
-                    phone,
-                    address,
-                    items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
-                    notes: orderNotes,
-                    total,
-                    paymentMethod,
-                    paymentReceipt: paymentReceipt || undefined,
-                    cartItems: [...cartItems],
-                }
-                localStorage.setItem('seafudz_orders', JSON.stringify([syncRecord, ...existing]))
-                window.dispatchEvent(new Event('seafudz_order_created'))
-            } catch (storageErr) {
-                console.warn('Could not sync to fallback local storage:', storageErr)
-            }
         }
     }
 

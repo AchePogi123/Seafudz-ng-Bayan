@@ -9,7 +9,7 @@ import riderRoutes from './src/routes/riderRoutes.js';
 import assistantRoutes from './src/routes/assistantRoutes.js';
 import salesRoutes from './src/routes/salesRoutes.js';
 import authRoutes from './src/routes/authRoutes.js';
-import tableRoutes from './src/routes/tableRoutes.js';
+import userFlowRoutes from './src/routes/userFlowRoutes.js';
 import { runMigrations } from './src/migrations/migrate.js';
 
 dotenv.config();
@@ -62,6 +62,7 @@ app.use('/api', assistantRoutes);
 app.use('/api', salesRoutes);
 app.use('/api', authRoutes);
 app.use('/api', tableRoutes);
+app.use('/api', userFlowRoutes);
 
 // Fallback route for unknown requests
 app.use((req, res) => {

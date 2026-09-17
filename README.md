@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🦞 Seafudz ng Bayan
 
 **Seafudz ng Bayan** is a modern Point-of-Sale (POS), Kitchen Display System, Order Management, and Delivery tracking platform for seafood restaurants.
@@ -105,6 +104,4 @@ Seafudz-ng-Bayan/
 | **Backend** | `cd Backend && node server.js` | Start local Express API server |
 | **Frontend** | `cd Frontend && npm run dev` | Start local React dev server |
 | **Deploy FE** | `firebase deploy` | Deploy frontend to Firebase Hosting |
-=======
-# BUPS
->>>>>>> 4e9b85313aad6d1f333f49e4e0cdb326cb09d3d3
+

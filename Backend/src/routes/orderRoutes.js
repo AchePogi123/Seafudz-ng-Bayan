@@ -356,6 +356,10 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    const isBulk = calcTotal > 10000;
+    const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
+    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';
+
     const orderRecord = {
       id: orderId,
       customer_id: customerId,
@@ -365,14 +369,22 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       phone: cleanPhone,
       delivery_address: cleanAddress,
       address: cleanAddress,
-      payment_method: paymentMethod || 'GCash',
-      paymentMethod: paymentMethod || 'GCash',
+      payment_method: initialPaymentMethod,
+      paymentMethod: initialPaymentMethod,
+      payment_receipt: req.body.paymentReceipt || undefined,
+      paymentReceipt: req.body.paymentReceipt || undefined,
+      gcash_authorized: false,
+      gcashAuthorized: false,
+      receipt_status: 'NONE',
+      receiptStatus: 'NONE',
+      is_bulk: isBulk,
+      isBulk: isBulk,
       notes: notes || '',
       subtotal: calcSubtotal,
       vat: calcVat,
       delivery_fee: calcFee,
       total: calcTotal,
-      status: 'PENDING',
+      status: initialStatus,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       items: rawItems.map(i => ({

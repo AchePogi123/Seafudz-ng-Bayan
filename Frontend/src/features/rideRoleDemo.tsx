@@ -57,6 +57,13 @@ export const RideRoleDemo: React.FC = () => {
               if (!isDelivery) return
 
               const rawStatus = (o.status || '').toUpperCase()
+              const unconfirmedStatuses = [
+                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+              ]
+              if (unconfirmedStatuses.includes(rawStatus)) return
+
               const id = o.id || o.ref
 
               let displayStatus = 'Ready'
@@ -111,6 +118,12 @@ export const RideRoleDemo: React.FC = () => {
 
               const id = o.id
               const rawStatus = (o.status || '').toUpperCase()
+              const unconfirmedStatuses = [
+                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+              ]
+              if (unconfirmedStatuses.includes(rawStatus)) return
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'

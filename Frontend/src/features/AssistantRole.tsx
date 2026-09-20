@@ -240,15 +240,124 @@ export const AssistantRole: React.FC = () => {
     setOrders((prev) =>
       prev.map((o) => (o.id === selectedOrderId ? { ...o, status: 'confirmed' } : o))
     )
+    setSelectedOrderId(null)
     setNotification(`Order ${selectedOrder.ref} approved! Sent to Cashier & Kitchen!`)
+  }
+
+  const handleAuthorizeGCash = async (orderId: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/authorize-gcash`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    } catch {}
+    fetchAssistantOrders(true)
+    setNotification(`GCash payment authorized for order #${orderId}! Customer can now pay and upload receipt.`)
+  }
+
+  const handleVerifyReceipt = async (orderId: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/verify-receipt`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    } catch {}
+
+    try {
+      const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updatedGlobal = globalOrders.map((o: any) =>
+        o.id === orderId || o.ref === orderId ? { ...o, status: 'CONFIRMED', receiptStatus: 'APPROVED' } : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+
+      const activeOrderStr = localStorage.getItem('seafudz_active_online_order')
+      if (activeOrderStr) {
+        const activeObj = JSON.parse(activeOrderStr)
+        if (activeObj.id === orderId || activeObj.ref === orderId) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
+        }
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    fetchAssistantOrders(true)
+    setNotification(`Receipt verified & confirmed for order #${orderId}! Sent to Kitchen!`)
+  }
+
+  const handleRejectReceipt = async (orderId: string) => {
+    const reason = prompt('Please state reason for rejecting payment receipt screenshot:', 'Invalid payment reference screenshot. Please upload a clear official GCash confirmation.')
+    if (reason === null) return
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/reject-receipt`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      })
+    } catch {}
+
+    try {
+      const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updatedGlobal = globalOrders.map((o: any) =>
+        o.id === orderId || o.ref === orderId ? { ...o, status: 'RECEIPT_REJECTED', rejectionReason: reason } : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+
+      const activeOrderStr = localStorage.getItem('seafudz_active_online_order')
+      if (activeOrderStr) {
+        const activeObj = JSON.parse(activeOrderStr)
+        if (activeObj.id === orderId || activeObj.ref === orderId) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'RECEIPT_REJECTED', rejectionReason: reason }))
+        }
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    fetchAssistantOrders(true)
+    setNotification(`Receipt rejected for order #${orderId}. Customer notified to re-upload.`)
+  }
+
+  const handleConfirmCOD = async (orderId: string) => {
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/confirm-cod`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      })
+    } catch {}
+
+    try {
+      const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updatedGlobal = globalOrders.map((o: any) =>
+        o.id === orderId || o.ref === orderId ? { ...o, status: 'CONFIRMED' } : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+
+      const activeOrderStr = localStorage.getItem('seafudz_active_online_order')
+      if (activeOrderStr) {
+        const activeObj = JSON.parse(activeOrderStr)
+        if (activeObj.id === orderId || activeObj.ref === orderId) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
+        }
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    fetchAssistantOrders(true)
+    setNotification(`COD product availability confirmed for order #${orderId}! Sent to Kitchen!`)
   }
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
       const s = (order.status || '').toLowerCase()
+      const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled'].includes(s)
+      
+      // GCash orders MUST NOT appear in Assistant pending list until customer submits reference screenshot (status becomes RECEIPT_SUBMITTED or paymentReceipt is present)
+      const isAwaitingCustomerReceipt = (order.paymentMethod === 'GCash' || !order.paymentMethod?.includes('COD')) &&
+        !order.paymentReceipt &&
+        ['gcash_pending_approval', 'awaiting_receipt', 'pending', 'unconfirmed', 'order placed'].includes(s)
+
       const matchesTab =
         activeTab === 'pending'
-          ? s === 'pending' || s === 'flagged' || s === 'pending_verification' || s === 'unconfirmed'
+          ? (!isConfirmedOrLater && !isAwaitingCustomerReceipt)
           : activeTab === 'kitchen'
             ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
             : activeTab === 'dispatch'
@@ -268,6 +377,13 @@ export const AssistantRole: React.FC = () => {
       )
     })
   }, [orders, activeTab, searchQuery])
+
+  // Clear selected order if it's no longer present in filtered list
+  useEffect(() => {
+    if (selectedOrderId && !filteredOrders.some((o) => o.id === selectedOrderId)) {
+      setSelectedOrderId(null)
+    }
+  }, [filteredOrders, selectedOrderId])
 
   // Reset pagination when filter or search changes
   useEffect(() => {
@@ -390,16 +506,21 @@ export const AssistantRole: React.FC = () => {
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('maya')
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-blue-100 text-blue-800'
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('cod')
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-blue-100 text-blue-800 border border-blue-200'
                             }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
+                          {(ord.total > 10000 || (ord as any).isBulk) && (
+                            <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                              BULK ORDER
+                            </span>
+                          )}
                           {ord.paymentReceipt && (
-                            <span className="text-[10px]" title="Receipt photo attached">Receipt</span>
+                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200" title="Receipt photo attached">Receipt</span>
                           )}
                         </div>
                         <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
@@ -530,14 +651,86 @@ export const AssistantRole: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Pipeline Action Button */}
-                <div className="pt-2">
-                  <button
-                    onClick={handleApproveSendToKitchen}
-                    className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
-                  >
-                    Forward to Cashier & Kitchen
-                  </button>
+                {/* BULK ORDER NOTICE IN DETAIL PANEL */}
+                {(selectedOrder.total > 10000 || (selectedOrder as any).isBulk) && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-900 flex items-center justify-between">
+                    <div>
+                      <p className="font-extrabold text-xs uppercase">⚠️ Bulk Order (₱10k+)</p>
+                      <p className="text-[10px] text-amber-700">Requires staff verification</p>
+                    </div>
+                    <span className="bg-amber-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase">Bulk</span>
+                  </div>
+                )}
+
+                {/* Pipeline Action Controls */}
+                <div className="pt-2 space-y-3">
+                  {(() => {
+                    const st = (selectedOrder.status || '').toUpperCase()
+                    const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'ASSIGNED', 'COMPLETED'].includes(st)
+
+                    if (isConfirmedOrLater) {
+                      return (
+                        <div className="w-full bg-emerald-50 text-emerald-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-emerald-300 shadow-xs">
+                          ✓ Confirmed & Sent to Kitchen ({st})
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <>
+                        {/* GCash Authorization Button */}
+                        {(selectedOrder.paymentMethod === 'GCash' || !selectedOrder.paymentMethod?.includes('COD')) &&
+                          ['GCASH_PENDING_APPROVAL', 'PENDING', 'UNCONFIRMED', 'ORDER PLACED'].includes(st) && (
+                            <button
+                              onClick={() => handleAuthorizeGCash(selectedOrder.id)}
+                              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
+                            >
+                              Authorize GCash Payment (Allow Customer to Pay)
+                            </button>
+                          )}
+
+                        {/* GCash Receipt Review Buttons */}
+                        {selectedOrder.paymentReceipt && ['RECEIPT_SUBMITTED', 'GCASH_AUTHORIZED', 'PENDING', 'UNCONFIRMED'].includes(st) && (
+                          <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
+                            <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleVerifyReceipt(selectedOrder.id)}
+                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl text-xs cursor-pointer transition-all shadow-xs"
+                              >
+                                Approve Receipt
+                              </button>
+                              <button
+                                onClick={() => handleRejectReceipt(selectedOrder.id)}
+                                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-2.5 rounded-xl text-xs cursor-pointer transition-all shadow-xs"
+                              >
+                                Reject (Invalid Image)
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* COD Confirmation Button */}
+                        {(selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD') &&
+                          ['PENDING_COD', 'PENDING', 'UNCONFIRMED'].includes(st) && (
+                            <button
+                              onClick={() => handleConfirmCOD(selectedOrder.id)}
+                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
+                            >
+                              Confirm COD & Send to Kitchen
+                            </button>
+                          )}
+
+                        {/* EXPLICIT CONFIRM ORDER & SEND TO KITCHEN BUTTON FOR BULK & PENDING ORDERS */}
+                        <button
+                          onClick={() => handleApproveSendToKitchen()}
+                          className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-black py-4 rounded-2xl text-sm flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-orange-500/30 active:scale-98"
+                        >
+                          <span>✅ Confirm Order & Send to Kitchen</span>
+                        </button>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             )}

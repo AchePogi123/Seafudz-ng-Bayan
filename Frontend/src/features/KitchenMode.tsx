@@ -17,6 +17,7 @@ export interface KitchenOrder {
   customer?: string
   notes?: string
   total?: number
+  isBulk?: boolean
   createdAt?: string
   paymentMethod?: string
   startTime?: number | null
@@ -41,8 +42,13 @@ export const KitchenMode: React.FC = () => {
           const orderType = (o.type || o.order_type || '').toLowerCase()
           const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
 
-          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant
-          if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(rawStatus)) {
+          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant (status becomes CONFIRMED)
+          const unconfirmedStatuses = [
+            'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+            'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+          ]
+          if (isDelivery && unconfirmedStatuses.includes(rawStatus)) {
             return false
           }
 
@@ -65,6 +71,9 @@ export const KitchenMode: React.FC = () => {
           const rawType = (o.type || o.order_type || 'Take Out').trim()
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
+          const calcTotal = parseFloat(o.total || 0)
+          const isBulkOrder = Boolean(o.is_bulk || o.isBulk || calcTotal > 10000)
+
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
             queue: o.id || o.ref || 'POS',
@@ -72,6 +81,8 @@ export const KitchenMode: React.FC = () => {
             category: formatCategory,
             status: mappedStatus,
             customer: customerName,
+            total: calcTotal,
+            isBulk: isBulkOrder,
             items: (o.cartItems || o.items || []).map((ci: any) => ({
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
@@ -137,6 +148,9 @@ export const KitchenMode: React.FC = () => {
                 const rawType = (o.order_type || o.type || 'Take Out').trim()
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
+                const calcTotal = parseFloat(o.total || 0)
+                const isBulkOrder = Boolean(o.is_bulk || o.isBulk || calcTotal > 10000)
+
                 return {
                   id: o.id,
                   queue: o.id,
@@ -144,6 +158,8 @@ export const KitchenMode: React.FC = () => {
                   category: formatCategory,
                   status: norm,
                   customer: customerName,
+                  total: calcTotal,
+                  isBulk: isBulkOrder,
                   items: (o.items || []).map((item: any) => ({
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
@@ -405,7 +421,14 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {(order.isBulk || (order.total && order.total > 10000)) && (
+                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                                BULK ORDER
+                              </span>
+                            )}
+                          </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
                           )}
@@ -478,7 +501,14 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {(order.isBulk || (order.total && order.total > 10000)) && (
+                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                                BULK ORDER
+                              </span>
+                            )}
+                          </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
                           )}

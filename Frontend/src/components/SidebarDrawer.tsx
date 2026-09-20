@@ -21,9 +21,8 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
   const navigate = useNavigate()
   const currentUser = getActiveUser()
 
-  // Determine active role: If the logged-in user is an admin, always give them full Admin access regardless of feature view
-  const userRole = (currentUser?.role || role || 'customer').toLowerCase()
-  const activeRole = userRole === 'admin' ? 'admin' : (role || userRole).toLowerCase()
+  // Determine active role: Prioritize logged-in user role if available, otherwise fall back to role prop
+  const activeRole = (currentUser?.role || role || 'customer').toLowerCase()
 
   // Lock body scroll when sidebar is open
   useEffect(() => {

@@ -1,5 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import NavbarCustomer from '../components/NavbarCustomer'
+import NavbarAdmin from '../components/NavbarAdmin'
+import NavbarAssistant from '../components/NavbarAssistant'
+import NavbarCashier from '../components/NavbarCashier'
+import NavbarKitchen from '../components/NavbarKitchen'
+import NavbarRider from '../components/Navbarrider'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 import { API_BASE_URL } from '../utils/api'
 
@@ -237,6 +242,28 @@ export const AccMan: React.FC = () => {
         }, 500)
     }
 
+    // Determine active role & employee status
+    const activeUser = getActiveUser()
+    const userRole = (activeUser?.role || 'customer').toLowerCase()
+    const isEmployee = userRole !== 'customer'
+
+    const renderNavbar = () => {
+        switch (userRole) {
+            case 'admin':
+                return <NavbarAdmin />
+            case 'assistant':
+                return <NavbarAssistant />
+            case 'cashier':
+                return <NavbarCashier />
+            case 'kitchen':
+                return <NavbarKitchen />
+            case 'rider':
+                return <NavbarRider />
+            default:
+                return <NavbarCustomer />
+        }
+    }
+
     // Order History data initialized empty
     const mockOrders: Array<{ id: string; date: string; total: number; status: string; items: string }> = []
 
@@ -245,7 +272,7 @@ export const AccMan: React.FC = () => {
             <div className="w-full flex flex-col gap-6">
 
                 {/* Custom-styled Navbar */}
-                <NavbarCustomer />
+                {renderNavbar()}
 
                 {/* Main Dashboard Layout */}
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
@@ -273,20 +300,28 @@ export const AccMan: React.FC = () => {
                                 {profile.email || profile.phone || 'No contact details provided'}
                             </p>
 
-                            <div className="flex items-center gap-2 mt-3 px-3 py-1 bg-amber-100 text-amber-700 rounded-full border border-amber-200/50 text-xs font-extrabold">
-                                {profile.membershipTier} Member
-                            </div>
+                            {isEmployee ? (
+                                <div className="flex items-center gap-2 mt-3 px-3.5 py-1 bg-slate-800 text-white rounded-full text-xs font-black uppercase tracking-wider shadow-xs">
+                                    {userRole}
+                                </div>
+                            ) : (
+                                <div className="flex items-center gap-2 mt-3 px-3 py-1 bg-amber-100 text-amber-700 rounded-full border border-amber-200/50 text-xs font-extrabold">
+                                    {profile.membershipTier} Member
+                                </div>
+                            )}
 
-                            <div className="w-full grid grid-cols-2 gap-4 border-t border-neutral-100 mt-6 pt-6">
-                                <div className="text-center border-r border-neutral-100">
-                                    <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Points Balance</p>
-                                    <p className="text-lg font-extrabold text-orange-600 mt-0.5">{profile.points} pts</p>
+                            {!isEmployee && (
+                                <div className="w-full grid grid-cols-2 gap-4 border-t border-neutral-100 mt-6 pt-6">
+                                    <div className="text-center border-r border-neutral-100">
+                                        <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Points Balance</p>
+                                        <p className="text-lg font-extrabold text-orange-600 mt-0.5">{profile.points} pts</p>
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Member Since</p>
+                                        <p className="text-sm font-extrabold text-neutral-700 mt-1">{profile.joinedDate}</p>
+                                    </div>
                                 </div>
-                                <div className="text-center">
-                                    <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider">Member Since</p>
-                                    <p className="text-sm font-extrabold text-neutral-700 mt-1">{profile.joinedDate}</p>
-                                </div>
-                            </div>
+                            )}
                         </div>
 
                         {/* Navigation Menu */}
@@ -318,15 +353,17 @@ export const AccMan: React.FC = () => {
                             >
                                 Notifications
                             </button>
-                            <button
-                                onClick={() => setActiveSection('orders')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'orders'
-                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                    }`}
-                            >
-                                Order History
-                            </button>
+                            {!isEmployee && (
+                                <button
+                                    onClick={() => setActiveSection('orders')}
+                                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'orders'
+                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
+                                        }`}
+                                >
+                                    Order History
+                                </button>
+                            )}
                         </div>
                     </aside>
 
@@ -383,16 +420,18 @@ export const AccMan: React.FC = () => {
                                             className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
                                         />
                                     </div>
-                                    <div className="flex flex-col gap-1.5 md:col-span-2">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Delivery Address</label>
-                                        <textarea
-                                            required
-                                            rows={3}
-                                            value={editForm.address}
-                                            onChange={(e) => handleProfileChange('address', e.target.value)}
-                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
-                                        />
-                                    </div>
+                                    {!isEmployee && (
+                                        <div className="flex flex-col gap-1.5 md:col-span-2">
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Delivery Address</label>
+                                            <textarea
+                                                required
+                                                rows={3}
+                                                value={editForm.address}
+                                                onChange={(e) => handleProfileChange('address', e.target.value)}
+                                                className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center gap-3 pt-6 border-t border-neutral-100">
@@ -534,7 +573,7 @@ export const AccMan: React.FC = () => {
                         )}
 
                         {/* SECTION 4: ORDER HISTORY */}
-                        {activeSection === 'orders' && (
+                        {activeSection === 'orders' && !isEmployee && (
                             <div className="space-y-6">
                                 <div>
                                     <h3 className="font-extrabold text-neutral-800 text-xl">Your Order History</h3>

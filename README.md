@@ -104,3 +104,4 @@ Seafudz-ng-Bayan/
 | **Backend** | `cd Backend && node server.js` | Start local Express API server |
 | **Frontend** | `cd Frontend && npm run dev` | Start local React dev server |
 | **Deploy FE** | `firebase deploy` | Deploy frontend to Firebase Hosting |
+

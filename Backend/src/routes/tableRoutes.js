@@ -10,7 +10,7 @@ router.get('/tables', async (req, res) => {
       SELECT t.id, t.name AS name, t.seats AS seats, t.section, t.status,
              o.id AS "activeOrderId", o.id AS order_number, o.total AS total_amount, o.status AS order_status, o.created_at AS "orderCreatedAt"
       FROM tables t
-      LEFT JOIN orders o ON t.id = o.table_id AND LOWER(o.status) NOT IN ('completed', 'cancelled')
+      LEFT JOIN orders o ON t.id = o.table_id AND UPPER(o.status) NOT IN ('COMPLETED', 'CANCELLED')
       ORDER BY t.name ASC
     `;
     const { rows } = await query(sql);

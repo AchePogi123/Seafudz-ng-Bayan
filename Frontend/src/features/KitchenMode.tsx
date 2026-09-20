@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { Navbar } from '../components/Navbar'
+import React, { useState, useEffect, useRef } from 'react'
+import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 
 interface OrderItem {
@@ -14,6 +14,7 @@ export interface KitchenOrder {
   category: string
   status: 'Pending' | 'Preparing' | 'Ready' | 'Completed' | string
   items: OrderItem[]
+  customer?: string
   notes?: string
   total?: number
   createdAt?: string
@@ -22,227 +23,303 @@ export interface KitchenOrder {
   completedTimeElapsed?: string
 }
 
-interface RawCartItem {
-  item?: { name?: string }
-  name?: string
-  quantity?: number
-}
-
-interface RawOrder {
-  id: string
-  type?: string
-  table?: string
-  status?: string
-  notes?: string
-  total?: number
-  createdAt?: string
-  paymentMethod?: string
-  startTime?: number
-  completedTimeElapsed?: string
-  cartItems?: RawCartItem[]
-  items?: Array<{ name: string; quantity: number }>
-}
-
-const mapRawToKitchenOrder = (raw: RawOrder): KitchenOrder => {
-  const items = raw.cartItems
-    ? raw.cartItems.map((ci) => ({
-        name: ci.item?.name || ci.name || 'Food Item',
-        quantity: ci.quantity || 1,
-      }))
-    : raw.items || []
-
-  return {
-    id: raw.id,
-    queue: raw.id,
-    type: raw.type || 'Dine In',
-    category: raw.table ? `${raw.type || 'Dine In'} - ${raw.table}` : 'Take Out',
-    status: raw.status || 'Pending',
-    items,
-    notes: raw.notes || '',
-    total: raw.total || 0,
-    createdAt: raw.createdAt || new Date().toISOString(),
-    paymentMethod: raw.paymentMethod || 'Cash',
-    startTime: raw.startTime || (raw.status === 'Preparing' ? Date.now() - 120000 : null),
-    completedTimeElapsed: raw.completedTimeElapsed || (raw.status === 'Ready' ? '5:30sec' : undefined),
-  }
-}
-
 export const KitchenMode: React.FC = () => {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
 
-  // Fetch live orders from backend API & localStorage fallback
-  const fetchKitchenOrders = async () => {
-    let localOrdersRaw: RawOrder[] = []
+  // Load orders from LocalStorage
+  const getLocalOrders = (): KitchenOrder[] => {
     try {
-      localOrdersRaw = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const stored = localStorage.getItem('seafudz_orders')
+      if (!stored) return []
+      const parsed = JSON.parse(stored)
+      return parsed
+        .filter((o: any) => {
+          const rawStatus = (o.status || '').toUpperCase()
+          const orderType = (o.type || o.order_type || '').toLowerCase()
+          const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
+
+          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant
+          if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(rawStatus)) {
+            return false
+          }
+
+          return true
+        })
+        .map((o: any) => {
+          const rawStatus = (o.status || '').toUpperCase()
+          let mappedStatus = 'Confirmed'
+          if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(rawStatus)) mappedStatus = 'Preparing'
+          else if (['READY', 'PREPARED'].includes(rawStatus)) mappedStatus = 'Ready'
+          else if (['COMPLETED', 'SERVED', 'DELIVERED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(rawStatus)) mappedStatus = 'Completed'
+          else mappedStatus = 'Confirmed'
+
+          const customerName = typeof o.customer === 'string' && o.customer.trim()
+            ? o.customer.trim()
+            : typeof o.customerName === 'string' && o.customerName.trim()
+            ? o.customerName.trim()
+            : undefined
+
+          const rawType = (o.type || o.order_type || 'Take Out').trim()
+          const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+
+          return {
+            id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
+            queue: o.id || o.ref || 'POS',
+            type: rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType,
+            category: formatCategory,
+            status: mappedStatus,
+            customer: customerName,
+            items: (o.cartItems || o.items || []).map((ci: any) => ({
+              name: ci.item?.name || ci.name || 'Food Item',
+              quantity: ci.quantity || 1,
+            })),
+            notes: o.notes || '',
+            createdAt: o.dateTime || o.createdAt || new Date().toISOString(),
+          }
+        })
     } catch {
-      /* ignore */
+      return []
     }
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/kitchen/orders`)
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data.data)) {
-          // Combine backend orders with local orders (preventing duplicate IDs)
-          const apiMap = new Map(data.data.map((o: { id: string }) => [o.id, o]))
-          localOrdersRaw.forEach((o: { id: string }) => {
-            if (!apiMap.has(o.id)) {
-              apiMap.set(o.id, o)
-            }
-          })
-          const combined = Array.from(apiMap.values())
-          const mappedOrders: KitchenOrder[] = combined.map((o) => mapRawToKitchenOrder(o as RawOrder))
-          setOrders(mappedOrders)
-          return
-        }
-      }
-    } catch (err) {
-      console.warn('Backend connection error, falling back to localStorage:', err)
-    }
-
-    // Fallback to localStorage
-    const mappedOrders: KitchenOrder[] = localOrdersRaw.map(mapRawToKitchenOrder)
-    setOrders(mappedOrders)
   }
 
-  // Initial load, polling, and listening for order creation events
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
+
+  // Fetch live tickets from backend API & merge with LocalStorage
+  const fetchKitchenOrders = async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
+
+    isFetchingRef.current = true
+    lastFetchRef.current = now
+
+    try {
+      let fetchedApiOrders: KitchenOrder[] = []
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/kitchen/orders`)
+        if (res.ok) {
+          const result = await res.json()
+          if (Array.isArray(result.data)) {
+            fetchedApiOrders = result.data
+              .filter((o: any) => {
+                const raw = (o.status || o.order_status || '').toUpperCase()
+                const orderType = (o.order_type || o.type || '').toLowerCase()
+                const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || (o.id && String(o.id).startsWith('SFB-'))
+
+                // Online delivery orders won't show in kitchen until verified & confirmed by Assistant
+                if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(raw)) {
+                  return false
+                }
+                return true
+              })
+              .map((o: any) => {
+                const raw = (o.status || o.order_status || '').toUpperCase()
+                let norm = 'Confirmed'
+                if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
+                else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
+                else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
+                else norm = 'Confirmed'
+
+                const customerName = typeof o.customer === 'string' && o.customer.trim()
+                  ? o.customer.trim()
+                  : typeof o.customerName === 'string' && o.customerName.trim()
+                  ? o.customerName.trim()
+                  : typeof o.customer_name === 'string' && o.customer_name.trim()
+                  ? o.customer_name.trim()
+                  : undefined
+
+                const rawType = (o.order_type || o.type || 'Take Out').trim()
+                const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+
+                return {
+                  id: o.id,
+                  queue: o.id,
+                  type: rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType,
+                  category: formatCategory,
+                  status: norm,
+                  customer: customerName,
+                  items: (o.items || []).map((item: any) => ({
+                    name: item.name || item.product_name_snapshot || 'Food Item',
+                    quantity: item.quantity || 1,
+                  })),
+                  notes: o.notes || '',
+                  createdAt: o.created_at || new Date().toISOString(),
+                }
+              })
+          }
+        }
+      } catch (err) {
+        console.warn('Backend connection note in KitchenMode:', err)
+      }
+
+      const fetchedLocalOrders = getLocalOrders()
+      const mergedMap = new Map<string, KitchenOrder>()
+
+      // Priority to local updates (most real-time for live interactions)
+      fetchedLocalOrders.forEach((item) => {
+        mergedMap.set(item.id, item)
+      })
+
+      // Merge API orders without duplicating already existing local tickets
+      fetchedApiOrders.forEach((apiItem) => {
+        const exists = Array.from(mergedMap.values()).some(
+          (local) => local.id === apiItem.id || local.queue === apiItem.queue || local.queue === apiItem.id || local.id === apiItem.queue
+        )
+        if (!exists) {
+          mergedMap.set(apiItem.id, apiItem)
+        }
+      })
+
+      setOrders(Array.from(mergedMap.values()))
+    } finally {
+      isFetchingRef.current = false
+    }
+  }
+
   useEffect(() => {
-    const initTimer = setTimeout(() => {
+    void fetchKitchenOrders()
+    const pollTimer = setInterval(() => {
       void fetchKitchenOrders()
-    }, 0)
-    const pollTimer = setInterval(fetchKitchenOrders, 2000)
+    }, 5000)
 
-    const handleStorageEvent = () => void fetchKitchenOrders()
-    window.addEventListener('storage', handleStorageEvent)
-    window.addEventListener('seafudz_order_created', handleStorageEvent)
+    const handleSync = () => {
+      void fetchKitchenOrders(true)
+    }
 
+    window.addEventListener('seafudz_order_created', handleSync)
     return () => {
-      clearTimeout(initTimer)
       clearInterval(pollTimer)
-      window.removeEventListener('storage', handleStorageEvent)
-      window.removeEventListener('seafudz_order_created', handleStorageEvent)
+      window.removeEventListener('seafudz_order_created', handleSync)
     }
   }, [])
 
-  // Keep a live ticker going for elapsed seconds
   useEffect(() => {
-    const timer = setInterval(() => {
-      setNow(Date.now())
-    }, 1000)
+    const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId)
 
-  // Helper to format elapsed time
-  const getPrepTimeDisplay = (order: KitchenOrder): string => {
-    if (order.status === 'Pending' || order.status === 'waiting') {
-      return 'Waiting'
+  const getPrepTimeDisplay = (order: KitchenOrder) => {
+    if (order.status === 'Preparing' && order.startTime) {
+      const elapsedSec = Math.floor((now - order.startTime) / 1000)
+      const mins = Math.floor(elapsedSec / 60)
+      const secs = elapsedSec % 60
+      return `${mins}:${secs < 10 ? '0' : ''}${secs}s`
     }
-    if (order.status === 'Ready' || order.status === 'Completed' || order.status === 'Served') {
-      return order.completedTimeElapsed || '4:15sec'
-    }
-    if ((order.status === 'Preparing' || order.status === 'preparing') && order.startTime) {
-      const elapsedSeconds = Math.floor((now - order.startTime) / 1000)
-      const mins = Math.floor(elapsedSeconds / 60)
-      const secs = elapsedSeconds % 60
-      return `${mins}:${secs.toString().padStart(2, '0')}sec`
+    if (order.completedTimeElapsed) {
+      return order.completedTimeElapsed
     }
     return '--'
   }
 
-  // Update order status handler
+  // Persistent Status Update Logic
   const updateOrderStatus = async (id: string, newStatus: string) => {
-    let finalTime = '0:00sec'
+    const upperStatus = newStatus.toUpperCase()
+    let normalizedTarget = 'CONFIRMED'
+
+    if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(upperStatus)) {
+      normalizedTarget = 'PREPARING'
+    } else if (['READY', 'PREPARED'].includes(upperStatus)) {
+      normalizedTarget = 'READY'
+    } else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED'].includes(upperStatus)) {
+      normalizedTarget = 'COMPLETED'
+    }
+
+    // 1. Update React UI state immediately
     setOrders((prevOrders) =>
       prevOrders.map((order) => {
         if (order.id !== id) return order
-
-        if (newStatus === 'Preparing') {
-          return {
-            ...order,
-            status: 'Preparing',
-            startTime: Date.now(),
-          }
-        }
-
-        if (newStatus === 'Ready') {
-          if (order.startTime) {
-            const elapsedSeconds = Math.floor((Date.now() - order.startTime) / 1000)
-            const mins = Math.floor(elapsedSeconds / 60)
-            const secs = elapsedSeconds % 60
-            finalTime = `${mins}:${secs.toString().padStart(2, '0')}sec`
-          } else {
-            finalTime = '4:30sec'
-          }
-          return {
-            ...order,
-            status: 'Ready',
-            completedTimeElapsed: finalTime,
-          }
-        }
-
-        if (newStatus === 'Completed' || newStatus === 'Served') {
-          return {
-            ...order,
-            status: 'Completed',
-          }
-        }
-
+        if (newStatus === 'Preparing') return { ...order, status: 'Preparing', startTime: Date.now() }
+        if (newStatus === 'Ready') return { ...order, status: 'Ready', completedTimeElapsed: '4:30sec' }
+        if (newStatus === 'Completed') return { ...order, status: 'Completed' }
         return { ...order, status: newStatus }
       })
     )
 
-    // Update localStorage & broadcast update event
+    // 2. Persist update in LocalStorage so polling doesn't reset it
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: { id: string; status: string }) =>
-        o.id === id ? { ...o, status: newStatus } : o
-      )
+      const targetOrder = orders.find((o) => o.id === id || o.queue === id)
+      let found = false
+
+      const updated = existing.map((o: any) => {
+        if (o.id === id || o.ref === id) {
+          found = true
+          return { ...o, status: normalizedTarget }
+        }
+        return o
+      })
+
+      if (!found && targetOrder) {
+        updated.unshift({
+          id: targetOrder.id,
+          ref: targetOrder.id,
+          type: targetOrder.type || 'Delivery',
+          category: targetOrder.category,
+          status: normalizedTarget,
+          items: targetOrder.items,
+          notes: targetOrder.notes,
+          dateTime: targetOrder.createdAt,
+        })
+      }
+
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+
+      // Also update active online customer order if matching
+      const savedActive = localStorage.getItem('seafudz_active_online_order')
+      if (savedActive) {
+        const activeObj = JSON.parse(savedActive)
+        if (activeObj && (activeObj.id === id || activeObj.ref === id)) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: normalizedTarget }))
+        }
+      }
+
       window.dispatchEvent(new Event('seafudz_order_created'))
     } catch {
-      /* ignore */
+      /* fallback silent */
     }
 
-    // Persist to Express Backend
+    // 3. Persist update in Express Backend API
     try {
       await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: normalizedTarget }),
       })
-    } catch (err) {
-      console.warn('Could not persist status change to backend:', err)
+      await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: normalizedTarget }),
+      })
+    } catch {
+      /* fallback silent */
     }
   }
 
-  // Delete order handler
   const deleteOrder = async (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
-    setOrders((prevOrders) => prevOrders.filter((o) => o.id !== id))
+    setOrders((prev) => prev.filter((o) => o.id !== id))
     if (selectedOrderId === id) setSelectedOrderId(null)
 
-    // Delete from localStorage
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.filter((o: { id: string }) => o.id !== id)
+      const updated = existing.filter((o: any) => o.id !== id && o.ref !== id)
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
     } catch {
       /* ignore */
     }
 
-    // Delete from Backend API
     try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${id}`, {
-        method: 'DELETE',
-      })
-    } catch (err) {
-      console.warn('Could not delete order on backend:', err)
+      await fetch(`${API_BASE_URL}/kitchen/orders/${id}`, { method: 'DELETE' })
+    } catch {
+      /* fallback silent */
     }
   }
 
@@ -253,23 +330,22 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  // Filter orders by status for Kanban columns & History table
-  const queueOrders = orders.filter(
-    (o) => o.status === 'Pending' || o.status === 'waiting'
-  )
-  const processingOrders = orders.filter(
-    (o) => o.status === 'Preparing' || o.status === 'preparing'
-  )
-  const doneOrders = orders.filter(
-    (o) => o.status === 'Ready'
-  )
+  const queueOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING' || s === 'UNCONFIRMED' || s === 'PENDING'
+  })
+  const processingOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
+  })
 
   const [historyPage, setHistoryPage] = useState(1)
   const ITEMS_PER_PAGE = 5
 
-  const historyOrders = orders.filter(
-    (o) => o.status === 'Completed' || o.status === 'Served'
-  )
+  const historyOrders = orders.filter((o) => {
+    const s = (o.status || '').toUpperCase()
+    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
+  })
 
   const totalPages = Math.max(1, Math.ceil(historyOrders.length / ITEMS_PER_PAGE))
   const startIndex = (historyPage - 1) * ITEMS_PER_PAGE
@@ -278,9 +354,8 @@ export const KitchenMode: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
       <div className="w-full flex flex-col gap-4 sm:gap-6">
-        <Navbar />
+        <NavbarKitchen />
 
-        {/* Top Header Action Bar with Upper Rightmost Order History Button */}
         <div className="flex items-center justify-between bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
           <div className="flex items-center gap-2">
             <h1 className="text-base sm:text-lg font-extrabold text-neutral-900">Kitchen Display Board</h1>
@@ -289,15 +364,11 @@ export const KitchenMode: React.FC = () => {
             </span>
           </div>
 
-          {/* Upper Rightmost Order History Icon Button */}
           <button
             onClick={() => setIsHistoryModalOpen(true)}
             className="flex items-center gap-2 bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
             title="View Order History"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
             <span>Order History</span>
             {historyOrders.length > 0 && (
               <span className="bg-white text-[#ff7a00] font-black text-[10px] px-1.5 py-0.5 rounded-full">
@@ -307,10 +378,8 @@ export const KitchenMode: React.FC = () => {
           </button>
         </div>
 
-        {/* 3-Column Kanban Board: Queue | Processing | Done */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 items-start">
-          
-          {/* Column 1: Queue (Waiting Orders) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
+          {/* Queue Column */}
           <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
             <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
@@ -331,35 +400,26 @@ export const KitchenMode: React.FC = () => {
                 queueOrders.map((order) => (
                   <div
                     key={order.id}
-                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-neutral-200/80 transition-all duration-150 flex flex-col justify-between"
+                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-neutral-200/80 transition-all flex flex-col justify-between"
                   >
-                    <div 
-                      onClick={() => setSelectedOrderId(order.id)}
-                      className="cursor-pointer"
-                    >
+                    <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          {order.customer && (
+                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
+                          )}
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider bg-neutral-200 text-neutral-700">
-                            Queue
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => deleteOrder(order.id, e)}
-                            className="text-neutral-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all cursor-pointer"
-                            title="Delete order"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => deleteOrder(order.id, e)}
+                          className="text-neutral-400 hover:text-red-600 p-1 rounded-md"
+                        >
+                          ✕
+                        </button>
                       </div>
 
-                      {/* Order Items Preview */}
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
                         {order.items.map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
@@ -371,29 +431,18 @@ export const KitchenMode: React.FC = () => {
                         ))}
                       </div>
 
-                      {/* Special Request Note */}
-                      <div className="mb-2.5 min-h-[30px] flex items-center">
-                        {order.notes ? (
-                          <p className="text-xs text-neutral-600 bg-neutral-100 px-2.5 py-1.5 rounded-lg font-normal w-full truncate">
-                            Note: {order.notes}
-                          </p>
-                        ) : (
-                          <div className="w-full"></div>
-                        )}
-                      </div>
-
-                      {/* Standardized Prep Timer Row */}
-                      <div className="flex justify-between items-center text-xs mb-3">
-                        <span className="text-neutral-400 font-medium">Prep Timer:</span>
-                        <span className="font-bold text-xs text-neutral-500">
-                          Waiting
-                        </span>
-                      </div>
+                      {order.notes ? (
+                        <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-3 flex items-center gap-1.5">
+                          <span>Note: {order.notes}</span>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-neutral-400 italic mb-2">No special instructions</div>
+                      )}
                     </div>
 
                     <button
                       onClick={() => updateOrderStatus(order.id, 'Preparing')}
-                      className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-xs transition-all cursor-pointer shadow-2xs"
+                      className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
                     >
                       Start Cooking
                     </button>
@@ -403,7 +452,7 @@ export const KitchenMode: React.FC = () => {
             </div>
           </section>
 
-          {/* Column 2: On Processing (Active Preparation) */}
+          {/* Processing Column */}
           <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
             <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
@@ -424,35 +473,26 @@ export const KitchenMode: React.FC = () => {
                 processingOrders.map((order) => (
                   <div
                     key={order.id}
-                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-orange-200/80 transition-all duration-150 flex flex-col justify-between"
+                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-orange-200/80 transition-all flex flex-col justify-between"
                   >
-                    <div 
-                      onClick={() => setSelectedOrderId(order.id)}
-                      className="cursor-pointer"
-                    >
+                    <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          {order.customer && (
+                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
+                          )}
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider bg-orange-100 text-orange-800">
-                            Cooking
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => deleteOrder(order.id, e)}
-                            className="text-neutral-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all cursor-pointer"
-                            title="Delete order"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => deleteOrder(order.id, e)}
+                          className="text-neutral-400 hover:text-red-600 p-1 rounded-md"
+                        >
+                          ✕
+                        </button>
                       </div>
 
-                      {/* Order Items Preview */}
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
                         {order.items.map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
@@ -464,29 +504,21 @@ export const KitchenMode: React.FC = () => {
                         ))}
                       </div>
 
-                      {/* Special Request Note */}
-                      <div className="mb-2.5 min-h-[30px] flex items-center">
-                        {order.notes ? (
-                          <p className="text-xs text-neutral-600 bg-neutral-100 px-2.5 py-1.5 rounded-lg font-normal w-full truncate">
-                            Note: {order.notes}
-                          </p>
-                        ) : (
-                          <div className="w-full"></div>
-                        )}
-                      </div>
+                      {order.notes && (
+                        <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-2 flex items-center gap-1.5">
+                          <span>Note: {order.notes}</span>
+                        </div>
+                      )}
 
-                      {/* Standardized Prep Timer Row */}
                       <div className="flex justify-between items-center text-xs mb-3">
                         <span className="text-neutral-400 font-medium">Prep Timer:</span>
-                        <span className="font-bold text-xs text-orange-600">
-                          {getPrepTimeDisplay(order)}
-                        </span>
+                        <span className="font-bold text-xs text-orange-600">{getPrepTimeDisplay(order)}</span>
                       </div>
                     </div>
 
                     <button
                       onClick={() => updateOrderStatus(order.id, 'Ready')}
-                      className="w-full bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs transition-all cursor-pointer shadow-2xs"
+                      className="w-full bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
                     >
                       Mark as Done
                     </button>
@@ -495,346 +527,141 @@ export const KitchenMode: React.FC = () => {
               )}
             </div>
           </section>
-
-          {/* Column 3: On Done (Completed Orders Ready for Customer) */}
-          <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
-              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-                On Done
-              </h2>
-              <span className="bg-emerald-50 text-emerald-700 font-semibold text-xs px-2.5 py-1 rounded-full">
-                {doneOrders.length} Ready
-              </span>
-            </div>
-
-            <div className="flex-1 space-y-3">
-              {doneOrders.length === 0 ? (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
-                  <p className="text-xs font-medium">No done orders waiting</p>
-                </div>
-              ) : (
-                doneOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="bg-[#faf9f6] rounded-xl p-4 border border-neutral-200/80 transition-all duration-150 flex flex-col justify-between"
-                  >
-                    <div 
-                      onClick={() => setSelectedOrderId(order.id)}
-                      className="cursor-pointer"
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                          <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider bg-emerald-100 text-emerald-800">
-                            Ready
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => deleteOrder(order.id, e)}
-                            className="text-neutral-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all cursor-pointer"
-                            title="Delete order"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Order Items Preview */}
-                      <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs font-medium text-neutral-700">
-                            <span>{item.name}</span>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
-                              x{item.quantity}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Special Request Note */}
-                      <div className="mb-2.5 min-h-[30px] flex items-center">
-                        {order.notes ? (
-                          <p className="text-xs text-neutral-600 bg-neutral-100 px-2.5 py-1.5 rounded-lg font-normal w-full truncate">
-                            Note: {order.notes}
-                          </p>
-                        ) : (
-                          <div className="w-full"></div>
-                        )}
-                      </div>
-
-                      {/* Standardized Prep Timer Row */}
-                      <div className="flex justify-between items-center text-xs mb-3">
-                        <span className="text-neutral-400 font-medium">Total Prep Time:</span>
-                        <span className="font-bold text-xs text-emerald-700">
-                          {getPrepTimeDisplay(order)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'Completed')}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs transition-all cursor-pointer shadow-2xs"
-                    >
-                      Customer Received
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-
         </div>
-
       </div>
 
-      {/* Order History Modal Dialog */}
+      {/* History Modal */}
       {isHistoryModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 animate-fade-in">
-          <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col animate-scale-up max-h-[92vh]">
-            
-            {/* Modal Header */}
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50">
+          <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col max-h-[92vh]">
             <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-black text-neutral-900 flex items-center gap-2">
-                  Order History
-                </h2>
-                <p className="text-xs text-neutral-400 font-medium mt-0.5">
-                  Completed orders received by customers
-                </p>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="bg-emerald-50 text-emerald-700 font-bold text-xs px-3 py-1.5 rounded-full border border-emerald-100">
-                  {historyOrders.length} Completed
-                </span>
-                <button
-                  onClick={() => setIsHistoryModalOpen(false)}
-                  className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 hover:text-neutral-700 flex items-center justify-center transition-all cursor-pointer font-bold text-xs"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Body: Order History Table */}
-            <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
-              <div className="bg-white rounded-2xl border border-neutral-200/80 overflow-hidden shadow-2xs">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-neutral-100 text-left">
-                    <thead className="bg-neutral-50 text-xs uppercase font-extrabold tracking-wider text-neutral-500">
-                      <tr>
-                        <th className="px-6 py-3.5">Reference #</th>
-                        <th className="px-6 py-3.5">Date & Time</th>
-                        <th className="px-6 py-3.5">Items</th>
-                        <th className="px-6 py-3.5">Table / Category</th>
-                        <th className="px-6 py-3.5">Total Amount</th>
-                        <th className="px-6 py-3.5">Order Type</th>
-                        <th className="px-6 py-3.5">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-100 text-xs font-medium">
-                      {paginatedHistoryOrders.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="px-6 py-12 text-center text-neutral-400">
-                            <div className="font-bold text-neutral-600 text-sm">No completed order history yet.</div>
-                            <div className="text-xs text-neutral-400 mt-0.5">
-                              Orders marked as 'Customer Received' will appear in this history table.
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        paginatedHistoryOrders.map((tx) => (
-                          <tr key={tx.id} className="hover:bg-neutral-50/60 transition-colors">
-                            <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
-                            <td className="px-6 py-3.5 text-neutral-500 whitespace-nowrap">
-                              {tx.createdAt ? new Date(tx.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'Just now'}
-                            </td>
-                            <td className="px-6 py-3.5 font-semibold text-neutral-800">
-                              {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
-                            </td>
-                            <td className="px-6 py-3.5 text-neutral-600 font-semibold">{tx.category}</td>
-                            <td className="px-6 py-3.5 font-bold text-neutral-900">
-                              ₱{(tx.total || 0).toLocaleString()}
-                            </td>
-                            <td className="px-6 py-3.5">
-                              <span
-                                className={`text-[11px] font-extrabold px-2.5 py-1 rounded-full ${
-                                  tx.type === 'Dine In'
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-100'
-                                    : tx.type === 'Take Out'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-100'
-                                    : 'bg-purple-50 text-purple-700 border border-purple-100'
-                                }`}
-                              >
-                                {tx.type}
-                              </span>
-                            </td>
-                            <td className="px-6 py-3.5">
-                              <button
-                                type="button"
-                                onClick={(e) => deleteOrder(tx.id, e)}
-                                className="text-neutral-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 border border-transparent hover:border-red-200"
-                                title="Delete from history"
-                              >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination Controls */}
-                <div className="bg-neutral-50 px-6 py-3 border-t border-neutral-100 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-semibold text-neutral-500">
-                  <div>
-                    Showing{' '}
-                    <span className="font-bold text-neutral-800">
-                      {historyOrders.length === 0 ? 0 : startIndex + 1}
-                    </span>{' '}
-                    to{' '}
-                    <span className="font-bold text-neutral-800">
-                      {Math.min(startIndex + ITEMS_PER_PAGE, historyOrders.length)}
-                    </span>{' '}
-                    of <span className="font-bold text-neutral-800">{historyOrders.length}</span> orders
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                      disabled={historyPage === 1}
-                      className="px-3 py-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-700 font-bold hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-2xs"
-                    >
-                      Previous
-                    </button>
-                    <span className="px-2 font-bold text-neutral-700">
-                      Page {historyPage} of {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setHistoryPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={historyPage >= totalPages}
-                      className="px-3 py-1.5 bg-white border border-neutral-200 rounded-lg text-neutral-700 font-bold hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-2xs"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="px-6 py-3.5 bg-neutral-50 border-t border-neutral-100 flex justify-end">
+              <h2 className="text-lg font-black text-neutral-900">Order History</h2>
               <button
-                type="button"
                 onClick={() => setIsHistoryModalOpen(false)}
-                className="bg-neutral-900 hover:bg-black text-white font-bold px-5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Full Order Detail Modal */}
-      {selectedOrder && (
-        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
-          <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden shadow-lg border border-neutral-200/80 animate-scale-up">
-            {/* Modal Header */}
-            <div className="p-5 bg-neutral-900 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-lg font-bold">Order #{selectedOrder.queue}</h3>
-                <p className="text-xs font-normal opacity-80 mt-0.5">{selectedOrder.category}</p>
-              </div>
-              <button 
-                onClick={() => setSelectedOrderId(null)}
-                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center font-bold text-sm leading-none transition-colors cursor-pointer"
+                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 font-bold"
               >
                 ✕
               </button>
             </div>
 
-            {/* Modal Body */}
-            <div className="p-6 space-y-5">
-              
-              {/* Order Items */}
+            <div className="p-6 overflow-y-auto flex-1">
+              <table className="min-w-full divide-y divide-neutral-100 text-left">
+                <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500">
+                  <tr>
+                    <th className="px-6 py-3.5">Reference #</th>
+                    <th className="px-6 py-3.5">Customer</th>
+                    <th className="px-6 py-3.5">Date & Time</th>
+                    <th className="px-6 py-3.5">Items</th>
+                    <th className="px-6 py-3.5">Category</th>
+                    <th className="px-6 py-3.5">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-100 text-xs font-medium">
+                  {paginatedHistoryOrders.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-6 py-12 text-center text-neutral-400">
+                        No completed order history yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedHistoryOrders.map((tx) => (
+                      <tr key={tx.id}>
+                        <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
+                        <td className="px-6 py-3.5 font-semibold text-neutral-800">{tx.customer || '—'}</td>
+                        <td className="px-6 py-3.5 text-neutral-500">{tx.createdAt}</td>
+                        <td className="px-6 py-3.5 font-semibold text-neutral-800">
+                          {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
+                        </td>
+                        <td className="px-6 py-3.5 text-neutral-600">{tx.category}</td>
+                        <td className="px-6 py-3.5">
+                          <button onClick={(e) => deleteOrder(tx.id, e)} className="text-red-600 font-bold">
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+
+              <div className="mt-4 flex justify-between items-center text-xs">
+                <span>
+                  Page {historyPage} of {totalPages}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
+                    disabled={historyPage === 1}
+                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    onClick={() => setHistoryPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={historyPage >= totalPages}
+                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Modal */}
+      {selectedOrder && (
+        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white w-full max-w-lg rounded-2xl overflow-hidden shadow-lg border border-neutral-200/80">
+            <div className="p-5 bg-neutral-900 text-white flex justify-between items-center">
+              <h3 className="text-lg font-bold">Order #{selectedOrder.queue}</h3>
+              <button onClick={() => setSelectedOrderId(null)} className="text-white font-bold">
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {selectedOrder.customer && (
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-1">Customer</h4>
+                  <div className="text-sm font-semibold text-neutral-900">{selectedOrder.customer}</div>
+                </div>
+              )}
+
               <div>
-                <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2.5">Order Items</h4>
-                <div className="bg-[#faf9f6] rounded-xl border border-neutral-200/80 p-3.5 divide-y divide-neutral-200/60">
+                <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Order Items</h4>
+                <div className="bg-[#faf9f6] rounded-xl border border-neutral-200/80 p-3.5">
                   {selectedOrder.items.map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center py-2 first:pt-0 last:pb-0 font-semibold text-neutral-800 text-xs sm:text-sm">
+                    <div key={idx} className="flex justify-between items-center py-1.5 text-xs font-semibold">
                       <span>{item.name}</span>
-                      <span className="bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded text-xs font-bold">
-                        x{item.quantity}
-                      </span>
+                      <span className="bg-neutral-200 px-2 py-0.5 rounded font-bold">x{item.quantity}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Special Requests / Notes */}
               <div>
-                <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Special Requests / Notes</h4>
-                <div className="bg-neutral-100 border border-neutral-200/80 rounded-xl p-3.5 text-xs text-neutral-700 font-medium">
-                  {selectedOrder.notes || 'No special requests/notes for this order.'}
+                <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Kitchen Special Instructions</h4>
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-xs font-bold text-red-900">
+                  {selectedOrder.notes || 'No special requests/notes provided for this order.'}
                 </div>
               </div>
 
-              {/* Prep Timer */}
-              <div className="flex justify-between items-center bg-[#faf9f6] border border-neutral-200/80 rounded-xl p-3.5">
-                <span className="text-xs font-semibold text-neutral-500">Preparation Time</span>
-                <span className={`text-sm font-bold ${
-                  selectedOrder.status === 'Preparing' ? 'text-orange-600' : 'text-neutral-600'
-                }`}>
-                  {getPrepTimeDisplay(selectedOrder)}
-                </span>
-              </div>
-
-              {/* Modal Buttons */}
-              <div className="grid grid-cols-2 gap-3 mt-4">
+              <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleStatusFromModal('Preparing')}
-                  disabled={selectedOrder.status === 'Preparing'}
-                  className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all cursor-pointer text-xs"
+                  className="bg-orange-600 text-white py-2.5 rounded-xl text-xs font-bold"
                 >
                   Start Preparing
                 </button>
                 <button
                   onClick={() => handleStatusFromModal('Ready')}
-                  className="w-full bg-neutral-900 hover:bg-black text-white font-semibold py-3 rounded-xl transition-all cursor-pointer text-xs"
+                  className="bg-neutral-900 text-white py-2.5 rounded-xl text-xs font-bold"
                 >
                   Mark as Ready
                 </button>
               </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <button
-                  onClick={(e) => deleteOrder(selectedOrder.id, e)}
-                  className="w-full bg-red-50 hover:bg-red-100 text-red-600 font-semibold py-2.5 rounded-xl transition-all cursor-pointer text-xs border border-red-200 flex items-center justify-center gap-1.5"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Delete Order
-                </button>
-                <button
-                  onClick={() => setSelectedOrderId(null)}
-                  className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-semibold py-2.5 rounded-xl transition-all cursor-pointer text-xs"
-                >
-                  Close
-                </button>
-              </div>
-
             </div>
           </div>
         </div>

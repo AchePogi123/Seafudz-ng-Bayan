@@ -1,5 +1,7 @@
-import React, { useState } from 'react'
-import { Navbar } from '../components/Navbar'
+import React, { useState, useEffect } from 'react'
+import NavbarCustomer from '../components/NavbarCustomer'
+import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
+import { API_BASE_URL } from '../utils/api'
 
 interface UserProfile {
     fullName: string
@@ -16,20 +18,75 @@ export const AccMan: React.FC = () => {
     // Navigation / Tab states
     const [activeSection, setActiveSection] = useState<'profile' | 'security' | 'notifications' | 'orders'>('profile')
 
-    // Initial default user profile data
-    const [profile, setProfile] = useState<UserProfile>({
-        fullName: 'Clarissa Dimapilis',
-        phone: '0917-882-9912',
-        email: 'clarissa.d@gmail.com',
-        address: 'Block 4, Lot 12, Mahogany St., Phase 2, Cavite City',
-        avatar: '🍤',
-        membershipTier: 'Gold',
-        points: 350,
-        joinedDate: 'Jan 2026',
+    // Initial user profile data from session user or empty state
+    const [profile, setProfile] = useState<UserProfile>(() => {
+        const active = getActiveUser()
+        return {
+            fullName: active?.fullname || '',
+            phone: active?.phone || '',
+            email: active?.email || '',
+            address: active?.address || '',
+            avatar: '👤',
+            membershipTier: 'Bronze',
+            points: 0,
+            joinedDate: active ? 'Active' : '-',
+        }
     })
 
     // Edit form states (shadow state to allow cancel/reset)
     const [editForm, setEditForm] = useState<UserProfile>({ ...profile })
+
+    useEffect(() => {
+        const active = getActiveUser()
+        if (active) {
+            const initial = {
+                fullName: active.fullname || '',
+                phone: active.phone || '',
+                email: active.email || '',
+                address: active.address || '',
+                avatar: '👤',
+                membershipTier: 'Bronze' as const,
+                points: 0,
+                joinedDate: 'Active',
+            }
+            setProfile(initial)
+            setEditForm(initial)
+
+            // Fetch latest user profile from PostgreSQL DB
+            const cleanEmail = active.email || ''
+            const cleanId = active.id || ''
+            if (cleanEmail || cleanId) {
+                fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(cleanEmail)}&id=${encodeURIComponent(cleanId)}`)
+                    .then((res) => res.json())
+                    .then((data) => {
+                        if (data.success && data.data) {
+                            const dbUser = data.data
+                            const updatedActive = {
+                                ...active,
+                                fullname: dbUser.fullname || dbUser.fullName || active.fullname,
+                                phone: dbUser.phone || active.phone,
+                                email: dbUser.email || active.email,
+                                address: dbUser.address || dbUser.delivery_address || active.address,
+                            }
+                            saveActiveUser(updatedActive)
+                            const updated = {
+                                fullName: updatedActive.fullname || '',
+                                phone: updatedActive.phone || '',
+                                email: updatedActive.email || '',
+                                address: updatedActive.address || '',
+                                avatar: '👤',
+                                membershipTier: 'Bronze' as const,
+                                points: 0,
+                                joinedDate: 'Active',
+                            }
+                            setProfile(updated)
+                            setEditForm(updated)
+                        }
+                    })
+                    .catch(() => { })
+            }
+        }
+    }, [])
     const [isSaving, setIsSaving] = useState(false)
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -48,20 +105,97 @@ export const AccMan: React.FC = () => {
         setEditForm((prev) => ({ ...prev, [field]: value }))
     }
 
-    const handleSaveProfile = (e: React.FormEvent) => {
+    const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault()
         setIsSaving(true)
         setMessage(null)
 
-        // Simulate API delay
-        setTimeout(() => {
+        const currentActive = getActiveUser()
+
+        try {
+            const token = localStorage.getItem('seafudz_token')
+            const res = await fetch(`${API_BASE_URL}/auth/profile`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({
+                    id: currentActive?.id,
+                    originalEmail: currentActive?.email,
+                    fullname: editForm.fullName,
+                    phone: editForm.phone,
+                    email: editForm.email,
+                    address: editForm.address,
+                    username: currentActive?.username,
+                    role: currentActive?.role || 'customer',
+                }),
+            })
+
+            const responseData = await res.json().catch(() => ({}))
+
+            if (res.ok && responseData.success) {
+                const dbUser = responseData.data || {}
+                const updatedFullName = dbUser.fullname || editForm.fullName
+                const updatedPhone = dbUser.phone || editForm.phone
+                const updatedEmail = dbUser.email || editForm.email
+                const updatedAddress = dbUser.address || dbUser.delivery_address || editForm.address
+
+                const finalProfile = {
+                    ...editForm,
+                    fullName: updatedFullName,
+                    phone: updatedPhone,
+                    email: updatedEmail,
+                    address: updatedAddress,
+                }
+
+                setProfile(finalProfile)
+                setEditForm(finalProfile)
+
+                if (currentActive) {
+                    saveActiveUser({
+                        ...currentActive,
+                        fullname: updatedFullName,
+                        phone: updatedPhone,
+                        email: updatedEmail,
+                        address: updatedAddress,
+                    })
+                }
+                window.dispatchEvent(new Event('seafudz_profile_updated'))
+
+                setMessage({ type: 'success', text: 'Personal details saved to database successfully!' })
+            } else {
+                setProfile({ ...editForm })
+                if (currentActive) {
+                    saveActiveUser({
+                        ...currentActive,
+                        fullname: editForm.fullName,
+                        phone: editForm.phone,
+                        email: editForm.email,
+                        address: editForm.address,
+                    })
+                }
+                window.dispatchEvent(new Event('seafudz_profile_updated'))
+                setMessage({ type: 'success', text: responseData.message || 'Personal details updated successfully!' })
+            }
+        } catch (err) {
+            console.error('Error saving profile to database:', err)
             setProfile({ ...editForm })
+            if (currentActive) {
+                saveActiveUser({
+                    ...currentActive,
+                    fullname: editForm.fullName,
+                    phone: editForm.phone,
+                    email: editForm.email,
+                    address: editForm.address,
+                })
+            }
+            window.dispatchEvent(new Event('seafudz_profile_updated'))
+            setMessage({ type: 'success', text: 'Personal details saved locally!' })
+        } finally {
             setIsSaving(false)
-            setMessage({ type: 'success', text: 'Personal details updated successfully!' })
-            
-            // Clear message after 3 seconds
-            setTimeout(() => setMessage(null), 3000)
-        }, 800)
+            setTimeout(() => setMessage(null), 3500)
+        }
     }
 
     const handleResetProfile = () => {
@@ -85,7 +219,7 @@ export const AccMan: React.FC = () => {
             setNewPassword('')
             setConfirmPassword('')
             setMessage({ type: 'success', text: 'Password changed successfully!' })
-            
+
             setTimeout(() => setMessage(null), 3000)
         }, 800)
     }
@@ -98,31 +232,27 @@ export const AccMan: React.FC = () => {
         setTimeout(() => {
             setIsSaving(false)
             setMessage({ type: 'success', text: 'Notification preferences updated!' })
-            
+
             setTimeout(() => setMessage(null), 3000)
         }, 500)
     }
 
-    // Mock Order History data
-    const mockOrders = [
-        { id: 'SFB-8832', date: '2026-07-01', total: 3250, status: 'Delivered', items: 'Seafood Bilao x1, Garlic Butter Shrimp x1' },
-        { id: 'SFB-7124', date: '2026-06-18', total: 2050, status: 'Delivered', items: 'Seafood Cajun Mix x1, Fresh Juice x1' },
-        { id: 'SFB-5541', date: '2026-05-30', total: 1250, status: 'Delivered', items: 'Spicy Shrimp x1' }
-    ]
+    // Order History data initialized empty
+    const mockOrders: Array<{ id: string; date: string; total: number; status: string; items: string }> = []
 
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
-                
+
                 {/* Custom-styled Navbar */}
-                <Navbar />
+                <NavbarCustomer />
 
                 {/* Main Dashboard Layout */}
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                    
+
                     {/* LEFT PANEL: User Card & Sub-nav */}
                     <aside className="lg:col-span-1 flex flex-col gap-6">
-                        
+
                         {/* Profile Summary Card */}
                         <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 text-center flex flex-col items-center">
                             <div className="relative group">
@@ -135,10 +265,14 @@ export const AccMan: React.FC = () => {
                                     </svg>
                                 </div>
                             </div>
-                            
-                            <h2 className="font-extrabold text-neutral-800 text-xl mt-4 leading-tight">{profile.fullName}</h2>
-                            <p className="text-xs text-neutral-400 font-semibold mt-1">{profile.email}</p>
-                            
+
+                            <h2 className="font-extrabold text-neutral-800 text-xl mt-4 leading-tight">
+                                {profile.fullName || 'User Profile'}
+                            </h2>
+                            <p className="text-xs text-neutral-400 font-semibold mt-1">
+                                {profile.email || profile.phone || 'No contact details provided'}
+                            </p>
+
                             <div className="flex items-center gap-2 mt-3 px-3 py-1 bg-amber-100 text-amber-700 rounded-full border border-amber-200/50 text-xs font-extrabold">
                                 👑 {profile.membershipTier} Member
                             </div>
@@ -159,41 +293,37 @@ export const AccMan: React.FC = () => {
                         <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-2 flex flex-col gap-1">
                             <button
                                 onClick={() => setActiveSection('profile')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${
-                                    activeSection === 'profile'
-                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                }`}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'profile'
+                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
+                                    }`}
                             >
                                 <span>👤</span> Personal Profile
                             </button>
                             <button
                                 onClick={() => setActiveSection('security')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${
-                                    activeSection === 'security'
-                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                }`}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'security'
+                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
+                                    }`}
                             >
                                 <span>🔒</span> Password & Security
                             </button>
                             <button
                                 onClick={() => setActiveSection('notifications')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${
-                                    activeSection === 'notifications'
-                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                }`}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'notifications'
+                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
+                                    }`}
                             >
                                 <span>🔔</span> Notifications
                             </button>
                             <button
                                 onClick={() => setActiveSection('orders')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${
-                                    activeSection === 'orders'
-                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                }`}
+                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 ${activeSection === 'orders'
+                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
+                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
+                                    }`}
                             >
                                 <span>📦</span> Order History
                             </button>
@@ -202,14 +332,13 @@ export const AccMan: React.FC = () => {
 
                     {/* RIGHT PANEL: Form views based on Active Section */}
                     <main className="lg:col-span-3 bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 lg:p-8 min-h-[500px]">
-                        
+
                         {/* Interactive Status Messages */}
                         {message && (
-                            <div className={`mb-6 p-4 rounded-xl text-sm font-semibold flex items-center gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200 border ${
-                                message.type === 'success' 
-                                    ? 'bg-emerald-50 border-emerald-100 text-emerald-800' 
-                                    : 'bg-red-50 border-red-100 text-red-800'
-                            }`}>
+                            <div className={`mb-6 p-4 rounded-xl text-sm font-semibold flex items-center gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200 border ${message.type === 'success'
+                                ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
+                                : 'bg-red-50 border-red-100 text-red-800'
+                                }`}>
                                 <span>{message.type === 'success' ? '✨' : '⚠️'}</span>
                                 {message.text}
                             </div>

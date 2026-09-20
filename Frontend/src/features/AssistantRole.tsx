@@ -1,673 +1,690 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
+import { NavbarAssistant } from '../components/NavbarAssistant'
+import { API_BASE_URL } from '../utils/api'
 
 export interface OrderItem {
-  name: string;
-  quantity: number;
-  price: number;
+  name: string
+  quantity: number
+  price: number
 }
 
 export interface OnlineOrder {
-  id: string;
-  ref: string;
-  customer: string;
-  phone: string;
-  address: string;
-  paymentMethod: string;
-  status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned';
-  items: OrderItem[];
-  total: number;
-  createdAt: string;
-  correctionNote?: string;
-  riderId?: string;
-  assignedRiderName?: string;
+  id: string
+  ref: string
+  customer: string
+  phone: string
+  address: string
+  paymentMethod: string
+  paymentReference?: string
+  paymentReceipt?: string
+  status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | string
+  items: OrderItem[]
+  total: number
+  createdAt: string
+  correctionNote?: string
+  riderId?: string
+  assignedRiderName?: string
 }
 
 export interface Rider {
-  id: string;
-  name: string;
-  status: 'Available' | 'Busy - 1 delivery active' | 'Offline';
-  vehicle: string;
-  phone: string;
+  id: string
+  name: string
+  status: 'Available' | 'Busy - 1 delivery active' | 'Offline'
+  vehicle: string
+  phone: string
 }
 
-const INITIAL_RIDERS: Rider[] = [
-  { id: 'r-1', name: 'Danilo "Speedy" Santos', status: 'Available', vehicle: 'Honda Click 125i', phone: '0917-555-0192' },
-  { id: 'r-2', name: 'Mark "Cajun" Dimaculangan', status: 'Busy - 1 delivery active', vehicle: 'Yamaha Aerox 155', phone: '0918-222-9981' },
-  { id: 'r-3', name: 'Jun-Jun "Dagat" Reyes', status: 'Available', vehicle: 'Suzuki Smash 115', phone: '0922-777-3322' },
-  { id: 'r-4', name: 'Ronaldo dela Cruz', status: 'Offline', vehicle: 'Honda Beat', phone: '0909-111-2233' }
-]
-
-// Initial mock online orders to make the UI look rich and interactive immediately
-const INITIAL_ONLINE_ORDERS: OnlineOrder[] = [
-  {
-    id: 'oo-1',
-    ref: 'ORD-8821',
-    customer: 'Clarissa Dimapilis',
-    phone: '0917-882-9912',
-    address: 'Block 4, Lot 12, Mahogany St., Phase 2, Cavite City',
-    paymentMethod: 'GCash',
-    status: 'pending',
-    items: [
-      { name: 'Seafood Cajun Mix', quantity: 1, price: 1800 },
-      { name: 'Fresh Juice', quantity: 2, price: 250 }
-    ],
-    total: 2300,
-    createdAt: '5 mins ago'
-  },
-  {
-    id: 'oo-2',
-    ref: 'ORD-8822',
-    customer: 'Michael Reyes',
-    phone: '0908-112-4455',
-    address: 'Room 204, Jade Heights Condominium, Taft Ave, Manila',
-    paymentMethod: 'Cash on Delivery',
-    status: 'pending',
-    items: [
-      { name: 'Crab Bucket', quantity: 1, price: 2500 },
-      { name: 'Spicy Shrimp', quantity: 1, price: 1200 }
-    ],
-    total: 3700,
-    createdAt: '12 mins ago'
-  },
-  {
-    id: 'oo-3',
-    ref: 'ORD-8823',
-    customer: 'Samantha Go',
-    phone: '0918-334-9988',
-    address: '15 Dunhill St., Fairview, Quezon City',
-    paymentMethod: 'GCash',
-    status: 'pending',
-    items: [
-      { name: 'Seafood Bilao', quantity: 1, price: 2000 }
-    ],
-    total: 2000,
-    createdAt: '25 mins ago'
-  }
-]
-
-const CUSTOMER_NAMES = ['Elena Cruz', 'Gabriel Santos', 'Patricia Luna', 'Renzo Diaz', 'Melissa Lim']
-const DISHES = [
-  { name: 'Seafood Cajun Mix', price: 1800 },
-  { name: 'Crab Bucket', price: 2500 },
-  { name: 'Spicy Shrimp', price: 1200 },
-  { name: 'Seafood Bilao', price: 2000 },
-  { name: 'Garlic Butter Shrimp', price: 1000 },
-  { name: 'Fresh Juice', price: 250 }
+const INITIAL_MOCK_RIDERS: Rider[] = [
+  { id: 'r-1', name: 'Rider Alex Ramos', status: 'Available', vehicle: 'Yamaha NMAX (Plate 123-ABC)', phone: '09170001111' },
+  { id: 'r-2', name: 'Dan Cruz', status: 'Available', vehicle: 'Honda Click 125i (Plate 456-DEF)', phone: '09180002222' },
+  { id: 'r-3', name: 'Marky Santos', status: 'Busy - 1 delivery active', vehicle: 'Kawasaki Barako (Plate 789-GHI)', phone: '09200003333' },
 ]
 
 export const AssistantRole: React.FC = () => {
-  const [orders, setOrders] = useState<OnlineOrder[]>(INITIAL_ONLINE_ORDERS)
+  const [orders, setOrders] = useState<OnlineOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
-
   const [activeTab, setActiveTab] = useState<'pending' | 'kitchen' | 'dispatch' | 'all'>('pending')
   const [correctionNoteInput, setCorrectionNoteInput] = useState('')
   const [selectedRiderId, setSelectedRiderId] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const ITEMS_PER_PAGE = 6
+  const [riders] = useState<Rider[]>(INITIAL_MOCK_RIDERS)
+  const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
 
-  // Auto-dismiss notification toast
   useEffect(() => {
     if (notification) {
-      const timer = setTimeout(() => {
-        setNotification(null)
-      }, 4000)
+      const timer = setTimeout(() => setNotification(null), 4000)
       return () => clearTimeout(timer)
     }
   }, [notification])
 
-  // Simulate incoming online orders periodically to keep UI alive
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const randomName = CUSTOMER_NAMES[Math.floor(Math.random() * CUSTOMER_NAMES.length)]
-      const numItems = Math.floor(Math.random() * 2) + 1
-      const selectedItems: OrderItem[] = []
-      let total = 0
+  const selectedOrder = orders.find((o) => o.id === selectedOrderId)
 
-      for (let i = 0; i < numItems; i++) {
-        const dish = DISHES[Math.floor(Math.random() * DISHES.length)]
-        const qty = Math.floor(Math.random() * 2) + 1
-        selectedItems.push({
-          name: dish.name,
-          quantity: qty,
-          price: dish.price
-        })
-        total += dish.price * qty
-      }
-
-      const orderId = `oo-${Date.now()}`
-      const refNumber = `ORD-${Math.floor(Math.random() * 9000) + 1000}`
-
-      const newOrder: OnlineOrder = {
-        id: orderId,
-        ref: refNumber,
-        customer: randomName,
-        phone: `09${Math.floor(Math.random() * 900000000 + 100000000)}`,
-        address: `${Math.floor(Math.random() * 120) + 1} Aurora Blvd, Quezon City`,
-        paymentMethod: Math.random() > 0.4 ? 'GCash' : 'Cash on Delivery',
-        status: 'pending',
-        items: selectedItems,
-        total,
-        createdAt: 'Just now'
-      }
-
-      setOrders(prev => [newOrder, ...prev])
-      setNotification(`🔔 New Online Order Received! ${refNumber} - ₱${total}`)
-    }, 25000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  const selectedOrder = orders.find(o => o.id === selectedOrderId)
-
-  // Phone Validation helper for Philippine numbers
   const validatePhone = (phoneStr: string): { isValid: boolean; cleaned: string } => {
     const cleaned = phoneStr.replace(/[^0-9+]/g, '')
-    if (cleaned.startsWith('+639')) {
-      return { isValid: cleaned.length === 13, cleaned }
-    }
-    if (cleaned.startsWith('09')) {
-      return { isValid: cleaned.length === 11, cleaned }
-    }
+    if (cleaned.startsWith('+639')) return { isValid: cleaned.length === 13, cleaned }
+    if (cleaned.startsWith('09')) return { isValid: cleaned.length === 11, cleaned }
     return { isValid: false, cleaned }
   }
 
-  // Address completeness helper
   const validateAddress = (addressStr: string): { isComplete: boolean; warningMsg?: string } => {
     const cleaned = addressStr.trim()
-    if (cleaned.length === 0) {
-      return { isComplete: false, warningMsg: 'Address is missing.' }
-    }
-    if (cleaned.length < 15) {
-      return { isComplete: false, warningMsg: 'Address details seem too short.' }
-    }
-    const keywords = ['brgy', 'barangay', 'st', 'street', 'ave', 'avenue', 'phase', 'block', 'lot', 'no', 'corner', 'cty', 'city', 'silang']
-    const hasDetails = keywords.some(keyword => cleaned.toLowerCase().includes(keyword))
-    if (!hasDetails) {
-      return { isComplete: false, warningMsg: 'Missing landmark or street indicator (e.g. St, Brgy).' }
-    }
+    if (cleaned.length === 0) return { isComplete: false, warningMsg: 'Address is missing.' }
+    if (cleaned.length < 10) return { isComplete: false, warningMsg: 'Address details seem too short.' }
     return { isComplete: true }
   }
 
-  // Real-time evaluation of selected order
   const customerNameValid = selectedOrder ? selectedOrder.customer.trim().length > 0 : false
   const phoneValidation = selectedOrder ? validatePhone(selectedOrder.phone) : { isValid: false, cleaned: '' }
   const addressValidation = selectedOrder ? validateAddress(selectedOrder.address) : { isComplete: false, warningMsg: '' }
 
-  const handleFlagForCorrection = () => {
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
+
+  // Fetch live orders from central backend & local store
+  const fetchAssistantOrders = async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
+
+    isFetchingRef.current = true
+    lastFetchRef.current = now
+
+    try {
+      const combinedMap = new Map<string, OnlineOrder>()
+
+      // 1. Read from shared LocalStorage (Online Delivery Orders ONLY)
+      try {
+        const local = localStorage.getItem('seafudz_orders')
+        if (local) {
+          const parsed = JSON.parse(local)
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              const orderType = (o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
+              if (!isDelivery) return // Ignore POS walk-in orders
+
+              const rawStatus = (o.status || 'PENDING').toLowerCase()
+              const id = o.id || o.ref
+              const items: OrderItem[] = Array.isArray(o.cartItems)
+                ? o.cartItems.map((ci: any) => ({
+                    name: ci.item?.name || ci.name || 'Seafood Dish',
+                    quantity: ci.quantity || 1,
+                    price: ci.item?.price || ci.price || 0,
+                  }))
+                : (o.items || '').split(',').map((part: string) => {
+                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                    return {
+                      name: match ? match[1].trim() : part.trim(),
+                      quantity: match ? parseInt(match[2], 10) : 1,
+                      price: 0,
+                    }
+                  })
+
+              combinedMap.set(id, {
+                id,
+                ref: id,
+                customer: o.customer || 'Online Customer',
+                phone: o.phone || '0917-000-0000',
+                address: o.address || 'Delivery Address',
+                paymentMethod: o.paymentMethod || 'GCash',
+                paymentReference: o.paymentReference || o.paymentRef,
+                paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
+                status: rawStatus,
+                items,
+                total: Number(o.total || 0),
+                createdAt: o.dateTime || 'Just now',
+                correctionNote: o.notes,
+                riderId: o.riderId,
+                assignedRiderName: o.assignedRiderName,
+              })
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('LocalStorage error in AssistantRole:', e)
+      }
+
+      // 2. Read from backend API (Online Delivery Orders ONLY)
+      try {
+        const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.data)) {
+            data.data.forEach((o: any) => {
+              const orderType = (o.order_type || o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
+              if (!isDelivery) return // Ignore POS walk-in orders
+
+              const id = o.id
+              if (!combinedMap.has(id)) {
+                combinedMap.set(id, {
+                  id,
+                  ref: id,
+                  customer: o.customer || o.customerName || 'Online Customer',
+                  phone: o.phone || '0917-000-0000',
+                  address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                  paymentMethod: o.paymentMethod || 'GCash',
+                  paymentReference: o.paymentReference || o.paymentRef,
+                  paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
+                  status: (o.status || 'PENDING').toLowerCase(),
+                  items: o.items || [],
+                  total: o.total || 0,
+                  createdAt: o.createdAt || 'Just now',
+                  correctionNote: o.notes,
+                  riderId: o.riderId,
+                  assignedRiderName: o.assignedRiderName,
+                })
+              }
+            })
+          }
+        }
+      } catch (err) {}
+
+      setOrders(Array.from(combinedMap.values()))
+    } finally {
+      isFetchingRef.current = false
+    }
+  }
+
+  useEffect(() => {
+    void fetchAssistantOrders()
+
+    const handleSync = () => {
+      void fetchAssistantOrders(true)
+    }
+
+    window.addEventListener('seafudz_order_created', handleSync)
+    window.addEventListener('storage', handleSync)
+
+    const timer = setInterval(() => {
+      void fetchAssistantOrders()
+    }, 6000)
+
+    return () => {
+      window.removeEventListener('seafudz_order_created', handleSync)
+      window.removeEventListener('storage', handleSync)
+      clearInterval(timer)
+    }
+  }, [])
+
+  const handleFlagForCorrection = async () => {
     if (!selectedOrderId || !selectedOrder) return
     if (!correctionNoteInput.trim()) {
       setNotification('⚠️ Please enter a correction note first.')
       return
     }
-    setOrders(prev =>
-      prev.map(o =>
-        o.id === selectedOrderId
-          ? { ...o, status: 'flagged', correctionNote: correctionNoteInput }
+
+    try {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'FLAGGED', note: correctionNoteInput }),
+      })
+    } catch {}
+
+    // Update in LocalStorage
+    try {
+      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updated = existing.map((o: any) =>
+        o.id === selectedOrderId || o.ref === selectedOrderId
+          ? { ...o, status: 'FLAGGED', notes: correctionNoteInput }
           : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === selectedOrderId ? { ...o, status: 'flagged', correctionNote: correctionNoteInput } : o
       )
     )
     setNotification(`🚩 Order ${selectedOrder.ref} flagged for correction.`)
     setCorrectionNoteInput('')
   }
 
-  const handleApproveSendToKitchen = () => {
+  // PASS ORDER TO CASHIER & KITCHEN (CONFIRMED)
+  const handleApproveSendToKitchen = async () => {
     if (!selectedOrderId || !selectedOrder) return
-    if (!customerNameValid || !phoneValidation.isValid || !addressValidation.isComplete) {
-      setNotification('⚠️ Fix or acknowledge checklist issues before sending to kitchen.')
-      return
-    }
-    setOrders(prev =>
-      prev.map(o =>
-        o.id === selectedOrderId ? { ...o, status: 'pending_preparation' } : o
+
+    try {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CONFIRMED' }),
+      })
+    } catch (err) {}
+
+    // Update in LocalStorage for instant live broadcast to Cashier & Kitchen
+    try {
+      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updated = existing.map((o: any) =>
+        o.id === selectedOrderId || o.ref === selectedOrderId
+          ? { ...o, status: 'CONFIRMED', paymentStatus: 'Paid' }
+          : o
       )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+
+      // Also update active online customer order if matching
+      const savedActive = localStorage.getItem('seafudz_active_online_order')
+      if (savedActive) {
+        const activeObj = JSON.parse(savedActive)
+        if (activeObj && (activeObj.id === selectedOrderId || activeObj.ref === selectedOrderId)) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
+        }
+      }
+
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    setOrders((prev) =>
+      prev.map((o) => (o.id === selectedOrderId ? { ...o, status: 'confirmed' } : o))
     )
-    setNotification(`🍳 Order ${selectedOrder.ref} approved and sent to Kitchen!`)
+    setNotification(`🍳 Order ${selectedOrder.ref} approved! Sent to Cashier & Kitchen!`)
   }
 
-  const handleAssignRider = () => {
+  // DISPATCH ORDER TO RIDER
+  const handleAssignRider = async () => {
     if (!selectedOrderId || !selectedOrder) return
     if (!selectedRiderId) {
       setNotification('⚠️ Please select a rider to dispatch.')
       return
     }
-    const rider = INITIAL_RIDERS.find(r => r.id === selectedRiderId)
+    const rider = riders.find((r) => r.id === selectedRiderId)
     if (!rider) return
 
-    setOrders(prev =>
-      prev.map(o =>
+    // Update in backend API
+    try {
+      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'OUT_FOR_DELIVERY', riderId: rider.id, assignedRiderName: rider.name }),
+      })
+    } catch {}
+
+    // Update in LocalStorage for live rider sync
+    try {
+      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updated = existing.map((o: any) =>
+        o.id === selectedOrderId || o.ref === selectedOrderId
+          ? { ...o, status: 'OUT_FOR_DELIVERY', riderId: rider.id, assignedRiderName: rider.name }
+          : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    setOrders((prev) =>
+      prev.map((o) =>
         o.id === selectedOrderId
-          ? { ...o, status: 'preparing', riderId: rider.id, assignedRiderName: rider.name }
+          ? { ...o, status: 'out_for_delivery', riderId: rider.id, assignedRiderName: rider.name }
           : o
       )
     )
-    setNotification(`🔔 Rider ${rider.name} notified of Order ${selectedOrder.ref}`)
+    setNotification(`🛵 Order ${selectedOrder.ref} assigned kay ${rider.name}! Handed over for delivery.`)
   }
 
-  // Filter list based on selected pipeline stage tab
-  const filteredOrders = orders.filter(order => {
-    if (activeTab === 'pending') return order.status === 'pending' || order.status === 'flagged'
-    if (activeTab === 'kitchen') return order.status === 'pending_preparation'
-    if (activeTab === 'dispatch') return order.status === 'preparing' || order.status === 'assigned'
-    return true
-  })
+  const filteredOrders = useMemo(() => {
+    return orders.filter((order) => {
+      const s = (order.status || '').toLowerCase()
+      const matchesTab =
+        activeTab === 'pending'
+          ? s === 'pending' || s === 'flagged' || s === 'pending_verification' || s === 'unconfirmed'
+          : activeTab === 'kitchen'
+          ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
+          : activeTab === 'dispatch'
+          ? s === 'ready' || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'
+          : true
+
+      if (!matchesTab) return false
+
+      if (!searchQuery.trim()) return true
+      const q = searchQuery.toLowerCase()
+      return (
+        order.ref.toLowerCase().includes(q) ||
+        order.customer.toLowerCase().includes(q) ||
+        order.phone.toLowerCase().includes(q) ||
+        order.address.toLowerCase().includes(q) ||
+        order.items.some((i) => i.name.toLowerCase().includes(q))
+      )
+    })
+  }, [orders, activeTab, searchQuery])
+
+  // Reset pagination when filter or search changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [activeTab, searchQuery])
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / ITEMS_PER_PAGE))
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+    return filteredOrders.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  }, [filteredOrders, currentPage, ITEMS_PER_PAGE])
 
   return (
-    <div className="flex flex-col h-screen bg-[#f8f6f4] text-[#2c1810] font-sans overflow-hidden">
-      {/* Top Navbar styled for light seafood theme */}
-      <header className="flex items-center justify-between bg-white border-b border-[#e0d6cf] px-6 py-3 shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">🍤</span>
-          <span className="text-xl font-bold text-[#2c1810] tracking-wide">
-            Seafood Palace <span className="text-[#ff7b00] font-medium">- Assistant Console</span>
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => setNotification("🔔 Checking for new online orders...")}
-            className="text-2xl hover:scale-110 active:scale-95 transition-transform cursor-pointer"
-            title="Check Notifications"
-          >
-            🛎️
-          </button>
-          <div className="bg-[#c9a98f] w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold cursor-pointer shadow-sm hover:bg-[#b09177] transition-colors">
-            👤
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 transition-all duration-300 pb-24 lg:pb-6 text-neutral-900 font-sans">
+      <div className="w-full flex flex-col gap-4 sm:gap-6">
+        {/* Top Navbar */}
+        <NavbarAssistant />
 
-      {/* Pipeline View Workspace */}
-      <div className="flex-1 flex flex-col lg:flex-row bg-[#f8f6f4] text-[#2c1810] overflow-hidden">
-        {/* Left panel: Order Feed */}
-        <div className="flex-1 flex flex-col border-r border-[#e0d6cf] bg-[#f8f6f4]">
-          {/* Pipeline Navigation Header */}
-          <div className="p-4 bg-white border-b border-[#e0d6cf] flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <h2 className="text-xl font-bold tracking-tight text-[#2c1810] flex items-center gap-2">
-                <span className="text-[#ff7b00]">🍤</span> Order Status Pipeline
-              </h2>
-              <p className="text-xs text-neutral-500">Bagong Silang Branch • Real-time Feeds</p>
+        {/* 4-Column Layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-start">
+          
+          {/* Left Column (3 Cols) */}
+          <div className="lg:col-span-3 flex flex-col gap-4">
+            {notification && (
+              <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-3 rounded-2xl flex items-center justify-between text-sm font-bold shadow-xs animate-in fade-in">
+                <span>{notification}</span>
+                <button onClick={() => setNotification(null)} className="text-orange-500 font-extrabold cursor-pointer">×</button>
+              </div>
+            )}
+
+            {/* Search and Tabs Row */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              {/* Pipeline Tabs */}
+              <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-neutral-200 shadow-2xs overflow-x-auto">
+                {[
+                  { id: 'pending', label: '1. Pending Orders', icon: '📝' },
+                  { id: 'kitchen', label: '2. Sent to Kitchen', icon: '🍳' },
+                  { id: 'dispatch', label: '3. Rider Dispatch', icon: '🛵' },
+                  { id: 'all', label: 'All Orders', icon: '📦' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`px-4 py-2.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
+                      activeTab === tab.id
+                        ? 'bg-[#ff7b00] text-white shadow-xs'
+                        : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
+                    }`}
+                  >
+                    <span>{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Search Bar (Same as Rider) */}
+              <div className="relative min-w-[240px]">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm">🔍</span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search customer, ref, address..."
+                  className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="flex bg-[#f8f6f4] p-1 rounded-xl border border-[#e0d6cf] text-xs">
-              <button
-                onClick={() => setActiveTab('pending')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'pending'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
-                  }`}
-              >
-                Pending Verification ({orders.filter(o => o.status === 'pending' || o.status === 'flagged').length})
-              </button>
-              <button
-                onClick={() => setActiveTab('kitchen')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'kitchen'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
-                  }`}
-              >
-                Kitchen ({orders.filter(o => o.status === 'pending_preparation').length})
-              </button>
-              <button
-                onClick={() => setActiveTab('dispatch')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'dispatch'
-                    ? 'bg-[#ff7b00] text-white shadow'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
-                  }`}
-              >
-                Rider Dispatch ({orders.filter(o => o.status === 'preparing' || o.status === 'assigned').length})
-              </button>
-              <button
-                onClick={() => setActiveTab('all')}
-                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${activeTab === 'all'
-                    ? 'bg-[#e0d6cf] text-[#2c1810]'
-                    : 'text-neutral-500 hover:text-[#ff7b00]'
-                  }`}
-              >
-                All ({orders.length})
-              </button>
+            {/* Orders Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {paginatedOrders.length === 0 ? (
+                <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
+                  <div className="text-3xl mb-2">📥</div>
+                  <h3 className="font-bold text-neutral-700">No orders in this stage right now.</h3>
+                  <p className="text-xs mt-1">
+                    {searchQuery ? `No results matching "${searchQuery}"` : 'Online orders placed by customers will appear here immediately.'}
+                  </p>
+                </div>
+              ) : (
+                paginatedOrders.map((ord) => {
+                  const isSelected = selectedOrderId === ord.id
+                  const s = (ord.status || '').toLowerCase()
+
+                  return (
+                    <div
+                      key={ord.id}
+                      onClick={() => setSelectedOrderId(ord.id)}
+                      className={`bg-white rounded-3xl p-5 border transition-all cursor-pointer shadow-xs hover:shadow-md ${
+                        isSelected
+                          ? 'border-[#ff7b00] ring-2 ring-orange-500/20'
+                          : 'border-neutral-200 hover:border-neutral-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
+                        <div>
+                          <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
+                          <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
+                          <p className="text-xs text-neutral-500 mt-0.5">📞 {ord.phone}</p>
+                        </div>
+                        <span
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                            s === 'pending' || s === 'unconfirmed'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : s === 'confirmed' || s === 'preparing'
+                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                              : s === 'ready'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          }`}
+                        >
+                          ● {ord.status}
+                        </span>
+                      </div>
+
+                      <div className="py-3 text-xs text-neutral-600 space-y-1">
+                        <p className="truncate">📍 <span className="font-medium text-neutral-700">{ord.address}</span></p>
+                        <p className="truncate">🍤 <span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                      </div>
+
+                      <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                            ord.paymentMethod?.toLowerCase().includes('maya')
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-blue-100 text-blue-800'
+                          }`}>
+                            {ord.paymentMethod || 'GCash'}
+                          </span>
+                          {ord.paymentReceipt && (
+                            <span className="text-[10px]" title="Receipt photo attached">📸</span>
+                          )}
+                        </div>
+                        <span className="text-neutral-400 font-medium text-[11px]">🕒 {ord.createdAt}</span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
             </div>
+
+            {/* Pagination Controls */}
+            {filteredOrders.length > ITEMS_PER_PAGE && (
+              <div className="bg-white px-5 py-3.5 rounded-2xl border border-neutral-200 shadow-2xs flex items-center justify-between">
+                <span className="text-xs font-bold text-neutral-500">
+                  Page <span className="text-neutral-900 font-black">{currentPage}</span> of{' '}
+                  <span className="text-neutral-900 font-black">{totalPages}</span> ({filteredOrders.length} total orders)
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                  >
+                    <span>⬅️</span> Prev
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#ff7b00] hover:bg-[#e66f00] text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                  >
+                    Next <span>➡️</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Order Feed Cards */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            {filteredOrders.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-neutral-400 bg-white border border-dashed border-[#e0d6cf] rounded-2xl p-6 text-center">
-                <span className="text-4xl mb-3">🗂️</span>
-                <h4 className="text-sm font-bold text-neutral-700">No Orders in this pipeline stage</h4>
-                <p className="text-xs text-neutral-500 max-w-xs mt-1">Pending and incoming delivery orders appear here automatically.</p>
+          {/* Right Column: Selected Order Management Details */}
+          <div className="lg:col-span-1 bg-white p-6 rounded-3xl border border-neutral-200/80 shadow-xs space-y-6">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 border-b border-neutral-100 pb-3">
+              Order Verification & Dispatch
+            </h3>
+
+            {!selectedOrder ? (
+              <div className="text-center py-16 text-neutral-400 text-xs">
+                <p className="text-2xl mb-1">👈</p>
+                Select an order from the list to review and forward to Cashier & Kitchen.
               </div>
             ) : (
-              filteredOrders.map(order => {
-                const isSelected = order.id === selectedOrderId
-                return (
-                  <div
-                    key={order.id}
-                    onClick={() => setSelectedOrderId(order.id)}
-                    className={`group relative bg-white border rounded-2xl p-4 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 ${isSelected
-                        ? 'border-[#ff7b00] ring-2 ring-[#ff7b00]/20 bg-[#fffbf9] shadow-sm'
-                        : 'border-[#e0d6cf] hover:border-[#ff7b00]/50 hover:bg-[#fffbf9]/40'
-                      }`}
-                  >
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-[#e0d6cf]">
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-[#ff7b00] text-sm tracking-wider">{order.ref}</span>
-                        <span className="text-[10px] text-neutral-400 font-semibold">{order.createdAt}</span>
-                      </div>
-                      <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase tracking-wider ${order.status === 'pending'
-                          ? 'bg-amber-100 text-amber-800'
-                          : order.status === 'flagged'
-                            ? 'bg-rose-100 text-rose-800 animate-pulse'
-                            : order.status === 'pending_preparation'
-                              ? 'bg-blue-100 text-blue-800'
-                              : 'bg-emerald-100 text-emerald-800'
-                        }`}>
-                        {order.status.replace('_', ' ').toUpperCase()}
-                      </span>
-                    </div>
+              <div className="space-y-5 text-xs text-slate-700">
+                {/* Clean Order Header */}
+                <div className="pb-4 border-b border-slate-100 space-y-1">
+                  <div className="flex justify-between items-center">
+                    <span className="font-extrabold text-slate-900 text-lg tracking-tight">{selectedOrder.ref}</span>
+                    <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide uppercase bg-slate-100 text-slate-600">
+                      {selectedOrder.paymentMethod || 'GCash'}
+                    </span>
+                  </div>
+                  <p className="font-normal text-slate-800 text-sm pt-0.5">{selectedOrder.customer}</p>
+                  <p className="text-slate-500 text-xs">{selectedOrder.phone}</p>
+                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">{selectedOrder.address}</p>
+                </div>
 
-                    <div className="flex flex-col md:flex-row justify-between md:items-center gap-2">
-                      <div>
-                        <div className="font-bold text-neutral-800 text-sm">{order.customer}</div>
-                        <div className="text-xs text-neutral-500 truncate max-w-md">{order.address}</div>
-                      </div>
-                      <div className="flex items-center justify-between md:justify-end gap-3 text-right">
-                        <span className="text-[10px] text-neutral-400 font-semibold">{order.paymentMethod}</span>
-                        <span className="font-extrabold text-[#2c1810] text-sm">₱{order.total.toLocaleString()}</span>
-                      </div>
+                {/* Minimal Payment Details */}
+                <div className="pb-4 border-b border-slate-100 space-y-2.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Payment Details</span>
+                    <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
+                  </div>
+
+                  <div className="space-y-1.5 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Payment Mode:</span>
+                      <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
                     </div>
-                    {order.correctionNote && (
-                      <div className="mt-2 text-[11px] text-rose-800 bg-rose-50 border border-rose-100 p-2 rounded-lg font-medium italic">
-                        ⚠️ Note: {order.correctionNote}
+                    {selectedOrder.paymentReference && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-500 font-medium">Reference No:</span>
+                        <span className="font-mono font-semibold text-slate-800">
+                          {selectedOrder.paymentReference}
+                        </span>
                       </div>
                     )}
                   </div>
-                )
-              })
+
+                  {/* Payment Receipt / Screenshot (Minimal) */}
+                  {selectedOrder.paymentReceipt && (
+                    <div className="pt-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <img
+                          src={selectedOrder.paymentReceipt}
+                          alt="Receipt Preview"
+                          onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
+                          className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity"
+                        />
+                        <div>
+                          <p className="text-[11px] font-semibold text-emerald-700">Receipt Attached</p>
+                          <p className="text-[10px] text-slate-400">Click to view image</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
+                        className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                      >
+                        View
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Minimal Checklist */}
+                <div className="pb-2 space-y-2 text-[11px]">
+                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Verification Checklist</p>
+                  <div className="space-y-1">
+                    <p className={customerNameValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                      <span>{customerNameValid ? '✓' : '✗'}</span>
+                      <span>{customerNameValid ? 'Customer name verified' : 'Missing customer name'}</span>
+                    </p>
+                    <p className={phoneValidation.isValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                      <span>{phoneValidation.isValid ? '✓' : '✗'}</span>
+                      <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
+                    </p>
+                    <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
+                      <span>{addressValidation.isComplete ? '✓' : '⚠'}</span>
+                      <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Pipeline Action Button */}
+                <div className="pt-2">
+                  <button
+                    onClick={handleApproveSendToKitchen}
+                    className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
+                  >
+                    <span>🍳</span> Forward to Cashier & Kitchen
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>
-
-        {/* Right panel: Console details & Pipelines (POS style sidebar theme) */}
-        <div className="w-full lg:w-[480px] bg-[#a08070] text-white border-t lg:border-t-0 border-[#8c6b5a] flex flex-col overflow-y-auto">
-          {selectedOrder ? (
-            <div className="flex flex-col p-6 space-y-6">
-
-              {/* Header Details */}
-              <div className="bg-[#8c6b5a] p-5 rounded-2xl border border-white/10 shadow-inner">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="text-[10px] uppercase font-bold text-white/60 tracking-wider">Active Reference</div>
-                    <h3 className="text-2xl font-black text-white tracking-wide mt-0.5">{selectedOrder.ref}</h3>
-                  </div>
-                  <span className={`text-[10px] font-black px-2.5 py-1 rounded-full uppercase border ${selectedOrder.status === 'pending'
-                      ? 'bg-amber-100 text-amber-900 border-amber-200'
-                      : selectedOrder.status === 'flagged'
-                        ? 'bg-rose-100 text-rose-900 border-rose-200'
-                        : selectedOrder.status === 'pending_preparation'
-                          ? 'bg-blue-100 text-blue-900 border-blue-200'
-                          : 'bg-emerald-100 text-emerald-900 border-emerald-200'
-                    }`}>
-                    {selectedOrder.status.replace('_', ' ').toUpperCase()}
-                  </span>
-                </div>
-                <div className="mt-4 border-t border-white/15 pt-3">
-                  <div className="font-bold text-white text-base">{selectedOrder.customer}</div>
-                  <div className="text-xs text-white/80 font-semibold mt-0.5">{selectedOrder.phone}</div>
-                </div>
-              </div>
-
-              {/* Pipeline Stage Indicators */}
-              <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                <div className={`p-2 rounded-lg border ${selectedOrder.status === 'pending' || selectedOrder.status === 'flagged'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
-                  }`}>
-                  1. Verification
-                </div>
-                <div className={`p-2 rounded-lg border ${selectedOrder.status === 'pending_preparation'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
-                  }`}>
-                  2. Kitchen Queue
-                </div>
-                <div className={`p-2 rounded-lg border ${selectedOrder.status === 'preparing' || selectedOrder.status === 'assigned'
-                    ? 'bg-[#ff7b00] text-white border-[#ff7b00]'
-                    : 'bg-black/10 text-white/50 border-white/10'
-                  }`}>
-                  3. Rider Dispatch
-                </div>
-              </div>
-
-              {/* PIPELINE VIEW 1: interactive Verification Checklist (Pending or Flagged) */}
-              {(selectedOrder.status === 'pending' || selectedOrder.status === 'flagged') && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-black/10 rounded-2xl border border-white/10 space-y-4">
-                    <h4 className="text-xs font-extrabold uppercase text-white/80 tracking-wider flex items-center gap-1.5">
-                      📋 Verification Checklist
-                    </h4>
-
-                    <div className="space-y-3 text-xs">
-                      {/* Checklist item 1 */}
-                      <div className="flex items-start justify-between p-2.5 rounded-xl bg-[#8c6b5a]/40 border border-white/10">
-                        <div>
-                          <div className="font-bold text-white">Customer Name Present</div>
-                          <div className="text-[10px] text-white/70 mt-0.5">Value: "{selectedOrder.customer}"</div>
-                        </div>
-                        <div>
-                          {customerNameValid ? (
-                            <span className="text-emerald-300 font-bold flex items-center gap-1">✓ Verified</span>
-                          ) : (
-                            <span className="text-rose-300 font-bold flex items-center gap-1">⚠️ Missing</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Checklist item 2 */}
-                      <div className="flex items-start justify-between p-2.5 rounded-xl bg-[#8c6b5a]/40 border border-white/10">
-                        <div>
-                          <div className="font-bold text-white">PH Mobile Format</div>
-                          <div className="text-[10px] text-white/70 mt-0.5">Value: "{selectedOrder.phone}"</div>
-                        </div>
-                        <div>
-                          {phoneValidation.isValid ? (
-                            <span className="text-emerald-300 font-bold flex items-center gap-1">✓ Valid format</span>
-                          ) : (
-                            <span className="text-amber-300 font-bold flex items-center gap-1">⚠️ Invalid</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Checklist item 3 */}
-                      <div className="flex items-start justify-between p-2.5 rounded-xl bg-[#8c6b5a]/40 border border-white/10">
-                        <div>
-                          <div className="font-bold text-white">Complete Address Details</div>
-                          <div className="text-[10px] text-white/70 mt-0.5 truncate max-w-[200px]" title={selectedOrder.address}>
-                            Value: "{selectedOrder.address}"
-                          </div>
-                        </div>
-                        <div>
-                          {addressValidation.isComplete ? (
-                            <span className="text-emerald-300 font-bold flex items-center gap-1">✓ Complete</span>
-                          ) : (
-                            <span className="text-amber-300 font-bold flex items-center gap-1">⚠️ Short/Incomplete</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {addressValidation.warningMsg && (
-                        <p className="text-[11px] text-amber-300 italic bg-amber-500/10 p-2 rounded-lg border border-amber-400/20">
-                          ⚠️ {addressValidation.warningMsg}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Flag for Correction Box */}
-                  <div className="p-4 bg-black/10 rounded-2xl border border-white/10 space-y-3">
-                    <h5 className="text-[11px] font-extrabold uppercase text-white/80 tracking-wider">
-                      Flag for Correction Note
-                    </h5>
-                    <textarea
-                      value={correctionNoteInput}
-                      onChange={(e) => setCorrectionNoteInput(e.target.value)}
-                      placeholder="Enter instructions (e.g. Address needs landmark, wrong format...)"
-                      className="w-full text-xs p-3 rounded-xl bg-[#8c6b5a]/30 border border-white/15 text-white placeholder-white/50 focus:outline-none focus:border-[#ff7b00] min-h-[70px] resize-none"
-                    />
-                    <div className="flex gap-3">
-                      <button
-                        onClick={handleFlagForCorrection}
-                        className="flex-1 bg-rose-600 hover:bg-rose-700 active:scale-[0.98] text-white py-2.5 px-4 rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 shadow-md border border-rose-500/20"
-                      >
-                        🚩 Flag for Correction
-                      </button>
-                      <button
-                        onClick={handleApproveSendToKitchen}
-                        className="flex-1 bg-[#ff7b00] hover:bg-[#e66f00] active:scale-[0.98] text-white py-2.5 px-4 rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 shadow-md shadow-orange-900/20"
-                      >
-                        🍳 Approve & Kitchen
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* PIPELINE VIEW 2: Kitchen Handshake Pending Preparation */}
-              {selectedOrder.status === 'pending_preparation' && (
-                <div className="p-5 bg-black/10 rounded-2xl border border-white/10 space-y-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl animate-spin text-amber-300">🧑‍🍳</span>
-                    <div>
-                      <h4 className="text-sm font-bold text-white">Sent to Kitchen Queue</h4>
-                      <p className="text-xs text-white/70">Order is pending kitchen verification and preparation.</p>
-                    </div>
-                  </div>
-
-                  {/* Simulated dispatch bypass button */}
-                  <button
-                    onClick={() => {
-                      setOrders(prev =>
-                        prev.map(o => o.id === selectedOrderId ? { ...o, status: 'preparing' } : o)
-                      )
-                      setNotification(`🍳 Kitchen handshake complete. Order ${selectedOrder.ref} is ready for dispatch assignment!`)
-                    }}
-                    className="w-full bg-[#ff7b00] hover:bg-[#e66f00] active:scale-[0.98] text-white py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5"
-                  >
-                    ⚡ Advance to Dispatch Matching
-                  </button>
-                </div>
-              )}
-
-              {/* PIPELINE VIEW 3: Rider Dispatch Panel */}
-              {(selectedOrder.status === 'preparing' || selectedOrder.status === 'assigned') && (
-                <div className="space-y-4">
-                  <div className="p-4 bg-black/10 rounded-2xl border border-white/10 space-y-3">
-                    <h4 className="text-xs font-extrabold uppercase text-white/80 tracking-wider flex items-center gap-1.5">
-                      🏍️ Select Dispatch Rider
-                    </h4>
-
-                    {selectedOrder.assignedRiderName ? (
-                      <div className="bg-[#8c6b5a]/50 border border-white/10 p-3 rounded-xl">
-                        <div className="text-xs font-bold text-white/70">Assigned Rider:</div>
-                        <div className="text-sm font-bold text-emerald-300 mt-1 flex items-center gap-1.5">
-                          <span>🏍️</span> {selectedOrder.assignedRiderName}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <select
-                          value={selectedRiderId}
-                          onChange={(e) => setSelectedRiderId(e.target.value)}
-                          className="w-full text-xs p-3 rounded-xl bg-[#8c6b5a] border border-white/10 text-white focus:outline-none focus:border-[#ff7b00]"
-                        >
-                          <option value="" className="text-[#2c1810]">-- Choose an Available Rider --</option>
-                          {INITIAL_RIDERS.map(rider => (
-                            <option key={rider.id} value={rider.id} disabled={rider.status === 'Offline'} className="text-[#2c1810]">
-                              {rider.name} ({rider.status}) - {rider.vehicle}
-                            </option>
-                          ))}
-                        </select>
-
-                        <button
-                          onClick={handleAssignRider}
-                          className="w-full bg-[#ff7b00] hover:bg-[#e66f00] active:scale-[0.98] text-white py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-1.5 shadow-md shadow-orange-950/20"
-                        >
-                          🚀 Assign Dispatch
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Dispatch Details Summary */}
-                  <div className="p-4 bg-black/10 rounded-2xl border border-white/10 space-y-3 text-xs">
-                    <h5 className="font-extrabold uppercase text-white/80 tracking-wider">
-                      Dispatch Summary
-                    </h5>
-                    <div className="space-y-2 divide-y divide-white/10">
-                      <div className="pt-2 flex justify-between">
-                        <span className="text-white/60">Customer:</span>
-                        <span className="font-bold text-white">{selectedOrder.customer} ({selectedOrder.phone})</span>
-                      </div>
-                      <div className="pt-2 flex justify-between">
-                        <span className="text-white/60">Address:</span>
-                        <span className="font-bold text-white text-right max-w-[240px] truncate" title={selectedOrder.address}>
-                          {selectedOrder.address}
-                        </span>
-                      </div>
-                      <div className="pt-2">
-                        <span className="text-white/60 block mb-1">Cargo Details (Items):</span>
-                        <div className="space-y-1 bg-[#8c6b5a]/40 border border-white/10 p-2.5 rounded-lg">
-                          {selectedOrder.items.map((item, idx) => (
-                            <div key={idx} className="flex justify-between text-[11px]">
-                              <span className="text-white/90 font-medium">{item.quantity}x {item.name}</span>
-                              <span className="text-white/70">₱{(item.price * item.quantity).toLocaleString()}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="pt-2 flex justify-between font-bold text-white">
-                        <span>Total Amount:</span>
-                        <span className="text-[#ffd099]">₱{selectedOrder.total.toLocaleString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Cargo itemized preview */}
-              <div className="p-4 bg-black/10 rounded-2xl border border-white/10 space-y-2">
-                <h5 className="text-xs uppercase font-extrabold tracking-wider text-white/80">Order Items</h5>
-                <div className="divide-y divide-white/10 bg-[#8c6b5a]/40 border border-white/10 rounded-xl overflow-hidden">
-                  {selectedOrder.items.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 text-xs">
-                      <div>
-                        <span className="font-bold text-[#ffd099] mr-2">{item.quantity}x</span>
-                        <span className="text-white font-semibold">{item.name}</span>
-                      </div>
-                      <span className="font-extrabold text-white/90">₱{(item.price * item.quantity).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-center p-8 text-white/60 bg-black/5 min-h-[300px]">
-              <span className="text-4xl mb-3">👈</span>
-              <h4 className="text-sm font-bold text-white">No Order Selected</h4>
-              <p className="text-xs text-white/70 max-w-[260px] mt-1">
-                Select an order from the list on the left to view details and process through the pipeline stages.
-              </p>
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* Floating Toast Notification */}
-      {notification && (
-        <div className="fixed bottom-6 right-6 bg-[#ff7b00] text-white px-6 py-4 rounded-xl shadow-2xl z-50 animate-in fade-in slide-in-from-bottom-5 duration-300 max-w-sm flex items-center gap-3 border border-orange-500/30">
-          <div className="text-xl">🔔</div>
-          <p className="font-semibold text-xs leading-snug">{notification}</p>
+      {/* Payment Receipt Image Preview Modal */}
+      {previewReceiptUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => setPreviewReceiptUrl(null)}
+        >
+          <div
+            className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl relative flex flex-col items-center gap-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-full flex items-center justify-between border-b border-neutral-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🧾</span>
+                <h4 className="font-black text-sm text-neutral-800">Customer Payment Receipt</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewReceiptUrl(null)}
+                className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="w-full max-h-[70vh] overflow-auto rounded-2xl bg-neutral-50 flex items-center justify-center p-2 border border-neutral-200">
+              <img
+                src={previewReceiptUrl}
+                alt="Full Payment Receipt"
+                className="max-h-[65vh] w-auto object-contain rounded-xl shadow-xs"
+              />
+            </div>
+
+            <div className="w-full flex items-center justify-between text-xs text-neutral-500 pt-1">
+              <span>Verify transaction reference & amount</span>
+              <button
+                type="button"
+                onClick={() => setPreviewReceiptUrl(null)}
+                className="bg-neutral-900 hover:bg-black text-white px-5 py-2 rounded-xl font-bold cursor-pointer transition-colors"
+              >
+                Done / Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   )
 }
+
+export default AssistantRole

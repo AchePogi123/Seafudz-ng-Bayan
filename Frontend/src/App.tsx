@@ -6,35 +6,129 @@ import { RideRoleDemo } from './features/rideRoleDemo'
 import { SalesReportCashier } from './features/salesReportCashier'
 import { OnlineCustomer } from './features/OnlineCustomer'
 import { AccMan } from './features/AccMan'
-import AboutUs from './features/AboutUs'
-import Dashboard from './features/Dashboard'
+import AdminCustomerView from './features/AdminCustomerViewTemp'
+import LandingPage from './features/LandingPage'
+import AdminDashboard from './features/AdminDashboard'
+import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
+import AboutUs from './features/AboutUs'
 import UserManagement from './features/UserManagement'
+import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/dashboard" element={<Dashboard />} />
+        {/* Public Landing Page & Public Information Routes */}
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/landingpage" element={<LandingPage />} />
+        <Route path="/landing-page" element={<LandingPage />} />
+        <Route path="/landing" element={<LandingPage />} />
+        <Route path="/dashboard" element={<LandingPage />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/users" element={<UserManagement />} />
-        <Route path="/pos" element={<POS />} />
-        <Route path="/kitchen" element={<KitchenMode />} />
-        <Route path="/assistant" element={<AssistantRole />} />
-        <Route path="/rider" element={<RideRoleDemo />} />
-        <Route path="/sales-report" element={<SalesReportCashier />} />
-        <Route path="/customer" element={<OnlineCustomer />} />
-        <Route path="/account" element={<AccMan />} />
         <Route path="/about" element={<AboutUs />} />
-        {/* Redirect root to /dashboard */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        {/* Fallback redirect to /dashboard for any unknown routes */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+
+        {/* Customer Routes */}
+        <Route path="/customer" element={<OnlineCustomer />} />
+        <Route path="/customer-dashboard" element={<Navigate to="/customer" replace />} />
+
+        {/* Account Management */}
+        <Route
+          path="/account"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'cashier', 'kitchen', 'rider', 'assistant', 'customer']}>
+              <AccMan />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Cashier & POS Feature Routes */}
+        <Route
+          path="/pos"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+              <POS />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/sales-report"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+              <SalesReportCashier />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Kitchen Feature Route */}
+        <Route
+          path="/kitchen"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'kitchen']}>
+              <KitchenMode />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Assistant Floor Call Route */}
+        <Route
+          path="/assistant"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'assistant']}>
+              <AssistantRole />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Rider Delivery Route */}
+        <Route
+          path="/rider"
+          element={
+            <ProtectedRoute allowedRoles={['admin', 'rider']}>
+              <RideRoleDemo />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Admin Management Dashboard Routes */}
+        <Route
+          path="/admin-dashboard"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin-sales-report"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <SalesReportAdmin />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <UserManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin-customers"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminCustomerView />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Fallback redirect to Landing Page */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )
 }
 
 export default App
-
-

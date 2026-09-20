@@ -90,6 +90,18 @@ export async function runMigrations() {
       console.log(`🎉 Completed ${pendingCount} pending migration(s) successfully.`);
     }
 
+    // Sync sequence counters for auto-incrementing primary keys
+    try {
+      await client.query(`
+        SELECT setval(pg_get_serial_sequence('order_items', 'id'), COALESCE(max(id), 1)) FROM order_items;
+        SELECT setval(pg_get_serial_sequence('categories', 'id'), COALESCE(max(id), 1)) FROM categories;
+        SELECT setval(pg_get_serial_sequence('payments', 'id'), COALESCE(max(id), 1)) FROM payments;
+      `);
+      console.log('🔄 Serial sequence counters synchronized successfully.');
+    } catch {
+      // Ignore if table or sequence does not exist yet
+    }
+
   } catch (err) {
     console.error('❌ Migration process halted due to error:', err);
     process.exit(1);

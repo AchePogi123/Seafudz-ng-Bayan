@@ -14,8 +14,13 @@ interface SuccessModalProps {
 }
 
 export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onConfirm, orderDetails }) => {
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Card'>('Cash')
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Hybrid'>('Cash')
   const [cashReceived, setCashReceived] = useState<string>('')
+  
+  // Hybrid split inputs
+  const [hybridCash, setHybridCash] = useState<string>('')
+  const [hybridEwallet, setHybridEwallet] = useState<string>('')
+  const [hybridWalletType, setHybridWalletType] = useState<'GCash'>('GCash')
 
   const totalAmount = orderDetails ? Math.round(orderDetails.total) : 0
 
@@ -24,20 +29,32 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
     if (isOpen) {
       const timer = setTimeout(() => {
         setCashReceived('')
+        setHybridCash('')
+        setHybridEwallet('')
+        setHybridWalletType('GCash')
         setPaymentMethod('Cash')
       }, 0)
       return () => clearTimeout(timer)
     }
   }, [isOpen])
 
-  // Calculate change derived from cashReceived and totalAmount
+  // Calculate change derived from cashReceived and totalAmount for pure Cash
   const change = useMemo(() => {
-    const cash = parseFloat(cashReceived)
-    if (!isNaN(cash) && cash >= totalAmount) {
-      return cash - totalAmount
+    if (paymentMethod === 'Cash') {
+      const cash = parseFloat(cashReceived)
+      if (!isNaN(cash) && cash >= totalAmount) {
+        return cash - totalAmount
+      }
     }
     return null
-  }, [cashReceived, totalAmount])
+  }, [paymentMethod, cashReceived, totalAmount])
+
+  // Hybrid split calculation
+  const parsedHybridCash = parseFloat(hybridCash) || 0
+  const parsedHybridEwallet = parseFloat(hybridEwallet) || 0
+  const hybridTotalEntered = parsedHybridCash + parsedHybridEwallet
+  const hybridBalanceRemaining = Math.max(0, totalAmount - hybridTotalEntered)
+  const isHybridComplete = Math.abs(hybridTotalEntered - totalAmount) < 0.01
 
   if (!isOpen || !orderDetails) return null
 
@@ -47,6 +64,21 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
 
   const handleExactChange = () => {
     setCashReceived(totalAmount.toString())
+  }
+
+  const handleAutoFillEwallet = () => {
+    const cash = parseFloat(hybridCash) || 0
+    const rem = Math.max(0, totalAmount - cash)
+    setHybridEwallet(rem.toString())
+  }
+
+  const handleConfirm = () => {
+    if (paymentMethod === 'Hybrid') {
+      const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString()} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString()})`
+      onConfirm(parsedHybridCash.toString(), 0, hybridLabel)
+    } else {
+      onConfirm(cashReceived, change, paymentMethod)
+    }
   }
 
   return (
@@ -78,22 +110,112 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
         </p>
 
         {/* Payment Method Selector Tabs */}
-        <div className="flex gap-2 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
-          {(['Cash', 'GCash', 'Card'] as const).map((method) => (
+        <div className="grid grid-cols-3 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
+          {(['Cash', 'GCash', 'Hybrid'] as const).map((method) => (
             <button
               key={method}
               type="button"
               onClick={() => setPaymentMethod(method)}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+              className={`py-2 text-[11px] font-extrabold rounded-xl transition-all cursor-pointer ${
                 paymentMethod === method
-                  ? 'bg-orange-500 text-white shadow-xs'
-                  : 'text-neutral-500 hover:text-neutral-800 font-bold'
+                  ? method === 'Hybrid'
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'bg-orange-500 text-white shadow-xs'
+                  : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
-              {method}
+              {method === 'Hybrid' ? '🔄 Hybrid' : method}
             </button>
           ))}
         </div>
+
+        {/* Hybrid Split Payment Box */}
+        {paymentMethod === 'Hybrid' && (
+          <div className="bg-purple-50/50 border border-purple-200/80 rounded-2xl p-4 mb-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[11px] font-black text-purple-900 tracking-wider uppercase flex items-center gap-1.5">
+                <span>🔄</span> HYBRID SPLIT PAYMENT
+              </h3>
+              <span className="text-[11px] font-bold text-neutral-500">
+                Target: <strong className="text-purple-700 font-black">₱{totalAmount.toLocaleString()}</strong>
+              </span>
+            </div>
+
+            {/* Split Input Row */}
+            <div className="grid grid-cols-2 gap-3">
+              {/* Cash Portion */}
+              <div>
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+                  Cash Amount
+                </label>
+                <div className="relative flex items-center">
+                  <span className="absolute left-2.5 text-neutral-400 font-bold text-xs">₱</span>
+                  <input
+                    type="number"
+                    value={hybridCash}
+                    onChange={(e) => setHybridCash(e.target.value)}
+                    placeholder="0"
+                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* E-Wallet Portion */}
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
+                    E-Wallet (GCash)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleAutoFillEwallet}
+                    className="text-[10px] font-bold text-purple-600 hover:text-purple-800 underline cursor-pointer"
+                  >
+                    Auto-Fill
+                  </button>
+                </div>
+                <div className="relative flex items-center">
+                  <span className="absolute left-2.5 text-neutral-400 font-bold text-xs">₱</span>
+                  <input
+                    type="number"
+                    value={hybridEwallet}
+                    onChange={(e) => setHybridEwallet(e.target.value)}
+                    placeholder="0"
+                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* E-wallet Type selector */}
+            <div className="flex items-center gap-2 pt-1">
+              <span className="text-[10px] font-bold text-neutral-500 uppercase">E-Wallet:</span>
+              <div className="flex gap-1.5">
+                <span className="px-2.5 py-1 text-[10px] font-black rounded-lg border bg-blue-600 text-white border-blue-600">
+                  GCash
+                </span>
+              </div>
+            </div>
+
+            {/* Split Status indicator */}
+            <div className="pt-2 border-t border-purple-100 flex items-center justify-between text-xs">
+              <span className="text-[11px] font-bold text-neutral-600">
+                Split Total: <strong>₱{hybridTotalEntered.toLocaleString()}</strong> / ₱{totalAmount.toLocaleString()}
+              </span>
+              {isHybridComplete ? (
+                <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
+                  ✓ Exactly balanced
+                </span>
+              ) : (
+                <span className="text-[11px] font-black text-rose-600">
+                  {hybridTotalEntered < totalAmount
+                    ? `Remaining: ₱${hybridBalanceRemaining.toLocaleString()}`
+                    : `Over by: ₱${(hybridTotalEntered - totalAmount).toLocaleString()}`}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Cash Calculator Box */}
         {paymentMethod === 'Cash' && (
@@ -217,15 +339,21 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(cashReceived, change, paymentMethod)}
-            disabled={paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount}
+            onClick={handleConfirm}
+            disabled={
+              (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
+              (paymentMethod === 'Hybrid' && !isHybridComplete)
+            }
             className={`flex-2 text-white font-bold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md ${
-              paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount
+              (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
+              (paymentMethod === 'Hybrid' && !isHybridComplete)
                 ? 'bg-neutral-300 cursor-not-allowed shadow-none'
-                : 'bg-orange-500 hover:bg-orange-600'
+                : paymentMethod === 'Hybrid'
+                ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-500/25'
+                : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/25'
             }`}
           >
-            Confirm & Print
+            {paymentMethod === 'Hybrid' ? 'Confirm Hybrid & Print' : 'Confirm & Print'}
           </button>
         </div>
       </div>

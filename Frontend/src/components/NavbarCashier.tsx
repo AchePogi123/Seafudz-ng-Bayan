@@ -1,0 +1,90 @@
+import React, { useState } from 'react'
+import { useLocation } from 'react-router-dom'
+import SidebarDrawer from './SidebarDrawer'
+
+interface NavbarCashierProps {
+    searchQuery?: string
+    setSearchQuery?: (query: string) => void
+}
+
+export const NavbarCashier: React.FC<NavbarCashierProps> = ({ searchQuery, setSearchQuery }) => {
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+    const location = useLocation()
+
+    const getCurrentPageName = () => {
+        if (location.pathname === '/pos') return 'Cashier POS'
+        if (location.pathname === '/sales-report') return 'Sales Report'
+        if (location.pathname === '/kitchen') return 'Kitchen Mode'
+        return 'Cashier Portal'
+    }
+
+    return (
+        <>
+            <header className="relative z-40 bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-3.5 sm:p-4 shadow-lg shadow-slate-200/40 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 transition-all duration-200">
+                <div className="flex items-center justify-between gap-4 w-full md:w-auto">
+                    <button
+                        onClick={() => setIsSidebarOpen(true)}
+                        className="flex items-center gap-3 cursor-pointer select-none group text-left focus:outline-none rounded-xl p-1 -m-1 transition-all"
+                    >
+                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 p-0.5 shadow-md shadow-orange-500/20 group-hover:scale-105 transition-transform duration-200 flex-shrink-0">
+                            <div className="w-full h-full bg-white rounded-[14px] overflow-hidden flex items-center justify-center">
+                                <img
+                                    src="/src/assets/hero.png"
+                                    alt="Seafood ng Bayan Logo"
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                        ; (e.target as HTMLImageElement).src =
+                                            "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23fff7ed'/><text y='68' x='18' font-size='55'>🦞</text></svg>"
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <h1 className="font-extrabold text-slate-900 text-base sm:text-lg tracking-tight group-hover:text-orange-600 transition-colors">
+                                    Seafood ng Bayan
+                                </h1>
+                                <span className="text-black text-[11px] font-bold uppercase tracking-wider">
+                                    CASHIER
+                                </span>
+                            </div>
+                            <p className="text-xs font-medium text-slate-500">{getCurrentPageName()}</p>
+                        </div>
+                    </button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-end w-full md:w-auto">
+                    {searchQuery !== undefined && setSearchQuery !== undefined && (
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 w-full md:w-[300px] lg:w-[360px] focus-within:border-orange-500 focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
+                            <svg className="w-4 h-4 text-slate-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search seafood dishes..."
+                                className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full"
+                            />
+                            {searchQuery && (
+                                <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs">
+                                    ✕
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </header>
+
+            {/* Global Sidebar Drawer */}
+            <SidebarDrawer
+                isOpen={isSidebarOpen}
+                onClose={() => setIsSidebarOpen(false)}
+                role="cashier"
+            />
+        </>
+    )
+}
+
+export default NavbarCashier

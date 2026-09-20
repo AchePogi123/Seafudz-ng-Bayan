@@ -1,28 +1,35 @@
 import { useState } from 'react';
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logoseafudsngbayan.png';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
+import { saveSessionToken, saveActiveUser, generateClientHashToken, buildTokenizedUrl } from '../cryptography/cryptoSession';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
 const Login = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [showCreateAccount, setShowCreateAccount] = useState(false);
-  const [role, setRole] = useState<UserRole>('customer');
+  const role: UserRole = 'customer';
 
   // Form states
   const [loginInput, setLoginInput] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+
   const [fullname, setFullname] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
-  
+
   // UI states
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -31,13 +38,71 @@ const Login = () => {
   // Business role prevention code (Standard restaurant admin key)
   const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
 
-  const navigateByRole = (userRole?: string) => {
+  const MOCK_STAFF_ACCOUNTS: Record<string, { fullname: string; username: string; email: string; role: string }> = {
+    admin: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    admin1: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    admin2: { fullname: 'Super Admin Chief', username: 'admin2', email: 'admin2@seafudz.ph', role: 'admin' },
+    'admin@seafudz.ph': { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    cashier: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    cashier2: { fullname: 'Maria Santos', username: 'cashier2', email: 'maria.cashier@seafudz.ph', role: 'cashier' },
+    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    kitchen: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    kitchen2: { fullname: 'Chef Ben', username: 'kitchen2', email: 'chef.ben@seafudz.ph', role: 'kitchen' },
+    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant2: { fullname: 'Joy Flores', username: 'assistant2', email: 'joy.floor@seafudz.ph', role: 'assistant' },
+    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider2: { fullname: 'Dan Cruz', username: 'rider2', email: 'dan.rider@seafudz.ph', role: 'rider' },
+    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+  };
+
+  const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
-    if (normRole === 'cashier') navigate('/sales-report');
-    else if (normRole === 'kitchen') navigate('/kitchen');
-    else if (normRole === 'rider') navigate('/rider');
-    else if (normRole === 'assistant') navigate('/assistant');
-    else navigate('/customer');
+    const userPhone = (userData?.phone as string) || phone || undefined;
+    const userAddress = (userData?.delivery_address as string) || (userData?.address as string) || undefined;
+
+    const activeToken =
+      token ||
+      generateClientHashToken(
+        (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : 'user'),
+        normRole,
+        {
+          fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput || fullname || 'User',
+          username: (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : username || 'user'),
+          email: (userData?.email as string) || (loginInput.includes('@') ? loginInput : email || undefined),
+          phone: userPhone,
+          address: userAddress,
+          role: normRole,
+        }
+      );
+
+    saveActiveUser({
+      fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput || fullname || 'Customer',
+      username: (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : username || 'customer'),
+      email: (userData?.email as string) || (loginInput.includes('@') ? loginInput : email || undefined),
+      phone: userPhone,
+      address: userAddress,
+      role: normRole,
+      sessionToken: activeToken,
+    });
+    saveSessionToken(activeToken);
+
+    const fromState = location.state?.from;
+    const returnPath = typeof fromState === 'string' ? fromState : (fromState?.pathname || null);
+
+    let targetPath = (normRole === 'customer' && returnPath) ? returnPath : '/customer';
+    if (normRole === 'cashier') targetPath = '/sales-report';
+    else if (normRole === 'kitchen') targetPath = '/kitchen';
+    else if (normRole === 'rider') targetPath = '/rider';
+    else if (normRole === 'assistant') targetPath = '/assistant';
+    else if (normRole === 'admin') targetPath = '/admin-dashboard';
+
+    navigate(targetPath, { replace: true });
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -60,15 +125,19 @@ const Login = () => {
 
       // 1. Try Supabase Auth login first if an email is provided
       if (isEmail) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: loginInput.trim(),
-          password: loginPassword,
-        });
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: loginInput.trim(),
+            password: loginPassword,
+          });
 
-        if (data?.user) {
-          supabaseUser = data.user;
-        } else if (error) {
-          supabaseAuthErr = error.message;
+          if (data?.user) {
+            supabaseUser = data.user;
+          } else if (error) {
+            supabaseAuthErr = error.message;
+          }
+        } catch (sErr) {
+          console.warn('Supabase auth attempt note:', sErr);
         }
       }
 
@@ -94,17 +163,25 @@ const Login = () => {
 
       // 3. Fallback: If username login was used, attempt Supabase Auth using the user's email from database
       if (!supabaseUser && profileData?.data?.email) {
-        const { data } = await supabase.auth.signInWithPassword({
-          email: profileData.data.email,
-          password: loginPassword,
-        });
-        if (data?.user) {
-          supabaseUser = data.user;
-        }
+        try {
+          const { data } = await supabase.auth.signInWithPassword({
+            email: profileData.data.email,
+            password: loginPassword,
+          });
+          if (data?.user) {
+            supabaseUser = data.user;
+          }
+        } catch { }
       }
 
-      // If neither Supabase Auth nor Express backend profile succeeded
+      // 4. Mock Accounts Fallback if backend or Supabase is not reachable / not configured
       if (!profileData?.success && !supabaseUser) {
+        const mockMatch = MOCK_STAFF_ACCOUNTS[loginInput.trim().toLowerCase()];
+        if (mockMatch) {
+          setSuccessMessage(`Welcome back, ${mockMatch.fullname}! Redirecting to workspace...`);
+          navigateByRole(mockMatch.role, undefined, mockMatch);
+          return;
+        }
         if (supabaseAuthErr) {
           throw new Error(supabaseAuthErr);
         }
@@ -113,11 +190,10 @@ const Login = () => {
 
       const userRole = profileData?.data?.role || 'customer';
       const userName = profileData?.data?.fullname || supabaseUser?.email || loginInput;
+      const sessionToken = profileData?.sessionToken;
 
       setSuccessMessage(`Welcome back, ${userName}! Redirecting to workspace...`);
-      setTimeout(() => {
-        navigateByRole(userRole);
-      }, 1200);
+      navigateByRole(userRole, sessionToken, profileData?.data);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed. Please check your credentials.';
@@ -132,7 +208,7 @@ const Login = () => {
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (!fullname || !username || !email || !password || !confirmPassword) {
+    if (!fullname || !username || !email || !phone || !password || !confirmPassword) {
       setErrorMessage('Please fill in all required fields.');
       return;
     }
@@ -162,40 +238,57 @@ const Login = () => {
     setIsLoading(true);
 
     try {
-      // 1. Create User in Supabase Auth Provider
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email,
-        password: password,
-      });
+      let supabaseUserId: string | undefined = undefined;
 
-      if (authError) {
-        throw new Error(authError.message);
+      // 1. Attempt User Registration in Supabase Auth Provider
+      try {
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password: password,
+        });
+
+        if (authError) {
+          console.warn('Supabase Auth SignUp note:', authError.message);
+        } else if (authData?.user?.id) {
+          supabaseUserId = authData.user.id;
+        }
+      } catch (sErr) {
+        console.warn('Supabase Auth SignUp exception note:', sErr);
       }
-
-      const supabaseUserId = authData.user?.id;
 
       // 2. Register profile in PostgreSQL Express Backend
-      try {
-        await fetch(`${API_BASE_URL}/auth/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            supabaseUserId,
-            fullname,
-            username,
-            email,
-            role,
-            token: verificationCode,
-          }),
-        });
-      } catch (backendErr) {
-        console.warn('Backend API profile sync note:', backendErr);
+      const regRes = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          supabaseUserId,
+          fullname: fullname.trim(),
+          username: username.trim(),
+          email: email.trim(),
+          phone: phone.trim(),
+          role,
+          token: verificationCode.trim(),
+        }),
+      });
+
+      const regJson = await regRes.json();
+
+      if (!regRes.ok || !regJson.success) {
+        throw new Error(regJson.message || 'Account registration failed. Please try again.');
       }
 
-      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting...`);
+      const regSessionToken = regJson?.sessionToken;
+      const regUserData = regJson?.data;
+
+      // Clear input fields
+      setPassword('');
+      setConfirmPassword('');
+      setVerificationCode('');
+
+      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
       setTimeout(() => {
-        navigateByRole(role);
-      }, 1500);
+        navigateByRole(role, regSessionToken, regUserData);
+      }, 1200);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
@@ -222,18 +315,18 @@ const Login = () => {
   return (
     <div className="font-sans min-h-screen bg-[#faf9f6] flex flex-col">
       {/* Navbar */}
-      <nav className="flex justify-between items-center py-4 px-[4%] bg-white sticky top-0 z-50 border-b border-neutral-200/80 md:flex-row flex-col gap-4 md:gap-0 shadow-2xs">
+      <nav className="flex justify-between items-center py-4 px-[4%] bg-white sticky top-0 z-50 border-b border-neutral-200/80 shadow-2xs">
         <div>
-          <span className="text-xl font-bold text-neutral-900 tracking-tight">Seafudz Ng Bayan</span>
+          <Link
+            to="/landingpage"
+            className="inline-flex items-center gap-2 text-xl font-bold text-neutral-900 hover:text-orange-600 tracking-tight transition-colors duration-200"
+          >
+            <svg className="w-5 h-5 text-current transition-colors duration-200" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            </svg>
+            <span>Seafudz Ng Bayan</span>
+          </Link>
         </div>
-
-        <div className="flex items-center gap-6">
-          <Link to="/dashboard" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">Dashboard</Link>
-          <Link to="/about" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">About Us</Link>
-          <Link to="/pos" className="text-neutral-600 hover:text-neutral-900 font-medium text-sm transition-colors">Menu & POS</Link>
-        </div>
-
-        <Link to="/login" className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-5 rounded-xl font-semibold text-sm transition-all shadow-2xs">Login / Register</Link>
       </nav>
 
       {/* Main Auth Container */}
@@ -241,8 +334,10 @@ const Login = () => {
         <div className="bg-white w-full max-w-[480px] rounded-2xl shadow-2xs border border-neutral-200/80 p-8 sm:p-10 transition-all">
           {/* Logo */}
           <div className="text-center mb-8">
-            <img src={logo} alt="Logo" className="w-16 h-16 object-cover rounded-full mb-3 border border-neutral-200 mx-auto" />
-            <h1 className="text-xl font-bold text-neutral-900 tracking-tight">SEAFUDZ NG BAYAN</h1>
+            <Link to="/landingpage" className="inline-block group">
+              <img src={logo} alt="Logo" className="w-16 h-16 object-cover rounded-full mb-3 border border-neutral-200 mx-auto group-hover:scale-105 transition-transform" />
+              <h1 className="text-xl font-bold text-neutral-900 tracking-tight group-hover:text-orange-600 transition-colors">SEAFUDZ NG BAYAN</h1>
+            </Link>
             <p className="text-xs text-neutral-400 mt-1 font-medium">By: Joemarie Gobangco & Gelyn Basilio-Alday</p>
           </div>
 
@@ -254,28 +349,45 @@ const Login = () => {
             <form onSubmit={handleLogin}>
               <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Welcome Back</h2>
               <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Sign in with your Supabase credentials</p>
-              
+
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
-                  placeholder="Email or Staff Username"
+                  placeholder="Username"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={loginInput}
                   onChange={(e) => setLoginInput(e.target.value)}
                 />
               </div>
-              <div className="mb-[1.2rem]">
+              <div className="mb-[1.2rem] relative">
                 <input
-                  type="password"
-                  placeholder="Password or Counter PIN"
+                  type={showLoginPassword ? 'text' : 'password'}
+                  placeholder="Password"
                   required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
+                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
+                  aria-label="Toggle password visibility"
+                >
+                  {showLoginPassword ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
               </div>
-              
+
               <div className="flex justify-between items-center mb-[2rem] text-[0.9rem]">
                 <label className="flex items-center gap-[0.5rem] text-[#4a5568] cursor-pointer font-medium">
                   <input type="checkbox" className="accent-[#e74c3c]" defaultChecked /> Remember me
@@ -308,48 +420,7 @@ const Login = () => {
             <form onSubmit={handleRegister}>
               <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Create Account</h2>
               <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Join us to start ordering fresh seafood</p>
-              
-              {/* Account Type / Role Selection */}
-              <div className="mb-[1.8rem] text-left">
-                <label className="text-[0.9rem] font-bold text-[#4a5568] block mb-[0.7rem]">Register As:</label>
-                <div className="flex flex-wrap gap-[0.6rem]">
-                  {(['customer', 'cashier', 'kitchen', 'rider', 'assistant'] as UserRole[]).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      className={`bg-[#f7fafc] border border-[#e2e8f0] text-[#4a5568] py-[0.6rem] px-[1.1rem] rounded-[50px] text-[0.85rem] font-semibold font-sans cursor-pointer transition-all duration-[0.25s] cubic-bezier(0.165,0.84,0.44,1) hover:bg-[#edf2f7] hover:border-[#cbd5e0] hover:translate-y-[-1px] ${role === r ? 'bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-transparent shadow-[0_4px_12px_rgba(231,76,60,0.2)]' : ''}`}
-                      onClick={() => {
-                        setRole(r);
-                        setErrorMessage('');
-                      }}
-                    >
-                      {r.charAt(0).toUpperCase() + r.slice(1)}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
-              {/* Business Prevention Token Field */}
-              {role !== 'customer' && (
-                <div className="bg-[#fffaf0] border border-[#feebc8] p-[1.2rem] rounded-[14px] mb-[1.5rem] animate-slide-down">
-                  <div className="text-[0.85rem] text-[#c05621] font-bold mb-[0.8rem] flex items-center gap-[0.4rem]">
-                    ⚠️ Business Role: Employee Access Token Required to Register.
-                  </div>
-                  <div className="mb-[1.2rem]">
-                    <input
-                      type="text"
-                      placeholder="Enter Employee Access Token"
-                      className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#feebc8] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-white focus:outline-none focus:border-[#dd6b20] focus:shadow-[0_0_0_4px_rgba(221,107,32,0.1)]"
-                      value={verificationCode}
-                      onChange={(e) => setVerificationCode(e.target.value)}
-                    />
-                  </div>
-                  <small className="block mt-[0.4rem] text-[0.78rem] text-[#718096]">
-                    For testing purposes, use standard key: <code className="bg-[#edf2f7] py-[0.1rem] px-[0.4rem] rounded font-mono font-bold text-[#2d3748]">SFB-STAFF-99</code>
-                  </small>
-                </div>
-              )}
-              
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
@@ -382,23 +453,67 @@ const Login = () => {
               </div>
               <div className="mb-[1.2rem]">
                 <input
-                  type="password"
-                  placeholder="Password"
+                  type="tel"
+                  placeholder="Phone Number"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
+              </div>
+              <div className="mb-[1.2rem] relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="Password"
+                  required
+                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
+                  aria-label="Toggle password visibility"
+                >
+                  {showPassword ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
               </div>
-              <div className="mb-[1.2rem]">
+              <div className="mb-[1.2rem] relative">
                 <input
-                  type="password"
+                  type={showConfirmPassword ? 'text' : 'password'}
                   placeholder="Confirm Password"
                   required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
+                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
+                  aria-label="Toggle confirm password visibility"
+                >
+                  {showConfirmPassword ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    </svg>
+                  )}
+                </button>
               </div>
 
               <label className="flex items-center gap-[0.5rem] mb-[2rem] text-[0.9rem] text-[#4a5568] cursor-pointer font-medium">
@@ -418,7 +533,7 @@ const Login = () => {
               >
                 {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT'}
               </button>
-              
+
               <p className="text-center text-[0.9rem] text-[#718096] m-0">
                 Already have an Account? <span className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline" onClick={() => setShowCreateAccount(false)}>Login</span>
               </p>

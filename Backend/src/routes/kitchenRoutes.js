@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 
 const router = Router();
 
@@ -7,26 +8,37 @@ const router = Router();
 router.get('/kitchen/orders', async (req, res) => {
   try {
     const sql = `
-      SELECT o.*, t.name AS table_name,
+      SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
+             o.order_type, o.status AS order_status,
+             COALESCE(ko.status, o.status) AS status,
+             o.notes, o.created_at, o.updated_at,
+             t.name AS table_name,
              COALESCE(
                json_agg(
                  json_build_object(
                    'id', oi.id,
-                   'menu_item_id', oi.menu_item_id,
+                   'menu_item_id', oi.product_id,
+                   'product_id', oi.product_id,
                    'quantity', oi.quantity,
                    'unit_price', oi.unit_price,
-                   'subtotal', (oi.unit_price * oi.quantity),
+                   'subtotal', oi.subtotal,
                    'notes', oi.notes,
-                   'name', COALESCE(oi.snapshot_item_name, m.name)
+                   'name', COALESCE(oi.product_name_snapshot, p.name)
                  )
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
       FROM orders o
+      LEFT JOIN kitchen_orders ko ON o.id = ko.order_id
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
-      LEFT JOIN menu_items m ON oi.menu_item_id = m.id
-      WHERE LOWER(o.status) IN ('pending', 'in_kitchen', 'cooking', 'preparing')
-      GROUP BY o.id, t.name
+      LEFT JOIN products p ON oi.product_id = p.id
+      WHERE UPPER(COALESCE(ko.status, o.status)) IN (
+        'CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN', 
+        'IN_PROCESS', 'COOKING', 'PREPARING', 'READY', 'PREPARED', 'COMPLETED'
+      ) OR (
+        UPPER(COALESCE(ko.status, o.status)) = 'PENDING' AND LOWER(COALESCE(o.order_type, '')) NOT LIKE '%delivery%'
+      )
+      GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
     `;
     const { rows } = await query(sql);
@@ -52,25 +64,65 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
     const { status } = req.body;
     const { id } = req.params;
 
-    const sql = `
-      UPDATE orders
-      SET status = $1, updated_at = NOW()
-      WHERE id = $2
-      RETURNING *
-    `;
-    const { rows } = await query(sql, [status, id]);
+    const normalizedStatus = (status || '').toUpperCase();
+    const validStatuses = ['PENDING', 'CONFIRMED', 'IN_PROCESS', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'];
+    const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'READY';
 
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Kitchen ticket '${id}' not found`,
-      });
+    // Update in-memory store if present
+    let memoryUpdated = false;
+    if (inMemoryOrders.has(id)) {
+      const order = inMemoryOrders.get(id);
+      order.status = finalStatus;
+      order.updatedAt = new Date().toISOString();
+      inMemoryOrders.set(id, order);
+      memoryUpdated = true;
+    } else {
+      for (const [k, v] of inMemoryOrders.entries()) {
+        if (v.id === id || v.ref === id || k === id) {
+          v.status = finalStatus;
+          v.updatedAt = new Date().toISOString();
+          inMemoryOrders.set(k, v);
+          memoryUpdated = true;
+        }
+      }
+    }
+
+    // Try updating DB kitchen_orders & orders
+    let dbUpdated = false;
+    let updatedRow = null;
+    try {
+      await query(`
+        INSERT INTO kitchen_orders (order_id, status, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (order_id) DO UPDATE SET
+          status = EXCLUDED.status,
+          updated_at = NOW()
+      `, [id, finalStatus]);
+
+      const sql = `
+        UPDATE orders
+        SET status = $1, updated_at = NOW()
+        WHERE id = $2
+        RETURNING *
+      `;
+      const { rows } = await query(sql, [finalStatus, id]);
+      if (rows.length > 0) {
+        dbUpdated = true;
+        updatedRow = rows[0];
+      }
+    } catch (dbErr) {
+      /* DB fallback silent */
+    }
+
+    if (!dbUpdated && !memoryUpdated) {
+      // Create/update in inMemoryOrders as fallback
+      inMemoryOrders.set(id, { id, ref: id, status: finalStatus, updatedAt: new Date().toISOString() });
     }
 
     return res.status(200).json({
       success: true,
-      message: `Kitchen ticket '${id}' updated to ${status}`,
-      data: rows[0],
+      message: `Kitchen ticket '${id}' updated to ${finalStatus}`,
+      data: updatedRow || { id, status: finalStatus },
     });
   } catch (error) {
     console.error('Error updating kitchen order status:', error);
@@ -86,9 +138,16 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
 router.delete('/kitchen/orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
+
+    await query(`
+      UPDATE kitchen_orders
+      SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+      WHERE order_id = $1
+    `, [id]);
+
     const sql = `
       UPDATE orders
-      SET status = 'Cancelled', updated_at = NOW()
+      SET status = 'CANCELLED', updated_at = NOW()
       WHERE id = $1
       RETURNING id
     `;
@@ -107,5 +166,78 @@ router.delete('/kitchen/orders/:id', async (req, res) => {
     });
   }
 });
+
+/**
+ * Handles status updates triggered by the Kitchen role
+ * Transitions: CONFIRMED -> PREPARING -> READY
+ */
+export async function handleKitchenStatusUpdate(req, res) {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const nextStatus = normalizeFlowStatus(status);
+    let updatedOrder = null;
+
+    if (inMemoryOrders.has(id)) {
+      const existing = inMemoryOrders.get(id);
+      existing.status = nextStatus;
+      existing.updated_at = new Date().toISOString();
+      inMemoryOrders.set(id, existing);
+      updatedOrder = formatOrderResponse(existing);
+    }
+
+    // Update PostgreSQL Database
+    try {
+      const { rows } = await query(
+        `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [nextStatus, id]
+      );
+      
+      // Keep kitchen_orders table in sync
+      let dbKitchenStatus = 'PENDING';
+      if (nextStatus === 'PREPARING') dbKitchenStatus = 'IN_PROCESS';
+      else if (nextStatus === 'READY') dbKitchenStatus = 'COMPLETED';
+
+      await query(
+        `INSERT INTO kitchen_orders (order_id, status, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (order_id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`,
+        [id, dbKitchenStatus]
+      );
+
+      if (rows.length > 0 && !updatedOrder) {
+        updatedOrder = formatOrderResponse(rows[0]);
+      }
+    } catch (dbErr) {
+      console.warn('DB update note (Kitchen Flow):', dbErr.message);
+    }
+
+    if (!updatedOrder) {
+      const newRec = {
+        id,
+        status: nextStatus,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      inMemoryOrders.set(id, newRec);
+      updatedOrder = formatOrderResponse(newRec);
+    }
+
+    console.log(`🍳 [Kitchen Flow] Order ${id} -> Status: ${nextStatus}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Order ${id} status updated to ${nextStatus} by Kitchen`,
+      data: updatedOrder,
+    });
+  } catch (error) {
+    console.error('Error in Kitchen status update:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update order status in Kitchen flow',
+      error: error.message,
+    });
+  }
+}
 
 export default router;

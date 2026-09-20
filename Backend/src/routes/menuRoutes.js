@@ -9,9 +9,9 @@ router.get('/menu', async (req, res) => {
     const { category, search, available, minPrice, maxPrice, limit, page } = req.query;
 
     let sql = `
-      SELECT m.*, c.name AS category
-      FROM menu_items m
-      LEFT JOIN categories c ON m.category_id = c.id
+      SELECT p.*, c.name AS category
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
       WHERE 1=1
     `;
     const params = [];
@@ -23,27 +23,27 @@ router.get('/menu', async (req, res) => {
     }
 
     if (search) {
-      sql += ` AND (LOWER(m.name) LIKE $${paramIndex} OR LOWER(m.description) LIKE $${paramIndex})`;
+      sql += ` AND (LOWER(p.name) LIKE $${paramIndex} OR LOWER(p.description) LIKE $${paramIndex})`;
       params.push(`%${search.toLowerCase()}%`);
       paramIndex++;
     }
 
     if (available !== undefined) {
-      sql += ` AND m.is_available = $${paramIndex++}`;
+      sql += ` AND p.is_available = $${paramIndex++}`;
       params.push(available === 'true');
     }
 
     if (minPrice) {
-      sql += ` AND m.price >= $${paramIndex++}`;
+      sql += ` AND p.price >= $${paramIndex++}`;
       params.push(Number(minPrice));
     }
 
     if (maxPrice) {
-      sql += ` AND m.price <= $${paramIndex++}`;
+      sql += ` AND p.price <= $${paramIndex++}`;
       params.push(Number(maxPrice));
     }
 
-    sql += ` ORDER BY m.created_at DESC`;
+    sql += ` ORDER BY p.created_at DESC`;
 
     if (limit && page) {
       const limitNum = parseInt(limit, 10) || 10;
@@ -76,10 +76,10 @@ router.get('/menu/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const sql = `
-      SELECT m.*, c.name AS category
-      FROM menu_items m
-      LEFT JOIN categories c ON m.category_id = c.id
-      WHERE m.id = $1
+      SELECT p.*, c.name AS category
+      FROM products p
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.id = $1
     `;
     const { rows } = await query(sql, [id]);
 
@@ -108,9 +108,9 @@ router.get('/menu/:id', async (req, res) => {
 router.get('/categories', async (req, res) => {
   try {
     const sql = `
-      SELECT c.id, c.name, COUNT(m.id)::int AS "itemCount"
+      SELECT c.id, c.name, COUNT(p.id)::int AS "itemCount"
       FROM categories c
-      LEFT JOIN menu_items m ON c.id = m.category_id
+      LEFT JOIN products p ON c.id = p.category_id
       GROUP BY c.id, c.name
       ORDER BY c.id ASC
     `;

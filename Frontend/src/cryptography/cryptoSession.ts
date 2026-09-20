@@ -12,6 +12,8 @@ export interface UserProfile {
   fullname?: string;
   username?: string;
   email?: string;
+  phone?: string;
+  address?: string;
   role: UserRole | string;
   sessionToken?: string;
   type?: string;
@@ -21,19 +23,34 @@ export interface UserProfile {
  * Role Permission Matrix for Frontend Routes
  */
 export const ROLE_ROUTE_PERMISSIONS: Record<string, string[]> = {
-  admin: ['/dashboard', '/users', '/pos', '/sales-report', '/kitchen', '/assistant', '/rider', '/customer', '/account', '/about'],
-  cashier: ['/pos', '/sales-report', '/customer', '/account', '/about'],
+  admin: [
+    '/admin-dashboard',
+    '/admin-sales-report',
+    '/admin-customers',
+    '/users',
+    '/dashboard',
+    '/pos',
+    '/sales-report',
+    '/kitchen',
+    '/assistant',
+    '/rider',
+    '/customer',
+    '/customer-dashboard',
+    '/account',
+    '/about',
+  ],
+  cashier: ['/pos', '/sales-report', '/customer', '/customer-dashboard', '/account', '/about'],
   kitchen: ['/kitchen', '/account', '/about'],
   rider: ['/rider', '/account', '/about'],
   assistant: ['/assistant', '/account', '/about'],
-  customer: ['/customer', '/account', '/about'],
+  customer: ['/customer', '/customer-dashboard', '/account', '/about'],
 };
 
 /**
  * Default fallback route by role
  */
 export const ROLE_DEFAULT_ROUTES: Record<string, string> = {
-  admin: '/dashboard',
+  admin: '/admin-dashboard',
   cashier: '/sales-report',
   kitchen: '/kitchen',
   rider: '/rider',
@@ -51,38 +68,127 @@ export function getSessionTokenFromUrl(): string | null {
 }
 
 /**
- * Stores the session hash token in sessionStorage
+ * Stores the session hash token in sessionStorage and localStorage
  */
 export function saveSessionToken(token: string): void {
   if (typeof window !== 'undefined' && token) {
-    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+    try {
+      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
+      localStorage.setItem('seafudz_token', token);
+    } catch {}
   }
 }
 
 /**
- * Stores active user profile in sessionStorage
+ * Stores active user profile in sessionStorage and localStorage
  */
 export function saveActiveUser(user: UserProfile): void {
   if (typeof window !== 'undefined' && user) {
-    sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(user));
+    try {
+      const userStr = JSON.stringify(user);
+      sessionStorage.setItem(ACTIVE_USER_KEY, userStr);
+      localStorage.setItem(ACTIVE_USER_KEY, userStr);
+      localStorage.setItem('seafudz_user', userStr);
+    } catch {}
     if (user.sessionToken) {
       saveSessionToken(user.sessionToken);
     }
   }
 }
 
+export function isUuidString(str?: string): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str.trim());
+}
+
 /**
- * Retrieves active user profile from sessionStorage
+ * Parses JWT / base64 payload from token string
+ */
+export function parseTokenPayload(token: string): UserProfile | null {
+  if (!token) return null;
+  try {
+    const payloadPart = token.split('.')[0];
+    if (!payloadPart) return null;
+    let base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
+    const decoded = typeof atob === 'function' ? atob(base64) : '';
+    if (decoded) {
+      const parsed = JSON.parse(decoded);
+      if (parsed && typeof parsed === 'object') {
+        const normRole = (parsed.role || 'customer').toLowerCase();
+        const rawName = parsed.fullname || parsed.username || '';
+        const cleanName = (rawName && !isUuidString(rawName))
+          ? rawName
+          : (parsed.email ? parsed.email.split('@')[0] : 'Customer');
+
+        return {
+          id: parsed.userId || parsed.id || 'user',
+          fullname: cleanName,
+          username: parsed.username && !isUuidString(parsed.username) ? parsed.username : (parsed.email ? parsed.email.split('@')[0] : 'user'),
+          email: parsed.email || undefined,
+          role: normRole,
+          sessionToken: token,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('Could not parse session token payload:', err);
+  }
+  return null;
+}
+
+/**
+ * Retrieves active user profile from session_token URL payload, sessionStorage, or localStorage
  */
 export function getActiveUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
-  const stored = sessionStorage.getItem(ACTIVE_USER_KEY);
-  if (!stored) return null;
-  try {
-    return JSON.parse(stored) as UserProfile;
-  } catch {
-    return null;
+
+  // 1. URL parameter session_token takes top priority for multi-tab testing & explicit links
+  const tokenFromUrl = getSessionTokenFromUrl();
+  if (tokenFromUrl) {
+    const parsedFromUrl = parseTokenPayload(tokenFromUrl);
+    if (parsedFromUrl) {
+      try {
+        sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(parsedFromUrl));
+        sessionStorage.setItem(SESSION_TOKEN_KEY, tokenFromUrl);
+      } catch {}
+      return parsedFromUrl;
+    }
   }
+
+  // 2. sessionStorage (unique to each browser tab)
+  try {
+    const sessionStored = sessionStorage.getItem(ACTIVE_USER_KEY);
+    if (sessionStored) {
+      const parsed = JSON.parse(sessionStored) as UserProfile;
+      if (parsed && parsed.role) return parsed;
+    }
+  } catch {}
+
+  // 3. localStorage (browser-wide fallback)
+  try {
+    const localStored = localStorage.getItem(ACTIVE_USER_KEY) || localStorage.getItem('seafudz_user');
+    if (localStored) {
+      const parsed = JSON.parse(localStored) as UserProfile;
+      if (parsed && parsed.role) return parsed;
+    }
+  } catch {}
+
+  // 4. Token fallback from stored session token
+  const token = getStoredSessionToken();
+  if (token) {
+    const parsed = parseTokenPayload(token);
+    if (parsed) {
+      try {
+        sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(parsed));
+      } catch {}
+      return parsed;
+    }
+  }
+  return null;
 }
 
 /**
@@ -90,8 +196,15 @@ export function getActiveUser(): UserProfile | null {
  */
 export function clearSession(): void {
   if (typeof window !== 'undefined') {
-    sessionStorage.removeItem(SESSION_TOKEN_KEY);
-    sessionStorage.removeItem(ACTIVE_USER_KEY);
+    try {
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      sessionStorage.removeItem(ACTIVE_USER_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(ACTIVE_USER_KEY);
+      localStorage.removeItem('seafudz_user');
+      localStorage.removeItem('seafudz_token');
+      localStorage.removeItem('seafudz_active_online_order');
+    } catch {}
   }
 }
 
@@ -100,28 +213,39 @@ export function clearSession(): void {
  */
 export function getStoredSessionToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return getSessionTokenFromUrl() || sessionStorage.getItem(SESSION_TOKEN_KEY);
+  return (
+    getSessionTokenFromUrl() ||
+    sessionStorage.getItem(SESSION_TOKEN_KEY) ||
+    localStorage.getItem(SESSION_TOKEN_KEY) ||
+    localStorage.getItem('seafudz_token')
+  );
 }
 
 /**
  * Generates client-side hash token fallback if offline
  */
-export function generateClientHashToken(userId: string = 'user'): string {
+export function generateClientHashToken(
+  userId: string = 'user',
+  role: string = 'customer',
+  extraData: Partial<UserProfile> = {}
+): string {
   const timestamp = Date.now();
   const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
   const fakeHash = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-  
+
   const payloadObj = {
     userId: userId.slice(0, 16),
-    email: null,
-    role: 'customer',
+    fullname: extraData.fullname || userId,
+    email: extraData.email || null,
+    role: role || 'customer',
     ts: timestamp,
     nonce,
   };
-  
-  const payloadEncoded = typeof btoa === 'function'
-    ? btoa(JSON.stringify(payloadObj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-    : 'eyJ1c2VySWQiOiJ1c2VyIiwidHMiOjF9';
+
+  const payloadEncoded =
+    typeof btoa === 'function'
+      ? btoa(JSON.stringify(payloadObj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+      : 'eyJ1c2VySWQiOiJ1c2VyIiwidHMiOjF9';
 
   return `${payloadEncoded}.${fakeHash}`;
 }
@@ -141,13 +265,14 @@ export function buildTokenizedUrl(path: string, token: string): string {
 export function hasRoutePermission(role: string | undefined, path: string): boolean {
   const normRole = (role || 'customer').toLowerCase();
   const allowedPaths = ROLE_ROUTE_PERMISSIONS[normRole] || ROLE_ROUTE_PERMISSIONS['customer'];
-  return allowedPaths.some(p => path.startsWith(p));
+  return allowedPaths.some((p) => path.startsWith(p));
 }
 
 export default {
   getSessionTokenFromUrl,
   saveSessionToken,
   saveActiveUser,
+  parseTokenPayload,
   getActiveUser,
   clearSession,
   getStoredSessionToken,

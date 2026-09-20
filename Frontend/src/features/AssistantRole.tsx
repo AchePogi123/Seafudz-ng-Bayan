@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { NavbarAssistant } from '../components/NavbarAssistant'
 import { API_BASE_URL } from '../utils/api'
 
@@ -80,106 +80,121 @@ export const AssistantRole: React.FC = () => {
   const phoneValidation = selectedOrder ? validatePhone(selectedOrder.phone) : { isValid: false, cleaned: '' }
   const addressValidation = selectedOrder ? validateAddress(selectedOrder.address) : { isComplete: false, warningMsg: '' }
 
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
+
   // Fetch live orders from central backend & local store
-  const fetchAssistantOrders = async () => {
-    const combinedMap = new Map<string, OnlineOrder>()
+  const fetchAssistantOrders = async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
 
-    // 1. Read from shared LocalStorage (Online Delivery Orders ONLY)
+    isFetchingRef.current = true
+    lastFetchRef.current = now
+
     try {
-      const local = localStorage.getItem('seafudz_orders')
-      if (local) {
-        const parsed = JSON.parse(local)
-        if (Array.isArray(parsed)) {
-          parsed.forEach((o: any) => {
-            const orderType = (o.type || '').toLowerCase()
-            const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
-            if (!isDelivery) return // Ignore POS walk-in orders
+      const combinedMap = new Map<string, OnlineOrder>()
 
-            const rawStatus = (o.status || 'PENDING').toLowerCase()
-            const id = o.id || o.ref
-            const items: OrderItem[] = Array.isArray(o.cartItems)
-              ? o.cartItems.map((ci: any) => ({
-                  name: ci.item?.name || ci.name || 'Seafood Dish',
-                  quantity: ci.quantity || 1,
-                  price: ci.item?.price || ci.price || 0,
-                }))
-              : (o.items || '').split(',').map((part: string) => {
-                  const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
-                  return {
-                    name: match ? match[1].trim() : part.trim(),
-                    quantity: match ? parseInt(match[2], 10) : 1,
-                    price: 0,
-                  }
-                })
+      // 1. Read from shared LocalStorage (Online Delivery Orders ONLY)
+      try {
+        const local = localStorage.getItem('seafudz_orders')
+        if (local) {
+          const parsed = JSON.parse(local)
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              const orderType = (o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
+              if (!isDelivery) return // Ignore POS walk-in orders
 
-            combinedMap.set(id, {
-              id,
-              ref: id,
-              customer: o.customer || 'Online Customer',
-              phone: o.phone || '0917-000-0000',
-              address: o.address || 'Delivery Address',
-              paymentMethod: o.paymentMethod || 'GCash',
-              paymentReference: o.paymentReference || o.paymentRef,
-              paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
-              status: rawStatus,
-              items,
-              total: Number(o.total || 0),
-              createdAt: o.dateTime || 'Just now',
-              correctionNote: o.notes,
-              riderId: o.riderId,
-              assignedRiderName: o.assignedRiderName,
-            })
-          })
-        }
-      }
-    } catch (e) {
-      console.warn('LocalStorage error in AssistantRole:', e)
-    }
+              const rawStatus = (o.status || 'PENDING').toLowerCase()
+              const id = o.id || o.ref
+              const items: OrderItem[] = Array.isArray(o.cartItems)
+                ? o.cartItems.map((ci: any) => ({
+                    name: ci.item?.name || ci.name || 'Seafood Dish',
+                    quantity: ci.quantity || 1,
+                    price: ci.item?.price || ci.price || 0,
+                  }))
+                : (o.items || '').split(',').map((part: string) => {
+                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                    return {
+                      name: match ? match[1].trim() : part.trim(),
+                      quantity: match ? parseInt(match[2], 10) : 1,
+                      price: 0,
+                    }
+                  })
 
-    // 2. Read from backend API (Online Delivery Orders ONLY)
-    try {
-      const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data.data)) {
-          data.data.forEach((o: any) => {
-            const orderType = (o.order_type || o.type || '').toLowerCase()
-            const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
-            if (!isDelivery) return // Ignore POS walk-in orders
-
-            const id = o.id
-            if (!combinedMap.has(id)) {
               combinedMap.set(id, {
                 id,
                 ref: id,
-                customer: o.customer || o.customerName || 'Online Customer',
+                customer: o.customer || 'Online Customer',
                 phone: o.phone || '0917-000-0000',
-                address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                address: o.address || 'Delivery Address',
                 paymentMethod: o.paymentMethod || 'GCash',
                 paymentReference: o.paymentReference || o.paymentRef,
                 paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
-                status: (o.status || 'PENDING').toLowerCase(),
-                items: o.items || [],
-                total: o.total || 0,
-                createdAt: o.createdAt || 'Just now',
+                status: rawStatus,
+                items,
+                total: Number(o.total || 0),
+                createdAt: o.dateTime || 'Just now',
                 correctionNote: o.notes,
                 riderId: o.riderId,
                 assignedRiderName: o.assignedRiderName,
               })
-            }
-          })
+            })
+          }
         }
+      } catch (e) {
+        console.warn('LocalStorage error in AssistantRole:', e)
       }
-    } catch (err) {}
 
-    setOrders(Array.from(combinedMap.values()))
+      // 2. Read from backend API (Online Delivery Orders ONLY)
+      try {
+        const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.data)) {
+            data.data.forEach((o: any) => {
+              const orderType = (o.order_type || o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
+              if (!isDelivery) return // Ignore POS walk-in orders
+
+              const id = o.id
+              if (!combinedMap.has(id)) {
+                combinedMap.set(id, {
+                  id,
+                  ref: id,
+                  customer: o.customer || o.customerName || 'Online Customer',
+                  phone: o.phone || '0917-000-0000',
+                  address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                  paymentMethod: o.paymentMethod || 'GCash',
+                  paymentReference: o.paymentReference || o.paymentRef,
+                  paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
+                  status: (o.status || 'PENDING').toLowerCase(),
+                  items: o.items || [],
+                  total: o.total || 0,
+                  createdAt: o.createdAt || 'Just now',
+                  correctionNote: o.notes,
+                  riderId: o.riderId,
+                  assignedRiderName: o.assignedRiderName,
+                })
+              }
+            })
+          }
+        }
+      } catch (err) {}
+
+      setOrders(Array.from(combinedMap.values()))
+    } finally {
+      isFetchingRef.current = false
+    }
   }
 
   useEffect(() => {
     void fetchAssistantOrders()
 
     const handleSync = () => {
-      void fetchAssistantOrders()
+      void fetchAssistantOrders(true)
     }
 
     window.addEventListener('seafudz_order_created', handleSync)
@@ -187,7 +202,7 @@ export const AssistantRole: React.FC = () => {
 
     const timer = setInterval(() => {
       void fetchAssistantOrders()
-    }, 3000)
+    }, 6000)
 
     return () => {
       window.removeEventListener('seafudz_order_created', handleSync)
@@ -253,6 +268,16 @@ export const AssistantRole: React.FC = () => {
           : o
       )
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+
+      // Also update active online customer order if matching
+      const savedActive = localStorage.getItem('seafudz_active_online_order')
+      if (savedActive) {
+        const activeObj = JSON.parse(savedActive)
+        if (activeObj && (activeObj.id === selectedOrderId || activeObj.ref === selectedOrderId)) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
+        }
+      }
+
       window.dispatchEvent(new Event('seafudz_order_created'))
     } catch {}
 

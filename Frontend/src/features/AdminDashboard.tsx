@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
 import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
@@ -51,71 +51,117 @@ const AdminDashboard: React.FC = () => {
     const [newPriceInput, setNewPriceInput] = useState<number | string>('')
     const [priceUpdateSuccess, setPriceUpdateSuccess] = useState(false)
 
+    const isFetchingRef = useRef(false)
+    const lastFetchRef = useRef(0)
+
     // Load Live Orders from API + Local Storage
-    const fetchLiveOrders = useCallback(async () => {
-        setIsLoadingOrders(true)
-        let combinedOrders: LiveOrderRecord[] = []
+    const fetchLiveOrders = useCallback(async (force?: boolean | unknown) => {
+        if (isFetchingRef.current) return
+        const isForce = typeof force === 'boolean' ? force : false
+        const now = Date.now()
+        if (!isForce && now - lastFetchRef.current < 2000) return
 
-        // 1. Fetch from LocalStorage (instant sync across tabs/POS)
+        isFetchingRef.current = true
+        lastFetchRef.current = now
+
         try {
-            const localRaw = localStorage.getItem('seafudz_orders')
-            if (localRaw) {
-                const parsed = JSON.parse(localRaw)
-                if (Array.isArray(parsed)) {
-                    combinedOrders = [...parsed]
-                }
-            }
-        } catch (e) {
-            console.warn('Error reading local orders:', e)
-        }
+            setIsLoadingOrders(true)
+            let combinedOrders: LiveOrderRecord[] = []
 
-        // 2. Fetch from Backend Database API
-        try {
-            const res = await fetch(`${API_BASE_URL}/orders`)
-            if (res.ok) {
-                const json = await res.json()
-                const dbOrders = json.data || json || []
-                if (Array.isArray(dbOrders)) {
-                    dbOrders.forEach((dbO: any) => {
-                        const exists = combinedOrders.some((o) => o.id === dbO.id || o.ref === dbO.id)
-                        if (!exists) {
-                            combinedOrders.push({
-                                id: dbO.id,
-                                ref: dbO.id,
-                                dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
-                                type: dbO.order_type || dbO.type || 'POS Order',
-                                status: dbO.status || 'Completed',
-                                paymentStatus: dbO.payment_status || 'Paid',
-                                customer: dbO.customer_name || (dbO.order_type === 'Delivery' ? 'Online Customer' : 'Walk-In'),
-                                items: Array.isArray(dbO.items)
-                                    ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')
-                                    : 'Assorted Seafoods',
-                                total: Number(dbO.total || 0),
-                                paymentMethod: dbO.payment_method || 'Cash',
-                            })
-                        }
-                    })
-                }
-            }
-        } catch (err) {
-            // Backend offline or unreachable, rely seamlessly on local orders
-        }
+            // 1. Fetch from LocalStorage (instant sync across tabs/POS)
+            try {
+                const localRaw = localStorage.getItem('seafudz_orders')
+                if (localRaw) {
+                    const parsed = JSON.parse(localRaw)
+                    if (Array.isArray(parsed)) {
+                        combinedOrders = parsed.map((o: any) => {
+                            let itemsStr = 'Assorted Seafoods'
+                            if (typeof o.items === 'string') {
+                                itemsStr = o.items
+                            } else if (Array.isArray(o.items)) {
+                                itemsStr = o.items
+                                    .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                                    .join(', ')
+                            }
+                            const custName =
+                                typeof o.customer === 'string' && o.customer.trim()
+                                    ? o.customer.trim()
+                                    : typeof o.customerName === 'string' && o.customerName.trim()
+                                    ? o.customerName.trim()
+                                    : 'Online Customer'
 
-        setOrders(combinedOrders)
-        setIsLoadingOrders(false)
+                            return {
+                                id: String(o.id || o.ref || `SFB-${Math.floor(Math.random() * 9000)}`),
+                                ref: String(o.ref || o.id || `SFB-${Math.floor(Math.random() * 9000)}`),
+                                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
+                                type: o.type || (o.customerName || o.customer ? 'Delivery' : 'POS Order'),
+                                status: o.status || 'Completed',
+                                paymentStatus: o.paymentStatus || 'Paid',
+                                customer: custName,
+                                items: itemsStr,
+                                cartItems: Array.isArray(o.items) ? o.items : o.cartItems,
+                                total: Number(o.total || 0),
+                                paymentMethod: o.paymentMethod || 'Cash',
+                            }
+                        })
+                    }
+                }
+            } catch (e) {
+                console.warn('Error reading local orders:', e)
+            }
+
+            // 2. Fetch from Backend Database API
+            try {
+                const res = await fetch(`${API_BASE_URL}/orders`)
+                if (res.ok) {
+                    const json = await res.json()
+                    const dbOrders = json.data || json || []
+                    if (Array.isArray(dbOrders)) {
+                        dbOrders.forEach((dbO: any) => {
+                            const exists = combinedOrders.some((o) => o.id === dbO.id || o.ref === dbO.id)
+                            if (!exists) {
+                                combinedOrders.push({
+                                    id: dbO.id,
+                                    ref: dbO.id,
+                                    dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
+                                    type: dbO.order_type || dbO.type || 'POS Order',
+                                    status: dbO.status || 'Completed',
+                                    paymentStatus: dbO.payment_status || 'Paid',
+                                    customer: dbO.customer_name || (dbO.order_type === 'Delivery' ? 'Online Customer' : 'Walk-In'),
+                                    items: Array.isArray(dbO.items)
+                                        ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')
+                                        : 'Assorted Seafoods',
+                                    total: Number(dbO.total || 0),
+                                    paymentMethod: dbO.payment_method || 'Cash',
+                                })
+                            }
+                        })
+                    }
+                }
+            } catch (err) {
+                // Backend offline or unreachable, rely seamlessly on local orders
+            }
+
+            setOrders(combinedOrders)
+            setIsLoadingOrders(false)
+        } finally {
+            isFetchingRef.current = false
+        }
     }, [])
 
     useEffect(() => {
-        fetchLiveOrders()
+        void fetchLiveOrders()
 
         const handleSync = () => {
-            fetchLiveOrders()
+            void fetchLiveOrders(true)
         }
 
         window.addEventListener('seafudz_order_created', handleSync)
         window.addEventListener('storage', handleSync)
 
-        const interval = setInterval(fetchLiveOrders, 10000)
+        const interval = setInterval(() => {
+            void fetchLiveOrders()
+        }, 10000)
 
         return () => {
             window.removeEventListener('seafudz_order_created', handleSync)
@@ -150,7 +196,7 @@ const AdminDashboard: React.FC = () => {
     const totalOnlineCustomersCount = useMemo(() => {
         const uniqueCustomers = new Set(
             orders
-                .filter((o) => (o.type || '').toLowerCase().includes('delivery') && o.customer)
+                .filter((o) => (o.type || '').toLowerCase().includes('delivery') && o.customer && typeof o.customer === 'string')
                 .map((o) => o.customer.trim().toLowerCase())
         )
         return uniqueCustomers.size
@@ -166,18 +212,21 @@ const AdminDashboard: React.FC = () => {
         const counts: Record<string, number> = {}
         orders.forEach((ord) => {
             if (ord.cartItems && Array.isArray(ord.cartItems)) {
-                ord.cartItems.forEach((ci) => {
-                    const name = ci.item?.name || 'Seafood'
-                    counts[name] = (counts[name] || 0) + ci.quantity
+                ord.cartItems.forEach((ci: any) => {
+                    const name = ci.name || ci.item?.name || 'Seafood'
+                    const qty = Number(ci.quantity) || 1
+                    counts[name] = (counts[name] || 0) + qty
                 })
-            } else if (ord.items) {
-                // Parse "ItemName x2" format if cartItems is flat
+            } else if (typeof ord.items === 'string') {
+                // Parse "ItemName x2" format if cartItems is flat string
                 ord.items.split(',').forEach((part) => {
                     const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
                     if (match) {
                         const name = match[1].trim()
                         const qty = parseInt(match[2], 10) || 1
                         counts[name] = (counts[name] || 0) + qty
+                    } else if (part.trim()) {
+                        counts[part.trim()] = (counts[part.trim()] || 0) + 1
                     }
                 })
             }

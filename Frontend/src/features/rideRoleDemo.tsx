@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { NavbarRider } from '../components/Navbarrider'
 import { API_BASE_URL } from '../utils/api'
 
@@ -28,118 +28,134 @@ export const RideRoleDemo: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
 
   // Fetch live delivery orders from LocalStorage + Backend API
-  const fetchDeliveries = useCallback(async () => {
-    const combinedMap = new Map<string, DeliveryOrder>()
+  const fetchDeliveries = useCallback(async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
 
-    // 1. Read from shared LocalStorage (Delivery Orders ONLY)
+    isFetchingRef.current = true
+    lastFetchRef.current = now
+
     try {
-      const local = localStorage.getItem('seafudz_orders')
-      if (local) {
-        const parsed = JSON.parse(local)
-        if (Array.isArray(parsed)) {
-          parsed.forEach((o: any) => {
-            // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
-            const orderType = (o.type || '').toLowerCase()
-            const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
-            if (!isDelivery) return
+      const combinedMap = new Map<string, DeliveryOrder>()
 
-            const rawStatus = (o.status || '').toUpperCase()
-            const id = o.id || o.ref
+      // 1. Read from shared LocalStorage (Delivery Orders ONLY)
+      try {
+        const local = localStorage.getItem('seafudz_orders')
+        if (local) {
+          const parsed = JSON.parse(local)
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
+              const orderType = (o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
+              if (!isDelivery) return
 
-            let displayStatus = 'Ready'
-            if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
-            else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
-            else if (rawStatus === 'READY') displayStatus = 'Ready'
-            else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-            else displayStatus = 'Pending'
+              const rawStatus = (o.status || '').toUpperCase()
+              const id = o.id || o.ref
 
-            const items: DeliveryItem[] = Array.isArray(o.cartItems)
-              ? o.cartItems.map((ci: any) => ({
-                  name: ci.item?.name || ci.name || 'Seafood Dish',
-                  quantity: ci.quantity || 1,
-                }))
-              : (o.items || '').split(',').map((part: string) => {
-                  const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
-                  return {
-                    name: match ? match[1].trim() : part.trim(),
-                    quantity: match ? parseInt(match[2], 10) : 1,
-                  }
-                })
+              let displayStatus = 'Ready'
+              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
+              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
+              else if (rawStatus === 'READY') displayStatus = 'Ready'
+              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
+              else displayStatus = 'Pending'
 
-            combinedMap.set(id, {
-              id,
-              ref: id,
-              customer: o.customer || 'Online Customer',
-              phone: o.phone || '0917-000-0000',
-              address: o.address || 'Delivery Address',
-              items,
-              total: Number(o.total || 0),
-              status: displayStatus,
-              createdAt: o.dateTime || 'Just now',
-              paymentMethod: o.paymentMethod || 'GCash',
-            })
-          })
-        }
-      }
-    } catch (e) {
-      console.warn('Rider LocalStorage note:', e)
-    }
+              const items: DeliveryItem[] = Array.isArray(o.cartItems)
+                ? o.cartItems.map((ci: any) => ({
+                    name: ci.item?.name || ci.name || 'Seafood Dish',
+                    quantity: ci.quantity || 1,
+                  }))
+                : (o.items || '').split(',').map((part: string) => {
+                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                    return {
+                      name: match ? match[1].trim() : part.trim(),
+                      quantity: match ? parseInt(match[2], 10) : 1,
+                    }
+                  })
 
-    // 2. Read from backend API (Online Delivery Orders ONLY)
-    try {
-      const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
-      if (res.ok) {
-        const data = await res.json()
-        if (Array.isArray(data.data)) {
-          data.data.forEach((o: any) => {
-            const orderType = (o.order_type || o.type || '').toLowerCase()
-            const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
-            if (!isDelivery) return
-
-            const id = o.id
-            const rawStatus = (o.status || '').toUpperCase()
-            let displayStatus = 'Ready'
-            if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
-            else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
-            else if (rawStatus === 'READY') displayStatus = 'Ready'
-            else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-            else displayStatus = 'Pending'
-
-            if (!combinedMap.has(id)) {
               combinedMap.set(id, {
                 id,
                 ref: id,
-                customer: o.customer || o.customerName || 'Online Customer',
+                customer: o.customer || 'Online Customer',
                 phone: o.phone || '0917-000-0000',
-                address: o.address || o.deliveryAddress || 'Metro Manila Address',
-                items: o.items || [],
-                total: o.total || 0,
+                address: o.address || 'Delivery Address',
+                items,
+                total: Number(o.total || 0),
                 status: displayStatus,
-                createdAt: o.createdAt || new Date().toISOString(),
+                createdAt: o.dateTime || 'Just now',
                 paymentMethod: o.paymentMethod || 'GCash',
               })
-            }
-          })
+            })
+          }
         }
+      } catch (e) {
+        console.warn('Rider LocalStorage note:', e)
       }
-    } catch (err) {}
 
-    setDeliveries(Array.from(combinedMap.values()))
+      // 2. Read from backend API (Online Delivery Orders ONLY)
+      try {
+        const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.data)) {
+            data.data.forEach((o: any) => {
+              const orderType = (o.order_type || o.type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
+              if (!isDelivery) return
+
+              const id = o.id
+              const rawStatus = (o.status || '').toUpperCase()
+              let displayStatus = 'Ready'
+              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
+              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
+              else if (rawStatus === 'READY') displayStatus = 'Ready'
+              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
+              else displayStatus = 'Pending'
+
+              if (!combinedMap.has(id)) {
+                combinedMap.set(id, {
+                  id,
+                  ref: id,
+                  customer: o.customer || o.customerName || 'Online Customer',
+                  phone: o.phone || '0917-000-0000',
+                  address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                  items: o.items || [],
+                  total: o.total || 0,
+                  status: displayStatus,
+                  createdAt: o.createdAt || new Date().toISOString(),
+                  paymentMethod: o.paymentMethod || 'GCash',
+                })
+              }
+            })
+          }
+        }
+      } catch (err) {}
+
+      setDeliveries(Array.from(combinedMap.values()))
+    } finally {
+      isFetchingRef.current = false
+    }
   }, [])
 
   useEffect(() => {
     void fetchDeliveries()
 
     const handleSync = () => {
-      void fetchDeliveries()
+      void fetchDeliveries(true)
     }
 
     window.addEventListener('seafudz_order_created', handleSync)
     window.addEventListener('storage', handleSync)
 
-    const interval = setInterval(fetchDeliveries, 3000)
+    const interval = setInterval(() => {
+      void fetchDeliveries()
+    }, 6000)
 
     return () => {
       window.removeEventListener('seafudz_order_created', handleSync)
@@ -167,6 +183,16 @@ export const RideRoleDemo: React.FC = () => {
         o.id === orderId || o.ref === orderId ? { ...o, status: apiStatus } : o
       )
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+
+      // Also update active online customer order if matching
+      const savedActive = localStorage.getItem('seafudz_active_online_order')
+      if (savedActive) {
+        const activeObj = JSON.parse(savedActive)
+        if (activeObj && (activeObj.id === orderId || activeObj.ref === orderId)) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: apiStatus }))
+        }
+      }
+
       window.dispatchEvent(new Event('seafudz_order_created'))
     } catch {}
 

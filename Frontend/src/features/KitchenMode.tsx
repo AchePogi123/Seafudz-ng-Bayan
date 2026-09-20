@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 
@@ -37,12 +37,11 @@ export const KitchenMode: React.FC = () => {
       return parsed
         .filter((o: any) => {
           const rawStatus = (o.status || '').toUpperCase()
-          const orderType = (o.type || '').toLowerCase()
-          const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.customer !== 'Walk-In')
+          const orderType = (o.type || o.order_type || '').toLowerCase()
+          const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
 
-          // If it is an online delivery order, it MUST NOT appear in kitchen while it is still PENDING / UNVERIFIED!
-          // It will ONLY appear in kitchen after Assistant approves/sends it (CONFIRMED / PREPARING / READY / COMPLETED).
-          if (isDelivery && (rawStatus === 'PENDING' || rawStatus === 'FLAGGED' || rawStatus === 'UNCONFIRMED')) {
+          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant
+          if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(rawStatus)) {
             return false
           }
 
@@ -62,12 +61,12 @@ export const KitchenMode: React.FC = () => {
             type: o.type || 'Take Out',
             category: o.table ? `Dine In - ${o.table}` : (o.type || 'Take Out'),
             status: mappedStatus,
-            items: (o.cartItems || []).map((ci: any) => ({
+            items: (o.cartItems || o.items || []).map((ci: any) => ({
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
             })),
             notes: o.notes || '',
-            createdAt: o.dateTime || new Date().toISOString(),
+            createdAt: o.dateTime || o.createdAt || new Date().toISOString(),
           }
         })
     } catch {
@@ -75,86 +74,105 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
+
   // Fetch live tickets from backend API & merge with LocalStorage
-  const fetchKitchenOrders = async () => {
-    let fetchedApiOrders: KitchenOrder[] = []
+  const fetchKitchenOrders = async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
+
+    isFetchingRef.current = true
+    lastFetchRef.current = now
 
     try {
-      const res = await fetch(`${API_BASE_URL}/kitchen/orders`)
-      if (res.ok) {
-        const result = await res.json()
-        if (Array.isArray(result.data)) {
-          fetchedApiOrders = result.data
-            .filter((o: any) => {
-              const raw = (o.status || o.order_status || '').toUpperCase()
-              const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress
+      let fetchedApiOrders: KitchenOrder[] = []
 
-              // Online delivery orders won't show in kitchen until verified & confirmed by Assistant
-              if (isDelivery && (raw === 'PENDING' || raw === 'FLAGGED' || raw === 'UNCONFIRMED')) {
-                return false
-              }
-              return true
-            })
-            .map((o: any) => {
-              const raw = (o.status || o.order_status || '').toUpperCase()
-              let norm = 'Confirmed'
-              if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
-              else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
-              else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
-              else norm = 'Confirmed'
+      try {
+        const res = await fetch(`${API_BASE_URL}/kitchen/orders`)
+        if (res.ok) {
+          const result = await res.json()
+          if (Array.isArray(result.data)) {
+            fetchedApiOrders = result.data
+              .filter((o: any) => {
+                const raw = (o.status || o.order_status || '').toUpperCase()
+                const orderType = (o.order_type || o.type || '').toLowerCase()
+                const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || (o.id && String(o.id).startsWith('SFB-'))
 
-              return {
-                id: o.id,
-                queue: o.id,
-                type: o.order_type || 'Take Out',
-                category: o.table_name ? `Dine In - ${o.table_name}` : (o.order_type || 'Take Out'),
-                status: norm,
-                items: (o.items || []).map((item: any) => ({
-                  name: item.name || item.product_name_snapshot || 'Food Item',
-                  quantity: item.quantity || 1,
-                })),
-                notes: o.notes || '',
-                createdAt: o.created_at || new Date().toISOString(),
-              }
-            })
+                // Online delivery orders won't show in kitchen until verified & confirmed by Assistant
+                if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(raw)) {
+                  return false
+                }
+                return true
+              })
+              .map((o: any) => {
+                const raw = (o.status || o.order_status || '').toUpperCase()
+                let norm = 'Confirmed'
+                if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
+                else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
+                else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
+                else norm = 'Confirmed'
+
+                return {
+                  id: o.id,
+                  queue: o.id,
+                  type: o.order_type || 'Take Out',
+                  category: o.table_name ? `Dine In - ${o.table_name}` : (o.order_type || 'Take Out'),
+                  status: norm,
+                  items: (o.items || []).map((item: any) => ({
+                    name: item.name || item.product_name_snapshot || 'Food Item',
+                    quantity: item.quantity || 1,
+                  })),
+                  notes: o.notes || '',
+                  createdAt: o.created_at || new Date().toISOString(),
+                }
+              })
+          }
         }
+      } catch (err) {
+        console.warn('Backend connection note in KitchenMode:', err)
       }
-    } catch (err) {
-      console.warn('Backend connection note in KitchenMode:', err)
+
+      const fetchedLocalOrders = getLocalOrders()
+      const mergedMap = new Map<string, KitchenOrder>()
+
+      // Priority to local updates (most real-time for live interactions)
+      fetchedLocalOrders.forEach((item) => {
+        mergedMap.set(item.id, item)
+      })
+
+      // Merge API orders without duplicating already existing local tickets
+      fetchedApiOrders.forEach((apiItem) => {
+        const exists = Array.from(mergedMap.values()).some(
+          (local) => local.id === apiItem.id || local.queue === apiItem.queue || local.queue === apiItem.id || local.id === apiItem.queue
+        )
+        if (!exists) {
+          mergedMap.set(apiItem.id, apiItem)
+        }
+      })
+
+      setOrders(Array.from(mergedMap.values()))
+    } finally {
+      isFetchingRef.current = false
     }
-
-    const fetchedLocalOrders = getLocalOrders()
-    const mergedMap = new Map<string, KitchenOrder>()
-
-    // Priority to local updates (most real-time for live interactions)
-    fetchedLocalOrders.forEach((item) => {
-      mergedMap.set(item.id, item)
-    })
-
-    // Merge API orders without duplicating already existing local tickets
-    fetchedApiOrders.forEach((apiItem) => {
-      const exists = Array.from(mergedMap.values()).some(
-        (local) => local.id === apiItem.id || local.queue === apiItem.queue || local.queue === apiItem.id || local.id === apiItem.queue
-      )
-      if (!exists) {
-        mergedMap.set(apiItem.id, apiItem)
-      }
-    })
-
-    setOrders(Array.from(mergedMap.values()))
   }
 
   useEffect(() => {
     void fetchKitchenOrders()
-    const pollTimer = setInterval(fetchKitchenOrders, 2000)
+    const pollTimer = setInterval(() => {
+      void fetchKitchenOrders()
+    }, 5000)
 
-    const handleStorageEvent = () => void fetchKitchenOrders()
-    window.addEventListener('seafudz_order_created', handleStorageEvent)
+    const handleSync = () => {
+      void fetchKitchenOrders(true)
+    }
 
+    window.addEventListener('seafudz_order_created', handleSync)
     return () => {
       clearInterval(pollTimer)
-      window.removeEventListener('seafudz_order_created', handleStorageEvent)
+      window.removeEventListener('seafudz_order_created', handleSync)
     }
   }, [])
 
@@ -165,18 +183,15 @@ export const KitchenMode: React.FC = () => {
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId)
 
-  const getPrepTimeDisplay = (order: KitchenOrder): string => {
-    if (order.status === 'Pending' || order.status === 'Confirmed' || order.status === 'CONFIRMED') {
-      return 'Waiting'
-    }
-    if (order.status === 'Ready' || order.status === 'Completed') {
-      return order.completedTimeElapsed || '4:15sec'
-    }
+  const getPrepTimeDisplay = (order: KitchenOrder) => {
     if (order.status === 'Preparing' && order.startTime) {
-      const elapsedSeconds = Math.floor((now - order.startTime) / 1000)
-      const mins = Math.floor(elapsedSeconds / 60)
-      const secs = elapsedSeconds % 60
-      return `${mins}:${secs.toString().padStart(2, '0')}sec`
+      const elapsedSec = Math.floor((now - order.startTime) / 1000)
+      const mins = Math.floor(elapsedSec / 60)
+      const secs = elapsedSec % 60
+      return `${mins}:${secs < 10 ? '0' : ''}${secs}s`
+    }
+    if (order.completedTimeElapsed) {
+      return order.completedTimeElapsed
     }
     return '--'
   }
@@ -184,10 +199,10 @@ export const KitchenMode: React.FC = () => {
   // Persistent Status Update Logic
   const updateOrderStatus = async (id: string, newStatus: string) => {
     const upperStatus = newStatus.toUpperCase()
-    let normalizedTarget = 'PENDING'
+    let normalizedTarget = 'CONFIRMED'
 
     if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(upperStatus)) {
-      normalizedTarget = 'IN_PROCESS'
+      normalizedTarget = 'PREPARING'
     } else if (['READY', 'PREPARED'].includes(upperStatus)) {
       normalizedTarget = 'READY'
     } else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED'].includes(upperStatus)) {
@@ -208,13 +223,42 @@ export const KitchenMode: React.FC = () => {
     // 2. Persist update in LocalStorage so polling doesn't reset it
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const targetOrder = orders.find((o) => o.id === id || o.queue === id)
+      let found = false
+
       const updated = existing.map((o: any) => {
         if (o.id === id || o.ref === id) {
-          return { ...o, status: normalizedTarget === 'COMPLETED' ? 'Completed' : normalizedTarget }
+          found = true
+          return { ...o, status: normalizedTarget }
         }
         return o
       })
+
+      if (!found && targetOrder) {
+        updated.unshift({
+          id: targetOrder.id,
+          ref: targetOrder.id,
+          type: targetOrder.type || 'Delivery',
+          category: targetOrder.category,
+          status: normalizedTarget,
+          items: targetOrder.items,
+          notes: targetOrder.notes,
+          dateTime: targetOrder.createdAt,
+        })
+      }
+
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+
+      // Also update active online customer order if matching
+      const savedActive = localStorage.getItem('seafudz_active_online_order')
+      if (savedActive) {
+        const activeObj = JSON.parse(savedActive)
+        if (activeObj && (activeObj.id === id || activeObj.ref === id)) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: normalizedTarget }))
+        }
+      }
+
+      window.dispatchEvent(new Event('seafudz_order_created'))
     } catch {
       /* fallback silent */
     }
@@ -222,6 +266,11 @@ export const KitchenMode: React.FC = () => {
     // 3. Persist update in Express Backend API
     try {
       await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: normalizedTarget }),
+      })
+      await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: normalizedTarget }),
@@ -266,17 +315,13 @@ export const KitchenMode: React.FC = () => {
     const s = (o.status || '').toUpperCase()
     return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
   })
-  const doneOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP'
-  })
 
   const [historyPage, setHistoryPage] = useState(1)
   const ITEMS_PER_PAGE = 5
 
   const historyOrders = orders.filter((o) => {
     const s = (o.status || '').toUpperCase()
-    return s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED'
+    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
   })
 
   const totalPages = Math.max(1, Math.ceil(historyOrders.length / ITEMS_PER_PAGE))
@@ -310,7 +355,7 @@ export const KitchenMode: React.FC = () => {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 items-start">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
           {/* Queue Column */}
           <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
             <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
@@ -450,74 +495,6 @@ export const KitchenMode: React.FC = () => {
                     >
                       Mark as Done
                     </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-
-          {/* Done Column */}
-          <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
-              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
-                On Done
-              </h2>
-              <span className="bg-emerald-50 text-emerald-700 font-semibold text-xs px-2.5 py-1 rounded-full">
-                {doneOrders.length} Ready
-              </span>
-            </div>
-
-            <div className="flex-1 space-y-3">
-              {doneOrders.length === 0 ? (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
-                  <p className="text-xs font-medium">No done orders waiting</p>
-                </div>
-              ) : (
-                doneOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="bg-[#faf9f6] rounded-xl p-4 border border-neutral-200/80 transition-all flex flex-col justify-between"
-                  >
-                    <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                          <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={(e) => deleteOrder(order.id, e)}
-                          className="text-neutral-400 hover:text-red-600 p-1 rounded-md"
-                        >
-                          ✕
-                        </button>
-                      </div>
-
-                      <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs font-medium text-neutral-700">
-                            <span>{item.name}</span>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
-                              x{item.quantity}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {order.type?.toLowerCase().includes('delivery') || order.category?.toLowerCase().includes('delivery') ? (
-                      <div className="w-full bg-amber-50 border border-amber-200 text-amber-800 font-bold py-2.5 rounded-lg text-xs text-center flex items-center justify-center gap-1.5">
-                        <span>🛵</span> Ready for Rider Pickup
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => updateOrderStatus(order.id, 'Completed')}
-                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                      >
-                        Customer Received
-                      </button>
-                    )}
                   </div>
                 ))
               )}

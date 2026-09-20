@@ -9,12 +9,12 @@ export function normalizeFlowStatus(rawStatus) {
   if (!rawStatus) return 'PENDING';
   const upper = String(rawStatus).toUpperCase().trim();
   
-  if (upper === 'PENDING' || upper === 'PENDING_VERIFICATION' || upper === 'UNCONFIRMED') return 'PENDING';
-  if (upper === 'CONFIRMED' || upper === 'PENDING_PREPARATION' || upper === 'APPROVED' || upper === 'IN_KITCHEN' || upper === 'IN KITCHEN') return 'CONFIRMED';
-  if (upper === 'PREPARING' || upper === 'COOKING' || upper === 'IN_PROCESS') return 'PREPARING';
-  if (upper === 'READY' || upper === 'READY_FOR_PICKUP' || upper === 'PREPARED') return 'READY';
-  if (upper === 'OUT_FOR_DELIVERY' || upper === 'DISPATCHED' || upper === 'ON_THE_WAY') return 'OUT_FOR_DELIVERY';
-  if (upper === 'COMPLETED' || upper === 'DELIVERED' || upper === 'SERVED') return 'COMPLETED';
+  if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING';
+  if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED';
+  if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING';
+  if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY';
+  if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY';
+  if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED';
   if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper;
   
   return 'PENDING';

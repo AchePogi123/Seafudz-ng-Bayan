@@ -6,7 +6,6 @@ import { RideRoleDemo } from './features/rideRoleDemo'
 import { SalesReportCashier } from './features/salesReportCashier'
 import { OnlineCustomer } from './features/OnlineCustomer'
 import { AccMan } from './features/AccMan'
-import CustomerDashboard from './features/CustomerDashboard'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
 import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
@@ -30,22 +29,8 @@ function App() {
         <Route path="/about" element={<AboutUs />} />
 
         {/* Customer Routes */}
-        <Route
-          path="/customer"
-          element={
-            <ProtectedRoute allowedRoles={['admin', 'customer', 'cashier', 'kitchen', 'rider', 'assistant']}>
-              <OnlineCustomer />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/customer-dashboard"
-          element={
-            <ProtectedRoute allowedRoles={['admin', 'customer', 'cashier', 'kitchen', 'rider', 'assistant']}>
-              <CustomerDashboard />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/customer" element={<OnlineCustomer />} />
+        <Route path="/customer-dashboard" element={<Navigate to="/customer" replace />} />
 
         {/* Account Management */}
         <Route

@@ -19,7 +19,7 @@ router.get('/user-flow/orders/:id', handleGetCustomerFlowOrder);
  */
 router.get('/user-flow/orders', async (req, res) => {
   try {
-    const { status } = req.query;
+    const { status, customerName, customerId, phone } = req.query;
 
     // Fetch DB orders if available
     let dbOrders = [];
@@ -72,6 +72,23 @@ router.get('/user-flow/orders', async (req, res) => {
     });
 
     let allOrders = Array.from(mergedMap.values());
+
+    if (customerName) {
+      const lower = String(customerName).toLowerCase().trim();
+      allOrders = allOrders.filter(o =>
+        (o.customerName && String(o.customerName).toLowerCase().trim() === lower) ||
+        (o.customer && String(o.customer).toLowerCase().trim() === lower)
+      );
+    }
+
+    if (phone) {
+      const cleanP = String(phone).trim();
+      allOrders = allOrders.filter(o => o.phone === cleanP);
+    }
+
+    if (customerId) {
+      allOrders = allOrders.filter(o => String(o.customer_id) === String(customerId));
+    }
 
     if (status) {
       const targetNorm = normalizeFlowStatus(status);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL } from '../utils/api'
 
@@ -28,100 +28,117 @@ export const SalesReportCashier: React.FC = () => {
   const [selectedTransaction, setSelectedTransaction] =
     useState<LiveTransaction | null>(null)
 
+  const isFetchingRef = useRef(false)
+  const lastFetchRef = useRef(0)
+
   // Load Real Orders from LocalStorage and Backend API
-  const loadOrders = useCallback(async () => {
-    let combined: LiveTransaction[] = []
+  const loadOrders = useCallback(async (force?: boolean | unknown) => {
+    if (isFetchingRef.current) return
+    const isForce = typeof force === 'boolean' ? force : false
+    const now = Date.now()
+    if (!isForce && now - lastFetchRef.current < 2000) return
 
-    // 1. Read LocalStorage
+    isFetchingRef.current = true
+    lastFetchRef.current = now
+
     try {
-      const local = localStorage.getItem('seafudz_orders')
+      let combined: LiveTransaction[] = []
 
-      if (local) {
-        const parsed = JSON.parse(local)
+      // 1. Read LocalStorage
+      try {
+        const local = localStorage.getItem('seafudz_orders')
 
-        if (Array.isArray(parsed)) {
-          combined = parsed.map((o: any) => ({
-            id: o.id || o.ref,
-            ref: o.ref || o.id,
-            dateTime: o.dateTime || new Date().toLocaleString(),
-            items: o.items || 'Seafood Dish',
-            customer:
-              o.customer ||
-              (o.type === 'Delivery'
-                ? 'Online Customer'
-                : 'Walk-In Customer'),
-            total: Number(o.total || 0),
-            type: o.type || 'POS Order',
-            paymentMethod: o.paymentMethod || 'Cash',
-            status: o.status || 'Completed',
-          }))
+        if (local) {
+          const parsed = JSON.parse(local)
+
+          if (Array.isArray(parsed)) {
+            combined = parsed.map((o: any) => ({
+              id: o.id || o.ref,
+              ref: o.ref || o.id,
+              dateTime: o.dateTime || new Date().toLocaleString(),
+              items: o.items || 'Seafood Dish',
+              customer:
+                o.customer ||
+                (o.type === 'Delivery'
+                  ? 'Online Customer'
+                  : 'Walk-In Customer'),
+              total: Number(o.total || 0),
+              type: o.type || 'POS Order',
+              paymentMethod: o.paymentMethod || 'Cash',
+              status: o.status || 'Completed',
+            }))
+          }
         }
+      } catch (e) {
+        console.warn('Error reading local orders:', e)
       }
-    } catch (e) {
-      console.warn('Error reading local orders:', e)
-    }
 
-    // 2. Read Backend Database API
-    try {
-      const res = await fetch(`${API_BASE_URL}/orders`)
+      // 2. Read Backend Database API
+      try {
+        const res = await fetch(`${API_BASE_URL}/orders`)
 
-      if (res.ok) {
-        const json = await res.json()
-        const dbList = json.data || json || []
+        if (res.ok) {
+          const json = await res.json()
+          const dbList = json.data || json || []
 
-        if (Array.isArray(dbList)) {
-          dbList.forEach((dbO: any) => {
-            const exists = combined.some(
-              (c) => c.id === dbO.id || c.ref === dbO.id
-            )
+          if (Array.isArray(dbList)) {
+            dbList.forEach((dbO: any) => {
+              const exists = combined.some(
+                (c) => c.id === dbO.id || c.ref === dbO.id
+              )
 
-            if (!exists) {
-              combined.push({
-                id: dbO.id,
-                ref: dbO.id,
-                dateTime: dbO.created_at
-                  ? new Date(dbO.created_at).toLocaleString()
-                  : new Date().toLocaleString(),
-                items: Array.isArray(dbO.items)
-                  ? dbO.items
-                    .map(
-                      (i: any) =>
-                        `${i.name || i.product_name_snapshot} x${i.quantity}`
-                    )
-                    .join(', ')
-                  : 'Seafood Items',
-                customer:
-                  dbO.customer_name ||
-                  (dbO.order_type === 'Delivery'
-                    ? 'Online Customer'
-                    : 'Walk-In Customer'),
-                total: Number(dbO.total || 0),
-                type: dbO.order_type || dbO.type || 'POS Order',
-                paymentMethod: dbO.payment_method || 'Cash',
-                status: dbO.status || 'Completed',
-              })
-            }
-          })
+              if (!exists) {
+                combined.push({
+                  id: dbO.id,
+                  ref: dbO.id,
+                  dateTime: dbO.created_at
+                    ? new Date(dbO.created_at).toLocaleString()
+                    : new Date().toLocaleString(),
+                  items: Array.isArray(dbO.items)
+                    ? dbO.items
+                      .map(
+                        (i: any) =>
+                          `${i.name || i.product_name_snapshot} x${i.quantity}`
+                      )
+                      .join(', ')
+                    : 'Seafood Items',
+                  customer:
+                    dbO.customer_name ||
+                    (dbO.order_type === 'Delivery'
+                      ? 'Online Customer'
+                      : 'Walk-In Customer'),
+                  total: Number(dbO.total || 0),
+                  type: dbO.order_type || dbO.type || 'POS Order',
+                  paymentMethod: dbO.payment_method || 'Cash',
+                  status: dbO.status || 'Completed',
+                })
+              }
+            })
+          }
         }
+      } catch (err) {
+        // Backend not reached, fall back to local
       }
-    } catch (err) {
-      // Backend not reached, fall back to local
-    }
 
-    setTransactions(combined)
+      setTransactions(combined)
+    } finally {
+      isFetchingRef.current = false
+    }
   }, [])
 
   useEffect(() => {
-    loadOrders()
+    void loadOrders()
 
     const handleSync = () => {
-      loadOrders()
+      void loadOrders(true)
     }
 
     window.addEventListener('seafudz_order_created', handleSync)
     window.addEventListener('storage', handleSync)
 
-    const timer = setInterval(loadOrders, 5000)
+    const timer = setInterval(() => {
+      void loadOrders()
+    }, 8000)
 
     return () => {
       window.removeEventListener('seafudz_order_created', handleSync)

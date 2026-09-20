@@ -1,10 +1,12 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
+import { getActiveUser } from '../cryptography/cryptoSession'
 
 interface CartItem {
     item: MenuItem
@@ -30,22 +32,96 @@ interface OnlineOrderState {
     createdAt: string
 }
 
+// Helper functions for user-scoped storage keys
+const getCartKey = (user: ReturnType<typeof getActiveUser>) => {
+    if (!user) return 'sfb_customer_cart_guest'
+    const id = user.id || user.username || user.fullname || 'guest'
+    return `sfb_customer_cart_${id}`
+}
+
+const getActiveOrderKey = (user: ReturnType<typeof getActiveUser>) => {
+    if (!user) return 'seafudz_active_online_order_guest'
+    const id = user.id || user.username || user.fullname || 'guest'
+    return `seafudz_active_online_order_${id}`
+}
+
+const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
+    if (!user) return 'seafudz_orders_guest'
+    const id = user.id || user.username || user.fullname || 'guest'
+    return `seafudz_orders_${id}`
+}
+
+export function normalizeStatus(rawStatus?: string): string {
+    if (!rawStatus) return 'PENDING'
+    const upper = String(rawStatus).toUpperCase().trim()
+    if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
+    if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
+    if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
+    if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
+    if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY'
+    if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED'
+    if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper
+    return 'PENDING'
+}
+
+export function getStatusRank(rawStatus?: string): number {
+    const norm = normalizeStatus(rawStatus)
+    switch (norm) {
+        case 'PENDING': return 0
+        case 'CONFIRMED': return 1
+        case 'PREPARING': return 2
+        case 'READY': return 3
+        case 'OUT_FOR_DELIVERY': return 4
+        case 'COMPLETED': return 5
+        case 'CANCELLED':
+        case 'FLAGGED': return -1
+        default: return 0
+    }
+}
+
 export const OnlineCustomer: React.FC = () => {
+    const navigate = useNavigate()
+    const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+
     // Availability & Price sync
     const { isAvailable } = useMenuAvailability()
     const { getEffectivePrice } = useMenuPrices()
 
+    const isFetchingOrderRef = useRef(false)
+    const lastFetchTimeRef = useRef(0)
+
     // Navigation states (automatically open tracking tab if there is an ongoing uncompleted order)
     const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() => {
         try {
-            const saved = localStorage.getItem('seafudz_active_online_order')
+            const user = getActiveUser()
+            if (!user) return 'menu'
+            const saved = localStorage.getItem(getActiveOrderKey(user))
             if (saved) {
                 const parsed = JSON.parse(saved)
-                if (parsed && parsed.id) return 'tracking'
+                if (parsed && parsed.id && parsed.status !== 'COMPLETED' && parsed.status !== 'CANCELLED') {
+                    return 'tracking'
+                }
             }
         } catch { }
         return 'menu'
     })
+
+    // Submitted Order tracking state initialized from localStorage (only for logged in user)
+    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(() => {
+        try {
+            const user = getActiveUser()
+            if (!user) return null
+            const saved = localStorage.getItem(getActiveOrderKey(user))
+            return saved ? JSON.parse(saved) : null
+        } catch {
+            return null
+        }
+    })
+
+    const activeOrderRef = useRef(activeOrder)
+    useEffect(() => {
+        activeOrderRef.current = activeOrder
+    }, [activeOrder])
 
     // Menu state using client items
     const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
@@ -55,8 +131,16 @@ export const OnlineCustomer: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('')
     const [selectedCategory, setSelectedCategory] = useState('All Menu')
 
-    // Cart state
-    const [cartItems, setCartItems] = useState<CartItem[]>([])
+    // Cart state with user-scoped localStorage persistence
+    const [cartItems, setCartItems] = useState<CartItem[]>(() => {
+        try {
+            const user = getActiveUser()
+            const saved = localStorage.getItem(getCartKey(user))
+            return saved ? JSON.parse(saved) : []
+        } catch {
+            return []
+        }
+    })
     const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
     const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
     const [tempNote, setTempNote] = useState('')
@@ -69,96 +153,209 @@ export const OnlineCustomer: React.FC = () => {
     const [paymentReceipt, setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
 
-    // Submitted Order tracking state initialized from localStorage
-    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(() => {
+    // Save cart state to user-scoped localStorage whenever modified
+    useEffect(() => {
         try {
-            const saved = localStorage.getItem('seafudz_active_online_order')
-            return saved ? JSON.parse(saved) : null
-        } catch {
-            return null
+            const user = getActiveUser()
+            localStorage.setItem(getCartKey(user), JSON.stringify(cartItems))
+        } catch (err) {
+            console.warn('Could not save cart to localStorage:', err)
         }
-    })
+    }, [cartItems])
+
+    // Auto-fill logged in user info & sync user cart and orders
+    useEffect(() => {
+        const currentUser = getActiveUser()
+        if (currentUser) {
+            if (currentUser.fullname) setCustomerName(currentUser.fullname)
+            if (currentUser.phone) setPhone(currentUser.phone)
+            if (currentUser.address) setAddress(currentUser.address)
+
+            // Hydrate user cart
+            try {
+                const savedCart = localStorage.getItem(getCartKey(currentUser))
+                if (savedCart) setCartItems(JSON.parse(savedCart))
+            } catch { }
+
+            // Hydrate user active order from local storage or backend DB
+            try {
+                const savedOrder = localStorage.getItem(getActiveOrderKey(currentUser))
+                if (savedOrder) {
+                    const parsed = JSON.parse(savedOrder)
+                    setActiveOrder(parsed)
+                } else {
+                    fetch(`${API_BASE_URL}/user-flow/orders?customerName=${encodeURIComponent(currentUser.fullname || '')}`)
+                        .then((res) => res.json())
+                        .then((data) => {
+                            const list = data.data || data
+                            if (Array.isArray(list) && list.length > 0) {
+                                const active = list.find((o: any) => {
+                                    const s = normalizeStatus(o.status)
+                                    return s !== 'COMPLETED' && s !== 'CANCELLED'
+                                })
+                                if (active) {
+                                    const normActive = { ...active, status: normalizeStatus(active.status) }
+                                    setActiveOrder(normActive)
+                                    localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(normActive))
+                                }
+                            }
+                        })
+                        .catch(() => { })
+                }
+            } catch { }
+        } else {
+            setActiveOrder(null)
+            if (activeTab === 'tracking') {
+                setActiveTab('menu')
+            }
+        }
+    }, [])
+
+    useEffect(() => {
+        const currentUser = getActiveUser()
+        if (currentUser) {
+            if (currentUser.fullname && !customerName) setCustomerName(currentUser.fullname)
+            if (currentUser.phone && !phone) setPhone(currentUser.phone)
+            if (currentUser.address && !address) setAddress(currentUser.address)
+        }
+    }, [activeTab])
+
+    const handleProceedToCheckout = () => {
+        const currentUser = getActiveUser()
+        if (!currentUser) {
+            setIsAuthModalOpen(true)
+            return
+        }
+        if (cartItems.length > 0) {
+            setActiveTab('billing')
+            setIsMobileCartOpen(false)
+        }
+    }
 
     // Real-time synchronization for customer order tracking
     useEffect(() => {
         if (!activeOrder?.id) return
+        const currentUser = getActiveUser()
 
-        const checkOrderStatus = async () => {
-            // 1. Check LocalStorage sync
+        const checkOrderStatus = async (force?: boolean | unknown) => {
+            if (isFetchingOrderRef.current) return
+            const isForce = typeof force === 'boolean' ? force : false
+            const now = Date.now()
+            if (!isForce && now - lastFetchTimeRef.current < 2000) return
+
+            isFetchingOrderRef.current = true
+            lastFetchTimeRef.current = now
+
             try {
-                const stored = localStorage.getItem('seafudz_orders')
-                if (stored) {
-                    const parsed = JSON.parse(stored)
-                    if (Array.isArray(parsed)) {
-                        const current = parsed.find((o: any) => o.id === activeOrder.id || o.ref === activeOrder.id)
-                        if (current && current.status) {
-                            const raw = current.status.toUpperCase()
-                            let normalized = 'PENDING'
-                            if (['CONFIRMED', 'UNCONFIRMED', 'VERIFIED'].includes(raw)) normalized = 'CONFIRMED'
-                            else if (['PREPARING', 'COOKING', 'IN_PROCESS', 'IN_KITCHEN'].includes(raw)) normalized = 'PREPARING'
-                            else if (['READY', 'PREPARED'].includes(raw)) normalized = 'READY'
-                            else if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) normalized = 'OUT_FOR_DELIVERY'
-                            else if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(raw)) normalized = 'COMPLETED'
-                            else normalized = raw
+                const currentOrderId = activeOrderRef.current?.id
+                if (!currentOrderId) return
 
-                            if (normalized !== activeOrder.status.toUpperCase()) {
+                let backendSuccess = false
+
+                // 1. Poll Backend API FIRST (Authoritative Server Truth)
+                try {
+                    const res = await fetch(`${API_BASE_URL}/user-flow/orders/${currentOrderId}`)
+                    if (res.ok) {
+                        const data = await res.json()
+                        const orderData = data.data || data
+                        if (orderData && orderData.status) {
+                            backendSuccess = true
+                            const normalized = normalizeStatus(orderData.status)
+                            const currentStatusNorm = normalizeStatus(activeOrderRef.current?.status)
+
+                            if (normalized !== currentStatusNorm) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
                                     const updated = { ...prev, status: normalized }
                                     try {
-                                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
+                                        localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
+
+                                        // Keep user order list and global seafudz_orders synchronized
+                                        const updateListInStorage = (key: string) => {
+                                            const raw = localStorage.getItem(key)
+                                            if (!raw) return
+                                            try {
+                                                const list = JSON.parse(raw)
+                                                if (Array.isArray(list)) {
+                                                    const updatedList = list.map((o: any) =>
+                                                        (o.id === currentOrderId || o.ref === currentOrderId)
+                                                            ? { ...o, status: normalized }
+                                                            : o
+                                                    )
+                                                    localStorage.setItem(key, JSON.stringify(updatedList))
+                                                }
+                                            } catch { }
+                                        }
+                                        updateListInStorage(getOrdersKey(currentUser))
+                                        updateListInStorage('seafudz_orders')
                                     } catch { }
                                     return updated
                                 })
-                                return
                             }
                         }
                     }
+                } catch (err) {
+                    // Backend offline / unreachable
                 }
-            } catch (storageErr) {
-                console.warn('Local order check error:', storageErr)
-            }
 
-            // 2. Poll Backend API (user-flow/orders endpoint)
-            try {
-                const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}`)
-                if (res.ok) {
-                    const data = await res.json()
-                    const orderData = data.data || data
-                    if (orderData && orderData.status) {
-                        const raw = orderData.status.toUpperCase()
-                        let normalized = 'PENDING'
-                        if (['CONFIRMED', 'UNCONFIRMED', 'VERIFIED'].includes(raw)) normalized = 'CONFIRMED'
-                        else if (['PREPARING', 'COOKING', 'IN_PROCESS', 'IN_KITCHEN'].includes(raw)) normalized = 'PREPARING'
-                        else if (['READY', 'PREPARED'].includes(raw)) normalized = 'READY'
-                        else if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) normalized = 'OUT_FOR_DELIVERY'
-                        else if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(raw)) normalized = 'COMPLETED'
-                        else normalized = raw
+                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank)
+                if (!backendSuccess) {
+                    try {
+                        const userOrdersKey = getOrdersKey(currentUser)
+                        const storedUser = localStorage.getItem(userOrdersKey)
+                        const storedGlobal = localStorage.getItem('seafudz_orders')
 
-                        if (normalized !== activeOrder.status.toUpperCase()) {
-                            setActiveOrder((prev) => {
-                                if (!prev) return null
-                                const updated = { ...prev, status: normalized }
-                                try {
-                                    localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
-                                } catch { }
-                                return updated
-                            })
+                        const parseList = (jsonStr: string | null) => {
+                            try {
+                                return jsonStr ? JSON.parse(jsonStr) : []
+                            } catch {
+                                return []
+                            }
                         }
+
+                        const allLists = [...parseList(storedUser), ...parseList(storedGlobal)]
+                        const current = allLists.find((o: any) => o.id === currentOrderId || o.ref === currentOrderId)
+
+                        if (current && current.status) {
+                            const normalized = normalizeStatus(current.status)
+                            const currentRank = getStatusRank(activeOrderRef.current?.status)
+                            const localRank = getStatusRank(normalized)
+
+                            // ONLY advance status if local rank is strictly higher than current status rank
+                            if (localRank > currentRank) {
+                                setActiveOrder((prev) => {
+                                    if (!prev) return null
+                                    const updated = { ...prev, status: normalized }
+                                    try {
+                                        localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
+                                    } catch { }
+                                    return updated
+                                })
+                            }
+                        }
+                    } catch (storageErr) {
+                        console.warn('Local order check error:', storageErr)
                     }
                 }
-            } catch (err) {
-                // Ignore if backend offline
+            } finally {
+                isFetchingOrderRef.current = false
             }
         }
 
         void checkOrderStatus()
         const interval = setInterval(() => {
             void checkOrderStatus()
-        }, 1000)
+        }, 5000)
 
-        const handleSync = () => {
-            void checkOrderStatus()
+        const handleSync = (e?: Event) => {
+            if (e && e instanceof StorageEvent && e.key) {
+                const activeKey = getActiveOrderKey(currentUser)
+                const ordersKey = getOrdersKey(currentUser)
+                if (e.key !== activeKey && e.key !== ordersKey && e.key !== 'seafudz_orders' && e.key !== 'seafudz_order_created') {
+                    return
+                }
+            }
+            void checkOrderStatus(true)
         }
 
         window.addEventListener('seafudz_order_created', handleSync)
@@ -169,7 +366,7 @@ export const OnlineCustomer: React.FC = () => {
             window.removeEventListener('seafudz_order_created', handleSync)
             window.removeEventListener('storage', handleSync)
         }
-    }, [activeOrder?.id, activeOrder?.status])
+    }, [activeOrder?.id])
 
     // Calculations with live effective prices
     const subtotal = useMemo(() => {
@@ -247,6 +444,11 @@ export const OnlineCustomer: React.FC = () => {
 
     const handlePlaceOrder = async (e: React.FormEvent) => {
         e.preventDefault()
+        const currentUser = getActiveUser()
+        if (!currentUser) {
+            setIsAuthModalOpen(true)
+            return
+        }
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
         const orderPayload = {
@@ -284,11 +486,15 @@ export const OnlineCustomer: React.FC = () => {
             const responseData = await res.json().catch(() => ({}))
             const serverOrder = responseData?.data || responseData
 
-            const newOrder: OnlineOrderState = {
-                id: serverOrder?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`,
+            const newOrderId = serverOrder?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`
+            const newOrder: OnlineOrderState & { type: string; customer: string; deliveryAddress: string } = {
+                id: newOrderId,
+                type: 'Delivery',
                 customerName: serverOrder?.customerName || serverOrder?.customer_name || customerName,
+                customer: serverOrder?.customerName || serverOrder?.customer_name || customerName,
                 phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
                 address: serverOrder?.address || serverOrder?.delivery_address || address,
+                deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || address,
                 paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
@@ -303,9 +509,24 @@ export const OnlineCustomer: React.FC = () => {
 
             setActiveOrder(newOrder)
             try {
-                localStorage.setItem('seafudz_active_online_order', JSON.stringify(newOrder))
+                const userOrderKey = getActiveOrderKey(currentUser)
+                const userOrdersKey = getOrdersKey(currentUser)
+                localStorage.setItem(userOrderKey, JSON.stringify(newOrder))
+
+                const existing = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+                const filtered = existing.filter((o: any) => o.id !== newOrderId && o.ref !== newOrderId)
+                localStorage.setItem(userOrdersKey, JSON.stringify([newOrder, ...filtered]))
+
+                // Update global seafudz_orders for Assistant/Kitchen/Rider role management
+                const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const globalFiltered = globalOrders.filter((o: any) => o.id !== newOrderId && o.ref !== newOrderId)
+                localStorage.setItem('seafudz_orders', JSON.stringify([newOrder, ...globalFiltered]))
             } catch { }
 
+            // Clear cart for this specific user
+            try {
+                localStorage.removeItem(getCartKey(currentUser))
+            } catch { }
             setCartItems([])
             setOrderNotes('')
             setActiveTab('tracking')
@@ -317,8 +538,9 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     const handleStartNewOrder = () => {
+        const currentUser = getActiveUser()
         try {
-            localStorage.removeItem('seafudz_active_online_order')
+            localStorage.removeItem(getActiveOrderKey(currentUser))
         } catch { }
         setActiveOrder(null)
         setCustomerName('')
@@ -333,43 +555,38 @@ export const OnlineCustomer: React.FC = () => {
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
                 {/* Integrated Customer Navbar */}
-                <NavbarCustomer searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+                <NavbarCustomer />
 
-                {/* Tab Navigation header */}
-                <div className="flex bg-white p-1.5 rounded-2xl border border-neutral-100 shadow-xs self-start gap-1">
-                    <button
-                        onClick={() => setActiveTab('menu')}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${activeTab === 'menu'
-                            ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                            : 'text-neutral-600 hover:bg-neutral-50'
-                            }`}
-                    >
-                        🍽️ Browse Menu
-                    </button>
-                    <button
-                        onClick={() => {
-                            if (cartItems.length > 0) setActiveTab('billing')
-                        }}
-                        disabled={cartItems.length === 0}
-                        className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${cartItems.length === 0 ? 'opacity-50 cursor-not-allowed' : ''
-                            } ${activeTab === 'billing'
-                                ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                : 'text-neutral-600 hover:bg-neutral-50'
-                            }`}
-                    >
-                        📋 Checkout & Billing
-                    </button>
-                    {activeOrder && (
+                {/* Browse Menu & Minimal Search Bar Container */}
+                <div className="flex flex-col gap-4 items-start">
+                    {/* Browse Menu Button */}
+                    <div className="flex bg-white p-1 rounded-2xl border border-neutral-100 shadow-2xs">
                         <button
-                            onClick={() => setActiveTab('tracking')}
-                            className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${activeTab === 'tracking'
-                                ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                : 'text-neutral-600 hover:bg-neutral-50'
-                                }`}
+                            onClick={() => setActiveTab('menu')}
+                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20"
                         >
-                            📍 Track Status
+                            🍽️ Browse Menu
                         </button>
-                    )}
+                    </div>
+
+                    {/* Minimal Search Bar directly BELOW Browse Menu */}
+                    <div className="flex items-center px-1 py-1 w-full max-w-sm">
+                        <svg className="w-4 h-4 text-slate-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Search dishes..."
+                            className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full focus:outline-none"
+                        />
+                        {searchQuery && (
+                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs">
+                                ✕
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 {/* VIEW 1: MENU / BROWSE */}
@@ -584,8 +801,8 @@ export const OnlineCustomer: React.FC = () => {
                                     </div>
 
                                     <button
-                                        onClick={() => setActiveTab('billing')}
-                                        className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2"
+                                        onClick={handleProceedToCheckout}
+                                        className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         Proceed to Checkout ➡️
                                     </button>
@@ -615,7 +832,7 @@ export const OnlineCustomer: React.FC = () => {
                                     <input
                                         type="text"
                                         required
-                                        placeholder="Clarissa Dimapilis"
+                                        placeholder="Full Name"
                                         value={customerName}
                                         onChange={(e) => setCustomerName(e.target.value)}
                                         className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
@@ -629,7 +846,7 @@ export const OnlineCustomer: React.FC = () => {
                                     <input
                                         type="tel"
                                         required
-                                        placeholder="0917-882-9912"
+                                        placeholder="Phone Number"
                                         value={phone}
                                         onChange={(e) => setPhone(e.target.value)}
                                         className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
@@ -644,7 +861,7 @@ export const OnlineCustomer: React.FC = () => {
                                 <textarea
                                     required
                                     rows={3}
-                                    placeholder="Block 4, Lot 12, Mahogany St., Phase 2, Cavite City"
+                                    placeholder="Enter your complete delivery address"
                                     value={address}
                                     onChange={(e) => setAddress(e.target.value)}
                                     className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
@@ -850,15 +1067,15 @@ export const OnlineCustomer: React.FC = () => {
                                     className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
                                     style={{
                                         width:
-                                            activeOrder.status === 'PENDING'
+                                            normalizeStatus(activeOrder.status) === 'PENDING'
                                                 ? '0%'
-                                                : activeOrder.status === 'CONFIRMED'
+                                                : normalizeStatus(activeOrder.status) === 'CONFIRMED'
                                                     ? '20%'
-                                                    : activeOrder.status === 'PREPARING'
+                                                    : normalizeStatus(activeOrder.status) === 'PREPARING'
                                                         ? '40%'
-                                                        : activeOrder.status === 'READY'
+                                                        : normalizeStatus(activeOrder.status) === 'READY'
                                                             ? '60%'
-                                                            : activeOrder.status === 'OUT_FOR_DELIVERY'
+                                                            : normalizeStatus(activeOrder.status) === 'OUT_FOR_DELIVERY'
                                                                 ? '80%'
                                                                 : '100%',
                                     }}
@@ -873,7 +1090,7 @@ export const OnlineCustomer: React.FC = () => {
                                     { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed', icon: '✨' },
                                 ].map((step) => {
                                     const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
-                                    const currUpper = (activeOrder.status || 'PENDING').toUpperCase()
+                                    const currUpper = normalizeStatus(activeOrder.status)
                                     const isCurrent = currUpper === step.key
                                     const isCompleted =
                                         statusOrder.indexOf(currUpper) >= statusOrder.indexOf(step.key)
@@ -1113,11 +1330,8 @@ export const OnlineCustomer: React.FC = () => {
                                 </div>
 
                                 <button
-                                    onClick={() => {
-                                        setActiveTab('billing')
-                                        setIsMobileCartOpen(false)
-                                    }}
-                                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2"
+                                    onClick={handleProceedToCheckout}
+                                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
                                     Proceed to Checkout ➡️
                                 </button>
@@ -1126,6 +1340,41 @@ export const OnlineCustomer: React.FC = () => {
                     </div>
                 )}
             </div>
+
+            {/* Account Required for Checkout Modal */}
+            {isAuthModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-neutral-100 relative text-center">
+                        <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-inner">
+                            🔐
+                        </div>
+
+                        <h3 className="text-xl font-extrabold text-neutral-900 mb-2">
+                            Account Required for Checkout
+                        </h3>
+
+                        <p className="text-xs text-neutral-600 mb-6 leading-relaxed">
+                            Please log in or register an account to complete your checkout and place your order. Don't worry—your selected items are saved in your cart!
+                        </p>
+
+                        <div className="flex flex-col gap-3">
+                            <button
+                                onClick={() => navigate('/login', { state: { from: '/customer' } })}
+                                className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg shadow-orange-500/25 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
+                            >
+                                <span>🔑 Login / Register Now</span>
+                            </button>
+
+                            <button
+                                onClick={() => setIsAuthModalOpen(false)}
+                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 px-6 rounded-2xl transition-all text-xs cursor-pointer"
+                            >
+                                Keep Browsing Menu
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

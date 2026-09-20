@@ -178,10 +178,10 @@ router.patch('/assistant/orders/:id/verify', async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 1. Update order status to IN_PROCESS
+    // 1. Update order status to CONFIRMED
     const orderSql = `
       UPDATE orders
-      SET status = 'IN_PROCESS', assistant_id = COALESCE($1, assistant_id), updated_at = NOW()
+      SET status = 'CONFIRMED', assistant_id = COALESCE($1, assistant_id), updated_at = NOW()
       WHERE id = $2
       RETURNING *
     `;

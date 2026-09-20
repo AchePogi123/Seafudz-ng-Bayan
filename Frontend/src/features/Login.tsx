@@ -341,6 +341,16 @@ const Login = () => {
             <p className="text-xs text-neutral-400 mt-1 font-medium">By: Joemarie Gobangco & Gelyn Basilio-Alday</p>
           </div>
 
+          {/* Notice when redirected from Order Online */}
+          {(location.state?.from === '/customer' || (typeof location.state?.from === 'object' && location.state?.from?.pathname === '/customer')) && !errorMessage && !successMessage && (
+            <div className="py-2.5 px-3.5 rounded-xl text-xs font-semibold mb-5 bg-orange-50 text-orange-900 border border-orange-200 flex items-center gap-2.5 text-left">
+              <svg className="w-4 h-4 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>Please sign in or create an account to verify your details and complete your seafood order.</span>
+            </div>
+          )}
+
           {errorMessage && <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#fff5f5] text-[#c53030] border border-[#fed7d7]">{errorMessage}</div>}
           {successMessage && <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#f0fff4] text-[#22543d] border border-[#c6f6d5]">{successMessage}</div>}
 

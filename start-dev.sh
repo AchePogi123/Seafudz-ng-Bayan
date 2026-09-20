@@ -10,20 +10,27 @@ echo -e "${GREEN}=================================================${NC}"
 echo -e "${GREEN} Starting Seafudz ng Bayan Backend & Frontend ${NC}"
 echo -e "${GREEN}=================================================${NC}"
 
-# Check if npm run dev in root works via concurrently
-if command -v npx &> /dev/null; then
-    npx concurrently -n "BACKEND,FRONTEND" -c "cyan,magenta" \
-        "cd Backend && npm run dev" \
-        "cd Frontend && npm run dev"
-else
-    echo -e "${CYAN}[BACKEND] Starting Express API...${NC}"
-    (cd Backend && npm run dev) &
-    BACKEND_PID=$!
-
-    echo -e "${MAGENTA}[FRONTEND] Starting React Vite...${NC}"
-    (cd Frontend && npm run dev) &
-    FRONTEND_PID=$!
-
-    trap "kill $BACKEND_PID $FRONTEND_PID" EXIT
-    wait
+# Ensure Backend dependencies are installed
+if [ ! -d "Backend/node_modules" ]; then
+    echo -e "${CYAN}📦 Installing Backend dependencies...${NC}"
+    (cd Backend && npm install)
 fi
+
+# Ensure Frontend dependencies are installed
+if [ ! -d "Frontend/node_modules" ]; then
+    echo -e "${MAGENTA}📦 Installing Frontend dependencies...${NC}"
+    (cd Frontend && npm install)
+fi
+
+echo -e "${CYAN}📡 [BACKEND] Starting Express API server on http://localhost:5000...${NC}"
+(cd Backend && npm run dev) &
+BACKEND_PID=$!
+
+echo -e "${MAGENTA}💻 [FRONTEND] Starting React Vite app on http://localhost:5173...${NC}"
+(cd Frontend && npm run dev) &
+FRONTEND_PID=$!
+
+# Trap Ctrl+C (SIGINT / SIGTERM) to cleanly shut down both processes
+trap "echo -e '\n🛑 Stopping dev servers...'; kill $BACKEND_PID $FRONTEND_PID 2>/dev/null; exit 0" SIGINT SIGTERM EXIT
+
+wait

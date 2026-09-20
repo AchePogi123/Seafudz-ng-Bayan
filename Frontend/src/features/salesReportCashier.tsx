@@ -52,21 +52,39 @@ export const SalesReportCashier: React.FC = () => {
           const parsed = JSON.parse(local)
 
           if (Array.isArray(parsed)) {
-            combined = parsed.map((o: any) => ({
-              id: o.id || o.ref,
-              ref: o.ref || o.id,
-              dateTime: o.dateTime || new Date().toLocaleString(),
-              items: o.items || 'Seafood Dish',
-              customer:
-                o.customer ||
-                (o.type === 'Delivery'
-                  ? 'Online Customer'
-                  : 'Walk-In Customer'),
-              total: Number(o.total || 0),
-              type: o.type || 'POS Order',
-              paymentMethod: o.paymentMethod || 'Cash',
-              status: o.status || 'Completed',
-            }))
+            combined = parsed.map((o: any) => {
+              let itemsSummary = 'Seafood Dish'
+              if (typeof o.items === 'string') {
+                itemsSummary = o.items
+              } else if (Array.isArray(o.items)) {
+                itemsSummary = o.items
+                  .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                  .join(', ')
+              } else if (Array.isArray(o.cartItems)) {
+                itemsSummary = o.cartItems
+                  .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                  .join(', ')
+              }
+
+              return {
+                id: String(o.id || o.ref),
+                ref: String(o.ref || o.id),
+                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
+                items: itemsSummary,
+                customer:
+                  typeof o.customer === 'string'
+                    ? o.customer
+                    : typeof o.customerName === 'string'
+                    ? o.customerName
+                    : o.type === 'Delivery'
+                    ? 'Online Customer'
+                    : 'Walk-In Customer',
+                total: Number(o.total || 0),
+                type: o.type || 'POS Order',
+                paymentMethod: o.paymentMethod || 'Cash',
+                status: o.status || 'Completed',
+              }
+            })
           }
         }
       } catch (e) {

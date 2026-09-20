@@ -34,23 +34,15 @@ export interface Rider {
   phone: string
 }
 
-const INITIAL_MOCK_RIDERS: Rider[] = [
-  { id: 'r-1', name: 'Rider Alex Ramos', status: 'Available', vehicle: 'Yamaha NMAX (Plate 123-ABC)', phone: '09170001111' },
-  { id: 'r-2', name: 'Dan Cruz', status: 'Available', vehicle: 'Honda Click 125i (Plate 456-DEF)', phone: '09180002222' },
-  { id: 'r-3', name: 'Marky Santos', status: 'Busy - 1 delivery active', vehicle: 'Kawasaki Barako (Plate 789-GHI)', phone: '09200003333' },
-]
 
 export const AssistantRole: React.FC = () => {
   const [orders, setOrders] = useState<OnlineOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'pending' | 'kitchen' | 'dispatch' | 'all'>('pending')
-  const [correctionNoteInput, setCorrectionNoteInput] = useState('')
-  const [selectedRiderId, setSelectedRiderId] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
-  const [riders] = useState<Rider[]>(INITIAL_MOCK_RIDERS)
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -111,18 +103,18 @@ export const AssistantRole: React.FC = () => {
               const id = o.id || o.ref
               const items: OrderItem[] = Array.isArray(o.cartItems)
                 ? o.cartItems.map((ci: any) => ({
-                    name: ci.item?.name || ci.name || 'Seafood Dish',
-                    quantity: ci.quantity || 1,
-                    price: ci.item?.price || ci.price || 0,
-                  }))
+                  name: ci.item?.name || ci.name || 'Seafood Dish',
+                  quantity: ci.quantity || 1,
+                  price: ci.item?.price || ci.price || 0,
+                }))
                 : (o.items || '').split(',').map((part: string) => {
-                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
-                    return {
-                      name: match ? match[1].trim() : part.trim(),
-                      quantity: match ? parseInt(match[2], 10) : 1,
-                      price: 0,
-                    }
-                  })
+                  const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                  return {
+                    name: match ? match[1].trim() : part.trim(),
+                    quantity: match ? parseInt(match[2], 10) : 1,
+                    price: 0,
+                  }
+                })
 
               combinedMap.set(id, {
                 id,
@@ -182,7 +174,7 @@ export const AssistantRole: React.FC = () => {
             })
           }
         }
-      } catch (err) {}
+      } catch (err) { }
 
       setOrders(Array.from(combinedMap.values()))
     } finally {
@@ -211,42 +203,6 @@ export const AssistantRole: React.FC = () => {
     }
   }, [])
 
-  const handleFlagForCorrection = async () => {
-    if (!selectedOrderId || !selectedOrder) return
-    if (!correctionNoteInput.trim()) {
-      setNotification('⚠️ Please enter a correction note first.')
-      return
-    }
-
-    try {
-      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'FLAGGED', note: correctionNoteInput }),
-      })
-    } catch {}
-
-    // Update in LocalStorage
-    try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: any) =>
-        o.id === selectedOrderId || o.ref === selectedOrderId
-          ? { ...o, status: 'FLAGGED', notes: correctionNoteInput }
-          : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch {}
-
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === selectedOrderId ? { ...o, status: 'flagged', correctionNote: correctionNoteInput } : o
-      )
-    )
-    setNotification(`🚩 Order ${selectedOrder.ref} flagged for correction.`)
-    setCorrectionNoteInput('')
-  }
-
   // PASS ORDER TO CASHIER & KITCHEN (CONFIRMED)
   const handleApproveSendToKitchen = async () => {
     if (!selectedOrderId || !selectedOrder) return
@@ -257,7 +213,7 @@ export const AssistantRole: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'CONFIRMED' }),
       })
-    } catch (err) {}
+    } catch (err) { }
 
     // Update in LocalStorage for instant live broadcast to Cashier & Kitchen
     try {
@@ -279,53 +235,12 @@ export const AssistantRole: React.FC = () => {
       }
 
       window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch {}
+    } catch { }
 
     setOrders((prev) =>
       prev.map((o) => (o.id === selectedOrderId ? { ...o, status: 'confirmed' } : o))
     )
-    setNotification(`🍳 Order ${selectedOrder.ref} approved! Sent to Cashier & Kitchen!`)
-  }
-
-  // DISPATCH ORDER TO RIDER
-  const handleAssignRider = async () => {
-    if (!selectedOrderId || !selectedOrder) return
-    if (!selectedRiderId) {
-      setNotification('⚠️ Please select a rider to dispatch.')
-      return
-    }
-    const rider = riders.find((r) => r.id === selectedRiderId)
-    if (!rider) return
-
-    // Update in backend API
-    try {
-      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'OUT_FOR_DELIVERY', riderId: rider.id, assignedRiderName: rider.name }),
-      })
-    } catch {}
-
-    // Update in LocalStorage for live rider sync
-    try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: any) =>
-        o.id === selectedOrderId || o.ref === selectedOrderId
-          ? { ...o, status: 'OUT_FOR_DELIVERY', riderId: rider.id, assignedRiderName: rider.name }
-          : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch {}
-
-    setOrders((prev) =>
-      prev.map((o) =>
-        o.id === selectedOrderId
-          ? { ...o, status: 'out_for_delivery', riderId: rider.id, assignedRiderName: rider.name }
-          : o
-      )
-    )
-    setNotification(`🛵 Order ${selectedOrder.ref} assigned kay ${rider.name}! Handed over for delivery.`)
+    setNotification(`Order ${selectedOrder.ref} approved! Sent to Cashier & Kitchen!`)
   }
 
   const filteredOrders = useMemo(() => {
@@ -335,10 +250,10 @@ export const AssistantRole: React.FC = () => {
         activeTab === 'pending'
           ? s === 'pending' || s === 'flagged' || s === 'pending_verification' || s === 'unconfirmed'
           : activeTab === 'kitchen'
-          ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
-          : activeTab === 'dispatch'
-          ? s === 'ready' || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'
-          : true
+            ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
+            : activeTab === 'dispatch'
+              ? s === 'ready' || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'
+              : true
 
       if (!matchesTab) return false
 
@@ -373,7 +288,7 @@ export const AssistantRole: React.FC = () => {
 
         {/* 4-Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-start">
-          
+
           {/* Left Column (3 Cols) */}
           <div className="lg:col-span-3 flex flex-col gap-4">
             {notification && (
@@ -388,21 +303,19 @@ export const AssistantRole: React.FC = () => {
               {/* Pipeline Tabs */}
               <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-neutral-200 shadow-2xs overflow-x-auto">
                 {[
-                  { id: 'pending', label: '1. Pending Orders', icon: '📝' },
-                  { id: 'kitchen', label: '2. Sent to Kitchen', icon: '🍳' },
-                  { id: 'dispatch', label: '3. Rider Dispatch', icon: '🛵' },
-                  { id: 'all', label: 'All Orders', icon: '📦' },
+                  { id: 'pending', label: '1. Pending Orders' },
+                  { id: 'kitchen', label: '2. Sent to Kitchen' },
+                  { id: 'dispatch', label: '3. Rider Dispatch' },
+                  { id: 'all', label: 'All Orders' },
                 ].map((tab) => (
                   <button
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id as any)}
-                    className={`px-4 py-2.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
-                      activeTab === tab.id
+                    className={`px-4 py-2.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id
                         ? 'bg-[#ff7b00] text-white shadow-xs'
                         : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
-                    }`}
+                      }`}
                   >
-                    <span>{tab.icon}</span>
                     <span>{tab.label}</span>
                   </button>
                 ))}
@@ -410,7 +323,6 @@ export const AssistantRole: React.FC = () => {
 
               {/* Search Bar (Same as Rider) */}
               <div className="relative min-w-[240px]">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm">🔍</span>
                 <input
                   type="text"
                   value={searchQuery}
@@ -433,7 +345,6 @@ export const AssistantRole: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {paginatedOrders.length === 0 ? (
                 <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                  <div className="text-3xl mb-2">📥</div>
                   <h3 className="font-bold text-neutral-700">No orders in this stage right now.</h3>
                   <p className="text-xs mt-1">
                     {searchQuery ? `No results matching "${searchQuery}"` : 'Online orders placed by customers will appear here immediately.'}
@@ -448,53 +359,50 @@ export const AssistantRole: React.FC = () => {
                     <div
                       key={ord.id}
                       onClick={() => setSelectedOrderId(ord.id)}
-                      className={`bg-white rounded-3xl p-5 border transition-all cursor-pointer shadow-xs hover:shadow-md ${
-                        isSelected
+                      className={`bg-white rounded-3xl p-5 border transition-all cursor-pointer shadow-xs hover:shadow-md ${isSelected
                           ? 'border-[#ff7b00] ring-2 ring-orange-500/20'
                           : 'border-neutral-200 hover:border-neutral-300'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
                         <div>
                           <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
                           <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
-                          <p className="text-xs text-neutral-500 mt-0.5">📞 {ord.phone}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                            s === 'pending' || s === 'unconfirmed'
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'pending' || s === 'unconfirmed'
                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
                               : s === 'confirmed' || s === 'preparing'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : s === 'ready'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                          }`}
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : s === 'ready'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            }`}
                         >
                           ● {ord.status}
                         </span>
                       </div>
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
-                        <p className="truncate">📍 <span className="font-medium text-neutral-700">{ord.address}</span></p>
-                        <p className="truncate">🍤 <span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <div className="flex items-center gap-1.5">
                           <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
-                            ord.paymentMethod?.toLowerCase().includes('maya')
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('maya')
                               ? 'bg-emerald-100 text-emerald-800'
                               : 'bg-blue-100 text-blue-800'
-                          }`}>
+                            }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
                           {ord.paymentReceipt && (
-                            <span className="text-[10px]" title="Receipt photo attached">📸</span>
+                            <span className="text-[10px]" title="Receipt photo attached">Receipt</span>
                           )}
                         </div>
-                        <span className="text-neutral-400 font-medium text-[11px]">🕒 {ord.createdAt}</span>
+                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                       </div>
                     </div>
                   )
@@ -538,7 +446,6 @@ export const AssistantRole: React.FC = () => {
 
             {!selectedOrder ? (
               <div className="text-center py-16 text-neutral-400 text-xs">
-                <p className="text-2xl mb-1">👈</p>
                 Select an order from the list to review and forward to Cashier & Kitchen.
               </div>
             ) : (
@@ -617,7 +524,7 @@ export const AssistantRole: React.FC = () => {
                       <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
                     </p>
                     <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
-                      <span>{addressValidation.isComplete ? '✓' : '⚠'}</span>
+                      <span>{addressValidation.isComplete ? '✓' : '!'}</span>
                       <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
                     </p>
                   </div>
@@ -629,7 +536,7 @@ export const AssistantRole: React.FC = () => {
                     onClick={handleApproveSendToKitchen}
                     className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
                   >
-                    <span>🍳</span> Forward to Cashier & Kitchen
+                    Forward to Cashier & Kitchen
                   </button>
                 </div>
               </div>
@@ -650,7 +557,6 @@ export const AssistantRole: React.FC = () => {
           >
             <div className="w-full flex items-center justify-between border-b border-neutral-100 pb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xl">🧾</span>
                 <h4 className="font-black text-sm text-neutral-800">Customer Payment Receipt</h4>
               </div>
               <button

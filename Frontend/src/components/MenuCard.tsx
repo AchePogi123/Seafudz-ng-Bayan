@@ -26,7 +26,7 @@ export const CLIENT_CATEGORIES = [
 ]
 
 export const CLIENT_MENU_ITEMS: MenuItem[] = [
-  // 🦐 SEAFOODS / ALACARTE / BOWLS / TRAYS
+  // SEAFOODS / ALACARTE / BOWLS / TRAYS
   {
     id: 'all-shrimp-alacarte-199',
     name: 'All Shrimp Alacarte',
@@ -84,7 +84,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('Mixedseafoods_Mixed Seafoods Alacarte_Tray_1199 pesos.jpg'),
   },
 
-  // 🍚 VALUE MEALS
+  // VALUE MEALS
   {
     id: 'chicken-pastil-35',
     name: 'Chicken Pastil',
@@ -110,7 +110,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('chao_fan_VALUE MEALS_35 pesos.jpg'),
   },
 
-  // 🥟 SIOMAI
+  // SIOMAI
   {
     id: 'pork-siomai-5',
     name: 'Pork Siomai',
@@ -152,7 +152,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('japanese_siomai_SIOMAI_6 pesos.jpg'),
   },
 
-  // 🌽 SEAFOODS ADD ONS
+  // SEAFOODS ADD ONS
   {
     id: 'corn-addon-20',
     name: 'Sweet Corn',
@@ -210,7 +210,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('specailsauce_SEAFOODS ADD ONS_30 pesos.jpg'),
   },
 
-  // 🍋 SHAKE & LEMONADE
+  // SHAKE & LEMONADE
   {
     id: 'lemonade-small-40',
     name: 'Fresh Lemonade (Small)',
@@ -260,7 +260,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('snakes_big_SHAKE&LEMONADE_50 peso.jpg'),
   },
 
-  // 🍧 DESSERTS
+  // DESSERTS
   {
     id: 'mango-pudding-50',
     name: 'Mango Pudding',
@@ -286,7 +286,7 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
     image: getMenuImageUrl('icecream_DESSERTS_50 pesos.jpg'),
   },
 
-  // 🥤 DRINKS
+  // DRINKS
   {
     id: 'mineral-water-15',
     name: 'Mineral Water (500ml)',
@@ -427,7 +427,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
             }`}
           onError={(e) => {
             (e.target as HTMLImageElement).src =
-              "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f5f5f5'/><text y='55' x='35' font-size='40'>🥘</text></svg>"
+              "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f5f5f5'/><text y='65' x='35' font-size='45' font-weight='bold' fill='%23ea580c'>S</text></svg>"
           }}
         />
 
@@ -440,7 +440,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
         {!isAvailable && (
           <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
             <span className="bg-rose-600 text-white font-extrabold text-[11px] sm:text-xs uppercase tracking-widest px-3 py-1 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-              <span>🚫</span> UNAVAILABLE / SOLD OUT
+              UNAVAILABLE / SOLD OUT
             </span>
           </div>
         )}
@@ -515,7 +515,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
                   title="Click to edit price"
                   className="text-[10px] font-bold text-neutral-400 hover:text-orange-600 bg-neutral-100 hover:bg-orange-50 border border-neutral-200 px-1.5 py-0.5 rounded transition-all cursor-pointer"
                 >
-                  ✏️ Edit
+                  Edit
                 </button>
               )}
             </div>
@@ -536,7 +536,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
                     : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-300'
                   }`}
               >
-                <span>{isAvailable ? '🚫 Out of Stock' : '🟢 Set Available'}</span>
+                <span>{isAvailable ? 'Out of Stock' : 'Set Available'}</span>
               </button>
             )}
 

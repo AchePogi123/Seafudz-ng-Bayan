@@ -4,7 +4,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logoseafudsngbayan.png';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
-import { saveSessionToken, saveActiveUser, generateClientHashToken, buildTokenizedUrl } from '../cryptography/cryptoSession';
+import { saveSessionToken, saveActiveUser, generateClientHashToken } from '../cryptography/cryptoSession';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 

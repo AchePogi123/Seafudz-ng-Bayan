@@ -213,7 +213,7 @@ export const RideRoleDemo: React.FC = () => {
       setSelectedOrder({ ...selectedOrder, status: newStatus })
     }
 
-    setNotification(`🛵 Order status updated to "${newStatus}"!`)
+    setNotification(`Order status updated to "${newStatus}"!`)
   }
 
   const filteredDeliveries = useMemo(() => {
@@ -273,7 +273,6 @@ export const RideRoleDemo: React.FC = () => {
                         : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
                     }`}
                   >
-                    <span>{tab === 'Ready' ? '📦' : tab === 'Out for Delivery' ? '🛵' : tab === 'Completed' ? '✨' : '📋'}</span>
                     <span>{tab} Orders</span>
                   </button>
                 ))}
@@ -281,13 +280,12 @@ export const RideRoleDemo: React.FC = () => {
 
               {/* Search Bar */}
               <div className="relative min-w-[240px]">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm">🔍</span>
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search customer, ref, address..."
-                  className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
+                  className="w-full pl-4 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
                 />
                 {searchQuery && (
                   <button
@@ -304,7 +302,6 @@ export const RideRoleDemo: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {paginatedDeliveries.length === 0 ? (
                 <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                  <div className="text-3xl mb-2">🛵</div>
                   <h3 className="font-bold text-neutral-700">No delivery orders found.</h3>
                   <p className="text-xs mt-1">
                     {searchQuery ? `No results matching "${searchQuery}"` : 'Orders dispatched by Assistant will show up here live.'}
@@ -328,7 +325,7 @@ export const RideRoleDemo: React.FC = () => {
                         <div>
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
                           <h4 className="text-base font-black text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
-                          <p className="text-xs text-neutral-500 mt-0.5">📞 {ord.phone}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
                         </div>
                         <span
                           className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
@@ -344,13 +341,13 @@ export const RideRoleDemo: React.FC = () => {
                       </div>
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
-                        <p className="truncate">📍 <span className="font-medium text-neutral-700">{ord.address}</span></p>
-                        <p className="truncate">🍤 <span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
-                        <span className="text-neutral-400 font-medium text-[11px]">🕒 {ord.createdAt}</span>
+                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                       </div>
                     </div>
                   )
@@ -372,14 +369,14 @@ export const RideRoleDemo: React.FC = () => {
                     disabled={currentPage === 1}
                     className="px-4 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
                   >
-                    <span>⬅️</span> Prev
+                    Prev
                   </button>
                   <button
                     onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                     disabled={currentPage >= totalPages}
                     className="px-4 py-2 rounded-xl text-xs font-bold bg-[#ff7b00] hover:bg-[#e66f00] text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
                   >
-                    Next <span>➡️</span>
+                    Next
                   </button>
                 </div>
               </div>
@@ -394,7 +391,6 @@ export const RideRoleDemo: React.FC = () => {
 
             {!selectedOrder ? (
               <div className="text-center py-16 text-neutral-400 text-xs">
-                <p className="text-2xl mb-1">👈</p>
                 Select an order from the list to view route and update delivery status.
               </div>
             ) : (
@@ -405,8 +401,8 @@ export const RideRoleDemo: React.FC = () => {
                     <span className="bg-white px-2 py-0.5 rounded font-bold text-[10px] text-neutral-600 uppercase border border-orange-200">{selectedOrder.paymentMethod}</span>
                   </div>
                   <p className="font-bold text-neutral-800">{selectedOrder.customer}</p>
-                  <p className="text-neutral-500">📞 {selectedOrder.phone}</p>
-                  <p className="text-neutral-600 mt-1">📍 {selectedOrder.address}</p>
+                  <p className="text-neutral-500">Phone: {selectedOrder.phone}</p>
+                  <p className="text-neutral-600 mt-1">Address: {selectedOrder.address}</p>
                 </div>
 
                 <div className="bg-neutral-50 p-3 rounded-2xl border border-neutral-100 space-y-1.5">
@@ -430,7 +426,7 @@ export const RideRoleDemo: React.FC = () => {
                       {selectedOrder.status !== 'Ready' ? (
                         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-center space-y-1">
                           <p className="text-xs font-bold text-amber-800 flex items-center justify-center gap-1.5">
-                            <span>🍳</span> Cooking in Kitchen
+                            Cooking in Kitchen
                           </p>
                           <p className="text-[11px] text-amber-600">
                             Cannot start delivery yet. Please wait for the kitchen to mark the order as <strong>"Ready / Done"</strong>.
@@ -439,7 +435,7 @@ export const RideRoleDemo: React.FC = () => {
                             disabled
                             className="w-full bg-neutral-200 text-neutral-400 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-not-allowed mt-2"
                           >
-                            <span>🛵</span> Start Delivery (Waiting for Kitchen)
+                            Start Delivery (Waiting for Kitchen)
                           </button>
                         </div>
                       ) : (
@@ -447,7 +443,7 @@ export const RideRoleDemo: React.FC = () => {
                           onClick={() => handleUpdateStatus(selectedOrder.id, 'Out for Delivery')}
                           className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20 cursor-pointer transition-all hover:scale-101"
                         >
-                          <span>🛵</span> Start Delivery (Out for Delivery)
+                          Start Delivery (Out for Delivery)
                         </button>
                       )}
                     </>
@@ -458,7 +454,7 @@ export const RideRoleDemo: React.FC = () => {
                       onClick={() => handleUpdateStatus(selectedOrder.id, 'Completed')}
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-all hover:scale-101"
                     >
-                      <span>✨</span> Mark as Delivered & Completed
+                      Mark as Delivered & Completed
                     </button>
                   )}
                 </div>

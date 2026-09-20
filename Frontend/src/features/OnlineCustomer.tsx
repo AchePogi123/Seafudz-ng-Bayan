@@ -608,9 +608,9 @@ export const OnlineCustomer: React.FC = () => {
                     <div className="flex bg-white p-1 rounded-2xl border border-neutral-100 shadow-2xs">
                         <button
                             onClick={() => setActiveTab('menu')}
-                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20"
+                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20 cursor-pointer"
                         >
-                            🍽️ Browse Menu
+                            Browse Menu
                         </button>
                     </div>
 
@@ -627,7 +627,7 @@ export const OnlineCustomer: React.FC = () => {
                             className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full focus:outline-none"
                         />
                         {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs">
+                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs cursor-pointer">
                                 ✕
                             </button>
                         )}
@@ -645,7 +645,7 @@ export const OnlineCustomer: React.FC = () => {
                                     <button
                                         key={cat}
                                         onClick={() => setSelectedCategory(cat)}
-                                        className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 ${selectedCategory === cat
+                                        className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
                                             ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
                                             : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
                                             }`}
@@ -677,7 +677,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         }`}
                                                     onError={(e) => {
                                                         ; (e.target as HTMLImageElement).src =
-                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="55" x="35" font-size="30">🦀</text></svg>'
+                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
                                                     }}
                                                 />
                                                 <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
@@ -687,7 +687,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 {!available && (
                                                     <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
                                                         <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                                            <span>🚫</span> Unavailable / Sold Out
+                                                            Unavailable / Sold Out
                                                         </span>
                                                     </div>
                                                 )}
@@ -740,7 +740,7 @@ export const OnlineCustomer: React.FC = () => {
                         <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto">
                             <div>
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
-                                    <span>🛒</span> Your Cart
+                                    Your Cart
                                     {cartItems.length > 0 && (
                                         <span className="bg-orange-100 text-orange-600 text-xs font-bold px-2 py-0.5 rounded-full">
                                             {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
@@ -750,7 +750,6 @@ export const OnlineCustomer: React.FC = () => {
 
                                 {cartItems.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-12 text-center text-neutral-400">
-                                        <span className="text-4xl mb-2">🍽️</span>
                                         <p className="text-sm font-medium">Cart is empty</p>
                                         <p className="text-xs mt-1 max-w-[200px]">Add delicious dishes from the menu to start!</p>
                                     </div>
@@ -760,17 +759,18 @@ export const OnlineCustomer: React.FC = () => {
                                             <div key={ci.item.id} className="pt-4 first:pt-0">
                                                 <div className="flex justify-between items-start gap-2">
                                                     <div>
-                                                        <p className="font-semibold text-neutral-800 text-sm leading-snug">
+                                                        <h4 className="font-semibold text-neutral-800 text-sm leading-snug">
                                                             {ci.item.name}
-                                                        </p>
+                                                        </h4>
                                                         <p className="text-xs text-orange-600 font-bold mt-0.5">
                                                             ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                         </p>
                                                     </div>
+
                                                     <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
                                                         <button
                                                             onClick={() => handleDecrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                         >
                                                             -
                                                         </button>
@@ -779,14 +779,13 @@ export const OnlineCustomer: React.FC = () => {
                                                         </span>
                                                         <button
                                                             onClick={() => handleIncrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                         >
                                                             +
                                                         </button>
                                                     </div>
                                                 </div>
 
-                                                {/* Special Note details */}
                                                 <div className="mt-2">
                                                     {editingNoteItemId === ci.item.id ? (
                                                         <div className="flex gap-2 mt-1">
@@ -799,7 +798,7 @@ export const OnlineCustomer: React.FC = () => {
                                                             />
                                                             <button
                                                                 onClick={() => handleSaveNote(ci.item.id)}
-                                                                className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold"
+                                                                className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
                                                             >
                                                                 Save
                                                             </button>
@@ -811,7 +810,7 @@ export const OnlineCustomer: React.FC = () => {
                                                             </p>
                                                             <button
                                                                 onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                                className="text-orange-500 hover:text-orange-600 font-bold text-[11px]"
+                                                                className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
                                                             >
                                                                 {ci.specialNote ? 'Edit note' : '+ Add Note'}
                                                             </button>
@@ -825,21 +824,21 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             {cartItems.length > 0 && (
-                                <div className="border-t border-neutral-100 pt-4 mt-4 space-y-4">
-                                    <div className="space-y-1.5">
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                <div className="border-t border-neutral-100 pt-4 space-y-4">
+                                    <div className="space-y-1.5 text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>Subtotal</span>
                                             <span>₱{subtotal.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>VAT (12%)</span>
                                             <span>₱{vat.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>Delivery Fee</span>
                                             <span>₱{deliveryFee.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-1.5 border-t border-dashed border-neutral-100">
+                                        <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
                                             <span>Total Amount</span>
                                             <span className="text-orange-600">₱{total.toLocaleString()}</span>
                                         </div>
@@ -849,7 +848,7 @@ export const OnlineCustomer: React.FC = () => {
                                         onClick={handleProceedToCheckout}
                                         className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        Proceed to Checkout ➡️
+                                        Proceed to Checkout
                                     </button>
                                 </div>
                             )}
@@ -866,7 +865,7 @@ export const OnlineCustomer: React.FC = () => {
                             className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
                         >
                             <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
-                                📍 Delivery & Billing Details
+                                Delivery & Billing Details
                             </h3>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -935,7 +934,6 @@ export const OnlineCustomer: React.FC = () => {
                                     <div
                                         className="flex items-center gap-3 p-3.5 rounded-xl border-2 border-blue-500 bg-blue-50/50 shadow-xs"
                                     >
-                                        <span className="text-2xl">💙</span>
                                         <div>
                                             <p className="font-black text-neutral-800 text-sm">GCash</p>
                                             <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
@@ -964,7 +962,6 @@ export const OnlineCustomer: React.FC = () => {
 
                                     {!paymentReceipt ? (
                                         <label className="border-2 border-dashed border-neutral-200 hover:border-orange-400 bg-neutral-50/50 hover:bg-orange-50/30 rounded-xl p-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-all">
-                                            <span className="text-2xl">📸</span>
                                             <span className="text-xs font-bold text-neutral-700">Click to upload payment screenshot</span>
                                             <span className="text-[10px] text-neutral-400">PNG, JPG, JPEG accepted</span>
                                             <input
@@ -992,7 +989,7 @@ export const OnlineCustomer: React.FC = () => {
                                             />
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-xs font-bold text-emerald-700 flex items-center gap-1">
-                                                    <span>✅</span> Receipt Attached
+                                                    Receipt Attached
                                                 </p>
                                                 <p className="text-[10px] text-neutral-500 truncate">Ready for Assistant review</p>
                                             </div>
@@ -1011,14 +1008,14 @@ export const OnlineCustomer: React.FC = () => {
                             <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                 <button
                                     type="submit"
-                                    className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2"
+                                    className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    🚀 Confirm & Submit Order
+                                    Confirm & Submit Order
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setActiveTab('menu')}
-                                    className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200"
+                                    className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200 cursor-pointer"
                                 >
                                     Back
                                 </button>
@@ -1132,12 +1129,12 @@ export const OnlineCustomer: React.FC = () => {
                                 />
 
                                 {[
-                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification', icon: '📝' },
-                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue', icon: '✅' },
-                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen', icon: '🍳' },
-                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider', icon: '📦' },
-                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route', icon: '🛵' },
-                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed', icon: '✨' },
+                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification' },
+                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue' },
+                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen' },
+                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider' },
+                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route' },
+                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed' },
                                 ].map((step) => {
                                     const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
                                     const currUpper = normalizeStatus(activeOrder.status)
@@ -1148,14 +1145,14 @@ export const OnlineCustomer: React.FC = () => {
                                     return (
                                         <div key={step.key} className="flex flex-col items-center z-10 relative">
                                             <div
-                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-sm sm:text-lg border-2 shadow-xs transition-all duration-300 ${isCurrent
+                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xs sm:text-sm font-extrabold border-2 shadow-xs transition-all duration-300 ${isCurrent
                                                     ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
                                                     : isCompleted
                                                         ? 'bg-orange-500 border-orange-500 text-white'
                                                         : 'bg-white border-neutral-200 text-neutral-400'
                                                     }`}
                                             >
-                                                {step.icon}
+                                                ●
                                             </div>
                                             <p
                                                 className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
@@ -1174,7 +1171,7 @@ export const OnlineCustomer: React.FC = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">📋 Delivery Info</h4>
+                                <h4 className="font-bold text-neutral-800 text-sm">Delivery Info</h4>
                                 <div className="text-xs space-y-1.5 text-neutral-600">
                                     <p>
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
@@ -1198,7 +1195,7 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">💳 Billing & Payment Details</h4>
+                                <h4 className="font-bold text-neutral-800 text-sm">Billing & Payment Details</h4>
                                 <div className="text-xs space-y-1.5 text-neutral-600">
                                     <p>
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Payment Mode:</span>{' '}
@@ -1268,9 +1265,9 @@ export const OnlineCustomer: React.FC = () => {
                         </div>
                         <button
                             onClick={() => setIsMobileCartOpen(true)}
-                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20"
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20 cursor-pointer"
                         >
-                            View Cart 🛒
+                            View Cart
                         </button>
                     </div>
                 )}
@@ -1282,11 +1279,11 @@ export const OnlineCustomer: React.FC = () => {
                             <div>
                                 <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
                                     <h3 className="font-bold text-neutral-800 text-lg flex items-center gap-2">
-                                        <span>🛒</span> Your Cart
+                                        Your Cart
                                     </h3>
                                     <button
                                         onClick={() => setIsMobileCartOpen(false)}
-                                        className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold p-1"
+                                        className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold p-1 cursor-pointer"
                                     >
                                         ×
                                     </button>
@@ -1307,7 +1304,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
                                                     <button
                                                         onClick={() => handleDecrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                     >
                                                         -
                                                     </button>
@@ -1316,7 +1313,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     </span>
                                                     <button
                                                         onClick={() => handleIncrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                     >
                                                         +
                                                     </button>
@@ -1335,7 +1332,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         />
                                                         <button
                                                             onClick={() => handleSaveNote(ci.item.id)}
-                                                            className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold"
+                                                            className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
                                                         >
                                                             Save
                                                         </button>
@@ -1347,7 +1344,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         </p>
                                                         <button
                                                             onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                            className="text-orange-500 hover:text-orange-600 font-bold text-[11px]"
+                                                            className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
                                                         >
                                                             {ci.specialNote ? 'Edit note' : '+ Add Note'}
                                                         </button>
@@ -1383,7 +1380,7 @@ export const OnlineCustomer: React.FC = () => {
                                     onClick={handleProceedToCheckout}
                                     className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    Proceed to Checkout ➡️
+                                    Proceed to Checkout
                                 </button>
                             </div>
                         </div>
@@ -1395,10 +1392,6 @@ export const OnlineCustomer: React.FC = () => {
             {isAuthModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-neutral-100 relative text-center">
-                        <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-inner">
-                            🔐
-                        </div>
-
                         <h3 className="text-xl font-extrabold text-neutral-900 mb-2">
                             Account Required for Checkout
                         </h3>
@@ -1412,7 +1405,7 @@ export const OnlineCustomer: React.FC = () => {
                                 onClick={() => navigate('/login', { state: { from: '/customer' } })}
                                 className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg shadow-orange-500/25 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
                             >
-                                <span>🔑 Login / Register Now</span>
+                                <span>Login / Register Now</span>
                             </button>
 
                             <button

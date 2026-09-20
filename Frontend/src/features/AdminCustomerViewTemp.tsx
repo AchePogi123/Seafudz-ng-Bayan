@@ -86,7 +86,6 @@ export const AdminCustomerView: React.FC = () => {
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-3xl border border-neutral-100 shadow-xs gap-4">
                     <div>
                         <div className="flex items-center gap-2">
-                            <span className="text-2xl">🛍️</span>
                             <h1 className="text-2xl font-black text-slate-800 tracking-tight">
                                 Customer Directory
                             </h1>
@@ -112,7 +111,9 @@ export const AdminCustomerView: React.FC = () => {
                             placeholder="Search by name, email, phone, or ID..."
                             className="w-full bg-white border border-neutral-200 rounded-2xl px-4 py-3 text-xs font-medium focus:outline-none focus:border-orange-500 shadow-2xs transition-all"
                         />
-                        <span className="absolute right-4 top-3 text-slate-400">🔍</span>
+                        <svg className="w-4 h-4 absolute right-4 top-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
                     </div>
                 </div>
 

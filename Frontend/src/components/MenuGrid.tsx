@@ -48,7 +48,11 @@ export const MenuGrid: React.FC<MenuGridProps> = ({
   if (!displayItems || displayItems.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 px-4 bg-white rounded-2xl border border-neutral-100 shadow-xs">
-        <div className="text-5xl mb-4">🔍</div>
+        <div className="w-12 h-12 mb-4 rounded-2xl bg-neutral-100 flex items-center justify-center text-neutral-400">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
         <h3 className="text-base font-bold text-neutral-700">No dishes found</h3>
         <p className="text-xs text-neutral-400 mt-1 max-w-[240px] text-center font-medium">
           We couldn't find anything matching your search query or selected category.

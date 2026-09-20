@@ -26,7 +26,7 @@ export const AccMan: React.FC = () => {
             phone: active?.phone || '',
             email: active?.email || '',
             address: active?.address || '',
-            avatar: '👤',
+            avatar: 'U',
             membershipTier: 'Bronze',
             points: 0,
             joinedDate: active ? 'Active' : '-',
@@ -44,7 +44,7 @@ export const AccMan: React.FC = () => {
                 phone: active.phone || '',
                 email: active.email || '',
                 address: active.address || '',
-                avatar: '👤',
+                avatar: 'U',
                 membershipTier: 'Bronze' as const,
                 points: 0,
                 joinedDate: 'Active',
@@ -74,7 +74,7 @@ export const AccMan: React.FC = () => {
                                 phone: updatedActive.phone || '',
                                 email: updatedActive.email || '',
                                 address: updatedActive.address || '',
-                                avatar: '👤',
+                                avatar: 'U',
                                 membershipTier: 'Bronze' as const,
                                 points: 0,
                                 joinedDate: 'Active',
@@ -256,8 +256,8 @@ export const AccMan: React.FC = () => {
                         {/* Profile Summary Card */}
                         <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 text-center flex flex-col items-center">
                             <div className="relative group">
-                                <div className="w-24 h-24 rounded-full bg-orange-100 flex items-center justify-center text-4xl border-2 border-orange-500 shadow-md transition-transform group-hover:scale-105 duration-200">
-                                    {profile.avatar}
+                                <div className="w-24 h-24 rounded-full bg-orange-100 flex items-center justify-center text-3xl font-black text-orange-600 border-2 border-orange-500 shadow-md transition-transform group-hover:scale-105 duration-200">
+                                    {(profile.fullName || 'U').charAt(0).toUpperCase()}
                                 </div>
                                 <div className="absolute bottom-0 right-0 bg-neutral-900 text-white rounded-full p-1.5 border border-white cursor-pointer hover:bg-orange-600 transition-colors shadow-sm">
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -274,7 +274,7 @@ export const AccMan: React.FC = () => {
                             </p>
 
                             <div className="flex items-center gap-2 mt-3 px-3 py-1 bg-amber-100 text-amber-700 rounded-full border border-amber-200/50 text-xs font-extrabold">
-                                👑 {profile.membershipTier} Member
+                                {profile.membershipTier} Member
                             </div>
 
                             <div className="w-full grid grid-cols-2 gap-4 border-t border-neutral-100 mt-6 pt-6">
@@ -298,7 +298,7 @@ export const AccMan: React.FC = () => {
                                     : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
                                     }`}
                             >
-                                <span>👤</span> Personal Profile
+                                Personal Profile
                             </button>
                             <button
                                 onClick={() => setActiveSection('security')}
@@ -307,7 +307,7 @@ export const AccMan: React.FC = () => {
                                     : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
                                     }`}
                             >
-                                <span>🔒</span> Password & Security
+                                Password & Security
                             </button>
                             <button
                                 onClick={() => setActiveSection('notifications')}
@@ -316,7 +316,7 @@ export const AccMan: React.FC = () => {
                                     : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
                                     }`}
                             >
-                                <span>🔔</span> Notifications
+                                Notifications
                             </button>
                             <button
                                 onClick={() => setActiveSection('orders')}
@@ -325,7 +325,7 @@ export const AccMan: React.FC = () => {
                                     : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
                                     }`}
                             >
-                                <span>📦</span> Order History
+                                Order History
                             </button>
                         </div>
                     </aside>
@@ -339,7 +339,6 @@ export const AccMan: React.FC = () => {
                                 ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
                                 : 'bg-red-50 border-red-100 text-red-800'
                                 }`}>
-                                <span>{message.type === 'success' ? '✨' : '⚠️'}</span>
                                 {message.text}
                             </div>
                         )}
@@ -565,7 +564,7 @@ export const AccMan: React.FC = () => {
                                                     {order.items}
                                                 </p>
                                                 <button className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all duration-150 flex-shrink-0">
-                                                    Reorder 🔁
+                                                    Reorder
                                                 </button>
                                             </div>
                                         </div>

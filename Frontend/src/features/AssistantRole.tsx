@@ -456,8 +456,8 @@ export const AssistantRole: React.FC = () => {
                     >
                       <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
                         <div>
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
-                          <h4 className="text-base font-black text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
+                          <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
+                          <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
                           <p className="text-xs text-neutral-500 mt-0.5">📞 {ord.phone}</p>
                         </div>
                         <span
@@ -531,163 +531,106 @@ export const AssistantRole: React.FC = () => {
           </div>
 
           {/* Right Column: Selected Order Management Details */}
-          <div className="lg:col-span-1 bg-white p-5 rounded-3xl border border-neutral-200 shadow-xs space-y-5">
-            <h3 className="font-black text-base text-neutral-800 tracking-tight border-b border-neutral-100 pb-3">
+          <div className="lg:col-span-1 bg-white p-6 rounded-3xl border border-neutral-200/80 shadow-xs space-y-6">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 border-b border-neutral-100 pb-3">
               Order Verification & Dispatch
             </h3>
 
             {!selectedOrder ? (
               <div className="text-center py-16 text-neutral-400 text-xs">
                 <p className="text-2xl mb-1">👈</p>
-                Select an order from the list to review and forward to Cashier, Kitchen, or Rider.
+                Select an order from the list to review and forward to Cashier & Kitchen.
               </div>
             ) : (
-              <div className="space-y-4 text-xs font-medium text-neutral-700">
-                <div className="bg-orange-50/60 p-3.5 rounded-2xl border border-orange-200 space-y-1">
+              <div className="space-y-5 text-xs text-slate-700">
+                {/* Clean Order Header */}
+                <div className="pb-4 border-b border-slate-100 space-y-1">
                   <div className="flex justify-between items-center">
-                    <span className="font-black text-orange-600 text-sm">{selectedOrder.ref}</span>
-                    <span className={`px-2 py-0.5 rounded font-black text-[10px] uppercase border ${
-                      selectedOrder.paymentMethod?.toLowerCase().includes('maya')
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                        : 'bg-blue-50 text-blue-700 border-blue-300'
-                    }`}>
-                      {selectedOrder.paymentMethod || 'GCash'} Transfer
+                    <span className="font-extrabold text-slate-900 text-lg tracking-tight">{selectedOrder.ref}</span>
+                    <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide uppercase bg-slate-100 text-slate-600">
+                      {selectedOrder.paymentMethod || 'GCash'}
                     </span>
                   </div>
-                  <p className="font-bold text-neutral-800">{selectedOrder.customer}</p>
-                  <p className="text-neutral-500">{selectedOrder.phone}</p>
-                  <p className="text-neutral-600 mt-1">{selectedOrder.address}</p>
+                  <p className="font-normal text-slate-800 text-sm pt-0.5">{selectedOrder.customer}</p>
+                  <p className="text-slate-500 text-xs">{selectedOrder.phone}</p>
+                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">{selectedOrder.address}</p>
                 </div>
 
-                {/* Digital Payment Verification Panel */}
-                <div className="bg-gradient-to-br from-neutral-50 to-orange-50/30 p-3.5 rounded-2xl border border-neutral-200 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-black uppercase tracking-wider text-neutral-600 flex items-center gap-1.5">
-                      <span>💳</span> Payment Verification
-                    </span>
-                    <span className="font-black text-neutral-800 text-xs">₱{selectedOrder.total.toLocaleString()}</span>
+                {/* Minimal Payment Details */}
+                <div className="pb-4 border-b border-slate-100 space-y-2.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Payment Details</span>
+                    <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
                   </div>
 
-                  <div className="space-y-1 bg-white p-2.5 rounded-xl border border-neutral-200/80">
-                    <div className="flex justify-between text-[11px]">
-                      <span className="text-neutral-500 font-bold">Payment Mode:</span>
-                      <span className="font-black text-neutral-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
+                  <div className="space-y-1.5 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Payment Mode:</span>
+                      <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
                     </div>
                     {selectedOrder.paymentReference && (
-                      <div className="flex justify-between text-[11px] items-center pt-1 border-t border-neutral-100">
-                        <span className="text-neutral-500 font-bold">Reference No:</span>
-                        <span className="font-mono font-black text-neutral-800 bg-neutral-100 px-1.5 py-0.5 rounded text-[11px]">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-500 font-medium">Reference No:</span>
+                        <span className="font-mono font-semibold text-slate-800">
                           {selectedOrder.paymentReference}
                         </span>
                       </div>
                     )}
                   </div>
 
-                  {/* Payment Receipt / Screenshot */}
-                  {selectedOrder.paymentReceipt ? (
-                    <div className="bg-white p-2.5 rounded-xl border border-neutral-200 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
+                  {/* Payment Receipt / Screenshot (Minimal) */}
+                  {selectedOrder.paymentReceipt && (
+                    <div className="pt-2 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
                         <img
                           src={selectedOrder.paymentReceipt}
                           alt="Receipt Preview"
                           onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
-                          className="w-12 h-12 object-cover rounded-lg border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity"
+                          className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity"
                         />
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-emerald-700 truncate">📸 Receipt Attached</p>
-                          <p className="text-[10px] text-neutral-400">Click to view full image</p>
+                        <div>
+                          <p className="text-[11px] font-semibold text-emerald-700">Receipt Attached</p>
+                          <p className="text-[10px] text-slate-400">Click to view image</p>
                         </div>
                       </div>
                       <button
                         type="button"
                         onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
-                        className="px-2.5 py-1.5 text-[11px] font-bold bg-orange-500 hover:bg-orange-600 text-white rounded-lg transition-colors cursor-pointer shadow-2xs"
+                        className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                       >
-                        View Photo
+                        View
                       </button>
-                    </div>
-                  ) : (
-                    <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-2 text-center text-[11px] text-amber-700">
-                      ℹ️ Customer did not upload a receipt screenshot.
                     </div>
                   )}
                 </div>
 
-                {/* Validation checklist */}
-                <div className="space-y-2 bg-neutral-50 p-3 rounded-2xl border border-neutral-100 text-[11px]">
-                  <p className="font-bold text-neutral-700">Verification Checklist:</p>
-                  <p className={customerNameValid ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                    {customerNameValid ? '✓ Customer name verified' : '✗ Missing customer name'}
-                  </p>
-                  <p className={phoneValidation.isValid ? 'text-emerald-600 font-bold' : 'text-rose-600 font-bold'}>
-                    {phoneValidation.isValid ? '✓ Valid PH Mobile format' : '✗ Incomplete phone number'}
-                  </p>
-                  <p className={addressValidation.isComplete ? 'text-emerald-600 font-bold' : 'text-amber-600 font-bold'}>
-                    {addressValidation.isComplete ? '✓ Delivery address complete' : `⚠ ${addressValidation.warningMsg}`}
-                  </p>
+                {/* Minimal Checklist */}
+                <div className="pb-2 space-y-2 text-[11px]">
+                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Verification Checklist</p>
+                  <div className="space-y-1">
+                    <p className={customerNameValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                      <span>{customerNameValid ? '✓' : '✗'}</span>
+                      <span>{customerNameValid ? 'Customer name verified' : 'Missing customer name'}</span>
+                    </p>
+                    <p className={phoneValidation.isValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                      <span>{phoneValidation.isValid ? '✓' : '✗'}</span>
+                      <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
+                    </p>
+                    <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
+                      <span>{addressValidation.isComplete ? '✓' : '⚠'}</span>
+                      <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
+                    </p>
+                  </div>
                 </div>
 
-                {/* Pipeline Action Buttons */}
-                <div className="space-y-2.5 pt-2 border-t border-neutral-100">
-                  {/* Step 1: Forward to Cashier & Kitchen */}
+                {/* Pipeline Action Button */}
+                <div className="pt-2">
                   <button
                     onClick={handleApproveSendToKitchen}
-                    className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20 cursor-pointer transition-all hover:scale-101"
+                    className="w-full bg-slate-900 hover:bg-black text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
                   >
                     <span>🍳</span> Forward to Cashier & Kitchen
                   </button>
-
-                  {/* Step 2: Assign to Rider when ready */}
-                  <div className="space-y-1.5 pt-2">
-                    <label className="text-[11px] font-bold text-neutral-500 uppercase">Select Available Rider:</label>
-                    <select
-                      value={selectedRiderId}
-                      onChange={(e) => setSelectedRiderId(e.target.value)}
-                      className="w-full p-2.5 rounded-xl border border-neutral-200 bg-neutral-50 text-xs font-semibold"
-                    >
-                      <option value="">-- Choose Rider --</option>
-                      {riders.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name} ({r.vehicle})
-                        </option>
-                      ))}
-                    </select>
-
-                    {(selectedOrder.status || '').toLowerCase() !== 'ready' && (selectedOrder.status || '').toLowerCase() !== 'out_for_delivery' && (selectedOrder.status || '').toLowerCase() !== 'completed' ? (
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-center mt-1">
-                        <p className="text-[11px] font-bold text-amber-800">
-                          ⏳ Cooking in Kitchen (Status: {selectedOrder.status})
-                        </p>
-                        <p className="text-[10px] text-amber-600">
-                          Wait for the kitchen to mark this order as "Ready" before dispatching to rider.
-                        </p>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={handleAssignRider}
-                        className="w-full bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer mt-1 shadow-xs"
-                      >
-                        <span>🛵</span> Dispatch to Rider (Out for Delivery)
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Flag order for customer correction */}
-                  <div className="pt-2">
-                    <input
-                      type="text"
-                      placeholder="Add correction note if issue found..."
-                      value={correctionNoteInput}
-                      onChange={(e) => setCorrectionNoteInput(e.target.value)}
-                      className="w-full p-2 border border-neutral-200 rounded-xl text-xs mb-1.5 bg-neutral-50"
-                    />
-                    <button
-                      onClick={handleFlagForCorrection}
-                      className="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold py-2 rounded-xl text-xs border border-rose-200 cursor-pointer"
-                    >
-                      🚩 Flag for Correction
-                    </button>
-                  </div>
                 </div>
               </div>
             )}

@@ -14,6 +14,7 @@ export interface KitchenOrder {
   category: string
   status: 'Pending' | 'Preparing' | 'Ready' | 'Completed' | string
   items: OrderItem[]
+  customer?: string
   notes?: string
   total?: number
   createdAt?: string
@@ -55,12 +56,22 @@ export const KitchenMode: React.FC = () => {
           else if (['COMPLETED', 'SERVED', 'DELIVERED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(rawStatus)) mappedStatus = 'Completed'
           else mappedStatus = 'Confirmed'
 
+          const customerName = typeof o.customer === 'string' && o.customer.trim()
+            ? o.customer.trim()
+            : typeof o.customerName === 'string' && o.customerName.trim()
+            ? o.customerName.trim()
+            : undefined
+
+          const rawType = (o.type || o.order_type || 'Take Out').trim()
+          const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
             queue: o.id || o.ref || 'POS',
-            type: o.type || 'Take Out',
-            category: o.table ? `Dine In - ${o.table}` : (o.type || 'Take Out'),
+            type: rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType,
+            category: formatCategory,
             status: mappedStatus,
+            customer: customerName,
             items: (o.cartItems || o.items || []).map((ci: any) => ({
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
@@ -115,12 +126,24 @@ export const KitchenMode: React.FC = () => {
                 else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
                 else norm = 'Confirmed'
 
+                const customerName = typeof o.customer === 'string' && o.customer.trim()
+                  ? o.customer.trim()
+                  : typeof o.customerName === 'string' && o.customerName.trim()
+                  ? o.customerName.trim()
+                  : typeof o.customer_name === 'string' && o.customer_name.trim()
+                  ? o.customer_name.trim()
+                  : undefined
+
+                const rawType = (o.order_type || o.type || 'Take Out').trim()
+                const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+
                 return {
                   id: o.id,
                   queue: o.id,
-                  type: o.order_type || 'Take Out',
-                  category: o.table_name ? `Dine In - ${o.table_name}` : (o.order_type || 'Take Out'),
+                  type: rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType,
+                  category: formatCategory,
                   status: norm,
+                  customer: customerName,
                   items: (o.items || []).map((item: any) => ({
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
@@ -383,6 +406,9 @@ export const KitchenMode: React.FC = () => {
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          {order.customer && (
+                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
+                          )}
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
                         <button
@@ -407,7 +433,6 @@ export const KitchenMode: React.FC = () => {
 
                       {order.notes ? (
                         <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-3 flex items-center gap-1.5">
-                          <span className="text-base">🌶️</span>
                           <span>Note: {order.notes}</span>
                         </div>
                       ) : (
@@ -454,6 +479,9 @@ export const KitchenMode: React.FC = () => {
                       <div className="flex justify-between items-start mb-2">
                         <div>
                           <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          {order.customer && (
+                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
+                          )}
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
                         <button
@@ -478,7 +506,6 @@ export const KitchenMode: React.FC = () => {
 
                       {order.notes && (
                         <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-2 flex items-center gap-1.5">
-                          <span>🌶️</span>
                           <span>Note: {order.notes}</span>
                         </div>
                       )}
@@ -522,6 +549,7 @@ export const KitchenMode: React.FC = () => {
                 <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500">
                   <tr>
                     <th className="px-6 py-3.5">Reference #</th>
+                    <th className="px-6 py-3.5">Customer</th>
                     <th className="px-6 py-3.5">Date & Time</th>
                     <th className="px-6 py-3.5">Items</th>
                     <th className="px-6 py-3.5">Category</th>
@@ -531,7 +559,7 @@ export const KitchenMode: React.FC = () => {
                 <tbody className="divide-y divide-neutral-100 text-xs font-medium">
                   {paginatedHistoryOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="px-6 py-12 text-center text-neutral-400">
+                      <td colSpan={6} className="px-6 py-12 text-center text-neutral-400">
                         No completed order history yet.
                       </td>
                     </tr>
@@ -539,6 +567,7 @@ export const KitchenMode: React.FC = () => {
                     paginatedHistoryOrders.map((tx) => (
                       <tr key={tx.id}>
                         <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
+                        <td className="px-6 py-3.5 font-semibold text-neutral-800">{tx.customer || '—'}</td>
                         <td className="px-6 py-3.5 text-neutral-500">{tx.createdAt}</td>
                         <td className="px-6 py-3.5 font-semibold text-neutral-800">
                           {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
@@ -593,6 +622,13 @@ export const KitchenMode: React.FC = () => {
             </div>
 
             <div className="p-6 space-y-4">
+              {selectedOrder.customer && (
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-1">Customer</h4>
+                  <div className="text-sm font-semibold text-neutral-900">{selectedOrder.customer}</div>
+                </div>
+              )}
+
               <div>
                 <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Order Items</h4>
                 <div className="bg-[#faf9f6] rounded-xl border border-neutral-200/80 p-3.5">

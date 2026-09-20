@@ -6,7 +6,7 @@ import type { MenuItem } from '../components/MenuCard'
 import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
-import { getActiveUser } from '../cryptography/cryptoSession'
+import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 
 interface CartItem {
     item: MenuItem
@@ -163,13 +163,50 @@ export const OnlineCustomer: React.FC = () => {
         }
     }, [cartItems])
 
+    // Helper to fetch latest profile credentials from database and update state + local active user
+    const syncUserProfileFromDB = (user?: ReturnType<typeof getActiveUser>) => {
+        const currentUser = user || getActiveUser()
+        if (!currentUser) return
+
+        // Instant local sync if values exist
+        if (currentUser.fullname) setCustomerName(currentUser.fullname)
+        if (currentUser.phone) setPhone(currentUser.phone)
+        if (currentUser.address) setAddress(currentUser.address)
+
+        const email = currentUser.email || ''
+        const id = currentUser.id || ''
+        if (!email && !id) return
+
+        fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(email)}&id=${encodeURIComponent(id)}`)
+            .then((res) => res.json())
+            .then((data) => {
+                if (data.success && data.data) {
+                    const dbUser = data.data
+                    const dbName = dbUser.fullname || currentUser.fullname || ''
+                    const dbPhone = dbUser.phone || currentUser.phone || ''
+                    const dbAddress = dbUser.address || dbUser.delivery_address || currentUser.address || ''
+
+                    const updatedActive = {
+                        ...currentUser,
+                        fullname: dbName,
+                        phone: dbPhone,
+                        address: dbAddress,
+                    }
+                    saveActiveUser(updatedActive)
+
+                    if (dbName) setCustomerName(dbName)
+                    if (dbPhone) setPhone(dbPhone)
+                    if (dbAddress) setAddress(dbAddress)
+                }
+            })
+            .catch(() => { })
+    }
+
     // Auto-fill logged in user info & sync user cart and orders
     useEffect(() => {
         const currentUser = getActiveUser()
         if (currentUser) {
-            if (currentUser.fullname) setCustomerName(currentUser.fullname)
-            if (currentUser.phone) setPhone(currentUser.phone)
-            if (currentUser.address) setAddress(currentUser.address)
+            syncUserProfileFromDB(currentUser)
 
             // Hydrate user cart
             try {
@@ -209,15 +246,22 @@ export const OnlineCustomer: React.FC = () => {
                 setActiveTab('menu')
             }
         }
+
+        const handleProfileSync = () => {
+            syncUserProfileFromDB()
+        }
+
+        window.addEventListener('seafudz_profile_updated', handleProfileSync)
+        window.addEventListener('storage', handleProfileSync)
+
+        return () => {
+            window.removeEventListener('seafudz_profile_updated', handleProfileSync)
+            window.removeEventListener('storage', handleProfileSync)
+        }
     }, [])
 
     useEffect(() => {
-        const currentUser = getActiveUser()
-        if (currentUser) {
-            if (currentUser.fullname && !customerName) setCustomerName(currentUser.fullname)
-            if (currentUser.phone && !phone) setPhone(currentUser.phone)
-            if (currentUser.address && !address) setAddress(currentUser.address)
-        }
+        syncUserProfileFromDB()
     }, [activeTab])
 
     const handleProceedToCheckout = () => {
@@ -226,6 +270,7 @@ export const OnlineCustomer: React.FC = () => {
             setIsAuthModalOpen(true)
             return
         }
+        syncUserProfileFromDB(currentUser)
         if (cartItems.length > 0) {
             setActiveTab('billing')
             setIsMobileCartOpen(false)
@@ -1036,28 +1081,33 @@ export const OnlineCustomer: React.FC = () => {
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
                     <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
-                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-neutral-100 pb-5 gap-4">
-                            <div>
-                                <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
-                                    Order Status Management
-                                </p>
-                                <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
-                                    Order ID: {activeOrder.id}
-                                </h3>
-                                <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                                {((activeOrder.status || '').toLowerCase() === 'completed' || (activeOrder.status || '').toLowerCase() === 'delivered') && (
-                                    <button
-                                        onClick={handleStartNewOrder}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-xs flex items-center gap-1.5"
-                                    >
-                                        🛒 Place New Order
-                                    </button>
-                                )}
-                            </div>
+                        <div className="border-b border-neutral-100 pb-5">
+                            <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
+                                Order Status Management
+                            </p>
+                            <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
+                                Order ID: {activeOrder.id}
+                            </h3>
+                            <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
                         </div>
+
+                        {/* Order Complete Banner Prompt */}
+                        {['COMPLETED', 'DELIVERED', 'SERVED'].includes(normalizeStatus(activeOrder.status)) && (
+                            <div className="bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4 border border-orange-400/30 animate-fade-in">
+                                <div className="text-center md:text-left">
+                                    <h4 className="text-base sm:text-lg font-black text-white tracking-tight">Order Complete!</h4>
+                                    <p className="text-xs sm:text-sm text-orange-100 font-medium mt-0.5">
+                                        Would you like to make another transaction?
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={handleStartNewOrder}
+                                    className="w-full md:w-auto bg-white hover:bg-orange-50 text-orange-600 font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <span>Make Another Transaction</span>
+                                </button>
+                            </div>
+                        )}
 
                         {/* Progress Bar */}
                         <div className="py-6">

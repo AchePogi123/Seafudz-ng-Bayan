@@ -146,36 +146,50 @@ export function parseTokenPayload(token: string): UserProfile | null {
 export function getActiveUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
 
-  // 1. URL parameter session_token takes top priority for multi-tab testing & explicit links
-  const tokenFromUrl = getSessionTokenFromUrl();
-  if (tokenFromUrl) {
-    const parsedFromUrl = parseTokenPayload(tokenFromUrl);
-    if (parsedFromUrl) {
-      try {
-        sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(parsedFromUrl));
-        sessionStorage.setItem(SESSION_TOKEN_KEY, tokenFromUrl);
-      } catch {}
-      return parsedFromUrl;
-    }
-  }
+  let userFromStorage: UserProfile | null = null;
 
-  // 2. sessionStorage (unique to each browser tab)
+  // 1. Check sessionStorage (unique to each browser tab)
   try {
     const sessionStored = sessionStorage.getItem(ACTIVE_USER_KEY);
     if (sessionStored) {
       const parsed = JSON.parse(sessionStored) as UserProfile;
-      if (parsed && parsed.role) return parsed;
+      if (parsed && parsed.role) userFromStorage = parsed;
     }
   } catch {}
 
-  // 3. localStorage (browser-wide fallback)
-  try {
-    const localStored = localStorage.getItem(ACTIVE_USER_KEY) || localStorage.getItem('seafudz_user');
-    if (localStored) {
-      const parsed = JSON.parse(localStored) as UserProfile;
-      if (parsed && parsed.role) return parsed;
+  // 2. Check localStorage (browser-wide fallback)
+  if (!userFromStorage) {
+    try {
+      const localStored = localStorage.getItem(ACTIVE_USER_KEY) || localStorage.getItem('seafudz_user');
+      if (localStored) {
+        const parsed = JSON.parse(localStored) as UserProfile;
+        if (parsed && parsed.role) userFromStorage = parsed;
+      }
+    } catch {}
+  }
+
+  // 3. URL parameter session_token sync & merge
+  const tokenFromUrl = getSessionTokenFromUrl();
+  if (tokenFromUrl) {
+    const parsedFromUrl = parseTokenPayload(tokenFromUrl);
+    if (parsedFromUrl) {
+      const mergedUser: UserProfile = {
+        ...userFromStorage,
+        ...parsedFromUrl,
+        fullname: userFromStorage?.fullname || parsedFromUrl.fullname,
+        username: userFromStorage?.username || parsedFromUrl.username,
+        role: parsedFromUrl.role || userFromStorage?.role || 'customer',
+        sessionToken: tokenFromUrl,
+      };
+      try {
+        sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(mergedUser));
+        sessionStorage.setItem(SESSION_TOKEN_KEY, tokenFromUrl);
+      } catch {}
+      return mergedUser;
     }
-  } catch {}
+  }
+
+  if (userFromStorage) return userFromStorage;
 
   // 4. Token fallback from stored session token
   const token = getStoredSessionToken();

@@ -161,6 +161,7 @@ export const AccMan: React.FC = () => {
                         address: updatedAddress,
                     })
                 }
+                window.dispatchEvent(new Event('seafudz_profile_updated'))
 
                 setMessage({ type: 'success', text: 'Personal details saved to database successfully!' })
             } else {
@@ -174,6 +175,7 @@ export const AccMan: React.FC = () => {
                         address: editForm.address,
                     })
                 }
+                window.dispatchEvent(new Event('seafudz_profile_updated'))
                 setMessage({ type: 'success', text: responseData.message || 'Personal details updated successfully!' })
             }
         } catch (err) {
@@ -188,6 +190,7 @@ export const AccMan: React.FC = () => {
                     address: editForm.address,
                 })
             }
+            window.dispatchEvent(new Event('seafudz_profile_updated'))
             setMessage({ type: 'success', text: 'Personal details saved locally!' })
         } finally {
             setIsSaving(false)

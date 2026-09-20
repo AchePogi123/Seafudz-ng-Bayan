@@ -39,25 +39,31 @@ const Login = () => {
   const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
 
   const MOCK_STAFF_ACCOUNTS: Record<string, { fullname: string; username: string; email: string; role: string }> = {
-    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant_cashier: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider_demo: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    admin: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
     admin1: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    admin2: { fullname: 'Super Admin Chief', username: 'admin2', email: 'admin2@seafudz.ph', role: 'admin' },
     'admin@seafudz.ph': { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
+    cashier: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    cashier2: { fullname: 'Maria Santos', username: 'cashier2', email: 'maria.cashier@seafudz.ph', role: 'cashier' },
+    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
+    kitchen: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    kitchen2: { fullname: 'Chef Ben', username: 'kitchen2', email: 'chef.ben@seafudz.ph', role: 'kitchen' },
+    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
+    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    assistant2: { fullname: 'Joy Flores', username: 'assistant2', email: 'joy.floor@seafudz.ph', role: 'assistant' },
+    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
+    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
+    rider2: { fullname: 'Dan Cruz', username: 'rider2', email: 'dan.rider@seafudz.ph', role: 'rider' },
+    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
   };
 
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
-    const userPhone = (userData?.phone as string) || (userData?.delivery_address ? (userData?.delivery_address as string) : undefined) || phone || undefined;
+    const userPhone = (userData?.phone as string) || phone || undefined;
     const userAddress = (userData?.delivery_address as string) || (userData?.address as string) || undefined;
 
     const activeToken =
@@ -96,7 +102,7 @@ const Login = () => {
     else if (normRole === 'assistant') targetPath = '/assistant';
     else if (normRole === 'admin') targetPath = '/admin-dashboard';
 
-    navigate(buildTokenizedUrl(targetPath, activeToken));
+    navigate(targetPath, { replace: true });
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -119,15 +125,19 @@ const Login = () => {
 
       // 1. Try Supabase Auth login first if an email is provided
       if (isEmail) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: loginInput.trim(),
-          password: loginPassword,
-        });
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: loginInput.trim(),
+            password: loginPassword,
+          });
 
-        if (data?.user) {
-          supabaseUser = data.user;
-        } else if (error) {
-          supabaseAuthErr = error.message;
+          if (data?.user) {
+            supabaseUser = data.user;
+          } else if (error) {
+            supabaseAuthErr = error.message;
+          }
+        } catch (sErr) {
+          console.warn('Supabase auth attempt note:', sErr);
         }
       }
 
@@ -153,13 +163,15 @@ const Login = () => {
 
       // 3. Fallback: If username login was used, attempt Supabase Auth using the user's email from database
       if (!supabaseUser && profileData?.data?.email) {
-        const { data } = await supabase.auth.signInWithPassword({
-          email: profileData.data.email,
-          password: loginPassword,
-        });
-        if (data?.user) {
-          supabaseUser = data.user;
-        }
+        try {
+          const { data } = await supabase.auth.signInWithPassword({
+            email: profileData.data.email,
+            password: loginPassword,
+          });
+          if (data?.user) {
+            supabaseUser = data.user;
+          }
+        } catch { }
       }
 
       // 4. Mock Accounts Fallback if backend or Supabase is not reachable / not configured
@@ -167,9 +179,7 @@ const Login = () => {
         const mockMatch = MOCK_STAFF_ACCOUNTS[loginInput.trim().toLowerCase()];
         if (mockMatch) {
           setSuccessMessage(`Welcome back, ${mockMatch.fullname}! Redirecting to workspace...`);
-          setTimeout(() => {
-            navigateByRole(mockMatch.role, undefined, mockMatch);
-          }, 800);
+          navigateByRole(mockMatch.role, undefined, mockMatch);
           return;
         }
         if (supabaseAuthErr) {
@@ -183,9 +193,7 @@ const Login = () => {
       const sessionToken = profileData?.sessionToken;
 
       setSuccessMessage(`Welcome back, ${userName}! Redirecting to workspace...`);
-      setTimeout(() => {
-        navigateByRole(userRole, sessionToken, profileData?.data);
-      }, 1200);
+      navigateByRole(userRole, sessionToken, profileData?.data);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Login failed. Please check your credentials.';

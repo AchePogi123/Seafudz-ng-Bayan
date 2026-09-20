@@ -349,15 +349,10 @@ export const AssistantRole: React.FC = () => {
     return orders.filter((order) => {
       const s = (order.status || '').toLowerCase()
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled'].includes(s)
-      
-      // GCash orders MUST NOT appear in Assistant pending list until customer submits reference screenshot (status becomes RECEIPT_SUBMITTED or paymentReceipt is present)
-      const isAwaitingCustomerReceipt = (order.paymentMethod === 'GCash' || !order.paymentMethod?.includes('COD')) &&
-        !order.paymentReceipt &&
-        ['gcash_pending_approval', 'awaiting_receipt', 'pending', 'unconfirmed', 'order placed'].includes(s)
 
       const matchesTab =
         activeTab === 'pending'
-          ? (!isConfirmedOrLater && !isAwaitingCustomerReceipt)
+          ? !isConfirmedOrLater
           : activeTab === 'kitchen'
             ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
             : activeTab === 'dispatch'
@@ -487,16 +482,22 @@ export const AssistantRole: React.FC = () => {
                           <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'pending' || s === 'unconfirmed'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : s === 'confirmed' || s === 'preparing'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : s === 'ready'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'gcash_pending_approval'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                              : s === 'gcash_authorized'
+                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                : s === 'receipt_submitted'
+                                  ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                  : s === 'pending' || s === 'unconfirmed'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : s === 'confirmed' || s === 'preparing'
+                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                      : s === 'ready'
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
-                          ● {ord.status}
+                          ● {s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : ord.status}
                         </span>
                       </div>
 
@@ -515,8 +516,8 @@ export const AssistantRole: React.FC = () => {
                             {ord.paymentMethod || 'GCash'}
                           </span>
                           {(ord.total > 10000 || (ord as any).isBulk) && (
-                            <span className="bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
-                              BULK ORDER
+                            <span className={`text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${s === 'gcash_pending_approval' ? 'bg-amber-600' : 'bg-amber-500'}`}>
+                              {s === 'gcash_pending_approval' ? 'BULK ORDER - REQUESTING FOR PAYMENT' : 'BULK ORDER'}
                             </span>
                           )}
                           {ord.paymentReceipt && (

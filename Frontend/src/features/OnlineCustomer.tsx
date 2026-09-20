@@ -54,6 +54,11 @@ const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
+    if (upper === 'GCASH_PENDING_APPROVAL') return 'GCASH_PENDING_APPROVAL'
+    if (upper === 'GCASH_AUTHORIZED') return 'GCASH_AUTHORIZED'
+    if (upper === 'RECEIPT_SUBMITTED') return 'RECEIPT_SUBMITTED'
+    if (upper === 'RECEIPT_REJECTED') return 'RECEIPT_REJECTED'
+    if (upper === 'PENDING_COD') return 'PENDING_COD'
     if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
     if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
     if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
@@ -61,18 +66,23 @@ export function normalizeStatus(rawStatus?: string): string {
     if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY'
     if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED'
     if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper
-    return 'PENDING'
+    return upper
 }
 
 export function getStatusRank(rawStatus?: string): number {
     const norm = normalizeStatus(rawStatus)
     switch (norm) {
-        case 'PENDING': return 0
-        case 'CONFIRMED': return 1
-        case 'PREPARING': return 2
-        case 'READY': return 3
-        case 'OUT_FOR_DELIVERY': return 4
-        case 'COMPLETED': return 5
+        case 'GCASH_PENDING_APPROVAL': return 0
+        case 'GCASH_AUTHORIZED': return 1
+        case 'RECEIPT_SUBMITTED': return 2
+        case 'PENDING':
+        case 'PENDING_COD': return 0
+        case 'RECEIPT_REJECTED': return 1
+        case 'CONFIRMED': return 3
+        case 'PREPARING': return 4
+        case 'READY': return 5
+        case 'OUT_FOR_DELIVERY': return 6
+        case 'COMPLETED': return 7
         case 'CANCELLED':
         case 'FLAGGED': return -1
         default: return 0
@@ -1061,7 +1071,7 @@ export const OnlineCustomer: React.FC = () => {
                                     type="submit"
                                     className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    Confirm & Submit Order
+                                    {total > 10000 ? 'Request Order' : 'Confirm & Submit Order'}
                                 </button>
                                 <button
                                     type="button"
@@ -1672,22 +1682,59 @@ export const OnlineCustomer: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* Bulk Order Banner if > 10k */}
-                        {(activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
-                            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 text-amber-900 text-left space-y-1">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-lg">⚠️</span>
-                                    <p className="font-extrabold text-xs uppercase tracking-wide">Bulk Order Notice (Exceeds ₱10,000)</p>
+                        {/* 1st POPUP MODAL FOR BULK ORDERS: WAITING FOR ASSISTANT VERIFICATION & PERMISSION */}
+                        {(activeOrder.total > 10000 || (activeOrder as any).isBulk) &&
+                         (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
+                            <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
+                                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
+                                    ⏳
                                 </div>
-                                <p className="text-xs text-amber-800 leading-relaxed">
-                                    Your order exceeds ₱10,000. It is classified as a Bulk Order and requires staff verification before payment or order confirmation.
+                                <div className="space-y-1">
+                                    <h3 className="font-extrabold text-neutral-900 text-2xl tracking-tight">
+                                        Order #{activeOrder.id} Requested
+                                    </h3>
+                                    <p className="text-sm font-extrabold text-amber-600 uppercase tracking-wider bg-amber-50 py-1.5 px-4 rounded-xl inline-block border border-amber-200">
+                                        Waiting for assistant to verify
+                                    </p>
+                                </div>
+
+                                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4.5 text-left space-y-2 shadow-xs">
+                                    <div className="flex items-center gap-2 text-amber-950 font-extrabold text-xs uppercase tracking-wide">
+                                        <span>⚠️ Bulk Order Verification Required</span>
+                                    </div>
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        Your order exceeds ₱10,000 and is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
+                                    </p>
+                                </div>
+
+                                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 flex items-center justify-between">
+                                    <span className="font-semibold text-slate-500">Requested Order Total:</span>
+                                    <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong>
+                                </div>
+
+                                <p className="text-[11px] text-neutral-400 font-medium pt-1">
+                                    This screen will automatically update once an assistant clicks "Allow Customer to Pay".
                                 </p>
                             </div>
                         )}
 
-                        {/* GCash Verification & Store Account Details */}
-                        {activeOrder.paymentMethod === 'GCash' && (
-                            <div className="space-y-4 text-left">
+                        {/* 2nd POPUP MODAL FOR BULK ORDERS & GCASH VERIFICATION (AUTHORIZED OR REGULAR ORDER) */}
+                        {activeOrder.paymentMethod === 'GCash' &&
+                         !((activeOrder.total > 10000 || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
+                            <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
+                                {/* Header badge if bulk order authorized */}
+                                {(activeOrder.total > 10000 || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
+                                    <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
+                                        <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
+                                            <span>✅ Permission Granted by Staff!</span>
+                                        </div>
+                                        <p className="text-xs text-emerald-700">
+                                            Staff has authorized your bulk order. Please transfer <strong>₱{activeOrder.total.toLocaleString()}</strong> to GCash below and submit your screenshot.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Store GCash Account Details Box */}
                                 <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
                                     <div className="flex justify-between items-center">
                                         <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
@@ -1711,6 +1758,17 @@ export const OnlineCustomer: React.FC = () => {
                                         <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
                                             <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
                                             <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
+                                        </div>
+                                    )}
+
+                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
+                                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
+                                            <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
+                                                <span>📸 Payment Screenshot Submitted</span>
+                                            </div>
+                                            <p className="text-xs text-blue-800 leading-relaxed">
+                                                Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                            </p>
                                         </div>
                                     )}
 

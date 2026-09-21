@@ -89,6 +89,7 @@ export const LandingPage: React.FC = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
   const [activeUser, setActiveUser] = useState<ReturnType<typeof getActiveUser>>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
 
   // Typewriter and bottom highlight line animation for "Bayan."
   const [typedWord, setTypedWord] = useState('');
@@ -163,10 +164,34 @@ export const LandingPage: React.FC = () => {
     setActiveUser(getActiveUser());
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
+      setShowScrollTop(window.scrollY > 400);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
+    e.preventDefault();
+    if (targetId === 'hero') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      const el = document.getElementById(targetId);
+      if (el) {
+        const headerOffset = 80;
+        const elementPosition = el.getBoundingClientRect().top;
+        const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+        window.scrollTo({
+          top: offsetPosition,
+          behavior: 'smooth',
+        });
+      }
+    }
+    setIsMobileMenuOpen(false);
+  };
 
   const handleOrderOnline = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
@@ -189,31 +214,31 @@ export const LandingPage: React.FC = () => {
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
           {/* Revamped Aesthetic Typographic Brand Logo */}
-          <BrandLogo variant="light" size="md" />
+          <BrandLogo variant="light" size="md" onClick={(e) => handleNavClick(e, 'hero')} />
 
           {/* Desktop Navigation Links */}
           <nav className="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-600">
-            <a href="#hero" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#hero" onClick={(e) => handleNavClick(e, 'hero')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Home
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#specialties" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#specialties" onClick={(e) => handleNavClick(e, 'specialties')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Specialties
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#standards" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Standard
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#our-story" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#our-story" onClick={(e) => handleNavClick(e, 'our-story')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Story
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#branches" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#branches" onClick={(e) => handleNavClick(e, 'branches')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Branches
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#faqs" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+            <a href="#faqs" onClick={(e) => handleNavClick(e, 'faqs')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               FAQs
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
@@ -268,12 +293,12 @@ export const LandingPage: React.FC = () => {
         {isMobileMenuOpen && (
           <div className="lg:hidden bg-white border-t border-slate-100 px-6 py-5 shadow-lg space-y-4 text-left">
             <nav className="flex flex-col gap-3 font-semibold text-slate-700 text-sm">
-              <a href="#hero" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">Home</a>
-              <a href="#specialties" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">Specialties</a>
-              <a href="#standards" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">Our Standard</a>
-              <a href="#our-story" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">Our Story</a>
-              <a href="#branches" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">Branches</a>
-              <a href="#faqs" onClick={() => setIsMobileMenuOpen(false)} className="hover:text-orange-600 py-1">FAQs</a>
+              <a href="#hero" onClick={(e) => handleNavClick(e, 'hero')} className="hover:text-orange-600 py-1">Home</a>
+              <a href="#specialties" onClick={(e) => handleNavClick(e, 'specialties')} className="hover:text-orange-600 py-1">Specialties</a>
+              <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="hover:text-orange-600 py-1">Our Standard</a>
+              <a href="#our-story" onClick={(e) => handleNavClick(e, 'our-story')} className="hover:text-orange-600 py-1">Our Story</a>
+              <a href="#branches" onClick={(e) => handleNavClick(e, 'branches')} className="hover:text-orange-600 py-1">Branches</a>
+              <a href="#faqs" onClick={(e) => handleNavClick(e, 'faqs')} className="hover:text-orange-600 py-1">FAQs</a>
             </nav>
             <div className="pt-3 border-t border-slate-100 space-y-2">
               <button
@@ -369,7 +394,8 @@ export const LandingPage: React.FC = () => {
 
                 <a
                   href="#specialties"
-                  className="bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-5 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all"
+                  onClick={(e) => handleNavClick(e, 'specialties')}
+                  className="bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-5 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer"
                 >
                   View Specialties
                 </a>
@@ -829,6 +855,31 @@ export const LandingPage: React.FC = () => {
 
       {/* 11. FOOTER */}
       <Footer />
+
+      {/* 12. FLOATING SCROLL TO TOP BUTTON (RIGHTMOST BOTTOM) */}
+      <button
+        onClick={scrollToTop}
+        aria-label="Scroll back to top"
+        className={`fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white shadow-lg shadow-orange-500/30 border border-white/25 hover:from-orange-500 hover:to-amber-400 hover:shadow-orange-500/50 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group ${
+          showScrollTop
+            ? 'opacity-100 translate-y-0 pointer-events-auto'
+            : 'opacity-0 translate-y-6 pointer-events-none'
+        }`}
+      >
+        <svg
+          className="w-5 h-5 text-white transition-transform duration-200 group-hover:-translate-y-0.5"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2.5"
+            d="M5 10l7-7m0 0l7 7m-7-7v18"
+          />
+        </svg>
+      </button>
     </div>
   );
 };

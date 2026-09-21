@@ -29,7 +29,14 @@ function App() {
         <Route path="/about" element={<AboutUs />} />
 
         {/* Customer Routes */}
-        <Route path="/customer" element={<OnlineCustomer />} />
+        <Route
+          path="/customer"
+          element={
+            <ProtectedRoute allowedRoles={['customer', 'admin', 'cashier', 'kitchen', 'rider', 'assistant']}>
+              <OnlineCustomer />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/customer-dashboard" element={<Navigate to="/customer" replace />} />
 
         {/* Account Management */}

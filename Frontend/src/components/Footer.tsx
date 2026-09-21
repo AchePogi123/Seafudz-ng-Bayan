@@ -8,7 +8,14 @@ export const Footer: React.FC = () => {
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 pb-12 border-b border-slate-800">
         {/* Column 1: Brand Info */}
         <div className="lg:col-span-2 space-y-4 text-left">
-          <BrandLogo variant="dark" size="md" />
+          <BrandLogo
+            variant="dark"
+            size="md"
+            onClick={(e) => {
+              e.preventDefault();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
 
           <p className="text-xs sm:text-sm text-slate-400 leading-relaxed max-w-sm">
             Serving authentic Filipino seafood bilao platters, Cajun boils, and fresh catch daily sourced directly from local coastal fishermen straight to your family's table.

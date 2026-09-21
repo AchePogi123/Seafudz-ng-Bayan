@@ -218,10 +218,35 @@ export const OnlineCustomer: React.FC = () => {
         if (currentUser) {
             syncUserProfileFromDB(currentUser)
 
-            // Hydrate user cart
+            // Hydrate user cart (and migrate guest cart if present)
             try {
-                const savedCart = localStorage.getItem(getCartKey(currentUser))
-                if (savedCart) setCartItems(JSON.parse(savedCart))
+                const guestCartKey = 'sfb_customer_cart_guest'
+                const guestCart = localStorage.getItem(guestCartKey)
+                const userCartKey = getCartKey(currentUser)
+                const savedCart = localStorage.getItem(userCartKey)
+
+                if (guestCart && guestCart !== '[]') {
+                    let merged: CartItem[] = JSON.parse(guestCart)
+                    if (savedCart && savedCart !== '[]') {
+                        const existingUserCart: CartItem[] = JSON.parse(savedCart)
+                        const itemMap = new Map<string, CartItem>()
+                        existingUserCart.forEach((ci) => itemMap.set(ci.item.id, ci))
+                        merged.forEach((ci) => {
+                            if (itemMap.has(ci.item.id)) {
+                                const curr = itemMap.get(ci.item.id)!
+                                itemMap.set(ci.item.id, { ...curr, quantity: curr.quantity + ci.quantity })
+                            } else {
+                                itemMap.set(ci.item.id, ci)
+                            }
+                        })
+                        merged = Array.from(itemMap.values())
+                    }
+                    localStorage.setItem(userCartKey, JSON.stringify(merged))
+                    localStorage.removeItem(guestCartKey)
+                    setCartItems(merged)
+                } else if (savedCart) {
+                    setCartItems(JSON.parse(savedCart))
+                }
             } catch { }
 
             // Hydrate user active order from local storage or backend DB

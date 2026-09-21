@@ -6,6 +6,7 @@ interface BrandLogoProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showSubtitle?: boolean;
   clickable?: boolean;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   className?: string;
 }
 
@@ -14,6 +15,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   size = 'md',
   showSubtitle = true,
   clickable = true,
+  onClick,
   className = ''
 }) => {
   const isDarkBg = variant === 'dark';
@@ -88,7 +90,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
   if (clickable) {
     return (
-      <Link to="/" className="inline-block outline-none focus-visible:ring-2 focus-visible:ring-orange-500 rounded-md py-0.5">
+      <Link to="/" onClick={onClick} className="inline-block outline-none focus-visible:ring-2 focus-visible:ring-orange-500 rounded-md py-0.5 cursor-pointer">
         {content}
       </Link>
     );

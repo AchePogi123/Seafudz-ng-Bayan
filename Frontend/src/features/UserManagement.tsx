@@ -96,7 +96,7 @@ const UserManagement = () => {
                 <div className="flex justify-between items-center mb-[2.5rem] flex-wrap gap-[1.5rem]">
                     <div>
                         <h1 className="text-[2.2rem] font-extrabold text-[#1a202c] m-0 tracking-[-0.5px]">
-                            👥 User Management
+                            User Management
                         </h1>
                         <p className="text-[1rem] text-[#718096] m-0">
                             Manage system access for staff and operational team

@@ -31,7 +31,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
             alt={item.name}
             className="w-full h-full object-cover"
             onError={(e) => {
-              (e.target as HTMLImageElement).src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f3f4f6'/><text y='62' x='20' font-size='45'>🍲</text></svg>";
+              (e.target as HTMLImageElement).src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f3f4f6'/><text y='65' x='35' font-size='45' font-weight='bold' fill='%23ea580c'>S</text></svg>";
             }}
           />
         </div>

@@ -7,6 +7,7 @@ import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
+import { checkIfBulkOrder } from '../utils/bulkOrder'
 
 interface CartItem {
     item: MenuItem
@@ -54,25 +55,30 @@ const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
-    if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
+    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
     if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
     if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
     if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY'
     if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED'
     if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper
-    return 'PENDING'
+    return upper
 }
 
 export function getStatusRank(rawStatus?: string): number {
     const norm = normalizeStatus(rawStatus)
     switch (norm) {
-        case 'PENDING': return 0
-        case 'CONFIRMED': return 1
-        case 'PREPARING': return 2
-        case 'READY': return 3
-        case 'OUT_FOR_DELIVERY': return 4
-        case 'COMPLETED': return 5
+        case 'GCASH_PENDING_APPROVAL': return 0
+        case 'GCASH_AUTHORIZED': return 1
+        case 'RECEIPT_SUBMITTED': return 2
+        case 'PENDING':
+        case 'PENDING_COD': return 0
+        case 'RECEIPT_REJECTED': return 1
+        case 'CONFIRMED': return 3
+        case 'PREPARING': return 4
+        case 'READY': return 5
+        case 'OUT_FOR_DELIVERY': return 6
+        case 'COMPLETED': return 7
         case 'CANCELLED':
         case 'FLAGGED': return -1
         default: return 0
@@ -149,9 +155,14 @@ export const OnlineCustomer: React.FC = () => {
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
-    const paymentMethod = 'GCash'
-    const [paymentReceipt, setPaymentReceipt] = useState<string | null>(null)
+    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
+    const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
+    const [isBulkWarningModalOpen, setIsBulkWarningModalOpen] = useState(false)
+    const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
+    const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
+    const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
+    const [isCancellingOrder, setIsCancellingOrder] = useState(false)
 
     // Save cart state to user-scoped localStorage whenever modified
     useEffect(() => {
@@ -208,10 +219,35 @@ export const OnlineCustomer: React.FC = () => {
         if (currentUser) {
             syncUserProfileFromDB(currentUser)
 
-            // Hydrate user cart
+            // Hydrate user cart (and migrate guest cart if present)
             try {
-                const savedCart = localStorage.getItem(getCartKey(currentUser))
-                if (savedCart) setCartItems(JSON.parse(savedCart))
+                const guestCartKey = 'sfb_customer_cart_guest'
+                const guestCart = localStorage.getItem(guestCartKey)
+                const userCartKey = getCartKey(currentUser)
+                const savedCart = localStorage.getItem(userCartKey)
+
+                if (guestCart && guestCart !== '[]') {
+                    let merged: CartItem[] = JSON.parse(guestCart)
+                    if (savedCart && savedCart !== '[]') {
+                        const existingUserCart: CartItem[] = JSON.parse(savedCart)
+                        const itemMap = new Map<string, CartItem>()
+                        existingUserCart.forEach((ci) => itemMap.set(ci.item.id, ci))
+                        merged.forEach((ci) => {
+                            if (itemMap.has(ci.item.id)) {
+                                const curr = itemMap.get(ci.item.id)!
+                                itemMap.set(ci.item.id, { ...curr, quantity: curr.quantity + ci.quantity })
+                            } else {
+                                itemMap.set(ci.item.id, ci)
+                            }
+                        })
+                        merged = Array.from(itemMap.values())
+                    }
+                    localStorage.setItem(userCartKey, JSON.stringify(merged))
+                    localStorage.removeItem(guestCartKey)
+                    setCartItems(merged)
+                } else if (savedCart) {
+                    setCartItems(JSON.parse(savedCart))
+                }
             } catch { }
 
             // Hydrate user active order from local storage or backend DB
@@ -264,6 +300,122 @@ export const OnlineCustomer: React.FC = () => {
         syncUserProfileFromDB()
     }, [activeTab])
 
+    const handleSubmitReceipt = async () => {
+        if (!activeOrder || !selectedReceiptPreview || isSubmittingReceipt) return
+        setIsSubmittingReceipt(true)
+        try {
+            await fetch(`${API_BASE_URL}/assistant/orders/${activeOrder.id}/upload-receipt`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paymentReceipt: selectedReceiptPreview }),
+            })
+
+            try {
+                const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const updatedGlobal = globalOrders.map((o: any) =>
+                    o.id === activeOrder.id || o.ref === activeOrder.id
+                        ? { ...o, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' }
+                        : o
+                )
+                localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+
+                const currentUser = getActiveUser()
+                const userOrderKey = getActiveOrderKey(currentUser)
+                const activeObjStr = localStorage.getItem(userOrderKey)
+                if (activeObjStr) {
+                    const activeObj = JSON.parse(activeObjStr)
+                    localStorage.setItem(userOrderKey, JSON.stringify({
+                        ...activeObj,
+                        paymentReceipt: selectedReceiptPreview,
+                        status: 'RECEIPT_SUBMITTED'
+                    }))
+                }
+                window.dispatchEvent(new Event('seafudz_order_created'))
+            } catch { }
+
+            const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
+
+            setActiveOrder((prev) => prev ? { ...prev, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' } : null)
+            setSelectedReceiptPreview(null)
+
+            if (!isBulk) {
+                setIsVerificationModalOpen(false)
+                setActiveTab('tracking')
+            }
+        } catch (err) {
+            console.error('Error submitting payment receipt:', err)
+        } finally {
+            setIsSubmittingReceipt(false)
+        }
+    }
+
+    const handleCancelOrder = async () => {
+        if (!activeOrder) return
+        const confirmCancel = window.confirm(`Are you sure you want to cancel Order #${activeOrder.id}?`)
+        if (!confirmCancel) return
+
+        setIsCancellingOrder(true)
+        try {
+            const token = localStorage.getItem('seafudz_token')
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}/cancel`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ status: 'CANCELLED' }),
+            })
+
+            const resData = await res.json().catch(() => ({}))
+            if (!res.ok && resData.message) {
+                alert(resData.message)
+                setIsCancellingOrder(false)
+                return
+            }
+        } catch (err) {
+            console.error('Error sending cancel request:', err)
+        }
+
+        const updatedOrder = { ...activeOrder, status: 'CANCELLED' }
+        setActiveOrder(updatedOrder)
+
+        try {
+            const currentUser = getActiveUser()
+            const userOrderKey = getActiveOrderKey(currentUser)
+            const userOrdersKey = getOrdersKey(currentUser)
+            localStorage.setItem(userOrderKey, JSON.stringify(updatedOrder))
+
+            const existingUserOrders = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+            const updatedUserOrders = existingUserOrders.map((o: any) =>
+                (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o
+            )
+            localStorage.setItem(userOrdersKey, JSON.stringify(updatedUserOrders))
+
+            const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+            const updatedGlobalOrders = globalOrders.map((o: any) =>
+                (o.id === activeOrder.id || o.ref === activeOrder.id) ? { ...o, status: 'CANCELLED' } : o
+            )
+            localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobalOrders))
+        } catch { }
+
+        window.dispatchEvent(new Event('seafudz_order_created'))
+        setIsCancellingOrder(false)
+    }
+
+    // Auto-navigate customer to Order Status tracking
+    useEffect(() => {
+        if (!activeOrder?.status) return
+        const s = (activeOrder.status || '').toUpperCase()
+        const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
+        const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
+        const isNonBulkCOD = (activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD') && !isBulk
+
+        if (isConfirmedOrLater || (!isBulk && s === 'RECEIPT_SUBMITTED') || isNonBulkCOD) {
+            setIsVerificationModalOpen(false)
+            setActiveTab('tracking')
+        }
+    }, [activeOrder?.status, activeOrder?.paymentMethod])
+
     const handleProceedToCheckout = () => {
         const currentUser = getActiveUser()
         if (!currentUser) {
@@ -272,6 +424,9 @@ export const OnlineCustomer: React.FC = () => {
         }
         syncUserProfileFromDB(currentUser)
         if (cartItems.length > 0) {
+            if (checkIfBulkOrder(cartItems)) {
+                setIsBulkWarningModalOpen(true)
+            }
             setActiveTab('billing')
             setIsMobileCartOpen(false)
         }
@@ -305,13 +460,13 @@ export const OnlineCustomer: React.FC = () => {
                         const orderData = data.data || data
                         if (orderData && orderData.status) {
                             backendSuccess = true
-                            const normalized = normalizeStatus(orderData.status)
-                            const currentStatusNorm = normalizeStatus(activeOrderRef.current?.status)
+                            const rawStatus = String(orderData.status).toUpperCase()
+                            const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
 
-                            if (normalized !== currentStatusNorm) {
+                            if (rawStatus !== currentRawStatus) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: normalized }
+                                    const updated = { ...prev, status: rawStatus }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
 
@@ -324,7 +479,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 if (Array.isArray(list)) {
                                                     const updatedList = list.map((o: any) =>
                                                         (o.id === currentOrderId || o.ref === currentOrderId)
-                                                            ? { ...o, status: normalized }
+                                                            ? { ...o, status: rawStatus }
                                                             : o
                                                     )
                                                     localStorage.setItem(key, JSON.stringify(updatedList))
@@ -343,7 +498,7 @@ export const OnlineCustomer: React.FC = () => {
                     // Backend offline / unreachable
                 }
 
-                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank)
+                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank or changed sub-status)
                 if (!backendSuccess) {
                     try {
                         const userOrdersKey = getOrdersKey(currentUser)
@@ -362,15 +517,16 @@ export const OnlineCustomer: React.FC = () => {
                         const current = allLists.find((o: any) => o.id === currentOrderId || o.ref === currentOrderId)
 
                         if (current && current.status) {
-                            const normalized = normalizeStatus(current.status)
+                            const rawStatus = String(current.status).toUpperCase()
+                            const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
                             const currentRank = getStatusRank(activeOrderRef.current?.status)
-                            const localRank = getStatusRank(normalized)
+                            const localRank = getStatusRank(rawStatus)
 
-                            // ONLY advance status if local rank is strictly higher than current status rank
-                            if (localRank > currentRank) {
+                            // Advance status if local rank is strictly higher OR raw sub-status changed (e.g. GCASH_AUTHORIZED)
+                            if (localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: normalized }
+                                    const updated = { ...prev, status: rawStatus }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
                                     } catch { }
@@ -496,6 +652,13 @@ export const OnlineCustomer: React.FC = () => {
         }
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
+        const isBulk = checkIfBulkOrder(cartItems)
+        const initialStatus = paymentMethod === 'COD' 
+            ? 'PENDING_COD' 
+            : isBulk 
+            ? 'GCASH_PENDING_APPROVAL' 
+            : 'GCASH_AUTHORIZED'
+
         const orderPayload = {
             type: 'Delivery',
             customerName,
@@ -508,6 +671,7 @@ export const OnlineCustomer: React.FC = () => {
             vat,
             deliveryFee,
             total,
+            status: initialStatus,
             items: cartItems.map((ci) => ({
                 id: ci.item.id,
                 name: ci.item.name,
@@ -574,7 +738,13 @@ export const OnlineCustomer: React.FC = () => {
             } catch { }
             setCartItems([])
             setOrderNotes('')
-            setActiveTab('tracking')
+            if (paymentMethod === 'COD' && !isBulk) {
+                setActiveTab('tracking')
+                setIsVerificationModalOpen(false)
+            } else {
+                setActiveTab('billing')
+                setIsVerificationModalOpen(true)
+            }
             setIsMobileCartOpen(false)
             window.dispatchEvent(new Event('seafudz_order_created'))
         } catch (err) {
@@ -608,9 +778,9 @@ export const OnlineCustomer: React.FC = () => {
                     <div className="flex bg-white p-1 rounded-2xl border border-neutral-100 shadow-2xs">
                         <button
                             onClick={() => setActiveTab('menu')}
-                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20"
+                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20 cursor-pointer"
                         >
-                            🍽️ Browse Menu
+                            Browse Menu
                         </button>
                     </div>
 
@@ -627,7 +797,7 @@ export const OnlineCustomer: React.FC = () => {
                             className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full focus:outline-none"
                         />
                         {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs">
+                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs cursor-pointer">
                                 ✕
                             </button>
                         )}
@@ -645,7 +815,7 @@ export const OnlineCustomer: React.FC = () => {
                                     <button
                                         key={cat}
                                         onClick={() => setSelectedCategory(cat)}
-                                        className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 ${selectedCategory === cat
+                                        className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
                                             ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
                                             : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
                                             }`}
@@ -677,7 +847,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         }`}
                                                     onError={(e) => {
                                                         ; (e.target as HTMLImageElement).src =
-                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="55" x="35" font-size="30">🦀</text></svg>'
+                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
                                                     }}
                                                 />
                                                 <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
@@ -687,7 +857,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 {!available && (
                                                     <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
                                                         <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                                            <span>🚫</span> Unavailable / Sold Out
+                                                            Unavailable / Sold Out
                                                         </span>
                                                     </div>
                                                 )}
@@ -740,7 +910,7 @@ export const OnlineCustomer: React.FC = () => {
                         <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto">
                             <div>
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
-                                    <span>🛒</span> Your Cart
+                                    Your Cart
                                     {cartItems.length > 0 && (
                                         <span className="bg-orange-100 text-orange-600 text-xs font-bold px-2 py-0.5 rounded-full">
                                             {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
@@ -750,7 +920,6 @@ export const OnlineCustomer: React.FC = () => {
 
                                 {cartItems.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-12 text-center text-neutral-400">
-                                        <span className="text-4xl mb-2">🍽️</span>
                                         <p className="text-sm font-medium">Cart is empty</p>
                                         <p className="text-xs mt-1 max-w-[200px]">Add delicious dishes from the menu to start!</p>
                                     </div>
@@ -760,17 +929,18 @@ export const OnlineCustomer: React.FC = () => {
                                             <div key={ci.item.id} className="pt-4 first:pt-0">
                                                 <div className="flex justify-between items-start gap-2">
                                                     <div>
-                                                        <p className="font-semibold text-neutral-800 text-sm leading-snug">
+                                                        <h4 className="font-semibold text-neutral-800 text-sm leading-snug">
                                                             {ci.item.name}
-                                                        </p>
+                                                        </h4>
                                                         <p className="text-xs text-orange-600 font-bold mt-0.5">
                                                             ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                         </p>
                                                     </div>
+
                                                     <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
                                                         <button
                                                             onClick={() => handleDecrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                         >
                                                             -
                                                         </button>
@@ -779,14 +949,13 @@ export const OnlineCustomer: React.FC = () => {
                                                         </span>
                                                         <button
                                                             onClick={() => handleIncrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                         >
                                                             +
                                                         </button>
                                                     </div>
                                                 </div>
 
-                                                {/* Special Note details */}
                                                 <div className="mt-2">
                                                     {editingNoteItemId === ci.item.id ? (
                                                         <div className="flex gap-2 mt-1">
@@ -799,7 +968,7 @@ export const OnlineCustomer: React.FC = () => {
                                                             />
                                                             <button
                                                                 onClick={() => handleSaveNote(ci.item.id)}
-                                                                className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold"
+                                                                className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
                                                             >
                                                                 Save
                                                             </button>
@@ -811,7 +980,7 @@ export const OnlineCustomer: React.FC = () => {
                                                             </p>
                                                             <button
                                                                 onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                                className="text-orange-500 hover:text-orange-600 font-bold text-[11px]"
+                                                                className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
                                                             >
                                                                 {ci.specialNote ? 'Edit note' : '+ Add Note'}
                                                             </button>
@@ -825,21 +994,21 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             {cartItems.length > 0 && (
-                                <div className="border-t border-neutral-100 pt-4 mt-4 space-y-4">
-                                    <div className="space-y-1.5">
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                <div className="border-t border-neutral-100 pt-4 space-y-4">
+                                    <div className="space-y-1.5 text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>Subtotal</span>
                                             <span>₱{subtotal.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>VAT (12%)</span>
                                             <span>₱{vat.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
+                                        <div className="flex justify-between">
                                             <span>Delivery Fee</span>
                                             <span>₱{deliveryFee.toLocaleString()}</span>
                                         </div>
-                                        <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-1.5 border-t border-dashed border-neutral-100">
+                                        <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
                                             <span>Total Amount</span>
                                             <span className="text-orange-600">₱{total.toLocaleString()}</span>
                                         </div>
@@ -849,7 +1018,7 @@ export const OnlineCustomer: React.FC = () => {
                                         onClick={handleProceedToCheckout}
                                         className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        Proceed to Checkout ➡️
+                                        Proceed to Checkout
                                     </button>
                                 </div>
                             )}
@@ -859,14 +1028,37 @@ export const OnlineCustomer: React.FC = () => {
 
                 {/* VIEW 2: CHECKOUT & BILLING PAGE */}
                 {activeTab === 'billing' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                    <div className="flex flex-col gap-6">
+                        {/* Active Verification Banner */}
+                        {activeOrder && (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4.5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-extrabold text-sm text-blue-950 uppercase tracking-wide">Active Order #{activeOrder.id} ({activeOrder.paymentMethod})</span>
+                                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (
+                                            <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase">Bulk Order</span>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-blue-800 mt-1">Status: <strong className="font-extrabold text-blue-950">{activeOrder.status}</strong> — Waiting for staff verification</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsVerificationModalOpen(true)}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
+                                >
+                                    <span>📱 Open Payment & Verification Popup</span>
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                         {/* Customer Details Form */}
                         <form
                             onSubmit={handlePlaceOrder}
                             className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
                         >
                             <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
-                                📍 Delivery & Billing Details
+                                Delivery & Billing Details
                             </h3>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -929,96 +1121,60 @@ export const OnlineCustomer: React.FC = () => {
                             {/* Payment Type Selection */}
                             <div className="flex flex-col gap-3">
                                 <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                    Payment Method (Online Digital Transfer)
+                                    Select Payment Method
                                 </label>
-                                <div className="grid grid-cols-1">
-                                    <div
-                                        className="flex items-center gap-3 p-3.5 rounded-xl border-2 border-blue-500 bg-blue-50/50 shadow-xs"
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    {/* GCash Option */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMethod('GCash')}
+                                        className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'GCash'
+                                            ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 shadow-sm'
+                                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                            }`}
                                     >
-                                        <span className="text-2xl">💙</span>
-                                        <div>
-                                            <p className="font-black text-neutral-800 text-sm">GCash</p>
-                                            <p className="text-[11px] text-neutral-400">0917-888-SEAFUDZ</p>
+                                        <div className="flex items-center justify-between w-full">
+                                            <span className="font-black text-neutral-900 text-sm">GCash</span>
+                                            <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
                                         </div>
-                                    </div>
-                                </div>
+                                        <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
+                                            {checkIfBulkOrder(cartItems)
+                                                ? 'Your GCash payment requires verification from staff before payment authorization and order confirmation.'
+                                                : 'Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.'}
+                                        </p>
+                                    </button>
 
-                                {/* Payment Transfer Instructions */}
-                                <div className="bg-neutral-50 border border-neutral-200/80 rounded-xl p-3.5 text-xs text-neutral-600 space-y-1">
-                                    <div className="flex justify-between items-center font-bold text-neutral-800">
-                                        <span>Send exact amount:</span>
-                                        <span className="text-orange-600 text-sm font-black">₱{total.toLocaleString()}</span>
-                                    </div>
-                                    <p className="text-[11px] text-neutral-500">
-                                        Account Name: <strong className="text-neutral-800">SEAFUDZ RESTAURANT PH</strong> •{' '}
-                                        GCash: <strong className="text-neutral-800">0917-888-7323</strong>
-                                    </p>
-                                </div>
-
-                                {/* Upload Receipt / Payment Screenshot */}
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-bold text-neutral-600 flex items-center justify-between">
-                                        <span>Upload Payment Receipt / Screenshot</span>
-                                        <span className="text-[11px] font-normal text-neutral-400">(Photo for Assistant verification)</span>
-                                    </label>
-
-                                    {!paymentReceipt ? (
-                                        <label className="border-2 border-dashed border-neutral-200 hover:border-orange-400 bg-neutral-50/50 hover:bg-orange-50/30 rounded-xl p-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-all">
-                                            <span className="text-2xl">📸</span>
-                                            <span className="text-xs font-bold text-neutral-700">Click to upload payment screenshot</span>
-                                            <span className="text-[10px] text-neutral-400">PNG, JPG, JPEG accepted</span>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                className="hidden"
-                                                onChange={(e) => {
-                                                    const file = e.target.files?.[0]
-                                                    if (file) {
-                                                        const reader = new FileReader()
-                                                        reader.onloadend = () => {
-                                                            setPaymentReceipt(reader.result as string)
-                                                        }
-                                                        reader.readAsDataURL(file)
-                                                    }
-                                                }}
-                                            />
-                                        </label>
-                                    ) : (
-                                        <div className="relative rounded-xl border border-neutral-200 overflow-hidden bg-neutral-900/5 p-2 flex items-center gap-3">
-                                            <img
-                                                src={paymentReceipt}
-                                                alt="Payment Receipt"
-                                                className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-xs font-bold text-emerald-700 flex items-center gap-1">
-                                                    <span>✅</span> Receipt Attached
-                                                </p>
-                                                <p className="text-[10px] text-neutral-500 truncate">Ready for Assistant review</p>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                onClick={() => setPaymentReceipt(null)}
-                                                className="px-2.5 py-1 text-xs font-bold bg-neutral-200 hover:bg-rose-100 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
-                                            >
-                                                Change
-                                            </button>
+                                    {/* COD Option */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setPaymentMethod('COD')}
+                                        className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'COD'
+                                            ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20 shadow-sm'
+                                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                            }`}
+                                    >
+                                        <div className="flex items-center justify-between w-full">
+                                            <span className="font-black text-neutral-900 text-sm">Cash on Delivery</span>
+                                            <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full">COD</span>
                                         </div>
-                                    )}
+                                        <p className="text-[11px] font-semibold text-emerald-900/80 mt-2 leading-tight">
+                                            Cash on Delivery requires staff product availability verification before order confirmation.
+                                        </p>
+                                    </button>
                                 </div>
                             </div>
 
                             <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                 <button
                                     type="submit"
-                                    className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2"
+                                    className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    🚀 Confirm & Submit Order
+                                    {checkIfBulkOrder(cartItems) ? 'Request Order' : 'Confirm & Submit Order'}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setActiveTab('menu')}
-                                    className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200"
+                                    className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200 cursor-pointer"
                                 >
                                     Back
                                 </button>
@@ -1076,20 +1232,267 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                )}
+                </div>
+            )}
 
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
                     <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
-                        <div className="border-b border-neutral-100 pb-5">
-                            <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
-                                Order Status Management
-                            </p>
-                            <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
-                                Order ID: {activeOrder.id}
-                            </h3>
-                            <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
+                        <div className="border-b border-neutral-100 pb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
+                                    Order Status Management
+                                </p>
+                                <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
+                                    Order ID: {activeOrder.id}
+                                </h3>
+                                <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
+                            </div>
+
+                            {/* CANCEL ORDER BUTTON (Eligible only when still in queue in kitchen, before PREPARING) */}
+                            {(() => {
+                                const rawSt = (activeOrder.status || '').toUpperCase()
+                                const isCancelled = rawSt === 'CANCELLED'
+                                const isPreparingOrLater = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
+
+                                if (isCancelled) {
+                                    return (
+                                        <span className="bg-rose-100 text-rose-800 font-extrabold text-xs px-4 py-2 rounded-xl border border-rose-300">
+                                            ❌ Order Cancelled
+                                        </span>
+                                    )
+                                }
+
+                                if (!isPreparingOrLater) {
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={handleCancelOrder}
+                                            disabled={isCancellingOrder}
+                                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 hover:border-rose-300 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1.5"
+                                        >
+                                            <span>❌</span> {isCancellingOrder ? 'Cancelling...' : 'Cancel Order'}
+                                        </button>
+                                    )
+                                }
+
+                                return (
+                                    <div className="text-right">
+                                        <span className="bg-neutral-100 text-neutral-500 font-bold text-xs px-3 py-1.5 rounded-xl border border-neutral-200 inline-block">
+                                            🍳 Kitchen Processing
+                                        </span>
+                                        <p className="text-[10px] text-neutral-400 mt-1">Cannot cancel once cooking starts</p>
+                                    </div>
+                                )
+                            })()}
                         </div>
+
+                        {/* CANCELLED ORDER BANNER */}
+                        {activeOrder.status === 'CANCELLED' && (
+                            <div className="bg-rose-50 border border-rose-300 rounded-2xl p-5 text-rose-900 space-y-3 shadow-xs animate-fade-in">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-2xl">❌</span>
+                                    <div>
+                                        <h4 className="font-extrabold text-base text-rose-900">Order Cancelled</h4>
+                                        <p className="text-xs text-rose-700 leading-relaxed">
+                                            This order was cancelled. No further kitchen preparation or payment will be processed.
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleStartNewOrder}
+                                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
+                                >
+                                    Start New Order
+                                </button>
+                            </div>
+                        )}
+
+                        {/* BULK ORDER BADGE IF TOTAL > 10K */}
+                        {activeOrder.status !== 'CANCELLED' && (activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
+                            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-900">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xl">⚠️</span>
+                                    <div>
+                                        <p className="font-extrabold text-sm uppercase tracking-wide">Bulk Order (Exceeds ₱10,000)</p>
+                                        <p className="text-xs text-amber-700">This order is classified as a Bulk Order and requires staff verification before payment or order confirmation.</p>
+                                    </div>
+                                </div>
+                                <span className="bg-amber-500 text-white font-black text-xs px-3 py-1 rounded-full uppercase shadow-xs">Bulk Order</span>
+                            </div>
+                        )}
+
+                        {/* GCash Verification Banners & Screenshot Upload */}
+                        {activeOrder.status !== 'CANCELLED' && activeOrder.paymentMethod === 'GCash' && (
+                            <div className="space-y-4">
+                                {['GCASH_PENDING_APPROVAL', 'PENDING'].includes(activeOrder.status) && (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-900 space-y-1">
+                                        <div className="flex items-center gap-2 font-bold text-sm">
+                                            <span>ℹ️ Staff Verification Required</span>
+                                        </div>
+                                        <p className="text-xs text-blue-700 leading-relaxed">
+                                            Your GCash payment requires verification from staff before payment authorization and order confirmation. Please wait for an assistant to authorize your transaction.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {activeOrder.status === 'GCASH_AUTHORIZED' && (
+                                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-emerald-900 space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-extrabold text-sm text-emerald-800">✅ GCash Payment Authorized by Staff</span>
+                                            <span className="text-xs font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full">Authorized</span>
+                                        </div>
+                                        <p className="text-xs text-emerald-700 leading-relaxed">
+                                            Staff has authorized your payment. Please transfer <strong className="text-emerald-950 font-black">₱{activeOrder.total.toLocaleString()}</strong> to GCash <strong className="text-emerald-950 font-black">0917-888-7323</strong> and upload your payment screenshot below.
+                                        </p>
+
+                                        {/* Upload Screenshot Input */}
+                                        <div className="pt-2">
+                                            {selectedReceiptPreview ? (
+                                                <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 space-y-3 text-left">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">Preview Reference Picture</span>
+                                                        <span className="text-[10px] bg-emerald-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-emerald-200">
+                                                        <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-emerald-300 shadow-2xs" />
+                                                        <div className="space-y-1">
+                                                            <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
+                                                            <label className="text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer block">
+                                                                Change Selected Picture
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/*"
+                                                                    className="hidden"
+                                                                    onChange={(e) => {
+                                                                        const file = e.target.files?.[0]
+                                                                        if (file) {
+                                                                            const reader = new FileReader()
+                                                                            reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                            reader.readAsDataURL(file)
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex gap-2 pt-1">
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleSubmitReceipt}
+                                                            disabled={isSubmittingReceipt}
+                                                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                        >
+                                                            {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedReceiptPreview(null)}
+                                                            className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : !activeOrder.paymentReceipt ? (
+                                                <label className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-white rounded-xl p-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-all">
+                                                    <span className="text-xs font-bold text-emerald-900">Click to select GCash Payment Screenshot</span>
+                                                    <span className="text-[10px] text-emerald-600">Attach receipt photo for Assistant review</span>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        className="hidden"
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0]
+                                                            if (file) {
+                                                                const reader = new FileReader()
+                                                                reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                reader.readAsDataURL(file)
+                                                            }
+                                                        }}
+                                                    />
+                                                </label>
+                                            ) : (
+                                                <div className="p-3 bg-white border border-emerald-200 rounded-xl flex items-center justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <img src={activeOrder.paymentReceipt} alt="Receipt" className="w-12 h-12 object-cover rounded-lg border" />
+                                                        <span className="text-xs font-bold text-emerald-900">Screenshot Uploaded (Pending Review)</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeOrder.status === 'RECEIPT_SUBMITTED' && (
+                                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-900 space-y-1 text-left">
+                                        <p className="font-bold text-sm">📸 Payment Screenshot Uploaded</p>
+                                        <p className="text-xs text-blue-700">Staff is currently inspecting your reference screenshot to verify payment.</p>
+                                    </div>
+                                )}
+
+                                {activeOrder.status === 'RECEIPT_REJECTED' && (
+                                    <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-900 space-y-3 text-left">
+                                        <p className="font-extrabold text-sm text-rose-800">⚠️ Payment Receipt Rejected</p>
+                                        <p className="text-xs text-rose-700 leading-relaxed">
+                                            {(activeOrder as any).rejectionReason || 'Invalid payment receipt or reference image. Please upload a clear official GCash screenshot.'}
+                                        </p>
+                                        {selectedReceiptPreview ? (
+                                            <div className="bg-white p-3 rounded-xl border border-rose-300 space-y-2">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={selectedReceiptPreview} alt="New Screenshot Preview" className="w-14 h-14 object-cover rounded-lg border" />
+                                                    <span className="text-xs font-bold text-neutral-800">New Screenshot Selected</span>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSubmitReceipt}
+                                                        disabled={isSubmittingReceipt}
+                                                        className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-2.5 rounded-xl text-xs shadow-xs cursor-pointer"
+                                                    >
+                                                        {isSubmittingReceipt ? 'Re-submitting...' : 'Re-submit Valid GCash Screenshot'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedReceiptPreview(null)}
+                                                        className="px-3 bg-neutral-200 text-neutral-700 font-bold text-xs rounded-xl"
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <label className="inline-block bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl cursor-pointer shadow-xs transition-colors">
+                                                Re-upload Valid GCash Screenshot
+                                                <input
+                                                    type="file"
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                        const file = e.target.files?.[0]
+                                                        if (file) {
+                                                            const reader = new FileReader()
+                                                            reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                            reader.readAsDataURL(file)
+                                                        }
+                                                    }}
+                                                />
+                                            </label>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* COD Verification Banner */}
+                        {activeOrder.paymentMethod === 'COD' && activeOrder.status === 'PENDING_COD' && (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-emerald-900 space-y-1">
+                                <p className="font-bold text-sm">💵 Cash on Delivery (COD) Selected</p>
+                                <p className="text-xs text-emerald-700">
+                                    Cash on Delivery requires staff product availability verification before order confirmation. Staff is checking item availability now...
+                                </p>
+                            </div>
+                        )}
 
                         {/* Order Complete Banner Prompt */}
                         {['COMPLETED', 'DELIVERED', 'SERVED'].includes(normalizeStatus(activeOrder.status)) && (
@@ -1132,12 +1535,12 @@ export const OnlineCustomer: React.FC = () => {
                                 />
 
                                 {[
-                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification', icon: '📝' },
-                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue', icon: '✅' },
-                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen', icon: '🍳' },
-                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider', icon: '📦' },
-                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route', icon: '🛵' },
-                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed', icon: '✨' },
+                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification' },
+                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue' },
+                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen' },
+                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider' },
+                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route' },
+                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed' },
                                 ].map((step) => {
                                     const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
                                     const currUpper = normalizeStatus(activeOrder.status)
@@ -1148,14 +1551,14 @@ export const OnlineCustomer: React.FC = () => {
                                     return (
                                         <div key={step.key} className="flex flex-col items-center z-10 relative">
                                             <div
-                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-sm sm:text-lg border-2 shadow-xs transition-all duration-300 ${isCurrent
+                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xs sm:text-sm font-extrabold border-2 shadow-xs transition-all duration-300 ${isCurrent
                                                     ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
                                                     : isCompleted
                                                         ? 'bg-orange-500 border-orange-500 text-white'
                                                         : 'bg-white border-neutral-200 text-neutral-400'
                                                     }`}
                                             >
-                                                {step.icon}
+                                                ●
                                             </div>
                                             <p
                                                 className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
@@ -1174,7 +1577,7 @@ export const OnlineCustomer: React.FC = () => {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">📋 Delivery Info</h4>
+                                <h4 className="font-bold text-neutral-800 text-sm">Delivery Info</h4>
                                 <div className="text-xs space-y-1.5 text-neutral-600">
                                     <p>
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
@@ -1198,7 +1601,7 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
 
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">💳 Billing & Payment Details</h4>
+                                <h4 className="font-bold text-neutral-800 text-sm">Billing & Payment Details</h4>
                                 <div className="text-xs space-y-1.5 text-neutral-600">
                                     <p>
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Payment Mode:</span>{' '}
@@ -1268,9 +1671,9 @@ export const OnlineCustomer: React.FC = () => {
                         </div>
                         <button
                             onClick={() => setIsMobileCartOpen(true)}
-                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20"
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20 cursor-pointer"
                         >
-                            View Cart 🛒
+                            View Cart
                         </button>
                     </div>
                 )}
@@ -1282,11 +1685,11 @@ export const OnlineCustomer: React.FC = () => {
                             <div>
                                 <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
                                     <h3 className="font-bold text-neutral-800 text-lg flex items-center gap-2">
-                                        <span>🛒</span> Your Cart
+                                        Your Cart
                                     </h3>
                                     <button
                                         onClick={() => setIsMobileCartOpen(false)}
-                                        className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold p-1"
+                                        className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold p-1 cursor-pointer"
                                     >
                                         ×
                                     </button>
@@ -1307,7 +1710,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
                                                     <button
                                                         onClick={() => handleDecrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                     >
                                                         -
                                                     </button>
@@ -1316,7 +1719,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     </span>
                                                     <button
                                                         onClick={() => handleIncrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1"
+                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
                                                     >
                                                         +
                                                     </button>
@@ -1335,7 +1738,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         />
                                                         <button
                                                             onClick={() => handleSaveNote(ci.item.id)}
-                                                            className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold"
+                                                            className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
                                                         >
                                                             Save
                                                         </button>
@@ -1347,7 +1750,7 @@ export const OnlineCustomer: React.FC = () => {
                                                         </p>
                                                         <button
                                                             onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                            className="text-orange-500 hover:text-orange-600 font-bold text-[11px]"
+                                                            className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
                                                         >
                                                             {ci.specialNote ? 'Edit note' : '+ Add Note'}
                                                         </button>
@@ -1383,7 +1786,7 @@ export const OnlineCustomer: React.FC = () => {
                                     onClick={handleProceedToCheckout}
                                     className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    Proceed to Checkout ➡️
+                                    Proceed to Checkout
                                 </button>
                             </div>
                         </div>
@@ -1391,14 +1794,281 @@ export const OnlineCustomer: React.FC = () => {
                 )}
             </div>
 
+            {/* 10k Bulk Order Warning Modal */}
+            {isBulkWarningModalOpen && (
+                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-amber-200 text-center space-y-4 animate-in zoom-in-95 duration-200">
+                        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-md shadow-amber-500/20">
+                            ⚠️
+                        </div>
+                        <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight">Bulk Order Notice</h3>
+                        <p className="text-sm font-semibold text-neutral-600 leading-relaxed bg-amber-50 p-4 rounded-2xl border border-amber-200/80">
+                            "Your order contains item quantities classified as a Bulk Order and requires staff verification before payment or order confirmation."
+                        </p>
+                        <button
+                            onClick={() => setIsBulkWarningModalOpen(false)}
+                            className="w-full bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-amber-500/20 active:scale-98 transition-all duration-200 text-sm cursor-pointer"
+                        >
+                            I Understand & Proceed
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Staff Verification & GCash Payment Modal Popup */}
+            {isVerificationModalOpen && activeOrder && (
+                <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
+                        {/* Close button */}
+                        <button
+                            onClick={() => setIsVerificationModalOpen(false)}
+                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+                        >
+                            ✕
+                        </button>
+
+                        {/* Modal Header */}
+                        <div className="text-center space-y-1">
+                            <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-orange-500/20">
+                                ⏳
+                            </div>
+                            <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
+                                Order #{activeOrder.id} Submitted
+                            </h3>
+                            <p className="text-xs font-semibold text-neutral-500">
+                                Your order is currently waiting for staff verification.
+                            </p>
+                        </div>
+
+                        {/* 1st POPUP MODAL FOR BULK ORDERS: WAITING FOR ASSISTANT VERIFICATION & PERMISSION */}
+                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) &&
+                         (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
+                            <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
+                                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
+                                    ⏳
+                                </div>
+                                <div className="space-y-1">
+                                    <h3 className="font-extrabold text-neutral-900 text-2xl tracking-tight">
+                                        Order #{activeOrder.id} Requested
+                                    </h3>
+                                    <p className="text-sm font-extrabold text-amber-600 uppercase tracking-wider bg-amber-50 py-1.5 px-4 rounded-xl inline-block border border-amber-200">
+                                        Waiting for assistant to verify
+                                    </p>
+                                </div>
+
+                                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4.5 text-left space-y-2 shadow-xs">
+                                    <div className="flex items-center gap-2 text-amber-950 font-extrabold text-xs uppercase tracking-wide">
+                                        <span>⚠️ Bulk Order Verification Required</span>
+                                    </div>
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        Your order is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
+                                    </p>
+                                </div>
+
+                                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 flex items-center justify-between">
+                                    <span className="font-semibold text-slate-500">Requested Order Total:</span>
+                                    <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong>
+                                </div>
+
+                                <p className="text-[11px] text-neutral-400 font-medium pt-1">
+                                    This screen will automatically update once an assistant clicks "Allow Customer to Pay".
+                                </p>
+                            </div>
+                        )}
+
+                        {/* 2nd POPUP MODAL FOR BULK ORDERS & GCASH VERIFICATION (AUTHORIZED OR REGULAR ORDER) */}
+                        {activeOrder.paymentMethod === 'GCash' &&
+                         !((checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
+                            <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
+                                {/* Header badge if bulk order authorized */}
+                                {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
+                                    <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
+                                        <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
+                                            <span>✅ Permission Granted by Staff!</span>
+                                        </div>
+                                        <p className="text-xs text-emerald-700">
+                                            Staff has authorized your bulk order. Please transfer <strong>₱{activeOrder.total.toLocaleString()}</strong> to GCash below and submit your screenshot.
+                                        </p>
+                                    </div>
+                                )}
+
+                                {/* Store GCash Account Details Box */}
+                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
+                                        <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
+                                    </div>
+                                    <div className="space-y-1 text-xs text-blue-950">
+                                        <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
+                                        <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
+                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
+                                    </div>
+                                </div>
+
+                                {/* Reference Screenshot Selection Input */}
+                                <div className="space-y-2 pt-1">
+                                    <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
+                                        <span>Upload GCash Reference Picture / Screenshot</span>
+                                        <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
+                                    </label>
+
+                                    {activeOrder.status === 'RECEIPT_REJECTED' && (
+                                        <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
+                                            <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
+                                            <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
+                                        </div>
+                                    )}
+
+                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
+                                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
+                                            <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
+                                                <span>📸 Payment Screenshot Submitted</span>
+                                            </div>
+                                            <p className="text-xs text-blue-800 leading-relaxed">
+                                                Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {selectedReceiptPreview ? (
+                                        <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
+                                                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
+                                                <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
+                                                <div className="space-y-1">
+                                                    <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
+                                                    <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
+                                                        Change Selected Picture
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            className="hidden"
+                                                            onChange={(e) => {
+                                                                const file = e.target.files?.[0]
+                                                                if (file) {
+                                                                    const reader = new FileReader()
+                                                                    reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                    reader.readAsDataURL(file)
+                                                                }
+                                                            }}
+                                                        />
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSubmitReceipt}
+                                                    disabled={isSubmittingReceipt}
+                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                >
+                                                    {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedReceiptPreview(null)}
+                                                    className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : !activeOrder.paymentReceipt ? (
+                                        <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
+                                            <span className="text-2xl">📱</span>
+                                            <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
+                                            <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0]
+                                                    if (file) {
+                                                        const reader = new FileReader()
+                                                        reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                        reader.readAsDataURL(file)
+                                                    }
+                                                }}
+                                            />
+                                        </label>
+                                    ) : (
+                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
+                                            <div className="flex items-center gap-3">
+                                                <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
+                                                <div>
+                                                    <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
+                                                    <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
+                                                </div>
+                                            </div>
+                                            <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
+                                                Change Reference Picture
+                                                <input
+                                                    type="file"
+                                                    accept="image/*"
+                                                    className="hidden"
+                                                    onChange={(e) => {
+                                                        const file = e.target.files?.[0]
+                                                        if (file) {
+                                                            const reader = new FileReader()
+                                                            reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                            reader.readAsDataURL(file)
+                                                        }
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* COD Verification Details */}
+                        {activeOrder.paymentMethod === 'COD' && (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-left space-y-2">
+                                <span className="text-xs font-black text-emerald-900 uppercase">Cash on Delivery Verification</span>
+                                <p className="text-xs text-emerald-800 leading-relaxed">
+                                    Cash on Delivery requires staff product availability verification before order confirmation. Staff is checking item availability now...
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Confirmed / Sent to Kitchen Status */}
+                        {['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes((activeOrder.status || '').toUpperCase()) && (
+                            <div className="bg-emerald-500 text-white rounded-2xl p-4 text-center space-y-2 shadow-md">
+                                <p className="font-extrabold text-sm">🎉 Order Confirmed & Approved by Staff!</p>
+                                <p className="text-xs text-emerald-100">Your order is now being prepared in the kitchen.</p>
+                                <button
+                                    onClick={() => {
+                                        setIsVerificationModalOpen(false)
+                                        setActiveTab('tracking')
+                                    }}
+                                    className="bg-white text-emerald-900 font-extrabold text-xs px-4 py-2 rounded-xl mt-2 cursor-pointer shadow-xs hover:bg-emerald-50 transition-all"
+                                >
+                                    View Kitchen & Delivery Tracker
+                                </button>
+                            </div>
+                        )}
+
+                        <div className="pt-2 flex gap-3">
+                            <button
+                                onClick={() => setIsVerificationModalOpen(false)}
+                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
+                            >
+                                Keep Waiting in Billing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Account Required for Checkout Modal */}
             {isAuthModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-neutral-100 relative text-center">
-                        <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl shadow-inner">
-                            🔐
-                        </div>
-
                         <h3 className="text-xl font-extrabold text-neutral-900 mb-2">
                             Account Required for Checkout
                         </h3>
@@ -1412,7 +2082,7 @@ export const OnlineCustomer: React.FC = () => {
                                 onClick={() => navigate('/login', { state: { from: '/customer' } })}
                                 className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg shadow-orange-500/25 transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
                             >
-                                <span>🔑 Login / Register Now</span>
+                                <span>Login / Register Now</span>
                             </button>
 
                             <button

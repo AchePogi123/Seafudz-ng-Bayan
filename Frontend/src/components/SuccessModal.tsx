@@ -20,7 +20,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
   // Hybrid split inputs
   const [hybridCash, setHybridCash] = useState<string>('')
   const [hybridEwallet, setHybridEwallet] = useState<string>('')
-  const [hybridWalletType, setHybridWalletType] = useState<'GCash'>('GCash')
+  const [hybridWalletType, setHybridWalletType] = useState<'GCash' | 'Maya'>('GCash')
 
   const totalAmount = orderDetails ? Math.round(orderDetails.total) : 0
 
@@ -60,16 +60,6 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
 
   const handlePresetClick = (amount: number) => {
     setCashReceived(amount.toString())
-  }
-
-  const handleExactChange = () => {
-    setCashReceived(totalAmount.toString())
-  }
-
-  const handleAutoFillEwallet = () => {
-    const cash = parseFloat(hybridCash) || 0
-    const rem = Math.max(0, totalAmount - cash)
-    setHybridEwallet(rem.toString())
   }
 
   const handleConfirm = () => {
@@ -124,7 +114,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                   : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
-              {method === 'Hybrid' ? '🔄 Hybrid' : method}
+              {method === 'Hybrid' ? 'Hybrid' : method}
             </button>
           ))}
         </div>
@@ -134,7 +124,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
           <div className="bg-purple-50/50 border border-purple-200/80 rounded-2xl p-4 mb-5 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-[11px] font-black text-purple-900 tracking-wider uppercase flex items-center gap-1.5">
-                <span>🔄</span> HYBRID SPLIT PAYMENT
+                HYBRID SPLIT PAYMENT
               </h3>
               <span className="text-[11px] font-bold text-neutral-500">
                 Target: <strong className="text-purple-700 font-black">₱{totalAmount.toLocaleString()}</strong>
@@ -145,7 +135,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
             <div className="grid grid-cols-2 gap-3">
               {/* Cash Portion */}
               <div>
-                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider mb-1">
                   Cash Amount
                 </label>
                 <div className="relative flex items-center">
@@ -155,24 +145,25 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                     value={hybridCash}
                     onChange={(e) => setHybridCash(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
+                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
                   />
                 </div>
               </div>
 
               {/* E-Wallet Portion */}
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
-                    E-Wallet (GCash)
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider">
+                    E-Wallet Amount
                   </label>
-                  <button
-                    type="button"
-                    onClick={handleAutoFillEwallet}
-                    className="text-[10px] font-bold text-purple-600 hover:text-purple-800 underline cursor-pointer"
+                  <select
+                    value={hybridWalletType}
+                    onChange={(e) => setHybridWalletType(e.target.value as 'GCash' | 'Maya')}
+                    className="text-[10px] font-extrabold text-purple-700 bg-purple-100/80 px-1 py-0.5 rounded outline-none cursor-pointer"
                   >
-                    Auto-Fill
-                  </button>
+                    <option value="GCash">GCash</option>
+                    <option value="Maya">Maya</option>
+                  </select>
                 </div>
                 <div className="relative flex items-center">
                   <span className="absolute left-2.5 text-neutral-400 font-bold text-xs">₱</span>
@@ -181,19 +172,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                     value={hybridEwallet}
                     onChange={(e) => setHybridEwallet(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-6 pr-2 py-1.5 border border-neutral-200 rounded-xl text-xs font-bold focus:border-purple-500 focus:ring-1 focus:ring-purple-500 outline-none bg-white"
+                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
                   />
                 </div>
-              </div>
-            </div>
-
-            {/* E-wallet Type selector */}
-            <div className="flex items-center gap-2 pt-1">
-              <span className="text-[10px] font-bold text-neutral-500 uppercase">E-Wallet:</span>
-              <div className="flex gap-1.5">
-                <span className="px-2.5 py-1 text-[10px] font-black rounded-lg border bg-blue-600 text-white border-blue-600">
-                  GCash
-                </span>
               </div>
             </div>
 
@@ -204,7 +185,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
               </span>
               {isHybridComplete ? (
                 <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
-                  ✓ Exactly balanced
+                  Exactly balanced
                 </span>
               ) : (
                 <span className="text-[11px] font-black text-rose-600">
@@ -221,7 +202,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
         {paymentMethod === 'Cash' && (
           <div className="bg-amber-50/40 border border-amber-100/90 rounded-2xl p-4 sm:p-4.5 mb-5 space-y-3.5">
             <h3 className="text-[11px] font-black text-amber-900 tracking-wider uppercase flex items-center gap-1.5">
-              💵 POS CASH CALCULATOR
+              POS CASH CALCULATOR
             </h3>
 
             <div className="grid grid-cols-2 gap-3 items-center">
@@ -235,14 +216,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                     type="number"
                     value={cashReceived}
                     onChange={(e) => setCashReceived(e.target.value)}
-                    placeholder="Enter amount"
-                    className="w-full pl-6 pr-6 py-2 border border-neutral-200 rounded-xl text-xs font-bold focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none bg-white text-neutral-800"
+                    placeholder="0"
+                    className="w-full pl-7 pr-3 py-2 text-sm font-black text-neutral-900 bg-white border border-amber-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
                   />
-                  <div className="absolute right-2 pointer-events-none text-neutral-400">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
-                    </svg>
-                  </div>
                 </div>
               </div>
 
@@ -250,32 +226,30 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                 <label className="block text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">
                   CHANGE DUE
                 </label>
-                <div
-                  className={`py-2 px-3 rounded-xl border text-xs font-black ${
-                    change !== null
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                      : 'bg-neutral-100/60 border-neutral-200/80 text-neutral-400'
-                  }`}
-                >
-                  {change !== null ? `₱${Math.round(change).toLocaleString()}` : '₱0'}
+                <div className="bg-white border border-amber-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-400">₱</span>
+                  <span className="text-sm font-black text-emerald-600">
+                    {change !== null ? `₱${Math.round(change).toLocaleString()}` : '₱0'}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* Quick Amount Keys */}
-            <div className="space-y-1.5 pt-0.5">
-              <span className="block text-[10px] font-bold text-neutral-400 uppercase tracking-wider">
-                QUICK AMOUNT KEYS
+            {/* Quick Cash Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mr-1">
+                Quick:
               </span>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={handleExactChange}
-                  className="px-3 py-1.5 bg-white border border-neutral-200 hover:border-orange-500 rounded-xl text-xs font-bold text-neutral-700 transition-all hover:bg-orange-50/30 active:scale-95 cursor-pointer shadow-2xs"
-                >
-                  Exact Change
-                </button>
-                {[100, 200, 500, 1000, 2000].map((amt) => (
+              {[
+                totalAmount,
+                Math.ceil(totalAmount / 50) * 50,
+                Math.ceil(totalAmount / 100) * 100,
+                Math.ceil(totalAmount / 500) * 500,
+                Math.ceil(totalAmount / 1000) * 1000,
+              ]
+                .filter((v, i, a) => a.indexOf(v) === i && v >= totalAmount)
+                .slice(0, 4)
+                .map((amt) => (
                   <button
                     key={amt}
                     type="button"
@@ -286,12 +260,11 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
                   </button>
                 ))}
               </div>
-            </div>
 
             {/* Alert for Insufficient cash */}
             {cashReceived && change === null && parseFloat(cashReceived) < totalAmount && (
               <p className="text-[11px] font-bold text-red-600 flex items-center gap-1 pt-1">
-                ⚠️ Cash received is less than total amount (₱{totalAmount.toLocaleString()})
+                Cash received is less than total amount (₱{totalAmount.toLocaleString()})
               </p>
             )}
           </div>

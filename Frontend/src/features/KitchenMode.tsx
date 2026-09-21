@@ -1,6 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
+import { checkIfBulkOrder } from '../utils/bulkOrder'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 interface OrderItem {
   name: string
@@ -17,6 +21,7 @@ export interface KitchenOrder {
   customer?: string
   notes?: string
   total?: number
+  isBulk?: boolean
   createdAt?: string
   paymentMethod?: string
   startTime?: number | null
@@ -24,10 +29,38 @@ export interface KitchenOrder {
 }
 
 export const KitchenMode: React.FC = () => {
+  const currentUser = getActiveUser()
+  const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
+
+  // Admin CRUD Modal states
+  const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+  const [editingKitchenOrder, setEditingKitchenOrder] = useState<any | null>(null)
+
+  const handleDeleteKitchenOrder = async (orderId: string) => {
+    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete Kitchen Order #${orderId}? This will remove it from the database.`)
+    if (!confirmDelete) return
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
+    } catch {}
+
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    setOrders((prev) => prev.filter((o) => o.id !== orderId))
+  }
 
   // Load orders from LocalStorage
   const getLocalOrders = (): KitchenOrder[] => {
@@ -41,8 +74,13 @@ export const KitchenMode: React.FC = () => {
           const orderType = (o.type || o.order_type || '').toLowerCase()
           const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
 
-          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant
-          if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(rawStatus)) {
+          // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant (status becomes CONFIRMED)
+          const unconfirmedStatuses = [
+            'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+            'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
+          ]
+          if (rawStatus === 'CANCELLED' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
             return false
           }
 
@@ -65,6 +103,9 @@ export const KitchenMode: React.FC = () => {
           const rawType = (o.type || o.order_type || 'Take Out').trim()
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
+          const calcTotal = parseFloat(o.total || 0)
+          const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.cartItems || o.items))
+
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
             queue: o.id || o.ref || 'POS',
@@ -72,6 +113,8 @@ export const KitchenMode: React.FC = () => {
             category: formatCategory,
             status: mappedStatus,
             customer: customerName,
+            total: calcTotal,
+            isBulk: isBulkOrder,
             items: (o.cartItems || o.items || []).map((ci: any) => ({
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
@@ -137,6 +180,9 @@ export const KitchenMode: React.FC = () => {
                 const rawType = (o.order_type || o.type || 'Take Out').trim()
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
+                const calcTotal = parseFloat(o.total || 0)
+                const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.items))
+
                 return {
                   id: o.id,
                   queue: o.id,
@@ -144,6 +190,8 @@ export const KitchenMode: React.FC = () => {
                   category: formatCategory,
                   status: norm,
                   customer: customerName,
+                  total: calcTotal,
+                  isBulk: isBulkOrder,
                   items: (o.items || []).map((item: any) => ({
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
@@ -330,26 +378,32 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  const queueOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING' || s === 'UNCONFIRMED' || s === 'PENDING'
-  })
-  const processingOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
-  })
+  const queueOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING' || s === 'UNCONFIRMED' || s === 'PENDING'
+      }),
+    [orders]
+  )
 
-  const [historyPage, setHistoryPage] = useState(1)
-  const ITEMS_PER_PAGE = 5
+  const processingOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
+      }),
+    [orders]
+  )
 
-  const historyOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
-  })
-
-  const totalPages = Math.max(1, Math.ceil(historyOrders.length / ITEMS_PER_PAGE))
-  const startIndex = (historyPage - 1) * ITEMS_PER_PAGE
-  const paginatedHistoryOrders = historyOrders.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  const historyOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
+      }),
+    [orders]
+  )
 
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
@@ -364,18 +418,29 @@ export const KitchenMode: React.FC = () => {
             </span>
           </div>
 
-          <button
-            onClick={() => setIsHistoryModalOpen(true)}
-            className="flex items-center gap-2 bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-            title="View Order History"
-          >
-            <span>Order History</span>
-            {historyOrders.length > 0 && (
-              <span className="bg-white text-[#ff7a00] font-black text-[10px] px-1.5 py-0.5 rounded-full">
-                {historyOrders.length}
-              </span>
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                onClick={() => setIsAdminCreateOpen(true)}
+                className="bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 flex items-center gap-1.5"
+              >
+                <span>➕</span> Create Ticket (Admin)
+              </button>
             )}
-          </button>
+
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="flex items-center gap-2 bg-neutral-900 hover:bg-black text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              title="View Order History"
+            >
+              <span>Order History</span>
+              {historyOrders.length > 0 && (
+                <span className="bg-orange-500 text-white font-black text-[10px] px-1.5 py-0.5 rounded-full">
+                  {historyOrders.length}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
@@ -405,7 +470,14 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
+                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                                BULK ORDER
+                              </span>
+                            )}
+                          </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
                           )}
@@ -478,7 +550,14 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
+                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
+                                BULK ORDER
+                              </span>
+                            )}
+                          </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
                           )}
@@ -532,40 +611,39 @@ export const KitchenMode: React.FC = () => {
 
       {/* History Modal */}
       {isHistoryModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50">
+        <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-3 sm:p-6 z-50 animate-fadeIn">
           <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col max-h-[92vh]">
-            <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between">
+            <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between flex-shrink-0">
               <h2 className="text-lg font-black text-neutral-900">Order History</h2>
               <button
                 onClick={() => setIsHistoryModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 font-bold"
+                className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold transition-colors cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto flex-1">
-              <table className="min-w-full divide-y divide-neutral-100 text-left">
-                <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500">
+            <div className="p-6 overflow-y-auto flex-1 max-h-[75vh] scroll-smooth overscroll-contain transform-gpu [will-change:scroll-position] [contain:content]">
+              <table className="min-w-full divide-y divide-neutral-100 text-left relative">
+                <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500 sticky top-0 z-10">
                   <tr>
-                    <th className="px-6 py-3.5">Reference #</th>
-                    <th className="px-6 py-3.5">Customer</th>
-                    <th className="px-6 py-3.5">Date & Time</th>
-                    <th className="px-6 py-3.5">Items</th>
-                    <th className="px-6 py-3.5">Category</th>
-                    <th className="px-6 py-3.5">Action</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Reference #</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Customer</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Date & Time</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Items</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Category</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 text-xs font-medium">
-                  {paginatedHistoryOrders.length === 0 ? (
+                  {historyOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-neutral-400">
+                      <td colSpan={5} className="px-6 py-12 text-center text-neutral-400">
                         No completed order history yet.
                       </td>
                     </tr>
                   ) : (
-                    paginatedHistoryOrders.map((tx) => (
-                      <tr key={tx.id}>
+                    historyOrders.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-neutral-50/60">
                         <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
                         <td className="px-6 py-3.5 font-semibold text-neutral-800">{tx.customer || '—'}</td>
                         <td className="px-6 py-3.5 text-neutral-500">{tx.createdAt}</td>
@@ -573,38 +651,11 @@ export const KitchenMode: React.FC = () => {
                           {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
                         </td>
                         <td className="px-6 py-3.5 text-neutral-600">{tx.category}</td>
-                        <td className="px-6 py-3.5">
-                          <button onClick={(e) => deleteOrder(tx.id, e)} className="text-red-600 font-bold">
-                            Delete
-                          </button>
-                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-
-              <div className="mt-4 flex justify-between items-center text-xs">
-                <span>
-                  Page {historyPage} of {totalPages}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                    disabled={historyPage === 1}
-                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setHistoryPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={historyPage >= totalPages}
-                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -651,21 +702,69 @@ export const KitchenMode: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleStatusFromModal('Preparing')}
-                  className="bg-orange-600 text-white py-2.5 rounded-xl text-xs font-bold"
+                  className="bg-orange-600 hover:bg-orange-700 text-white py-2.5 rounded-xl text-xs font-bold cursor-pointer"
                 >
                   Start Preparing
                 </button>
                 <button
                   onClick={() => handleStatusFromModal('Ready')}
-                  className="bg-neutral-900 text-white py-2.5 rounded-xl text-xs font-bold"
+                  className="bg-neutral-900 hover:bg-black text-white py-2.5 rounded-xl text-xs font-bold cursor-pointer"
                 >
                   Mark as Ready
                 </button>
               </div>
+
+              {isAdmin && (
+                <div className="pt-3 border-t border-amber-200 bg-amber-50 p-3.5 rounded-xl flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider">Admin Controls:</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingKitchenOrder(selectedOrder)
+                        setSelectedOrderId(null)
+                      }}
+                      className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteKitchenOrder(selectedOrder.id)
+                        setSelectedOrderId(null)
+                      }}
+                      className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {/* ADMIN CRUD MODALS */}
+      <AdminCreateTransactionModal
+        isOpen={isAdminCreateOpen}
+        onClose={() => setIsAdminCreateOpen(false)}
+        onCreated={() => {
+          const updated = getLocalOrders()
+          setOrders(updated)
+        }}
+      />
+
+      <AdminEditTransactionModal
+        isOpen={Boolean(editingKitchenOrder)}
+        transaction={editingKitchenOrder}
+        onClose={() => setEditingKitchenOrder(null)}
+        onSave={() => {
+          const updated = getLocalOrders()
+          setOrders(updated)
+        }}
+      />
     </div>
   )
 }

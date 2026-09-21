@@ -230,39 +230,159 @@ router.patch('/assistant/orders/:id/verify', async (req, res) => {
   }
 });
 
-// PATCH /api/assistant/orders/:id/flag - Flag online order for correction
-router.patch('/assistant/orders/:id/flag', async (req, res) => {
+// PATCH /api/assistant/orders/:id/authorize-gcash - Authorize customer GCash payment
+router.patch('/assistant/orders/:id/authorize-gcash', async (req, res) => {
   try {
     const { id } = req.params;
-    const { correctionNote } = req.body;
+    let order = inMemoryOrders.get(id) || { id };
 
-    const sql = `
-      UPDATE orders
-      SET notes = COALESCE($1, notes), updated_at = NOW()
-      WHERE id = $2
-      RETURNING *
-    `;
-    const { rows } = await query(sql, [correctionNote ? `FLAGGED: ${correctionNote}` : null, id]);
+    order.gcashAuthorized = true;
+    order.status = 'GCASH_AUTHORIZED';
+    order.receiptStatus = 'AWAITING_RECEIPT';
+    order.updated_at = new Date().toISOString();
 
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Order '${id}' not found`,
-      });
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(`UPDATE orders SET status = 'GCASH_AUTHORIZED', updated_at = NOW() WHERE id = $1`, [id]);
+    } catch (err) {
+      console.warn('DB update note (Authorize GCash):', err.message);
     }
 
     return res.status(200).json({
       success: true,
-      message: `Order #${id} flagged for correction`,
-      data: rows[0],
+      message: `GCash payment authorized for order #${id}`,
+      data: formatOrderResponse(order),
     });
   } catch (error) {
-    console.error('Error flagging order:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to flag order',
-      error: error.message,
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/assistant/orders/:id/upload-receipt - Customer uploads GCash screenshot
+router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentReceipt } = req.body;
+    let order = inMemoryOrders.get(id) || { id };
+
+    order.paymentReceipt = paymentReceipt;
+    order.status = 'RECEIPT_SUBMITTED';
+    order.receiptStatus = 'PENDING_VERIFICATION';
+    order.rejectionReason = '';
+    order.updated_at = new Date().toISOString();
+
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(`UPDATE orders SET status = 'RECEIPT_SUBMITTED', updated_at = NOW() WHERE id = $1`, [id]);
+    } catch (err) {
+      console.warn('DB update note (Upload Receipt):', err.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt uploaded for order #${id}`,
+      data: formatOrderResponse(order),
     });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/assistant/orders/:id/verify-receipt - Assistant approves receipt screenshot
+router.patch('/assistant/orders/:id/verify-receipt', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let order = inMemoryOrders.get(id) || { id };
+
+    order.status = 'CONFIRMED';
+    order.receiptStatus = 'APPROVED';
+    order.updated_at = new Date().toISOString();
+
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(`UPDATE orders SET status = 'CONFIRMED', updated_at = NOW() WHERE id = $1`, [id]);
+      await query(
+        `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
+         ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+        [id]
+      );
+    } catch (err) {
+      console.warn('DB update note (Verify Receipt):', err.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt approved for order #${id}. Sent to kitchen!`,
+      data: formatOrderResponse(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/assistant/orders/:id/reject-receipt - Assistant rejects invalid screenshot
+router.patch('/assistant/orders/:id/reject-receipt', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    let order = inMemoryOrders.get(id) || { id };
+
+    order.status = 'RECEIPT_REJECTED';
+    order.receiptStatus = 'REJECTED';
+    order.rejectionReason = reason || 'Invalid payment receipt or reference image. Please upload a clear official GCash confirmation.';
+    order.paymentReceipt = undefined; // clear invalid screenshot
+    order.updated_at = new Date().toISOString();
+
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(`UPDATE orders SET status = 'RECEIPT_REJECTED', updated_at = NOW() WHERE id = $1`, [id]);
+    } catch (err) {
+      console.warn('DB update note (Reject Receipt):', err.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt rejected for order #${id}`,
+      data: formatOrderResponse(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/assistant/orders/:id/confirm-cod - Assistant confirms COD availability
+router.patch('/assistant/orders/:id/confirm-cod', async (req, res) => {
+  try {
+    const { id } = req.params;
+    let order = inMemoryOrders.get(id) || { id };
+
+    order.status = 'CONFIRMED';
+    order.updated_at = new Date().toISOString();
+
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(`UPDATE orders SET status = 'CONFIRMED', updated_at = NOW() WHERE id = $1`, [id]);
+      await query(
+        `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
+         ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+        [id]
+      );
+    } catch (err) {
+      console.warn('DB update note (Confirm COD):', err.message);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `COD Order #${id} availability confirmed! Sent to kitchen!`,
+      data: formatOrderResponse(order),
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

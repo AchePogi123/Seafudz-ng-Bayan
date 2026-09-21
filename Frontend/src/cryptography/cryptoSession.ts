@@ -76,7 +76,7 @@ export function saveSessionToken(token: string): void {
       sessionStorage.setItem(SESSION_TOKEN_KEY, token);
       localStorage.setItem(SESSION_TOKEN_KEY, token);
       localStorage.setItem('seafudz_token', token);
-    } catch {}
+    } catch { }
   }
 }
 
@@ -90,7 +90,7 @@ export function saveActiveUser(user: UserProfile): void {
       sessionStorage.setItem(ACTIVE_USER_KEY, userStr);
       localStorage.setItem(ACTIVE_USER_KEY, userStr);
       localStorage.setItem('seafudz_user', userStr);
-    } catch {}
+    } catch { }
     if (user.sessionToken) {
       saveSessionToken(user.sessionToken);
     }
@@ -155,7 +155,7 @@ export function getActiveUser(): UserProfile | null {
       const parsed = JSON.parse(sessionStored) as UserProfile;
       if (parsed && parsed.role) userFromStorage = parsed;
     }
-  } catch {}
+  } catch { }
 
   // 2. Check localStorage (browser-wide fallback)
   if (!userFromStorage) {
@@ -165,7 +165,7 @@ export function getActiveUser(): UserProfile | null {
         const parsed = JSON.parse(localStored) as UserProfile;
         if (parsed && parsed.role) userFromStorage = parsed;
       }
-    } catch {}
+    } catch { }
   }
 
   // 3. URL parameter session_token sync & merge
@@ -184,7 +184,7 @@ export function getActiveUser(): UserProfile | null {
       try {
         sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(mergedUser));
         sessionStorage.setItem(SESSION_TOKEN_KEY, tokenFromUrl);
-      } catch {}
+      } catch { }
       return mergedUser;
     }
   }
@@ -198,7 +198,7 @@ export function getActiveUser(): UserProfile | null {
     if (parsed) {
       try {
         sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(parsed));
-      } catch {}
+      } catch { }
       return parsed;
     }
   }
@@ -218,7 +218,7 @@ export function clearSession(): void {
       localStorage.removeItem('seafudz_user');
       localStorage.removeItem('seafudz_token');
       localStorage.removeItem('seafudz_active_online_order');
-    } catch {}
+    } catch { }
   }
 }
 

@@ -299,7 +299,7 @@ router.get('/auth/me-profile', async (req, res) => {
 
     // Check employees second
     const empRes = await query(
-      `SELECT id, supabase_user_id, fullname, username, email, role, created_at
+      `SELECT id, supabase_user_id, fullname, username, email, phone, role, created_at
        FROM employees
        WHERE (id::text = $1 OR supabase_user_id::text = $1) OR ($2 <> '' AND LOWER(email) = $2)
        LIMIT 1`,
@@ -351,13 +351,15 @@ router.put('/auth/profile', async (req, res) => {
            SET fullname = COALESCE(NULLIF($1, ''), fullname),
                email = COALESCE(NULLIF($2, ''), email),
                username = COALESCE(NULLIF($3, ''), username),
+               phone = COALESCE(NULLIF($4, ''), phone),
                updated_at = NOW()
-           WHERE (id::text = $4 OR supabase_user_id::text = $4) OR ($5 <> '' AND LOWER(email) = $5) OR ($6 <> '' AND LOWER(email) = $6)
-           RETURNING id, supabase_user_id, fullname, username, email, role, created_at, updated_at`,
+           WHERE (id::text = $5 OR supabase_user_id::text = $5) OR ($6 <> '' AND LOWER(email) = $6) OR ($7 <> '' AND LOWER(email) = $7)
+           RETURNING id, supabase_user_id, fullname, username, email, phone, role, created_at, updated_at`,
           [
             cleanFullname,
             cleanEmail,
             (username || '').trim(),
+            cleanPhone,
             cleanId || '00000000-0000-0000-0000-000000000000',
             cleanOrigEmail,
             cleanEmail,

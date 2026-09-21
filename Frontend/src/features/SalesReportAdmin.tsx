@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { NavbarAdmin } from '../components/NavbarAdmin'
 import { API_BASE_URL } from '../utils/api'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 export interface LiveTransaction {
     id: string
@@ -18,6 +21,9 @@ export interface LiveTransaction {
 type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
 
 const SalesReportAdmin: React.FC = () => {
+    const currentUser = getActiveUser()
+    const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
     const location = useLocation()
     const navState = location.state as { channel?: string; tab?: TabType; payment?: string } | null
 
@@ -25,6 +31,32 @@ const SalesReportAdmin: React.FC = () => {
     const [transactions, setTransactions] = useState<LiveTransaction[]>([])
     const [searchQuery, setSearchQuery] = useState('')
     const [selectedTransaction, setSelectedTransaction] = useState<LiveTransaction | null>(null)
+
+    // Admin CRUD Modal states
+    const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+    const [editingTransaction, setEditingTransaction] = useState<any | null>(null)
+
+    const handleDeleteTransaction = async (id: string) => {
+        const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete transaction #${id}? This will remove it from the PostgreSQL DB.`)
+        if (!confirmDelete) return
+
+        try {
+            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => {})
+        } catch {}
+
+        try {
+            const local = localStorage.getItem('seafudz_orders')
+            if (local) {
+                const parsed = JSON.parse(local)
+                const updated = parsed.filter((o: any) => o.id !== id && o.ref !== id)
+                localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+            }
+            window.dispatchEvent(new Event('seafudz_order_created'))
+        } catch {}
+
+        if (selectedTransaction?.id === id) setSelectedTransaction(null)
+        void loadOrders(true)
+    }
 
     const isFetchingRef = useRef(false)
     const lastFetchRef = useRef(0)
@@ -644,11 +676,32 @@ const SalesReportAdmin: React.FC = () => {
                             </span>
                         </div>
 
-                        <div className="px-6 pb-6">
+                        <div className="px-6 pb-6 flex gap-2">
+                            {isAdmin && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setEditingTransaction(selectedTransaction)
+                                            setSelectedTransaction(null)
+                                        }}
+                                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition-all cursor-pointer text-xs"
+                                    >
+                                        ✏️ Edit Transaction
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteTransaction(selectedTransaction.id)}
+                                        className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-xl transition-all cursor-pointer text-xs"
+                                    >
+                                        🗑️ Delete
+                                    </button>
+                                </>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => setSelectedTransaction(null)}
-                                className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl transition-all cursor-pointer"
+                                className="flex-1 bg-neutral-900 hover:bg-black text-white font-bold py-3 rounded-xl transition-all cursor-pointer text-xs"
                             >
                                 Close
                             </button>
@@ -656,6 +709,20 @@ const SalesReportAdmin: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* ADMIN CRUD MODALS */}
+            <AdminCreateTransactionModal
+                isOpen={isAdminCreateOpen}
+                onClose={() => setIsAdminCreateOpen(false)}
+                onCreated={() => void loadOrders(true)}
+            />
+
+            <AdminEditTransactionModal
+                isOpen={Boolean(editingTransaction)}
+                transaction={editingTransaction}
+                onClose={() => setEditingTransaction(null)}
+                onSave={() => void loadOrders(true)}
+            />
 
             {/* Print Specific CSS Overrides */}
             <style>{`

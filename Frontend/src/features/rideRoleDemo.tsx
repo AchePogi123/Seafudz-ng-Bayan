@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { NavbarRider } from '../components/Navbarrider'
 import { API_BASE_URL } from '../utils/api'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 interface DeliveryItem {
   name: string
@@ -21,12 +24,51 @@ interface DeliveryOrder {
 }
 
 export const RideRoleDemo: React.FC = () => {
+  const currentUser = getActiveUser()
+  const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([])
   const [selectedOrder, setSelectedOrder] = useState<DeliveryOrder | null>(null)
   const [activeTab, setActiveTab] = useState<'All' | 'Ready' | 'Out for Delivery' | 'Completed'>('All')
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+
+  // Admin CRUD Modal states
+  const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+  const [editingRiderOrder, setEditingRiderOrder] = useState<any | null>(null)
+
+  const handleDeleteRiderOrder = async (orderId: string) => {
+    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete Delivery #${orderId}? This will remove it from the PostgreSQL DB.`)
+    if (!confirmDelete) return
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
+    } catch {}
+
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    if (selectedOrder?.id === orderId) setSelectedOrder(null)
+    void fetchDeliveries(true)
+    setNotification(`Delivery #${orderId} deleted from DB by Admin.`)
+  }
+
+  const [hiddenOrderIds, setHiddenOrderIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('seafudz_rider_hidden_orders')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const ITEMS_PER_PAGE = 6
   const isFetchingRef = useRef(false)
   const lastFetchRef = useRef(0)
@@ -44,6 +86,12 @@ export const RideRoleDemo: React.FC = () => {
     try {
       const combinedMap = new Map<string, DeliveryOrder>()
 
+      let hiddenSet = new Set<string>()
+      try {
+        const saved = localStorage.getItem('seafudz_rider_hidden_orders')
+        if (saved) hiddenSet = new Set(JSON.parse(saved))
+      } catch {}
+
       // 1. Read from shared LocalStorage (Delivery Orders ONLY)
       try {
         const local = localStorage.getItem('seafudz_orders')
@@ -52,19 +100,27 @@ export const RideRoleDemo: React.FC = () => {
           if (Array.isArray(parsed)) {
             parsed.forEach((o: any) => {
               // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
-              const orderType = (o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
-              if (!isDelivery) return
+              const orderType = (o.type || o.order_type || '').toLowerCase()
+              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
+              if (isPos) return
+
+              const id = o.id || o.ref
+              if (hiddenSet.has(id) || hiddenSet.has(o.ref)) return
 
               const rawStatus = (o.status || '').toUpperCase()
-              const id = o.id || o.ref
+              const unconfirmedStatuses = [
+                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+              ]
+              if (unconfirmedStatuses.includes(rawStatus)) return
 
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
               else if (rawStatus === 'READY') displayStatus = 'Ready'
               else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else displayStatus = 'Pending'
+              else return // Skip pending / unconfirmed orders in Rider UI
 
               const items: DeliveryItem[] = Array.isArray(o.cartItems)
                 ? o.cartItems.map((ci: any) => ({
@@ -106,17 +162,25 @@ export const RideRoleDemo: React.FC = () => {
           if (Array.isArray(data.data)) {
             data.data.forEach((o: any) => {
               const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
-              if (!isDelivery) return
+              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
+              if (isPos) return
 
               const id = o.id
+              if (hiddenSet.has(id)) return
+
               const rawStatus = (o.status || '').toUpperCase()
+              const unconfirmedStatuses = [
+                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+              ]
+              if (unconfirmedStatuses.includes(rawStatus)) return
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
               else if (rawStatus === 'READY') displayStatus = 'Ready'
               else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else displayStatus = 'Pending'
+              else return // Skip pending / unconfirmed orders in Rider UI
 
               if (!combinedMap.has(id)) {
                 combinedMap.set(id, {
@@ -172,6 +236,20 @@ export const RideRoleDemo: React.FC = () => {
     }
   }, [notification])
 
+  const handleHideOrder = (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setHiddenOrderIds((prev) => {
+      const next = new Set(prev)
+      next.add(orderId)
+      try {
+        localStorage.setItem('seafudz_rider_hidden_orders', JSON.stringify(Array.from(next)))
+      } catch {}
+      return next
+    })
+    setSelectedOrder((prev) => (prev?.id === orderId ? null : prev))
+    setNotification(`Order ${orderId} removed from Rider view (UI only).`)
+  }
+
   // Rider updates status to Out for Delivery or Delivered/Completed
   const handleUpdateStatus = async (orderId: string, newStatus: 'Out for Delivery' | 'Completed') => {
     const apiStatus = newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
@@ -213,11 +291,12 @@ export const RideRoleDemo: React.FC = () => {
       setSelectedOrder({ ...selectedOrder, status: newStatus })
     }
 
-    setNotification(`🛵 Order status updated to "${newStatus}"!`)
+    setNotification(`Order status updated to "${newStatus}"!`)
   }
 
   const filteredDeliveries = useMemo(() => {
     return deliveries.filter((d) => {
+      if (hiddenOrderIds.has(d.id) || hiddenOrderIds.has(d.ref)) return false
       const matchesTab = activeTab === 'All' ? d.status !== 'Completed' : d.status.toLowerCase() === activeTab.toLowerCase()
       if (!matchesTab) return false
 
@@ -230,7 +309,7 @@ export const RideRoleDemo: React.FC = () => {
         (d.address || '').toLowerCase().includes(q)
       )
     })
-  }, [deliveries, activeTab, searchQuery])
+  }, [deliveries, activeTab, searchQuery, hiddenOrderIds])
 
   // Reset pagination when filter or search changes
   useEffect(() => {
@@ -273,30 +352,38 @@ export const RideRoleDemo: React.FC = () => {
                         : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
                     }`}
                   >
-                    <span>{tab === 'Ready' ? '📦' : tab === 'Out for Delivery' ? '🛵' : tab === 'Completed' ? '✨' : '📋'}</span>
                     <span>{tab} Orders</span>
                   </button>
                 ))}
               </div>
 
-              {/* Search Bar */}
-              <div className="relative min-w-[240px]">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 text-sm">🔍</span>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search customer, ref, address..."
-                  className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
-                />
-                {searchQuery && (
+              {/* Search Bar & Admin Create Button */}
+              <div className="flex items-center gap-2 min-w-[240px]">
+                {isAdmin && (
                   <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs"
+                    onClick={() => setIsAdminCreateOpen(true)}
+                    className="px-4 py-2.5 rounded-2xl bg-[#ff7b00] hover:bg-[#e06c00] text-white font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-md shadow-orange-500/20 active:scale-95"
                   >
-                    ✕
+                    ➕ Create Delivery
                   </button>
                 )}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search customer, ref, address..."
+                    className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -304,7 +391,6 @@ export const RideRoleDemo: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {paginatedDeliveries.length === 0 ? (
                 <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                  <div className="text-3xl mb-2">🛵</div>
                   <h3 className="font-bold text-neutral-700">No delivery orders found.</h3>
                   <p className="text-xs mt-1">
                     {searchQuery ? `No results matching "${searchQuery}"` : 'Orders dispatched by Assistant will show up here live.'}
@@ -328,29 +414,41 @@ export const RideRoleDemo: React.FC = () => {
                         <div>
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
                           <h4 className="text-base font-black text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
-                          <p className="text-xs text-neutral-500 mt-0.5">📞 {ord.phone}</p>
+                          <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
                         </div>
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                            ord.status === 'Ready'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : ord.status === 'Out for Delivery'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          }`}
-                        >
-                          ● {ord.status}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                              ord.status === 'Ready'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : ord.status === 'Out for Delivery'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            ● {ord.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleHideOrder(ord.id, e)}
+                            title="Remove from Rider UI (does not delete from DB)"
+                            className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
-                        <p className="truncate">📍 <span className="font-medium text-neutral-700">{ord.address}</span></p>
-                        <p className="truncate">🍤 <span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
-                        <span className="text-neutral-400 font-medium text-[11px]">🕒 {ord.createdAt}</span>
+                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                       </div>
                     </div>
                   )
@@ -372,14 +470,14 @@ export const RideRoleDemo: React.FC = () => {
                     disabled={currentPage === 1}
                     className="px-4 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
                   >
-                    <span>⬅️</span> Prev
+                    Prev
                   </button>
                   <button
                     onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                     disabled={currentPage >= totalPages}
                     className="px-4 py-2 rounded-xl text-xs font-bold bg-[#ff7b00] hover:bg-[#e66f00] text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
                   >
-                    Next <span>➡️</span>
+                    Next
                   </button>
                 </div>
               </div>
@@ -394,7 +492,6 @@ export const RideRoleDemo: React.FC = () => {
 
             {!selectedOrder ? (
               <div className="text-center py-16 text-neutral-400 text-xs">
-                <p className="text-2xl mb-1">👈</p>
                 Select an order from the list to view route and update delivery status.
               </div>
             ) : (
@@ -405,8 +502,8 @@ export const RideRoleDemo: React.FC = () => {
                     <span className="bg-white px-2 py-0.5 rounded font-bold text-[10px] text-neutral-600 uppercase border border-orange-200">{selectedOrder.paymentMethod}</span>
                   </div>
                   <p className="font-bold text-neutral-800">{selectedOrder.customer}</p>
-                  <p className="text-neutral-500">📞 {selectedOrder.phone}</p>
-                  <p className="text-neutral-600 mt-1">📍 {selectedOrder.address}</p>
+                  <p className="text-neutral-500">Phone: {selectedOrder.phone}</p>
+                  <p className="text-neutral-600 mt-1">Address: {selectedOrder.address}</p>
                 </div>
 
                 <div className="bg-neutral-50 p-3 rounded-2xl border border-neutral-100 space-y-1.5">
@@ -430,7 +527,7 @@ export const RideRoleDemo: React.FC = () => {
                       {selectedOrder.status !== 'Ready' ? (
                         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 text-center space-y-1">
                           <p className="text-xs font-bold text-amber-800 flex items-center justify-center gap-1.5">
-                            <span>🍳</span> Cooking in Kitchen
+                            Cooking in Kitchen
                           </p>
                           <p className="text-[11px] text-amber-600">
                             Cannot start delivery yet. Please wait for the kitchen to mark the order as <strong>"Ready / Done"</strong>.
@@ -439,7 +536,7 @@ export const RideRoleDemo: React.FC = () => {
                             disabled
                             className="w-full bg-neutral-200 text-neutral-400 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-not-allowed mt-2"
                           >
-                            <span>🛵</span> Start Delivery (Waiting for Kitchen)
+                            Start Delivery (Waiting for Kitchen)
                           </button>
                         </div>
                       ) : (
@@ -447,7 +544,7 @@ export const RideRoleDemo: React.FC = () => {
                           onClick={() => handleUpdateStatus(selectedOrder.id, 'Out for Delivery')}
                           className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-orange-500/20 cursor-pointer transition-all hover:scale-101"
                         >
-                          <span>🛵</span> Start Delivery (Out for Delivery)
+                          Start Delivery (Out for Delivery)
                         </button>
                       )}
                     </>
@@ -458,8 +555,37 @@ export const RideRoleDemo: React.FC = () => {
                       onClick={() => handleUpdateStatus(selectedOrder.id, 'Completed')}
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-2xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-all hover:scale-101"
                     >
-                      <span>✨</span> Mark as Delivered & Completed
+                      Mark as Delivered & Completed
                     </button>
+                  )}
+
+                  <button
+                    onClick={() => handleHideOrder(selectedOrder.id)}
+                    className="w-full bg-neutral-100 hover:bg-red-50 text-neutral-600 hover:text-red-700 font-bold py-2.5 rounded-2xl text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-neutral-200 hover:border-red-200"
+                  >
+                    Remove Order from Rider View (UI only)
+                  </button>
+
+                  {isAdmin && (
+                    <div className="pt-3 border-t border-amber-200 bg-amber-50 p-3.5 rounded-2xl space-y-2">
+                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">Admin Override Controls:</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingRiderOrder(selectedOrder)}
+                          className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-2 rounded-xl text-xs transition-all cursor-pointer shadow-2xs"
+                        >
+                          ✏️ Edit Delivery
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRiderOrder(selectedOrder.id)}
+                          className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-2xs"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -467,6 +593,20 @@ export const RideRoleDemo: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ADMIN CRUD MODALS */}
+      <AdminCreateTransactionModal
+        isOpen={isAdminCreateOpen}
+        onClose={() => setIsAdminCreateOpen(false)}
+        onCreated={() => void fetchDeliveries(true)}
+      />
+
+      <AdminEditTransactionModal
+        isOpen={Boolean(editingRiderOrder)}
+        transaction={editingRiderOrder}
+        onClose={() => setEditingRiderOrder(null)}
+        onSave={() => void fetchDeliveries(true)}
+      />
     </div>
   )
 }

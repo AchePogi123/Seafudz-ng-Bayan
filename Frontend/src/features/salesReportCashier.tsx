@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
@@ -21,7 +21,24 @@ export interface LiveTransaction {
   change?: number
 }
 
+interface SummaryData {
+  totalOrders: number
+  grossRevenue: number
+  subtotalRevenue: number
+  vatCollected: number
+  averageOrderValue: number
+  breakdown: {
+    cash: { total: number; count: number }
+    gcash: { total: number; count: number }
+    maya: { total: number; count: number }
+    hybrid: { total: number; count: number }
+    cod: { total: number; count: number }
+  }
+}
+
 type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
+
+const PAGE_SIZE = 10
 
 export const SalesReportCashier: React.FC = () => {
   const currentUser = getActiveUser()
@@ -30,242 +47,181 @@ export const SalesReportCashier: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('Today')
   const [transactions, setTransactions] = useState<LiveTransaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<'All' | 'Dine In' | 'Take Out' | 'Delivery'>('All')
   const [paymentFilter, setPaymentFilter] = useState<'All' | 'Cash' | 'GCash' | 'COD'>('All')
 
   // Selected transaction for inspecting official receipt modal
   const [selectedTransaction, setSelectedTransaction] = useState<LiveTransaction | null>(null)
-  
+
+  // Pagination state (10 per page)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalMatchingCount, setTotalMatchingCount] = useState(0)
+  const [isLoading, setIsLoading] = useState(false)
+  const [summaryData, setSummaryData] = useState<SummaryData>({
+    totalOrders: 0,
+    grossRevenue: 0,
+    subtotalRevenue: 0,
+    vatCollected: 0,
+    averageOrderValue: 0,
+    breakdown: {
+      cash: { total: 0, count: 0 },
+      gcash: { total: 0, count: 0 },
+      maya: { total: 0, count: 0 },
+      hybrid: { total: 0, count: 0 },
+      cod: { total: 0, count: 0 },
+    },
+  })
+
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingTransaction, setEditingTransaction] = useState<LiveTransaction | null>(null)
 
-  const isFetchingRef = useRef(false)
-  const lastFetchRef = useRef(0)
+  // Debounce search
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+      setCurrentPage(1)
+    }, 300)
+    return () => clearTimeout(handler)
+  }, [searchQuery])
 
-  // Load Real Orders from LocalStorage and Backend API
-  const loadOrders = useCallback(async (force?: boolean | unknown) => {
-    if (isFetchingRef.current) return
-    const isForce = typeof force === 'boolean' ? force : false
-    const now = Date.now()
-    if (!isForce && now - lastFetchRef.current < 2000) return
+  // Helper to format backend order row
+  const formatOrderRow = useCallback((dbO: any): LiveTransaction => {
+    const rawType = dbO.order_type || dbO.type || ''
+    const normalizedType =
+      rawType.toUpperCase() === 'ONLINE' || rawType === 'Delivery'
+        ? 'Delivery'
+        : rawType.toUpperCase() === 'ON_SITE'
+        ? 'Dine In'
+        : rawType || 'Dine In'
 
-    isFetchingRef.current = true
-    lastFetchRef.current = now
+    let itemsSummary = 'Seafood Dish'
+    let rawItemsList: any[] = []
 
-    try {
-      let combined: LiveTransaction[] = []
+    if (Array.isArray(dbO.items) && dbO.items.length > 0) {
+      rawItemsList = dbO.items
+      itemsSummary = dbO.items
+        .map((i: any) => `${i.name || i.product_name_snapshot || 'Dish'} x${i.quantity || 1}`)
+        .join(', ')
+    } else if (typeof dbO.items === 'string') {
+      itemsSummary = dbO.items
+    }
 
-      // 1. Read LocalStorage
-      try {
-        const local = localStorage.getItem('seafudz_orders')
-
-        if (local) {
-          const parsed = JSON.parse(local)
-
-          if (Array.isArray(parsed)) {
-            combined = parsed.map((o: any) => {
-              let itemsSummary = 'Seafood Dish'
-              let rawItemsList: any[] = []
-
-              if (Array.isArray(o.cartItems)) {
-                rawItemsList = o.cartItems
-                itemsSummary = o.cartItems
-                  .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
-                  .join(', ')
-              } else if (Array.isArray(o.items)) {
-                rawItemsList = o.items
-                itemsSummary = o.items
-                  .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
-                  .join(', ')
-              } else if (typeof o.items === 'string') {
-                itemsSummary = o.items
-              }
-
-              return {
-                id: String(o.id || o.ref),
-                ref: String(o.ref || o.id),
-                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
-                items: itemsSummary,
-                cartItems: rawItemsList,
-                customer:
-                  typeof o.customer === 'string'
-                    ? o.customer
-                    : typeof o.customerName === 'string'
-                    ? o.customerName
-                    : o.type === 'Delivery'
-                    ? 'Online Customer'
-                    : 'Walk-In Customer',
-                total: Number(o.total || 0),
-                type: o.type || 'POS Order',
-                paymentMethod: o.paymentMethod || 'Cash',
-                status: o.status || 'Completed',
-                notes: o.notes || '',
-                cashReceived: o.cashReceived,
-                change: o.change,
-              }
-            })
-          }
-        }
-      } catch (e) {
-        console.warn('Error reading local orders:', e)
-      }
-
-      // 2. Read Backend Database API
-      try {
-        const res = await fetch(`${API_BASE_URL}/orders`)
-
-        if (res.ok) {
-          const json = await res.json()
-          const dbList = json.data || json || []
-
-          if (Array.isArray(dbList)) {
-            dbList.forEach((dbO: any) => {
-              const exists = combined.some(
-                (c) => c.id === dbO.id || c.ref === dbO.id
-              )
-
-              if (!exists) {
-                combined.push({
-                  id: dbO.id,
-                  ref: dbO.id,
-                  dateTime: dbO.created_at
-                    ? new Date(dbO.created_at).toLocaleString()
-                    : new Date().toLocaleString(),
-                  items: Array.isArray(dbO.items)
-                    ? dbO.items
-                      .map(
-                        (i: any) =>
-                          `${i.name || i.product_name_snapshot} x${i.quantity}`
-                      )
-                      .join(', ')
-                    : 'Seafood Items',
-                  cartItems: Array.isArray(dbO.items) ? dbO.items : [],
-                  customer:
-                    dbO.customer_name ||
-                    (dbO.order_type === 'Delivery'
-                      ? 'Online Customer'
-                      : 'Walk-In Customer'),
-                  total: Number(dbO.total || 0),
-                  type: dbO.order_type || dbO.type || 'POS Order',
-                  paymentMethod: dbO.payment_method || 'Cash',
-                  status: dbO.status || 'Completed',
-                  notes: dbO.notes || '',
-                })
-              }
-            })
-          }
-        }
-      } catch (err) {
-        /* Backend fetch fallback */
-      }
-
-      setTransactions(combined)
-    } finally {
-      isFetchingRef.current = false
+    return {
+      id: String(dbO.id),
+      ref: String(dbO.id),
+      dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
+      items: itemsSummary,
+      cartItems: rawItemsList,
+      customer:
+        dbO.customer_name ||
+        (normalizedType === 'Delivery' ? 'Online Customer' : 'Walk-In Customer'),
+      total: Number(dbO.total || 0),
+      type: normalizedType,
+      paymentMethod: dbO.payment_method || 'Cash',
+      status: dbO.status || 'Completed',
+      notes: dbO.notes || '',
     }
   }, [])
 
-  useEffect(() => {
-    void loadOrders()
+  // Fetch KPI summary from backend
+  const fetchSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`)
+      if (res.ok) {
+        const json = await res.json()
+        if (json.success && json.data) {
+          setSummaryData({
+            totalOrders: json.data.totalOrders || 0,
+            grossRevenue: json.data.grossRevenue || 0,
+            subtotalRevenue: json.data.subtotalRevenue || 0,
+            vatCollected: json.data.vatCollected || 0,
+            averageOrderValue: json.data.averageOrderValue || 0,
+            breakdown: json.data.breakdown || {
+              cash: { total: 0, count: 0 },
+              gcash: { total: 0, count: 0 },
+              maya: { total: 0, count: 0 },
+              hybrid: { total: 0, count: 0 },
+              cod: { total: 0, count: 0 },
+            },
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch cashier sales summary:', err)
+    }
+  }, [activeTab])
 
+  // Fetch exact 10 orders for current page
+  const fetchOrdersPage = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const offset = (currentPage - 1) * PAGE_SIZE
+      const params = new URLSearchParams({
+        limit: String(PAGE_SIZE),
+        offset: String(offset),
+        tab: activeTab,
+      })
+      if (typeFilter !== 'All') params.append('type', typeFilter)
+      if (paymentFilter !== 'All') params.append('payment', paymentFilter)
+      if (debouncedSearch) params.append('search', debouncedSearch)
+
+      const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
+      if (res.ok) {
+        const json = await res.json()
+        const list = json.data || []
+        const formatted = list.map(formatOrderRow)
+        setTransactions(formatted)
+        setTotalMatchingCount(typeof json.total === 'number' ? json.total : formatted.length)
+      }
+    } catch (err) {
+      console.error('Failed to fetch 10 orders for cashier:', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [currentPage, activeTab, typeFilter, paymentFilter, debouncedSearch, formatOrderRow])
+
+  // Fetch KPI summary when activeTab changes
+  useEffect(() => {
+    void fetchSummary()
+  }, [fetchSummary])
+
+  // Fetch exact 10 orders when page or filters change
+  useEffect(() => {
+    void fetchOrdersPage()
+  }, [fetchOrdersPage])
+
+  // Auto-sync listener
+  useEffect(() => {
     const handleSync = () => {
-      void loadOrders(true)
+      void fetchSummary()
+      void fetchOrdersPage()
     }
 
     window.addEventListener('seafudz_order_created', handleSync)
     window.addEventListener('storage', handleSync)
 
-    const timer = setInterval(() => {
-      void loadOrders()
-    }, 6000)
-
     return () => {
       window.removeEventListener('seafudz_order_created', handleSync)
       window.removeEventListener('storage', handleSync)
-      clearInterval(timer)
     }
-  }, [loadOrders])
+  }, [fetchSummary, fetchOrdersPage])
 
-  // Filter based on Tab Date, Type, Payment Method, and Search
-  const filteredTransactions = useMemo(() => {
-    const now = new Date()
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab)
+    setCurrentPage(1)
+  }
 
-    return transactions.filter((t) => {
-      // Search matching
-      const q = searchQuery.toLowerCase().trim()
-      const matchesSearch =
-        !q ||
-        (t.ref || '').toLowerCase().includes(q) ||
-        (t.customer || '').toLowerCase().includes(q) ||
-        (t.items || '').toLowerCase().includes(q)
+  const handleTypeChange = (type: 'All' | 'Dine In' | 'Take Out' | 'Delivery') => {
+    setTypeFilter(type)
+    setCurrentPage(1)
+  }
 
-      // Type / Channel matching
-      const matchesType =
-        typeFilter === 'All' ||
-        (t.type || '').toLowerCase() === typeFilter.toLowerCase()
-
-      // Payment Method matching
-      const p = (t.paymentMethod || 'Cash').toLowerCase()
-      const matchesPayment =
-        paymentFilter === 'All' ||
-        (paymentFilter === 'Cash' && p.includes('cash')) ||
-        (paymentFilter === 'GCash' && p.includes('gcash')) ||
-        (paymentFilter === 'COD' && p.includes('cod'))
-
-      // Date Tab filtering
-      const tDate = new Date(t.dateTime)
-      const isValidDate = !isNaN(tDate.getTime())
-
-      let matchesTab = true
-
-      if (isValidDate) {
-        if (activeTab === 'Today') {
-          matchesTab = tDate.toDateString() === now.toDateString()
-        } else if (activeTab === 'This Week') {
-          const diffDays = (now.getTime() - tDate.getTime()) / (1000 * 3600 * 24)
-          matchesTab = diffDays <= 7
-        } else if (activeTab === 'This Month') {
-          matchesTab =
-            tDate.getMonth() === now.getMonth() &&
-            tDate.getFullYear() === now.getFullYear()
-        } else if (activeTab === 'This Year') {
-          matchesTab = tDate.getFullYear() === now.getFullYear()
-        }
-      }
-
-      return matchesSearch && matchesType && matchesPayment && matchesTab
-    })
-  }, [transactions, searchQuery, typeFilter, paymentFilter, activeTab])
-
-  // Computed Metrics
-  const totalSales = useMemo(() => {
-    return filteredTransactions
-      .filter((t) => (t.status || '').toUpperCase() !== 'CANCELLED')
-      .reduce((acc, t) => acc + Number(t.total || 0), 0)
-  }, [filteredTransactions])
-
-  const totalOrders = useMemo(() => {
-    return filteredTransactions.filter(
-      (t) => (t.status || '').toUpperCase() !== 'CANCELLED'
-    ).length
-  }, [filteredTransactions])
-
-  const averageOrder = useMemo(() => {
-    return totalOrders > 0 ? Math.round(totalSales / totalOrders) : 0
-  }, [totalSales, totalOrders])
-
-  const posVsOnlineRatio = useMemo(() => {
-    const validT = filteredTransactions.filter(
-      (t) => (t.status || '').toUpperCase() !== 'CANCELLED'
-    )
-    if (validT.length === 0) return '100% POS Walk-In'
-    const posCount = validT.filter(
-      (t) => t.type !== 'Delivery' && t.customer !== 'Online Customer'
-    ).length
-    const pct = Math.round((posCount / validT.length) * 100)
-    return `${pct}% POS Walk-In / ${100 - pct}% Online`
-  }, [filteredTransactions])
+  const handlePaymentChange = (pm: 'All' | 'Cash' | 'GCash' | 'COD') => {
+    setPaymentFilter(pm)
+    setCurrentPage(1)
+  }
 
   // Helper to parse items string into list
   const getOrderedItems = (items: string) => {
@@ -277,7 +233,9 @@ export const SalesReportCashier: React.FC = () => {
   }
 
   const handleDeleteTransaction = async (id: string) => {
-    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete transaction #${id}? This will remove it from the PostgreSQL database and all role views.`)
+    const confirmDelete = window.confirm(
+      `⚠️ Admin Action: Are you sure you want to permanently delete transaction #${id}? This will remove it from the PostgreSQL database and all role views.`
+    )
     if (!confirmDelete) return
 
     try {
@@ -295,7 +253,26 @@ export const SalesReportCashier: React.FC = () => {
     } catch {}
 
     if (selectedTransaction?.id === id) setSelectedTransaction(null)
-    void loadOrders(true)
+    void fetchSummary()
+    void fetchOrdersPage()
+  }
+
+  // Calculate Pagination numbers
+  const totalPages = Math.max(1, Math.ceil(totalMatchingCount / PAGE_SIZE))
+  const startItem = totalMatchingCount > 0 ? (currentPage - 1) * PAGE_SIZE + 1 : 0
+  const endItem = Math.min(currentPage * PAGE_SIZE, totalMatchingCount)
+
+  const getPaginationRange = () => {
+    const delta = 1
+    const range: (number | string)[] = []
+    for (let i = 1; i <= totalPages; i++) {
+      if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
+        range.push(i)
+      } else if (range[range.length - 1] !== '...') {
+        range.push('...')
+      }
+    }
+    return range
   }
 
   return (
@@ -314,7 +291,7 @@ export const SalesReportCashier: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs sm:text-sm text-neutral-500 font-medium mt-1">
-              Real-time revenue synchronization for Walk-In POS and Online Delivery orders
+              Live ledger displaying 10 orders per page for Walk-In POS and Online Delivery
             </p>
           </div>
 
@@ -332,7 +309,10 @@ export const SalesReportCashier: React.FC = () => {
               Live Sync
             </span>
             <button
-              onClick={() => loadOrders(true)}
+              onClick={() => {
+                void fetchSummary()
+                void fetchOrdersPage()
+              }}
               className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-2xs active:scale-95"
             >
               ↻ Refresh Sales
@@ -340,13 +320,13 @@ export const SalesReportCashier: React.FC = () => {
           </div>
         </div>
 
-        {/* Time Period Filter Tabs (POS Category Pill Style) */}
+        {/* Time Period Filter Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-neutral-200/80 shadow-2xs">
           <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
             {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
               <button
                 key={tab}
-                onClick={() => setActiveTab(tab)}
+                onClick={() => handleTabChange(tab)}
                 className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap ${
                   activeTab === tab
                     ? 'bg-[#ff7b00] text-white shadow-md shadow-orange-500/20'
@@ -359,7 +339,7 @@ export const SalesReportCashier: React.FC = () => {
           </div>
 
           <div className="flex items-center text-xs font-bold text-neutral-600 bg-neutral-50 px-4 py-2 rounded-xl border border-neutral-200">
-            Total Transactions: <strong className="text-neutral-900 ml-1">{filteredTransactions.length}</strong>
+            Total Orders: <strong className="text-neutral-900 ml-1">{summaryData.totalOrders.toLocaleString()}</strong>
           </div>
         </div>
 
@@ -371,7 +351,7 @@ export const SalesReportCashier: React.FC = () => {
               Total Sales Revenue
             </p>
             <div className="text-2xl sm:text-3xl font-black text-[#ff7b00]">
-              ₱{totalSales.toLocaleString()}
+              ₱{summaryData.grossRevenue.toLocaleString()}
             </div>
             <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
               Exact revenue for {activeTab.toLowerCase()}
@@ -384,7 +364,7 @@ export const SalesReportCashier: React.FC = () => {
               Completed Orders
             </p>
             <div className="text-2xl sm:text-3xl font-black text-neutral-800">
-              {totalOrders}
+              {summaryData.totalOrders.toLocaleString()}
             </div>
             <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
               Verified paid transactions
@@ -397,23 +377,23 @@ export const SalesReportCashier: React.FC = () => {
               Average Transaction Value
             </p>
             <div className="text-2xl sm:text-3xl font-black text-emerald-600">
-              ₱{averageOrder.toLocaleString()}
+              ₱{summaryData.averageOrderValue.toLocaleString()}
             </div>
             <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
               Per order transaction average
             </p>
           </div>
 
-          {/* Sales Ratio */}
+          {/* Cash vs GCash Breakdown */}
           <div className="bg-white p-5 rounded-3xl shadow-2xs border border-neutral-200/80 space-y-1">
             <p className="text-[11px] uppercase font-black tracking-wider text-neutral-400">
-              Sales Channel Ratio
+              Cash vs GCash Total
             </p>
-            <div className="text-base sm:text-lg font-extrabold text-slate-800 pt-1">
-              {posVsOnlineRatio}
+            <div className="text-sm font-bold text-slate-800 pt-1">
+              ₱{summaryData.breakdown.cash.total.toLocaleString()} Cash / ₱{summaryData.breakdown.gcash.total.toLocaleString()} GCash
             </div>
             <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
-              Walk-In POS vs Online Delivery
+              {summaryData.breakdown.cash.count} Cash • {summaryData.breakdown.gcash.count} GCash
             </p>
           </div>
         </div>
@@ -426,7 +406,7 @@ export const SalesReportCashier: React.FC = () => {
             {(['All', 'Dine In', 'Take Out', 'Delivery'] as const).map((type) => (
               <button
                 key={type}
-                onClick={() => setTypeFilter(type)}
+                onClick={() => handleTypeChange(type)}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   typeFilter === type
                     ? 'bg-neutral-900 text-white shadow-2xs'
@@ -444,7 +424,7 @@ export const SalesReportCashier: React.FC = () => {
             {(['All', 'Cash', 'GCash', 'COD'] as const).map((method) => (
               <button
                 key={method}
-                onClick={() => setPaymentFilter(method)}
+                onClick={() => handlePaymentChange(method)}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   paymentFilter === method
                     ? 'bg-orange-500 text-white shadow-2xs'
@@ -463,7 +443,7 @@ export const SalesReportCashier: React.FC = () => {
             <h2 className="font-extrabold text-sm text-neutral-800 flex items-center gap-2">
               <span>🧾 Live Transactions</span>
               <span className="text-xs font-bold bg-neutral-100 text-neutral-600 px-2.5 py-0.5 rounded-full">
-                {filteredTransactions.length} Items
+                Page {currentPage} of {totalPages}
               </span>
             </h2>
 
@@ -490,7 +470,19 @@ export const SalesReportCashier: React.FC = () => {
               </thead>
 
               <tbody className="divide-y divide-neutral-100">
-                {filteredTransactions.length === 0 ? (
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={isAdmin ? 10 : 9} className="px-6 py-16 text-center text-orange-600">
+                      <div className="flex items-center justify-center gap-2 font-bold">
+                        <svg className="animate-spin h-5 w-5 text-orange-600" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                        </svg>
+                        <span>Loading page {currentPage}...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : transactions.length === 0 ? (
                   <tr>
                     <td colSpan={isAdmin ? 10 : 9} className="px-6 py-16 text-center text-neutral-400">
                       <span className="text-3xl block mb-2">📋</span>
@@ -501,7 +493,7 @@ export const SalesReportCashier: React.FC = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredTransactions.map((tx) => {
+                  transactions.map((tx) => {
                     const isCancelled = (tx.status || '').toUpperCase() === 'CANCELLED'
 
                     return (
@@ -593,7 +585,7 @@ export const SalesReportCashier: React.FC = () => {
                                 type="button"
                                 onClick={() => handleDeleteTransaction(tx.id)}
                                 title="Delete Transaction (Admin)"
-                                className="bg-red-50 hover:bg-red-100 text-red-600 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all border border-red-200 cursor-pointer"
+                                className="bg-red-600 hover:bg-red-700 text-red-600 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all border border-red-200 cursor-pointer"
                               >
                                 🗑️
                               </button>
@@ -607,6 +599,70 @@ export const SalesReportCashier: React.FC = () => {
               </tbody>
             </table>
           </div>
+
+          {/* 1-10 PER PAGE PAGINATION CONTROLS */}
+          <div className="pt-4 pb-4 px-6 border-t border-neutral-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+            {/* Showing 1-10 of N label */}
+            <div className="flex items-center gap-2 text-xs font-bold text-neutral-600">
+              <span className="bg-neutral-100 px-3 py-1.5 rounded-xl border border-neutral-200">
+                Showing <strong className="text-orange-600">{startItem}–{endItem}</strong> of{' '}
+                <strong className="text-neutral-900">{totalMatchingCount.toLocaleString()}</strong> orders
+              </span>
+              <span className="text-[11px] text-neutral-400 font-semibold">(10 per page)</span>
+            </div>
+
+            {/* Page navigation buttons */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {/* Prev Button */}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1 || isLoading}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                >
+                  <span>⬅️</span> Prev
+                </button>
+
+                {/* Numbered Page Buttons */}
+                {getPaginationRange().map((pageItem, idx) => {
+                  if (pageItem === '...') {
+                    return (
+                      <span key={`ellipsis-${idx}`} className="px-2 text-xs font-black text-neutral-400">
+                        …
+                      </span>
+                    )
+                  }
+
+                  const pageNum = Number(pageItem)
+                  const isActive = currentPage === pageNum
+
+                  return (
+                    <button
+                      key={`page-${pageNum}`}
+                      onClick={() => setCurrentPage(pageNum)}
+                      disabled={isLoading}
+                      className={`min-w-[34px] h-[34px] px-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
+                        isActive
+                          ? 'bg-orange-500 text-white shadow-xs shadow-orange-500/30 ring-2 ring-orange-400/30'
+                          : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  )
+                })}
+
+                {/* Next Button */}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages || isLoading}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                >
+                  Next <span>➡️</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -617,7 +673,7 @@ export const SalesReportCashier: React.FC = () => {
           onClick={() => setSelectedTransaction(null)}
         >
           <div
-            className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-neutral-200 space-y-4 animate-in zoom-in-95 duration-200"
+            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-neutral-200 space-y-4 animate-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -752,14 +808,20 @@ export const SalesReportCashier: React.FC = () => {
       <AdminCreateTransactionModal
         isOpen={isAdminCreateOpen}
         onClose={() => setIsAdminCreateOpen(false)}
-        onCreated={() => void loadOrders(true)}
+        onCreated={() => {
+          void fetchSummary()
+          void fetchOrdersPage()
+        }}
       />
 
       <AdminEditTransactionModal
         isOpen={Boolean(editingTransaction)}
         transaction={editingTransaction}
         onClose={() => setEditingTransaction(null)}
-        onSave={() => void loadOrders(true)}
+        onSave={() => {
+          void fetchSummary()
+          void fetchOrdersPage()
+        }}
       />
     </div>
   )

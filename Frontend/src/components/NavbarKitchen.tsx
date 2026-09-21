@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import SidebarDrawer from './SidebarDrawer'
+import BrandLogo from './BrandLogo'
 
 export const NavbarKitchen: React.FC = () => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -8,40 +9,28 @@ export const NavbarKitchen: React.FC = () => {
 
     return (
         <>
-            <header className="relative z-40 bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-3.5 sm:p-4 shadow-lg shadow-slate-200/40 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 transition-all duration-200">
-                <div className="flex items-center justify-between gap-4 w-full md:w-auto">
+            <header className="relative z-40 bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-3 sm:p-3.5 shadow-lg shadow-slate-200/40 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 transition-all duration-200">
+                <div className="flex items-center gap-3.5 w-full md:w-auto">
+                    {/* Dedicated Hamburger Menu Trigger */}
                     <button
                         onClick={() => setIsSidebarOpen(true)}
-                        className="flex items-center gap-3 cursor-pointer select-none group text-left focus:outline-none rounded-xl p-1 -m-1 transition-all"
+                        className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200/90 flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-orange-500/30 shrink-0"
+                        aria-label="Open Navigation Menu"
+                        title="Open Navigation Menu"
                     >
-                        <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 p-0.5 shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform duration-200 flex-shrink-0">
-                            <div className="w-full h-full bg-white rounded-[14px] overflow-hidden flex items-center justify-center">
-                                <img
-                                    src="/src/assets/hero.png"
-                                    alt="Seafood ng Bayan Logo"
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                        ; (e.target as HTMLImageElement).src =
-                                            "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23fff7ed'/><text y='65' x='35' font-size='45' font-weight='bold' fill='%23ea580c'>S</text></svg>"
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <h1 className="font-extrabold text-slate-900 text-base sm:text-lg tracking-tight group-hover:text-amber-600 transition-colors">
-                                    Seafood ng Bayan
-                                </h1>
-                                <span className="text-black text-[11px] font-bold uppercase tracking-wider">
-                                    KITCHEN
-                                </span>
-                            </div>
-                            <p className="text-xs font-medium text-slate-500">
-                                {location.pathname === '/kitchen' ? 'Kitchen Display' : 'Kitchen Portal'}
-                            </p>
-                        </div>
+                        <svg className="w-5 h-5 text-slate-700" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+                        </svg>
                     </button>
+
+                    {/* Brand Logo (Navigates to Home/Landing) */}
+                    <BrandLogo
+                        to="/"
+                        size="md"
+                        badge="KITCHEN"
+                        badgeColor="bg-amber-100 text-amber-700 border border-amber-200"
+                        subtitle={location.pathname === '/kitchen' ? 'Kitchen Display System' : 'Kitchen Management'}
+                    />
                 </div>
             </header>
 

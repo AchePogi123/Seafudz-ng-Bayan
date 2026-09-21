@@ -102,4 +102,14 @@ Seafudz-ng-Bayan/
 | **Database** | `docker compose stop` | Stop local Postgres container |
 | **Backend** | `cd Backend && node server.js` | Start local Express API server |
 | **Frontend** | `cd Frontend && npm run dev` | Start local React dev server |
+| **Scripts** | `python3 scripts/stress_test.py --quick` | Run automated API stress & load test |
+| **Scripts** | `python3 scripts/generate_sales_transactions.py -c 1000 --db` | Generate & seed synthetic sales data |
 | **Deploy FE** | `firebase deploy` | Deploy frontend to Firebase Hosting |
+
+---
+
+## 📚 Additional Documentation
+- [SCRIPTS_GUIDE.md](./SCRIPTS_GUIDE.md) — Comprehensive guide for data generation & stress testing scripts.
+- [DOCKER_POSTGRES_SETUP.md](./DOCKER_POSTGRES_SETUP.md) — Docker PostgreSQL local setup.
+- [BACKEND_READINESS.md](./BACKEND_READINESS.md) — Complete backend integration readiness breakdown.
+

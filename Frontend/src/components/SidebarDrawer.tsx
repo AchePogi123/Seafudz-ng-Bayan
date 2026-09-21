@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getActiveUser, clearSession } from '../cryptography/cryptoSession'
+import BrandLogo from './BrandLogo'
 
 interface SidebarDrawerProps {
   isOpen: boolean
@@ -337,28 +338,33 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
       >
         {/* Drawer Header */}
         <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-linear-to-br from-orange-500 to-amber-600 flex items-center justify-center text-white shadow-md shadow-orange-500/20 font-black text-xl tracking-tight">
-              S
-            </div>
-            <div>
-              <h2 className="font-extrabold text-slate-900 text-base tracking-tight leading-tight">
-                Seafood ng Bayan
-              </h2>
-              <span className="block mt-0.5 text-[11px] font-bold uppercase tracking-wider text-black">
-                {activeRole}
-              </span>
-            </div>
-          </div>
+          <BrandLogo
+            to="/"
+            onClick={onClose}
+            size="md"
+            badge={activeRole}
+            subtitle="System Navigator"
+          />
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-white border border-slate-200 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+            className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
             aria-label="Close Sidebar"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
+        </div>
+
+        {/* Branch / Shift Status Banner */}
+        <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+          <span className="flex items-center gap-1.5 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
+            Caloocan Flagship Branch
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">
+            ESC to close
+          </span>
         </div>
 
         {/* Drawer Body - Navigation Links */}

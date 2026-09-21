@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import logo from '../assets/logoseafudsngbayan.png';
+import BrandLogo from '../components/BrandLogo';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken } from '../cryptography/cryptoSession';
@@ -96,7 +96,7 @@ const Login = () => {
     const returnPath = typeof fromState === 'string' ? fromState : (fromState?.pathname || null);
 
     let targetPath = (normRole === 'customer' && returnPath) ? returnPath : '/customer';
-    if (normRole === 'cashier') targetPath = '/sales-report';
+    if (normRole === 'cashier') targetPath = '/pos';
     else if (normRole === 'kitchen') targetPath = '/kitchen';
     else if (normRole === 'rider') targetPath = '/rider';
     else if (normRole === 'assistant') targetPath = '/assistant';
@@ -333,12 +333,9 @@ const Login = () => {
       <div className="flex-1 flex justify-center items-center py-12 px-6">
         <div className="bg-white w-full max-w-[480px] rounded-2xl shadow-2xs border border-neutral-200/80 p-8 sm:p-10 transition-all">
           {/* Logo */}
-          <div className="text-center mb-8">
-            <Link to="/landingpage" className="inline-block group">
-              <img src={logo} alt="Logo" className="w-16 h-16 object-cover rounded-full mb-3 border border-neutral-200 mx-auto group-hover:scale-105 transition-transform" />
-              <h1 className="text-xl font-bold text-neutral-900 tracking-tight group-hover:text-orange-600 transition-colors">SEAFUDZ NG BAYAN</h1>
-            </Link>
-            <p className="text-xs text-neutral-400 mt-1 font-medium">By: Joemarie Gobangco & Gelyn Basilio-Alday</p>
+          <div className="text-center mb-8 flex flex-col items-center">
+            <BrandLogo to="/" size="lg" subtitle="FRESH SEAFOOD & BILAO FEASTS" />
+            <p className="text-xs text-neutral-400 mt-2 font-medium">By: Joemarie Gobangco & Gelyn Basilio-Alday</p>
           </div>
 
           {/* Notice when redirected from Order Online */}

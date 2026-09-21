@@ -223,7 +223,7 @@ const handleLogin = async (e: React.FormEvent) => {
   const userRole = profileData.data?.role || 'customer';
 
   // Role-based Navigation
-  if (userRole === 'cashier') navigate('/sales-report');
+  if (userRole === 'cashier') navigate('/pos');
   else if (userRole === 'kitchen') navigate('/kitchen');
   else if (userRole === 'rider') navigate('/rider');
   else if (userRole === 'assistant') navigate('/assistant');

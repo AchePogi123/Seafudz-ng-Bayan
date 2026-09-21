@@ -1,3 +1,5 @@
+import { checkIfBulkOrder } from '../utils/bulkOrder.js';
+
 // Central In-Memory Store Fallback for backend order flow
 export const inMemoryOrders = new Map();
 
@@ -28,7 +30,7 @@ export function formatOrderResponse(row) {
   const normStatus = normalizeFlowStatus(row.status);
   const items = Array.isArray(row.items) ? row.items : [];
   const calcTotal = parseFloat(row.total || 0);
-  const isBulk = Boolean(row.is_bulk || row.isBulk || calcTotal > 10000);
+  const isBulk = Boolean(row.is_bulk || row.isBulk || checkIfBulkOrder(items));
 
   return {
     id: row.id,

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
+import { checkIfBulkOrder } from '../utils/bulkOrder.js';
 
 const router = Router();
 
@@ -356,9 +357,13 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const isBulk = calcTotal > 10000;
+    const isBulk = checkIfBulkOrder(items);
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';
+    const initialStatus = initialPaymentMethod === 'COD' 
+      ? 'PENDING_COD' 
+      : isBulk 
+      ? 'GCASH_PENDING_APPROVAL' 
+      : 'GCASH_AUTHORIZED';
 
     const orderRecord = {
       id: orderId,
@@ -373,8 +378,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       paymentMethod: initialPaymentMethod,
       payment_receipt: req.body.paymentReceipt || undefined,
       paymentReceipt: req.body.paymentReceipt || undefined,
-      gcash_authorized: false,
-      gcashAuthorized: false,
+      gcash_authorized: !isBulk,
+      gcashAuthorized: !isBulk,
+      status: initialStatus,
       receipt_status: 'NONE',
       receiptStatus: 'NONE',
       is_bulk: isBulk,
@@ -403,9 +409,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     try {
       await query(
         `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
-         VALUES ($1, $2, 'ONLINE', 'PENDING', $3, $4, $5, $6, $7, NOW())
-         ON CONFLICT (id) DO UPDATE SET status = 'PENDING'`,
-        [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null]
+         VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`,
+        [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null, initialStatus]
       );
     } catch (dbErr) {
       console.warn('DB query note (using central memory store):', dbErr.message);

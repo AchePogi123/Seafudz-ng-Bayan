@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { NavbarAssistant } from '../components/NavbarAssistant'
 import { API_BASE_URL } from '../utils/api'
+import { checkIfBulkOrder } from '../utils/bulkOrder'
 
 export interface OrderItem {
   name: string
@@ -95,8 +96,8 @@ export const AssistantRole: React.FC = () => {
           const parsed = JSON.parse(local)
           if (Array.isArray(parsed)) {
             parsed.forEach((o: any) => {
-              const orderType = (o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
+              const orderType = (o.type || o.order_type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
 
               const rawStatus = (o.status || 'PENDING').toLowerCase()
@@ -148,7 +149,7 @@ export const AssistantRole: React.FC = () => {
           if (Array.isArray(data.data)) {
             data.data.forEach((o: any) => {
               const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
+              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
 
               const id = o.id
@@ -251,6 +252,24 @@ export const AssistantRole: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
       })
     } catch {}
+
+    try {
+      const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      const updatedGlobal = globalOrders.map((o: any) =>
+        o.id === orderId || o.ref === orderId ? { ...o, status: 'GCASH_AUTHORIZED' } : o
+      )
+      localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+
+      const activeOrderStr = localStorage.getItem('seafudz_active_online_order')
+      if (activeOrderStr) {
+        const activeObj = JSON.parse(activeOrderStr)
+        if (activeObj.id === orderId || activeObj.ref === orderId) {
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'GCASH_AUTHORIZED' }))
+        }
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
     fetchAssistantOrders(true)
     setNotification(`GCash payment authorized for order #${orderId}! Customer can now pay and upload receipt.`)
   }
@@ -515,7 +534,7 @@ export const AssistantRole: React.FC = () => {
                             }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
-                          {(ord.total > 10000 || (ord as any).isBulk) && (
+                          {(checkIfBulkOrder(ord.items) || (ord as any).isBulk) && (
                             <span className={`text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${s === 'gcash_pending_approval' ? 'bg-amber-600' : 'bg-amber-500'}`}>
                               {s === 'gcash_pending_approval' ? 'BULK ORDER - REQUESTING FOR PAYMENT' : 'BULK ORDER'}
                             </span>
@@ -649,14 +668,20 @@ export const AssistantRole: React.FC = () => {
                       <span>{addressValidation.isComplete ? '✓' : '!'}</span>
                       <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
                     </p>
+                    {(!selectedOrder.paymentMethod?.toLowerCase().includes('cod') && selectedOrder.status?.toUpperCase() !== 'PENDING_COD') && (
+                      <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                        <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
+                        <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 {/* BULK ORDER NOTICE IN DETAIL PANEL */}
-                {(selectedOrder.total > 10000 || (selectedOrder as any).isBulk) && (
+                {(checkIfBulkOrder(selectedOrder.items) || (selectedOrder as any).isBulk) && (
                   <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-900 flex items-center justify-between">
                     <div>
-                      <p className="font-extrabold text-xs uppercase">⚠️ Bulk Order (₱10k+)</p>
+                      <p className="font-extrabold text-xs uppercase">⚠️ Bulk Order</p>
                       <p className="text-[10px] text-amber-700">Requires staff verification</p>
                     </div>
                     <span className="bg-amber-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase">Bulk</span>
@@ -677,59 +702,82 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    return (
-                      <>
-                        {/* GCash Authorization Button */}
-                        {(selectedOrder.paymentMethod === 'GCash' || !selectedOrder.paymentMethod?.includes('COD')) &&
-                          ['GCASH_PENDING_APPROVAL', 'PENDING', 'UNCONFIRMED', 'ORDER PLACED'].includes(st) && (
-                            <button
-                              onClick={() => handleAuthorizeGCash(selectedOrder.id)}
-                              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
-                            >
-                              Authorize GCash Payment (Allow Customer to Pay)
-                            </button>
-                          )}
+                    const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD'
+                    const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
 
-                        {/* GCash Receipt Review Buttons */}
-                        {selectedOrder.paymentReceipt && ['RECEIPT_SUBMITTED', 'GCASH_AUTHORIZED', 'PENDING', 'UNCONFIRMED'].includes(st) && (
+                    // 1. COD Orders Flow
+                    if (isCOD) {
+                      return (
+                        <button
+                          onClick={() => handleConfirmCOD(selectedOrder.id)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
+                        >
+                          <span>✅ Confirm COD Order & Send to Kitchen</span>
+                        </button>
+                      )
+                    }
+
+                    // 2. GCash Bulk Order Needing Initial Authorization
+                    if (st === 'GCASH_PENDING_APPROVAL') {
+                      return (
+                        <button
+                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
+                        >
+                          Authorize GCash Payment (Allow Customer to Pay)
+                        </button>
+                      )
+                    }
+
+                    // 3. GCash Order WITH Reference Screenshot Submitted
+                    if (hasReceipt) {
+                      return (
+                        <div className="space-y-3">
                           <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
                             <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
                             <div className="flex gap-2">
                               <button
                                 onClick={() => handleVerifyReceipt(selectedOrder.id)}
-                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl text-xs cursor-pointer transition-all shadow-xs"
+                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
                               >
-                                Approve Receipt
+                                Approve Receipt & Send to Kitchen
                               </button>
                               <button
                                 onClick={() => handleRejectReceipt(selectedOrder.id)}
-                                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-2.5 rounded-xl text-xs cursor-pointer transition-all shadow-xs"
+                                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
                               >
                                 Reject (Invalid Image)
                               </button>
                             </div>
                           </div>
-                        )}
+                          <button
+                            onClick={() => handleApproveSendToKitchen()}
+                            className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-black py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-orange-500/30 active:scale-98"
+                          >
+                            <span>✅ Confirm Order & Send to Kitchen</span>
+                          </button>
+                        </div>
+                      )
+                    }
 
-                        {/* COD Confirmation Button */}
-                        {(selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD') &&
-                          ['PENDING_COD', 'PENDING', 'UNCONFIRMED'].includes(st) && (
-                            <button
-                              onClick={() => handleConfirmCOD(selectedOrder.id)}
-                              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-sm active:scale-98"
-                            >
-                              Confirm COD & Send to Kitchen
-                            </button>
-                          )}
-
-                        {/* EXPLICIT CONFIRM ORDER & SEND TO KITCHEN BUTTON FOR BULK & PENDING ORDERS */}
+                    // 4. GCash Order WITHOUT Reference Screenshot (Customer hasn't sent it yet)
+                    return (
+                      <div className="space-y-3">
+                        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 text-center space-y-1">
+                          <p className="font-extrabold text-xs text-amber-900 flex items-center justify-center gap-1.5">
+                            <span>⏳</span> Awaiting GCash Reference Screenshot
+                          </p>
+                          <p className="text-[11px] text-amber-700 leading-normal">
+                            The customer has not sent/uploaded their GCash transaction reference screenshot yet. Order cannot be confirmed until system detects receipt.
+                          </p>
+                        </div>
                         <button
-                          onClick={() => handleApproveSendToKitchen()}
-                          className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-black py-4 rounded-2xl text-sm flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg shadow-orange-500/30 active:scale-98"
+                          disabled
+                          className="w-full bg-slate-200 text-slate-400 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-not-allowed border border-slate-300 opacity-80"
                         >
-                          <span>✅ Confirm Order & Send to Kitchen</span>
+                          <span>🔒 Cannot Confirm (Awaiting Reference Screenshot)</span>
                         </button>
-                      </>
+                      </div>
                     )
                   })()}
                 </div>

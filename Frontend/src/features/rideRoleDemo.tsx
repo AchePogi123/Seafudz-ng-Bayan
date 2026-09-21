@@ -27,6 +27,14 @@ export const RideRoleDemo: React.FC = () => {
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [hiddenOrderIds, setHiddenOrderIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('seafudz_rider_hidden_orders')
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    } catch {
+      return new Set()
+    }
+  })
   const ITEMS_PER_PAGE = 6
   const isFetchingRef = useRef(false)
   const lastFetchRef = useRef(0)
@@ -44,6 +52,12 @@ export const RideRoleDemo: React.FC = () => {
     try {
       const combinedMap = new Map<string, DeliveryOrder>()
 
+      let hiddenSet = new Set<string>()
+      try {
+        const saved = localStorage.getItem('seafudz_rider_hidden_orders')
+        if (saved) hiddenSet = new Set(JSON.parse(saved))
+      } catch {}
+
       // 1. Read from shared LocalStorage (Delivery Orders ONLY)
       try {
         const local = localStorage.getItem('seafudz_orders')
@@ -52,9 +66,12 @@ export const RideRoleDemo: React.FC = () => {
           if (Array.isArray(parsed)) {
             parsed.forEach((o: any) => {
               // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
-              const orderType = (o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || (o.address && o.address !== 'Dine In' && o.customer !== 'Walk-In')
+              const orderType = (o.type || o.order_type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return
+
+              const id = o.id || o.ref
+              if (hiddenSet.has(id) || hiddenSet.has(o.ref)) return
 
               const rawStatus = (o.status || '').toUpperCase()
               const unconfirmedStatuses = [
@@ -64,14 +81,12 @@ export const RideRoleDemo: React.FC = () => {
               ]
               if (unconfirmedStatuses.includes(rawStatus)) return
 
-              const id = o.id || o.ref
-
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
               else if (rawStatus === 'READY') displayStatus = 'Ready'
               else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else displayStatus = 'Pending'
+              else return // Skip pending / unconfirmed orders in Rider UI
 
               const items: DeliveryItem[] = Array.isArray(o.cartItems)
                 ? o.cartItems.map((ci: any) => ({
@@ -113,10 +128,12 @@ export const RideRoleDemo: React.FC = () => {
           if (Array.isArray(data.data)) {
             data.data.forEach((o: any) => {
               const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.address
+              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return
 
               const id = o.id
+              if (hiddenSet.has(id)) return
+
               const rawStatus = (o.status || '').toUpperCase()
               const unconfirmedStatuses = [
                 'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
@@ -129,7 +146,7 @@ export const RideRoleDemo: React.FC = () => {
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
               else if (rawStatus === 'READY') displayStatus = 'Ready'
               else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else displayStatus = 'Pending'
+              else return // Skip pending / unconfirmed orders in Rider UI
 
               if (!combinedMap.has(id)) {
                 combinedMap.set(id, {
@@ -185,6 +202,20 @@ export const RideRoleDemo: React.FC = () => {
     }
   }, [notification])
 
+  const handleHideOrder = (orderId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setHiddenOrderIds((prev) => {
+      const next = new Set(prev)
+      next.add(orderId)
+      try {
+        localStorage.setItem('seafudz_rider_hidden_orders', JSON.stringify(Array.from(next)))
+      } catch {}
+      return next
+    })
+    setSelectedOrder((prev) => (prev?.id === orderId ? null : prev))
+    setNotification(`Order ${orderId} removed from Rider view (UI only).`)
+  }
+
   // Rider updates status to Out for Delivery or Delivered/Completed
   const handleUpdateStatus = async (orderId: string, newStatus: 'Out for Delivery' | 'Completed') => {
     const apiStatus = newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
@@ -231,6 +262,7 @@ export const RideRoleDemo: React.FC = () => {
 
   const filteredDeliveries = useMemo(() => {
     return deliveries.filter((d) => {
+      if (hiddenOrderIds.has(d.id) || hiddenOrderIds.has(d.ref)) return false
       const matchesTab = activeTab === 'All' ? d.status !== 'Completed' : d.status.toLowerCase() === activeTab.toLowerCase()
       if (!matchesTab) return false
 
@@ -243,7 +275,7 @@ export const RideRoleDemo: React.FC = () => {
         (d.address || '').toLowerCase().includes(q)
       )
     })
-  }, [deliveries, activeTab, searchQuery])
+  }, [deliveries, activeTab, searchQuery, hiddenOrderIds])
 
   // Reset pagination when filter or search changes
   useEffect(() => {
@@ -340,17 +372,29 @@ export const RideRoleDemo: React.FC = () => {
                           <h4 className="text-base font-black text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
                           <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
                         </div>
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                            ord.status === 'Ready'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : ord.status === 'Out for Delivery'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                          }`}
-                        >
-                          ● {ord.status}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                              ord.status === 'Ready'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : ord.status === 'Out for Delivery'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            ● {ord.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleHideOrder(ord.id, e)}
+                            title="Remove from Rider UI (does not delete from DB)"
+                            className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
@@ -470,6 +514,13 @@ export const RideRoleDemo: React.FC = () => {
                       Mark as Delivered & Completed
                     </button>
                   )}
+
+                  <button
+                    onClick={() => handleHideOrder(selectedOrder.id)}
+                    className="w-full bg-neutral-100 hover:bg-red-50 text-neutral-600 hover:text-red-700 font-bold py-2.5 rounded-2xl text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer border border-neutral-200 hover:border-red-200"
+                  >
+                    Remove Order from Rider View (UI only)
+                  </button>
                 </div>
               </div>
             )}

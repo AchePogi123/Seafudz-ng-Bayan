@@ -7,6 +7,7 @@ import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
+import { checkIfBulkOrder } from '../utils/bulkOrder'
 
 interface CartItem {
     item: MenuItem
@@ -54,12 +55,7 @@ const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
-    if (upper === 'GCASH_PENDING_APPROVAL') return 'GCASH_PENDING_APPROVAL'
-    if (upper === 'GCASH_AUTHORIZED') return 'GCASH_AUTHORIZED'
-    if (upper === 'RECEIPT_SUBMITTED') return 'RECEIPT_SUBMITTED'
-    if (upper === 'RECEIPT_REJECTED') return 'RECEIPT_REJECTED'
-    if (upper === 'PENDING_COD') return 'PENDING_COD'
-    if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
+    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
     if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
     if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
@@ -160,7 +156,7 @@ export const OnlineCustomer: React.FC = () => {
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
     const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
-    const [paymentReceipt, setPaymentReceipt] = useState<string | null>(null)
+    const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
     const [isBulkWarningModalOpen, setIsBulkWarningModalOpen] = useState(false)
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
@@ -311,8 +307,15 @@ export const OnlineCustomer: React.FC = () => {
                 window.dispatchEvent(new Event('seafudz_order_created'))
             } catch { }
 
+            const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
+
             setActiveOrder((prev) => prev ? { ...prev, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' } : null)
             setSelectedReceiptPreview(null)
+
+            if (!isBulk) {
+                setIsVerificationModalOpen(false)
+                setActiveTab('tracking')
+            }
         } catch (err) {
             console.error('Error submitting payment receipt:', err)
         } finally {
@@ -320,12 +323,14 @@ export const OnlineCustomer: React.FC = () => {
         }
     }
 
-    // Auto-navigate customer to Order Status tracking ONLY when Assistant confirms order to kitchen (status becomes CONFIRMED or later)
+    // Auto-navigate customer to Order Status tracking
     useEffect(() => {
         if (!activeOrder?.status) return
         const s = (activeOrder.status || '').toUpperCase()
+        const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
         const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
-        if (isConfirmedOrLater) {
+
+        if (isConfirmedOrLater || (!isBulk && s === 'RECEIPT_SUBMITTED')) {
             setIsVerificationModalOpen(false)
             setActiveTab('tracking')
         }
@@ -339,7 +344,7 @@ export const OnlineCustomer: React.FC = () => {
         }
         syncUserProfileFromDB(currentUser)
         if (cartItems.length > 0) {
-            if (total > 10000) {
+            if (checkIfBulkOrder(cartItems)) {
                 setIsBulkWarningModalOpen(true)
             }
             setActiveTab('billing')
@@ -375,13 +380,13 @@ export const OnlineCustomer: React.FC = () => {
                         const orderData = data.data || data
                         if (orderData && orderData.status) {
                             backendSuccess = true
-                            const normalized = normalizeStatus(orderData.status)
-                            const currentStatusNorm = normalizeStatus(activeOrderRef.current?.status)
+                            const rawStatus = String(orderData.status).toUpperCase()
+                            const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
 
-                            if (normalized !== currentStatusNorm) {
+                            if (rawStatus !== currentRawStatus) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: normalized }
+                                    const updated = { ...prev, status: rawStatus }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
 
@@ -394,7 +399,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 if (Array.isArray(list)) {
                                                     const updatedList = list.map((o: any) =>
                                                         (o.id === currentOrderId || o.ref === currentOrderId)
-                                                            ? { ...o, status: normalized }
+                                                            ? { ...o, status: rawStatus }
                                                             : o
                                                     )
                                                     localStorage.setItem(key, JSON.stringify(updatedList))
@@ -413,7 +418,7 @@ export const OnlineCustomer: React.FC = () => {
                     // Backend offline / unreachable
                 }
 
-                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank)
+                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank or changed sub-status)
                 if (!backendSuccess) {
                     try {
                         const userOrdersKey = getOrdersKey(currentUser)
@@ -432,15 +437,16 @@ export const OnlineCustomer: React.FC = () => {
                         const current = allLists.find((o: any) => o.id === currentOrderId || o.ref === currentOrderId)
 
                         if (current && current.status) {
-                            const normalized = normalizeStatus(current.status)
+                            const rawStatus = String(current.status).toUpperCase()
+                            const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
                             const currentRank = getStatusRank(activeOrderRef.current?.status)
-                            const localRank = getStatusRank(normalized)
+                            const localRank = getStatusRank(rawStatus)
 
-                            // ONLY advance status if local rank is strictly higher than current status rank
-                            if (localRank > currentRank) {
+                            // Advance status if local rank is strictly higher OR raw sub-status changed (e.g. GCASH_AUTHORIZED)
+                            if (localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: normalized }
+                                    const updated = { ...prev, status: rawStatus }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
                                     } catch { }
@@ -566,7 +572,12 @@ export const OnlineCustomer: React.FC = () => {
         }
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
-        const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
+        const isBulk = checkIfBulkOrder(cartItems)
+        const initialStatus = paymentMethod === 'COD' 
+            ? 'PENDING_COD' 
+            : isBulk 
+            ? 'GCASH_PENDING_APPROVAL' 
+            : 'GCASH_AUTHORIZED'
 
         const orderPayload = {
             type: 'Delivery',
@@ -939,7 +950,7 @@ export const OnlineCustomer: React.FC = () => {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className="font-extrabold text-sm text-blue-950 uppercase tracking-wide">Active Order #{activeOrder.id} ({activeOrder.paymentMethod})</span>
-                                        {(activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
+                                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (
                                             <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase">Bulk Order</span>
                                         )}
                                     </div>
@@ -1042,7 +1053,9 @@ export const OnlineCustomer: React.FC = () => {
                                             <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
                                         </div>
                                         <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
-                                            Your GCash payment requires verification from staff before payment authorization and order confirmation.
+                                            {checkIfBulkOrder(cartItems)
+                                                ? 'Your GCash payment requires verification from staff before payment authorization and order confirmation.'
+                                                : 'Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.'}
                                         </p>
                                     </button>
 
@@ -1071,7 +1084,7 @@ export const OnlineCustomer: React.FC = () => {
                                     type="submit"
                                     className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
-                                    {total > 10000 ? 'Request Order' : 'Confirm & Submit Order'}
+                                    {checkIfBulkOrder(cartItems) ? 'Request Order' : 'Confirm & Submit Order'}
                                 </button>
                                 <button
                                     type="button"
@@ -1645,7 +1658,7 @@ export const OnlineCustomer: React.FC = () => {
                         </div>
                         <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight">Bulk Order Notice</h3>
                         <p className="text-sm font-semibold text-neutral-600 leading-relaxed bg-amber-50 p-4 rounded-2xl border border-amber-200/80">
-                            "Your order exceeds ₱10,000. It is classified as a Bulk Order and requires staff verification before payment or order confirmation."
+                            "Your order contains item quantities classified as a Bulk Order and requires staff verification before payment or order confirmation."
                         </p>
                         <button
                             onClick={() => setIsBulkWarningModalOpen(false)}
@@ -1683,7 +1696,7 @@ export const OnlineCustomer: React.FC = () => {
                         </div>
 
                         {/* 1st POPUP MODAL FOR BULK ORDERS: WAITING FOR ASSISTANT VERIFICATION & PERMISSION */}
-                        {(activeOrder.total > 10000 || (activeOrder as any).isBulk) &&
+                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) &&
                          (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
                             <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
                                 <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
@@ -1703,7 +1716,7 @@ export const OnlineCustomer: React.FC = () => {
                                         <span>⚠️ Bulk Order Verification Required</span>
                                     </div>
                                     <p className="text-xs text-amber-800 leading-relaxed">
-                                        Your order exceeds ₱10,000 and is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
+                                        Your order is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
                                     </p>
                                 </div>
 
@@ -1720,10 +1733,10 @@ export const OnlineCustomer: React.FC = () => {
 
                         {/* 2nd POPUP MODAL FOR BULK ORDERS & GCASH VERIFICATION (AUTHORIZED OR REGULAR ORDER) */}
                         {activeOrder.paymentMethod === 'GCash' &&
-                         !((activeOrder.total > 10000 || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
+                         !((checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
                             <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
                                 {/* Header badge if bulk order authorized */}
-                                {(activeOrder.total > 10000 || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
+                                {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
                                     <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
                                         <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
                                             <span>✅ Permission Granted by Staff!</span>

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
+import { checkIfBulkOrder } from '../utils/bulkOrder'
 
 interface OrderItem {
   name: string
@@ -72,7 +73,7 @@ export const KitchenMode: React.FC = () => {
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
           const calcTotal = parseFloat(o.total || 0)
-          const isBulkOrder = Boolean(o.is_bulk || o.isBulk || calcTotal > 10000)
+          const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.cartItems || o.items))
 
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
@@ -149,7 +150,7 @@ export const KitchenMode: React.FC = () => {
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
                 const calcTotal = parseFloat(o.total || 0)
-                const isBulkOrder = Boolean(o.is_bulk || o.isBulk || calcTotal > 10000)
+                const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.items))
 
                 return {
                   id: o.id,
@@ -346,26 +347,32 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  const queueOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING' || s === 'UNCONFIRMED' || s === 'PENDING'
-  })
-  const processingOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
-  })
+  const queueOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'CONFIRMED' || s === 'PENDING_PREPARATION' || s === 'IN_KITCHEN' || s === 'WAITING' || s === 'UNCONFIRMED' || s === 'PENDING'
+      }),
+    [orders]
+  )
 
-  const [historyPage, setHistoryPage] = useState(1)
-  const ITEMS_PER_PAGE = 5
+  const processingOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'PREPARING' || s === 'COOKING' || s === 'IN_PROCESS'
+      }),
+    [orders]
+  )
 
-  const historyOrders = orders.filter((o) => {
-    const s = (o.status || '').toUpperCase()
-    return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
-  })
-
-  const totalPages = Math.max(1, Math.ceil(historyOrders.length / ITEMS_PER_PAGE))
-  const startIndex = (historyPage - 1) * ITEMS_PER_PAGE
-  const paginatedHistoryOrders = historyOrders.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  const historyOrders = useMemo(
+    () =>
+      orders.filter((o) => {
+        const s = (o.status || '').toUpperCase()
+        return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
+      }),
+    [orders]
+  )
 
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
@@ -423,7 +430,7 @@ export const KitchenMode: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {(order.isBulk || (order.total && order.total > 10000)) && (
+                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
                               <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
                                 BULK ORDER
                               </span>
@@ -503,7 +510,7 @@ export const KitchenMode: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {(order.isBulk || (order.total && order.total > 10000)) && (
+                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
                               <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
                                 BULK ORDER
                               </span>
@@ -562,40 +569,39 @@ export const KitchenMode: React.FC = () => {
 
       {/* History Modal */}
       {isHistoryModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50">
+        <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-3 sm:p-6 z-50 animate-fadeIn">
           <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col max-h-[92vh]">
-            <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between">
+            <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between flex-shrink-0">
               <h2 className="text-lg font-black text-neutral-900">Order History</h2>
               <button
                 onClick={() => setIsHistoryModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 font-bold"
+                className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold transition-colors cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="p-6 overflow-y-auto flex-1">
-              <table className="min-w-full divide-y divide-neutral-100 text-left">
-                <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500">
+            <div className="p-6 overflow-y-auto flex-1 max-h-[75vh] scroll-smooth overscroll-contain transform-gpu [will-change:scroll-position] [contain:content]">
+              <table className="min-w-full divide-y divide-neutral-100 text-left relative">
+                <thead className="bg-neutral-50 text-xs uppercase font-extrabold text-neutral-500 sticky top-0 z-10">
                   <tr>
-                    <th className="px-6 py-3.5">Reference #</th>
-                    <th className="px-6 py-3.5">Customer</th>
-                    <th className="px-6 py-3.5">Date & Time</th>
-                    <th className="px-6 py-3.5">Items</th>
-                    <th className="px-6 py-3.5">Category</th>
-                    <th className="px-6 py-3.5">Action</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Reference #</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Customer</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Date & Time</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Items</th>
+                    <th className="px-6 py-3.5 bg-neutral-50">Category</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 text-xs font-medium">
-                  {paginatedHistoryOrders.length === 0 ? (
+                  {historyOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-neutral-400">
+                      <td colSpan={5} className="px-6 py-12 text-center text-neutral-400">
                         No completed order history yet.
                       </td>
                     </tr>
                   ) : (
-                    paginatedHistoryOrders.map((tx) => (
-                      <tr key={tx.id}>
+                    historyOrders.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-neutral-50/60">
                         <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
                         <td className="px-6 py-3.5 font-semibold text-neutral-800">{tx.customer || '—'}</td>
                         <td className="px-6 py-3.5 text-neutral-500">{tx.createdAt}</td>
@@ -603,38 +609,11 @@ export const KitchenMode: React.FC = () => {
                           {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
                         </td>
                         <td className="px-6 py-3.5 text-neutral-600">{tx.category}</td>
-                        <td className="px-6 py-3.5">
-                          <button onClick={(e) => deleteOrder(tx.id, e)} className="text-red-600 font-bold">
-                            Delete
-                          </button>
-                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-
-              <div className="mt-4 flex justify-between items-center text-xs">
-                <span>
-                  Page {historyPage} of {totalPages}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setHistoryPage((p) => Math.max(1, p - 1))}
-                    disabled={historyPage === 1}
-                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setHistoryPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={historyPage >= totalPages}
-                    className="px-3 py-1 bg-neutral-100 rounded disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>

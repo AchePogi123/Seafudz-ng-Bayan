@@ -162,6 +162,7 @@ export const OnlineCustomer: React.FC = () => {
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
+    const [isCancellingOrder, setIsCancellingOrder] = useState(false)
 
     // Save cart state to user-scoped localStorage whenever modified
     useEffect(() => {
@@ -348,18 +349,72 @@ export const OnlineCustomer: React.FC = () => {
         }
     }
 
+    const handleCancelOrder = async () => {
+        if (!activeOrder) return
+        const confirmCancel = window.confirm(`Are you sure you want to cancel Order #${activeOrder.id}?`)
+        if (!confirmCancel) return
+
+        setIsCancellingOrder(true)
+        try {
+            const token = localStorage.getItem('seafudz_token')
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}/cancel`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ status: 'CANCELLED' }),
+            })
+
+            const resData = await res.json().catch(() => ({}))
+            if (!res.ok && resData.message) {
+                alert(resData.message)
+                setIsCancellingOrder(false)
+                return
+            }
+        } catch (err) {
+            console.error('Error sending cancel request:', err)
+        }
+
+        const updatedOrder = { ...activeOrder, status: 'CANCELLED' }
+        setActiveOrder(updatedOrder)
+
+        try {
+            const currentUser = getActiveUser()
+            const userOrderKey = getActiveOrderKey(currentUser)
+            const userOrdersKey = getOrdersKey(currentUser)
+            localStorage.setItem(userOrderKey, JSON.stringify(updatedOrder))
+
+            const existingUserOrders = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+            const updatedUserOrders = existingUserOrders.map((o: any) =>
+                (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o
+            )
+            localStorage.setItem(userOrdersKey, JSON.stringify(updatedUserOrders))
+
+            const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+            const updatedGlobalOrders = globalOrders.map((o: any) =>
+                (o.id === activeOrder.id || o.ref === activeOrder.id) ? { ...o, status: 'CANCELLED' } : o
+            )
+            localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobalOrders))
+        } catch { }
+
+        window.dispatchEvent(new Event('seafudz_order_created'))
+        setIsCancellingOrder(false)
+    }
+
     // Auto-navigate customer to Order Status tracking
     useEffect(() => {
         if (!activeOrder?.status) return
         const s = (activeOrder.status || '').toUpperCase()
         const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
         const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
+        const isNonBulkCOD = (activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD') && !isBulk
 
-        if (isConfirmedOrLater || (!isBulk && s === 'RECEIPT_SUBMITTED')) {
+        if (isConfirmedOrLater || (!isBulk && s === 'RECEIPT_SUBMITTED') || isNonBulkCOD) {
             setIsVerificationModalOpen(false)
             setActiveTab('tracking')
         }
-    }, [activeOrder?.status])
+    }, [activeOrder?.status, activeOrder?.paymentMethod])
 
     const handleProceedToCheckout = () => {
         const currentUser = getActiveUser()
@@ -683,8 +738,13 @@ export const OnlineCustomer: React.FC = () => {
             } catch { }
             setCartItems([])
             setOrderNotes('')
-            setActiveTab('billing')
-            setIsVerificationModalOpen(true)
+            if (paymentMethod === 'COD' && !isBulk) {
+                setActiveTab('tracking')
+                setIsVerificationModalOpen(false)
+            } else {
+                setActiveTab('billing')
+                setIsVerificationModalOpen(true)
+            }
             setIsMobileCartOpen(false)
             window.dispatchEvent(new Event('seafudz_order_created'))
         } catch (err) {
@@ -1178,18 +1238,78 @@ export const OnlineCustomer: React.FC = () => {
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
                     <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
-                        <div className="border-b border-neutral-100 pb-5">
-                            <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
-                                Order Status Management
-                            </p>
-                            <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
-                                Order ID: {activeOrder.id}
-                            </h3>
-                            <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
+                        <div className="border-b border-neutral-100 pb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                            <div>
+                                <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
+                                    Order Status Management
+                                </p>
+                                <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
+                                    Order ID: {activeOrder.id}
+                                </h3>
+                                <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
+                            </div>
+
+                            {/* CANCEL ORDER BUTTON (Eligible only when still in queue in kitchen, before PREPARING) */}
+                            {(() => {
+                                const rawSt = (activeOrder.status || '').toUpperCase()
+                                const isCancelled = rawSt === 'CANCELLED'
+                                const isPreparingOrLater = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
+
+                                if (isCancelled) {
+                                    return (
+                                        <span className="bg-rose-100 text-rose-800 font-extrabold text-xs px-4 py-2 rounded-xl border border-rose-300">
+                                            ❌ Order Cancelled
+                                        </span>
+                                    )
+                                }
+
+                                if (!isPreparingOrLater) {
+                                    return (
+                                        <button
+                                            type="button"
+                                            onClick={handleCancelOrder}
+                                            disabled={isCancellingOrder}
+                                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 hover:border-rose-300 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1.5"
+                                        >
+                                            <span>❌</span> {isCancellingOrder ? 'Cancelling...' : 'Cancel Order'}
+                                        </button>
+                                    )
+                                }
+
+                                return (
+                                    <div className="text-right">
+                                        <span className="bg-neutral-100 text-neutral-500 font-bold text-xs px-3 py-1.5 rounded-xl border border-neutral-200 inline-block">
+                                            🍳 Kitchen Processing
+                                        </span>
+                                        <p className="text-[10px] text-neutral-400 mt-1">Cannot cancel once cooking starts</p>
+                                    </div>
+                                )
+                            })()}
                         </div>
 
+                        {/* CANCELLED ORDER BANNER */}
+                        {activeOrder.status === 'CANCELLED' && (
+                            <div className="bg-rose-50 border border-rose-300 rounded-2xl p-5 text-rose-900 space-y-3 shadow-xs animate-fade-in">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-2xl">❌</span>
+                                    <div>
+                                        <h4 className="font-extrabold text-base text-rose-900">Order Cancelled</h4>
+                                        <p className="text-xs text-rose-700 leading-relaxed">
+                                            This order was cancelled. No further kitchen preparation or payment will be processed.
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleStartNewOrder}
+                                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
+                                >
+                                    Start New Order
+                                </button>
+                            </div>
+                        )}
+
                         {/* BULK ORDER BADGE IF TOTAL > 10K */}
-                        {(activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
+                        {activeOrder.status !== 'CANCELLED' && (activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
                             <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-900">
                                 <div className="flex items-center gap-2">
                                     <span className="text-xl">⚠️</span>
@@ -1203,7 +1323,7 @@ export const OnlineCustomer: React.FC = () => {
                         )}
 
                         {/* GCash Verification Banners & Screenshot Upload */}
-                        {activeOrder.paymentMethod === 'GCash' && (
+                        {activeOrder.status !== 'CANCELLED' && activeOrder.paymentMethod === 'GCash' && (
                             <div className="space-y-4">
                                 {['GCASH_PENDING_APPROVAL', 'PENDING'].includes(activeOrder.status) && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-900 space-y-1">

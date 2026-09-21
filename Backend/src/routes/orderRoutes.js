@@ -280,6 +280,153 @@ router.post('/orders', async (req, res) => {
   }
 });
 
+// DELETE /api/orders/:id - Delete order from DB and memory (Admin action)
+router.delete('/orders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    inMemoryOrders.delete(id);
+
+    try {
+      await query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+      await query(`DELETE FROM kitchen_orders WHERE order_id = $1`, [id]);
+      await query(`DELETE FROM deliveries WHERE order_id = $1`, [id]);
+      await query(`DELETE FROM payments WHERE order_id = $1`, [id]);
+      await query(`DELETE FROM orders WHERE id = $1`, [id]);
+    } catch (dbErr) {
+      console.warn('DB delete note:', dbErr.message);
+    }
+
+    console.log(`🗑️ Order ${id} deleted from database and memory`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Order ${id} deleted successfully`,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete order',
+      error: error.message,
+    });
+  }
+});
+
+// PUT /api/orders/:id - Update full transaction details in DB (Admin action)
+router.put('/orders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      customerName,
+      phone,
+      address,
+      status,
+      paymentMethod,
+      paymentStatus,
+      notes,
+      items,
+      subtotal,
+      vat,
+      deliveryFee,
+      total,
+      type,
+      table,
+    } = req.body;
+
+    // 1. Update inMemoryOrders if present
+    let existingInMemory = inMemoryOrders.get(id) || {};
+    const updatedInMemory = {
+      ...existingInMemory,
+      id,
+      customerName: customerName || existingInMemory.customerName,
+      customer: customerName || existingInMemory.customer,
+      phone: phone || existingInMemory.phone,
+      address: address || existingInMemory.address,
+      status: status ? status.toUpperCase() : existingInMemory.status,
+      paymentMethod: paymentMethod || existingInMemory.paymentMethod,
+      notes: notes !== undefined ? notes : existingInMemory.notes,
+      items: items || existingInMemory.items,
+      total: total !== undefined ? total : existingInMemory.total,
+      type: type || existingInMemory.type,
+      table: table || existingInMemory.table,
+      updated_at: new Date().toISOString(),
+    };
+    inMemoryOrders.set(id, updatedInMemory);
+
+    // 2. Persist in PostgreSQL DB
+    try {
+      const calcTotal = total !== undefined ? total : (subtotal || 0) + (vat || 0) + (deliveryFee || 0);
+
+      await query(
+        `UPDATE orders
+         SET status = COALESCE($1, status),
+             subtotal = COALESCE($2, subtotal),
+             tax = COALESCE($3, tax),
+             delivery_fee = COALESCE($4, delivery_fee),
+             total = COALESCE($5, total),
+             notes = COALESCE($6, notes),
+             order_type = COALESCE($7, order_type),
+             updated_at = NOW()
+         WHERE id = $8`,
+        [
+          status ? status.toUpperCase() : null,
+          subtotal || null,
+          vat || null,
+          deliveryFee || null,
+          calcTotal || null,
+          notes || null,
+          type || null,
+          id,
+        ]
+      );
+
+      // If items provided, recreate order_items in DB
+      if (Array.isArray(items) && items.length > 0) {
+        await query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+        for (const item of items) {
+          const itemName = item.name || item.product_name_snapshot || 'Item';
+          const qty = item.quantity || 1;
+          const price = item.price || item.unit_price || 0;
+          await query(
+            `INSERT INTO order_items (order_id, product_name_snapshot, quantity, unit_price, subtotal)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [id, itemName, qty, price, qty * price]
+          );
+        }
+      }
+
+      // Update payment record if payment method/status supplied
+      if (paymentMethod || paymentStatus) {
+        await query(
+          `INSERT INTO payments (order_id, payment_method, amount, status, updated_at)
+           VALUES ($1, $2, $3, $4, NOW())
+           ON CONFLICT (order_id) DO UPDATE SET
+             payment_method = EXCLUDED.payment_method,
+             status = EXCLUDED.status,
+             updated_at = NOW()`,
+          [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED']
+        ).catch(() => {});
+      }
+    } catch (dbErr) {
+      console.warn('DB update order note:', dbErr.message);
+    }
+
+    console.log(`✏️ Admin updated order ${id} in DB and memory`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Order ${id} updated successfully`,
+      data: updatedInMemory,
+    });
+  } catch (error) {
+    console.error('Error updating order:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update order',
+      error: error.message,
+    });
+  }
+});
+
 // PATCH /api/orders/:id/status - Update order status
 router.patch('/orders/:id/status', async (req, res) => {
   try {
@@ -287,8 +434,14 @@ router.patch('/orders/:id/status', async (req, res) => {
     const { id } = req.params;
 
     const normalizedStatus = (status || '').toUpperCase();
-    const validStatuses = ['PENDING', 'IN_PROCESS', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'CANCELLED'];
-    const finalStatus = validStatuses.includes(normalizedStatus) ? normalizedStatus : 'PENDING';
+    const finalStatus = normalizedStatus;
+
+    if (inMemoryOrders.has(id)) {
+      const o = inMemoryOrders.get(id);
+      o.status = finalStatus;
+      o.updated_at = new Date().toISOString();
+      inMemoryOrders.set(id, o);
+    }
 
     const sql = `
       UPDATE orders
@@ -298,17 +451,10 @@ router.patch('/orders/:id/status', async (req, res) => {
     `;
     const { rows } = await query(sql, [finalStatus, id]);
 
-    if (rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: `Order '${id}' not found`,
-      });
-    }
-
     return res.status(200).json({
       success: true,
       message: `Order ${id} status updated to ${finalStatus}`,
-      data: rows[0],
+      data: rows[0] || { id, status: finalStatus },
     });
   } catch (error) {
     console.error('Error updating order status:', error);

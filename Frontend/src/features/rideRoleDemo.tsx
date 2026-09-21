@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { NavbarRider } from '../components/Navbarrider'
 import { API_BASE_URL } from '../utils/api'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 interface DeliveryItem {
   name: string
@@ -21,12 +24,43 @@ interface DeliveryOrder {
 }
 
 export const RideRoleDemo: React.FC = () => {
+  const currentUser = getActiveUser()
+  const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
   const [deliveries, setDeliveries] = useState<DeliveryOrder[]>([])
   const [selectedOrder, setSelectedOrder] = useState<DeliveryOrder | null>(null)
   const [activeTab, setActiveTab] = useState<'All' | 'Ready' | 'Out for Delivery' | 'Completed'>('All')
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+
+  // Admin CRUD Modal states
+  const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+  const [editingRiderOrder, setEditingRiderOrder] = useState<any | null>(null)
+
+  const handleDeleteRiderOrder = async (orderId: string) => {
+    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete Delivery #${orderId}? This will remove it from the PostgreSQL DB.`)
+    if (!confirmDelete) return
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
+    } catch {}
+
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    if (selectedOrder?.id === orderId) setSelectedOrder(null)
+    void fetchDeliveries(true)
+    setNotification(`Delivery #${orderId} deleted from DB by Admin.`)
+  }
+
   const [hiddenOrderIds, setHiddenOrderIds] = useState<Set<string>>(() => {
     try {
       const saved = localStorage.getItem('seafudz_rider_hidden_orders')
@@ -67,8 +101,8 @@ export const RideRoleDemo: React.FC = () => {
             parsed.forEach((o: any) => {
               // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
               const orderType = (o.type || o.order_type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
-              if (!isDelivery) return
+              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
+              if (isPos) return
 
               const id = o.id || o.ref
               if (hiddenSet.has(id) || hiddenSet.has(o.ref)) return
@@ -128,8 +162,8 @@ export const RideRoleDemo: React.FC = () => {
           if (Array.isArray(data.data)) {
             data.data.forEach((o: any) => {
               const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
-              if (!isDelivery) return
+              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
+              if (isPos) return
 
               const id = o.id
               if (hiddenSet.has(id)) return
@@ -323,23 +357,33 @@ export const RideRoleDemo: React.FC = () => {
                 ))}
               </div>
 
-              {/* Search Bar */}
-              <div className="relative min-w-[240px]">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search customer, ref, address..."
-                  className="w-full pl-4 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
-                />
-                {searchQuery && (
+              {/* Search Bar & Admin Create Button */}
+              <div className="flex items-center gap-2 min-w-[240px]">
+                {isAdmin && (
                   <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs"
+                    onClick={() => setIsAdminCreateOpen(true)}
+                    className="px-4 py-2.5 rounded-2xl bg-[#ff7b00] hover:bg-[#e06c00] text-white font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-md shadow-orange-500/20 active:scale-95"
                   >
-                    ✕
+                    ➕ Create Delivery
                   </button>
                 )}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search customer, ref, address..."
+                    className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -521,12 +565,48 @@ export const RideRoleDemo: React.FC = () => {
                   >
                     Remove Order from Rider View (UI only)
                   </button>
+
+                  {isAdmin && (
+                    <div className="pt-3 border-t border-amber-200 bg-amber-50 p-3.5 rounded-2xl space-y-2">
+                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">Admin Override Controls:</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEditingRiderOrder(selectedOrder)}
+                          className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-2 rounded-xl text-xs transition-all cursor-pointer shadow-2xs"
+                        >
+                          ✏️ Edit Delivery
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRiderOrder(selectedOrder.id)}
+                          className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-2xs"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* ADMIN CRUD MODALS */}
+      <AdminCreateTransactionModal
+        isOpen={isAdminCreateOpen}
+        onClose={() => setIsAdminCreateOpen(false)}
+        onCreated={() => void fetchDeliveries(true)}
+      />
+
+      <AdminEditTransactionModal
+        isOpen={Boolean(editingRiderOrder)}
+        transaction={editingRiderOrder}
+        onClose={() => setEditingRiderOrder(null)}
+        onSave={() => void fetchDeliveries(true)}
+      />
     </div>
   )
 }

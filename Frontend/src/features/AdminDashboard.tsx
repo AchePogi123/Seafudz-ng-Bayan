@@ -335,20 +335,6 @@ const AdminDashboard: React.FC = () => {
         return deliveryOrders.reduce((sum, o) => sum + Number(o.total || 0), 0)
     }, [deliveryOrders])
 
-    const totalOnlineCustomersCount = useMemo(() => {
-        const uniqueCustomers = new Set(
-            deliveryOrders
-                .filter((o) => o.customer && typeof o.customer === 'string')
-                .map((o) => o.customer.trim().toLowerCase())
-        )
-        return uniqueCustomers.size
-    }, [deliveryOrders])
-
-    const averageOrderValue = useMemo(() => {
-        if (dateFilteredOrders.length === 0) return 0
-        return Math.round(totalLiveRevenue / dateFilteredOrders.length)
-    }, [dateFilteredOrders, totalLiveRevenue])
-
     const posRevenuePercent = useMemo(() => {
         if (totalLiveRevenue === 0) return 0
         return Math.round((posRevenue / totalLiveRevenue) * 100)
@@ -575,22 +561,19 @@ const AdminDashboard: React.FC = () => {
     // Payment Methods Distribution
     const paymentStats = useMemo(() => {
         let gcash = 0
-        let maya = 0
         let cash = 0
 
         dateFilteredOrders.forEach((o) => {
             const pm = (o.paymentMethod || '').toLowerCase()
             const amt = Number(o.total || 0)
             if (pm.includes('gcash')) gcash += amt
-            else if (pm.includes('maya')) maya += amt
             else cash += amt
         })
 
-        const total = gcash + maya + cash || 1
+        const total = gcash + cash || 1
         return [
             { name: 'Cash (POS Store)', amount: cash, pct: Math.round((cash / total) * 100), color: 'bg-amber-500', border: 'border-amber-500' },
             { name: 'GCash Online', amount: gcash, pct: Math.round((gcash / total) * 100), color: 'bg-blue-500', border: 'border-blue-500' },
-            { name: 'Maya Wallet', amount: maya, pct: Math.round((maya / total) * 100), color: 'bg-emerald-500', border: 'border-emerald-500' },
         ]
     }, [dateFilteredOrders])
 
@@ -773,37 +756,9 @@ const AdminDashboard: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 6 KPI Metric Cards Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-                    {/* Metric 1: Total Revenue */}
-                    <div
-                        onClick={() => navigate('/admin-sales-report')}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-orange-400 transition-all cursor-pointer group"
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-orange-600 transition-colors">Total Revenue</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-orange-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.revenue.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.revenue.areaD} fill="url(#orangeSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="orangeSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#f97316" />
-                                            <stop offset="100%" stopColor="#f97316" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl font-black text-orange-600 mt-2">
-                            ₱{totalLiveRevenue.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-slate-400 mt-1">
-                            {dateFilteredOrders.length} Period Orders
-                        </p>
-                    </div>
-
-                    {/* Metric 2: Total Orders */}
+                {/* 3 KPI Metric Cards Grid */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {/* Metric 1: Total Orders (Both Online & POS) */}
                     <div
                         onClick={() => navigate('/admin-sales-report')}
                         className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer group"
@@ -823,21 +778,21 @@ const AdminDashboard: React.FC = () => {
                                 </svg>
                             </div>
                         </div>
-                        <h3 className="text-2xl font-black text-slate-900 mt-2">
+                        <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
                             {dateFilteredOrders.length}
                         </h3>
                         <p className="text-[10px] font-bold text-indigo-600 mt-1">
-                            {posOrders.length} POS / {deliveryOrders.length} Delivery
+                            Combined Online & On-Site
                         </p>
                     </div>
 
-                    {/* Metric 3: POS Store Revenue */}
+                    {/* Metric 2: Total Orders of On-Site POS */}
                     <div
                         onClick={() => navigate('/admin-sales-report', { state: { channel: 'POS', tab: 'This Year' } })}
                         className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer group"
                     >
                         <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-amber-600 transition-colors">POS Cashier Sales</span>
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-amber-600 transition-colors">Total POS Orders</span>
                             <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                 <svg className="w-full h-full text-amber-500 overflow-visible" viewBox="0 0 56 28" fill="none">
                                     <path d={dynamicMetricTrends.pos.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -851,49 +806,21 @@ const AdminDashboard: React.FC = () => {
                                 </svg>
                             </div>
                         </div>
-                        <h3 className="text-2xl font-black text-slate-900 mt-2">
-                            ₱{posRevenue.toLocaleString()}
+                        <h3 className="text-2xl sm:text-3xl font-black text-amber-600 mt-2">
+                            {posOrders.length}
                         </h3>
                         <p className="text-[10px] font-bold text-amber-600 mt-1">
-                            {posRevenuePercent}% of Total Sales
+                            On-Site Store Walk-Ins
                         </p>
                     </div>
 
-                    {/* Metric 4: Online Delivery Revenue */}
+                    {/* Metric 3: Total Orders Online */}
                     <div
                         onClick={() => navigate('/admin-sales-report', { state: { channel: 'Online', tab: 'This Year' } })}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-emerald-300 transition-all cursor-pointer group"
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-emerald-600 transition-colors">Delivery Sales</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-emerald-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.delivery.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.delivery.areaD} fill="url(#emeraldSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="emeraldSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#10b981" />
-                                            <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-900 mt-2">
-                            ₱{deliveryRevenue.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-emerald-600 mt-1">
-                            {deliveryRevenuePercent}% of Total Sales
-                        </p>
-                    </div>
-
-                    {/* Metric 5: Online Customer Buyers */}
-                    <div
-                        onClick={() => navigate('/customer-directory')}
                         className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group"
                     >
                         <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Online Customers</span>
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Total Online Orders</span>
                             <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
                                 <svg className="w-full h-full text-blue-500 overflow-visible" viewBox="0 0 56 28" fill="none">
                                     <path d={dynamicMetricTrends.customers.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -907,39 +834,11 @@ const AdminDashboard: React.FC = () => {
                                 </svg>
                             </div>
                         </div>
-                        <h3 className="text-2xl font-black text-slate-900 mt-2">
-                            {totalOnlineCustomersCount}
+                        <h3 className="text-2xl sm:text-3xl font-black text-blue-600 mt-2">
+                            {deliveryOrders.length}
                         </h3>
                         <p className="text-[10px] font-bold text-blue-600 mt-1">
-                            Unique Delivery Buyers
-                        </p>
-                    </div>
-
-                    {/* Metric 6: Average Order Value */}
-                    <div
-                        onClick={() => navigate('/admin-sales-report')}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-purple-300 transition-all cursor-pointer group"
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-purple-600 transition-colors">Avg Ticket Size</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-purple-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.avgTicket.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.avgTicket.areaD} fill="url(#purpleSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="purpleSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#a855f7" />
-                                            <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-900 mt-2">
-                            ₱{averageOrderValue.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-purple-600 mt-1">
-                            Average Spend / Order
+                            Online Delivery Orders
                         </p>
                     </div>
                 </div>

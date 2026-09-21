@@ -2,6 +2,9 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { NavbarAssistant } from '../components/NavbarAssistant'
 import { API_BASE_URL } from '../utils/api'
 import { checkIfBulkOrder } from '../utils/bulkOrder'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 export interface OrderItem {
   name: string
@@ -37,6 +40,9 @@ export interface Rider {
 
 
 export const AssistantRole: React.FC = () => {
+  const currentUser = getActiveUser()
+  const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
   const [orders, setOrders] = useState<OnlineOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [notification, setNotification] = useState<string | null>(null)
@@ -45,6 +51,33 @@ export const AssistantRole: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
+
+  // Admin CRUD Modal states
+  const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+  const [editingAssistantOrder, setEditingAssistantOrder] = useState<any | null>(null)
+
+  const handleDeleteAssistantOrder = async (orderId: string) => {
+    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete order #${orderId}? This will remove it from the PostgreSQL database.`)
+    if (!confirmDelete) return
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
+    } catch {}
+
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    if (selectedOrderId === orderId) setSelectedOrderId(null)
+    void fetchAssistantOrders(true)
+    setNotification(`Order #${orderId} deleted from DB by Admin.`)
+  }
 
   useEffect(() => {
     if (notification) {
@@ -451,23 +484,33 @@ export const AssistantRole: React.FC = () => {
                 ))}
               </div>
 
-              {/* Search Bar (Same as Rider) */}
-              <div className="relative min-w-[240px]">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search customer, ref, address..."
-                  className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
-                />
-                {searchQuery && (
+              {/* Search Bar & Admin Create Button */}
+              <div className="flex items-center gap-2 min-w-[240px]">
+                {isAdmin && (
                   <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                    onClick={() => setIsAdminCreateOpen(true)}
+                    className="px-4 py-2.5 rounded-2xl bg-[#ff7b00] hover:bg-[#e06c00] text-white font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-md shadow-orange-500/20 active:scale-95"
                   >
-                    ✕
+                    ➕ Create Transaction
                   </button>
                 )}
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search customer, ref, address..."
+                    className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -513,10 +556,12 @@ export const AssistantRole: React.FC = () => {
                                       ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                       : s === 'ready'
                                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                                        : s === 'cancelled'
+                                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                          : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
-                          ● {s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : ord.status}
+                          ● {s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled by Customer' : ord.status}
                         </span>
                       </div>
 
@@ -692,6 +737,15 @@ export const AssistantRole: React.FC = () => {
                 <div className="pt-2 space-y-3">
                   {(() => {
                     const st = (selectedOrder.status || '').toUpperCase()
+
+                    if (st === 'CANCELLED') {
+                      return (
+                        <div className="w-full bg-rose-50 text-rose-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-rose-300 shadow-xs">
+                          ❌ Order Cancelled by Customer
+                        </div>
+                      )
+                    }
+
                     const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'ASSIGNED', 'COMPLETED'].includes(st)
 
                     if (isConfirmedOrLater) {
@@ -781,6 +835,30 @@ export const AssistantRole: React.FC = () => {
                     )
                   })()}
                 </div>
+
+                {isAdmin && (
+                  <div className="pt-3 border-t border-amber-200/80 bg-amber-50/60 p-3.5 rounded-2xl space-y-2">
+                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">
+                      Admin Override Controls:
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setEditingAssistantOrder(selectedOrder)}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95"
+                      >
+                        ✏️ Edit Order
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAssistantOrder(selectedOrder.id)}
+                        className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95"
+                      >
+                        🗑️ Delete Order
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -831,6 +909,20 @@ export const AssistantRole: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ADMIN CRUD MODALS */}
+      <AdminCreateTransactionModal
+        isOpen={isAdminCreateOpen}
+        onClose={() => setIsAdminCreateOpen(false)}
+        onCreated={() => void fetchAssistantOrders(true)}
+      />
+
+      <AdminEditTransactionModal
+        isOpen={Boolean(editingAssistantOrder)}
+        transaction={editingAssistantOrder}
+        onClose={() => setEditingAssistantOrder(null)}
+        onSave={() => void fetchAssistantOrders(true)}
+      />
     </div>
   )
 }

@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 import { checkIfBulkOrder } from '../utils/bulkOrder'
+import { getActiveUser } from '../cryptography/cryptoSession'
+import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
+import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 
 interface OrderItem {
   name: string
@@ -26,10 +29,38 @@ export interface KitchenOrder {
 }
 
 export const KitchenMode: React.FC = () => {
+  const currentUser = getActiveUser()
+  const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
+
+  // Admin CRUD Modal states
+  const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
+  const [editingKitchenOrder, setEditingKitchenOrder] = useState<any | null>(null)
+
+  const handleDeleteKitchenOrder = async (orderId: string) => {
+    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete Kitchen Order #${orderId}? This will remove it from the database.`)
+    if (!confirmDelete) return
+
+    try {
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
+    } catch {}
+
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+      window.dispatchEvent(new Event('seafudz_order_created'))
+    } catch {}
+
+    setOrders((prev) => prev.filter((o) => o.id !== orderId))
+  }
 
   // Load orders from LocalStorage
   const getLocalOrders = (): KitchenOrder[] => {
@@ -47,9 +78,9 @@ export const KitchenMode: React.FC = () => {
           const unconfirmedStatuses = [
             'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
             'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
           ]
-          if (isDelivery && unconfirmedStatuses.includes(rawStatus)) {
+          if (rawStatus === 'CANCELLED' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
             return false
           }
 
@@ -387,18 +418,29 @@ export const KitchenMode: React.FC = () => {
             </span>
           </div>
 
-          <button
-            onClick={() => setIsHistoryModalOpen(true)}
-            className="flex items-center gap-2 bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-            title="View Order History"
-          >
-            <span>Order History</span>
-            {historyOrders.length > 0 && (
-              <span className="bg-white text-[#ff7a00] font-black text-[10px] px-1.5 py-0.5 rounded-full">
-                {historyOrders.length}
-              </span>
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                onClick={() => setIsAdminCreateOpen(true)}
+                className="bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 flex items-center gap-1.5"
+              >
+                <span>➕</span> Create Ticket (Admin)
+              </button>
             )}
-          </button>
+
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="flex items-center gap-2 bg-neutral-900 hover:bg-black text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
+              title="View Order History"
+            >
+              <span>Order History</span>
+              {historyOrders.length > 0 && (
+                <span className="bg-orange-500 text-white font-black text-[10px] px-1.5 py-0.5 rounded-full">
+                  {historyOrders.length}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
@@ -660,21 +702,69 @@ export const KitchenMode: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => handleStatusFromModal('Preparing')}
-                  className="bg-orange-600 text-white py-2.5 rounded-xl text-xs font-bold"
+                  className="bg-orange-600 hover:bg-orange-700 text-white py-2.5 rounded-xl text-xs font-bold cursor-pointer"
                 >
                   Start Preparing
                 </button>
                 <button
                   onClick={() => handleStatusFromModal('Ready')}
-                  className="bg-neutral-900 text-white py-2.5 rounded-xl text-xs font-bold"
+                  className="bg-neutral-900 hover:bg-black text-white py-2.5 rounded-xl text-xs font-bold cursor-pointer"
                 >
                   Mark as Ready
                 </button>
               </div>
+
+              {isAdmin && (
+                <div className="pt-3 border-t border-amber-200 bg-amber-50 p-3.5 rounded-xl flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black text-amber-800 uppercase tracking-wider">Admin Controls:</span>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingKitchenOrder(selectedOrder)
+                        setSelectedOrderId(null)
+                      }}
+                      className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
+                    >
+                      ✏️ Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteKitchenOrder(selectedOrder.id)
+                        setSelectedOrderId(null)
+                      }}
+                      className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
+
+      {/* ADMIN CRUD MODALS */}
+      <AdminCreateTransactionModal
+        isOpen={isAdminCreateOpen}
+        onClose={() => setIsAdminCreateOpen(false)}
+        onCreated={() => {
+          const updated = getLocalOrders()
+          setOrders(updated)
+        }}
+      />
+
+      <AdminEditTransactionModal
+        isOpen={Boolean(editingKitchenOrder)}
+        transaction={editingKitchenOrder}
+        onClose={() => setEditingKitchenOrder(null)}
+        onSave={() => {
+          const updated = getLocalOrders()
+          setOrders(updated)
+        }}
+      />
     </div>
   )
 }

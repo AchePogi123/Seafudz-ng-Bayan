@@ -114,8 +114,8 @@ const SalesReportAdmin: React.FC = () => {
             rawType.toUpperCase() === 'ONLINE'
                 ? 'Delivery'
                 : rawType.toUpperCase() === 'ON_SITE'
-                ? 'POS Order'
-                : rawType || 'POS Order'
+                    ? 'POS Order'
+                    : rawType || 'POS Order'
 
         let itemsSummary = 'Seafood Dish'
         if (Array.isArray(dbO.items) && dbO.items.length > 0) {
@@ -142,29 +142,182 @@ const SalesReportAdmin: React.FC = () => {
     }, [])
 
     const fetchSummary = useCallback(async () => {
+        // Build the sales summary from the actual orders endpoint.
+        // The /sales/summary endpoint can return zero even when /orders
+        // already contains the transactions shown in the table.
         try {
-            const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`)
-            if (res.ok) {
-                const json = await res.json()
-                if (json.success && json.data) {
-                    setSummaryData({
-                        totalOrders: json.data.totalOrders || 0,
-                        grossRevenue: json.data.grossRevenue || 0,
-                        subtotalRevenue: json.data.subtotalRevenue || 0,
-                        vatCollected: json.data.vatCollected || 0,
-                        averageOrderValue: json.data.averageOrderValue || 0,
-                        breakdown: json.data.breakdown || {
-                            cash: { total: 0, count: 0 },
-                            gcash: { total: 0, count: 0 },
-                            maya: { total: 0, count: 0 },
-                            hybrid: { total: 0, count: 0 },
-                            cod: { total: 0, count: 0 },
-                        },
-                    })
-                }
+            const orderMap = new Map<string, any>()
+
+            const getOrderDate = (order: any) => {
+                const value =
+                    order.created_at ??
+                    order.createdAt ??
+                    order.dateTime ??
+                    order.date ??
+                    null
+
+                if (!value) return null
+                const parsed = new Date(value)
+                return Number.isNaN(parsed.getTime()) ? null : parsed
             }
+
+            const isInSelectedPeriod = (order: any) => {
+                const orderDate = getOrderDate(order)
+                if (!orderDate) return true
+
+                const now = new Date()
+                const startOfToday = new Date(
+                    now.getFullYear(),
+                    now.getMonth(),
+                    now.getDate()
+                )
+                const startOfWeek = new Date(startOfToday)
+                startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
+                const startOfMonth = new Date(
+                    now.getFullYear(),
+                    now.getMonth(),
+                    1
+                )
+                const startOfYear = new Date(now.getFullYear(), 0, 1)
+
+                if (activeTab === 'Today') return orderDate >= startOfToday
+                if (activeTab === 'This Week') return orderDate >= startOfWeek
+                if (activeTab === 'This Month') return orderDate >= startOfMonth
+                if (activeTab === 'This Year') return orderDate >= startOfYear
+
+                return true
+            }
+
+            // Include locally stored orders first.
+            try {
+                const localRaw = localStorage.getItem('seafudz_orders')
+
+                if (localRaw) {
+                    const localOrders = JSON.parse(localRaw)
+
+                    if (Array.isArray(localOrders)) {
+                        localOrders
+                            .filter(isInSelectedPeriod)
+                            .forEach((order: any, index: number) => {
+                                const key = String(
+                                    order.id ??
+                                    order.ref ??
+                                    `local-${index}`
+                                )
+                                orderMap.set(key, order)
+                            })
+                    }
+                }
+            } catch (localErr) {
+                console.warn('Failed to read local orders for sales summary:', localErr)
+            }
+
+            // Get a large set of backend orders so the KPI cards use the
+            // same database records displayed by the transaction register.
+            try {
+                const ordersRes = await fetch(
+                    `${API_BASE_URL}/orders?limit=1000&offset=0&tab=${encodeURIComponent(activeTab)}`
+                )
+
+                if (ordersRes.ok) {
+                    const ordersJson = await ordersRes.json()
+                    const backendOrders = Array.isArray(ordersJson.data)
+                        ? ordersJson.data
+                        : []
+
+                    backendOrders
+                        .filter(isInSelectedPeriod)
+                        .forEach((order: any, index: number) => {
+                            const key = String(
+                                order.id ??
+                                order.ref ??
+                                `backend-${index}`
+                            )
+                            orderMap.set(key, order)
+                        })
+                }
+            } catch (ordersErr) {
+                console.warn('Failed to fetch orders for sales summary:', ordersErr)
+            }
+
+            const orders = Array.from(orderMap.values())
+
+            const breakdown = {
+                cash: { total: 0, count: 0 },
+                gcash: { total: 0, count: 0 },
+                maya: { total: 0, count: 0 },
+                hybrid: { total: 0, count: 0 },
+                cod: { total: 0, count: 0 },
+            }
+
+            let grossRevenue = 0
+
+            orders.forEach((order: any) => {
+                const total = Number(
+                    order.total ??
+                    order.totalAmount ??
+                    order.grandTotal ??
+                    order.amount ??
+                    0
+                ) || 0
+
+                grossRevenue += total
+
+                const payment = String(
+                    order.payment_method ??
+                    order.paymentMethod ??
+                    order.payment ??
+                    'Cash'
+                ).toLowerCase()
+
+                if (payment.includes('hybrid') || payment.includes('split')) {
+                    breakdown.hybrid.total += total
+                    breakdown.hybrid.count += 1
+                } else if (payment.includes('gcash')) {
+                    breakdown.gcash.total += total
+                    breakdown.gcash.count += 1
+                } else if (payment.includes('maya')) {
+                    breakdown.maya.total += total
+                    breakdown.maya.count += 1
+                } else if (payment.includes('cod')) {
+                    breakdown.cod.total += total
+                    breakdown.cod.count += 1
+                } else {
+                    breakdown.cash.total += total
+                    breakdown.cash.count += 1
+                }
+            })
+
+            if (orders.length > 0) {
+                setSummaryData({
+                    totalOrders: orders.length,
+                    grossRevenue,
+                    subtotalRevenue: 0,
+                    vatCollected: 0,
+                    averageOrderValue: grossRevenue / orders.length,
+                    breakdown,
+                })
+                return
+            }
+
+            // Keep the cards at zero only when there are genuinely no
+            // transactions for the selected period.
+            setSummaryData({
+                totalOrders: 0,
+                grossRevenue: 0,
+                subtotalRevenue: 0,
+                vatCollected: 0,
+                averageOrderValue: 0,
+                breakdown: {
+                    cash: { total: 0, count: 0 },
+                    gcash: { total: 0, count: 0 },
+                    maya: { total: 0, count: 0 },
+                    hybrid: { total: 0, count: 0 },
+                    cod: { total: 0, count: 0 },
+                },
+            })
         } catch (err) {
-            console.warn('Failed to fetch sales summary:', err)
+            console.warn('Failed to calculate sales summary:', err)
         }
     }, [activeTab])
 
@@ -181,14 +334,82 @@ const SalesReportAdmin: React.FC = () => {
             if (paymentFilter !== 'All') params.append('payment', paymentFilter)
             if (debouncedSearch) params.append('search', debouncedSearch)
 
-            const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
-            if (res.ok) {
-                const json = await res.json()
-                const list = json.data || []
-                const formatted = list.map(formatOrderRow)
-                setTransactions(formatted)
-                setTotalMatchingCount(typeof json.total === 'number' ? json.total : formatted.length)
+            let combinedOrders: LiveTransaction[] = []
+
+            try {
+                const localRaw = localStorage.getItem('seafudz_orders')
+                if (localRaw) {
+                    const parsed = JSON.parse(localRaw)
+                    if (Array.isArray(parsed)) {
+                        combinedOrders = parsed.map((o: any) => {
+                            let itemsStr = 'Seafood Dish'
+                            if (typeof o.items === 'string') {
+                                itemsStr = o.items
+                            } else if (Array.isArray(o.items)) {
+                                itemsStr = o.items
+                                    .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                                    .join(', ')
+                            }
+                            return {
+                                id: String(o.id || o.ref),
+                                ref: String(o.ref || o.id),
+                                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
+                                type: o.type || 'POS Order',
+                                status: o.status || 'Completed',
+                                customer: o.customerName || o.customer || 'Walk-In',
+                                items: itemsStr,
+                                total: Number(o.total || 0),
+                                paymentMethod: o.paymentMethod || 'Cash',
+                            }
+                        })
+                    }
+                }
+            } catch (e) {
+                console.warn('Error reading local orders:', e)
             }
+
+            if (channelFilter !== 'All') {
+                const isOnline = channelFilter === 'Online'
+                combinedOrders = combinedOrders.filter(o => {
+                    const t = (o.type || '').toLowerCase()
+                    const oIsOnline = t.includes('delivery') || t.includes('online')
+                    return isOnline ? oIsOnline : !oIsOnline
+                })
+            }
+            if (paymentFilter !== 'All') {
+                const p = paymentFilter.toLowerCase()
+                if (p === 'hybrid') {
+                    combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes('hybrid') || (o.paymentMethod || '').toLowerCase().includes('split'))
+                } else {
+                    combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes(p))
+                }
+            }
+            if (debouncedSearch) {
+                const q = debouncedSearch.toLowerCase()
+                combinedOrders = combinedOrders.filter(o => (o.ref || '').toLowerCase().includes(q) || (o.customer || '').toLowerCase().includes(q))
+            }
+
+            let backendCount = 0
+            try {
+                const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
+                if (res.ok) {
+                    const json = await res.json()
+                    const list = json.data || []
+                    const formatted = list.map(formatOrderRow)
+
+                    formatted.forEach((dbO: LiveTransaction) => {
+                        if (!combinedOrders.some(o => o.id === dbO.id || o.ref === dbO.id)) {
+                            combinedOrders.push(dbO)
+                        }
+                    })
+                    backendCount = typeof json.total === 'number' ? json.total : formatted.length
+                }
+            } catch (err) {
+                console.warn('Backend offline', err)
+            }
+
+            setTotalMatchingCount(Math.max(backendCount, combinedOrders.length))
+            setTransactions(combinedOrders.slice(offset, offset + PAGE_SIZE))
         } catch (err) {
             console.error('Failed to fetch page of orders:', err)
         } finally {
@@ -226,8 +447,8 @@ const SalesReportAdmin: React.FC = () => {
         if (!confirmDelete) return
 
         try {
-            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => {})
-        } catch {}
+            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => { })
+        } catch { }
 
         try {
             const local = localStorage.getItem('seafudz_orders')
@@ -237,7 +458,7 @@ const SalesReportAdmin: React.FC = () => {
                 localStorage.setItem('seafudz_orders', JSON.stringify(updated))
             }
             window.dispatchEvent(new Event('seafudz_order_created'))
-        } catch {}
+        } catch { }
 
         if (selectedTransaction?.id === id) setSelectedTransaction(null)
         void fetchSummary()
@@ -337,7 +558,7 @@ const SalesReportAdmin: React.FC = () => {
                             <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
-                            <span>Sync</span>
+                            <span>Refresh Orders</span>
                         </button>
 
                         <button
@@ -361,11 +582,10 @@ const SalesReportAdmin: React.FC = () => {
                                 key={tab}
                                 type="button"
                                 onClick={() => handleTabChange(tab)}
-                                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                    activeTab === tab
-                                        ? 'bg-orange-500 text-white shadow-2xs'
-                                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                                }`}
+                                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${activeTab === tab
+                                    ? 'bg-orange-500 text-white shadow-2xs'
+                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                                    }`}
                             >
                                 {tab}
                             </button>
@@ -383,11 +603,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Total Revenue */}
                     <div
                         onClick={() => handlePaymentChange('All')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'All'
-                                ? 'border-orange-500 ring-2 ring-orange-500/15'
-                                : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'All'
+                            ? 'border-orange-500 ring-2 ring-orange-500/15'
+                            : 'border-slate-200/80 hover:border-slate-300'
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
@@ -404,11 +623,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Cash */}
                     <div
                         onClick={() => handlePaymentChange('Cash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'Cash'
-                                ? 'border-amber-500 ring-2 ring-amber-500/15'
-                                : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Cash'
+                            ? 'border-amber-500 ring-2 ring-amber-500/15'
+                            : 'border-slate-200/80 hover:border-slate-300'
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
@@ -425,11 +643,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* GCash */}
                     <div
                         onClick={() => handlePaymentChange('GCash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'GCash'
-                                ? 'border-blue-500 ring-2 ring-blue-500/15'
-                                : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'GCash'
+                            ? 'border-blue-500 ring-2 ring-blue-500/15'
+                            : 'border-slate-200/80 hover:border-slate-300'
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
@@ -446,11 +663,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Hybrid / Split */}
                     <div
                         onClick={() => handlePaymentChange('Hybrid')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'Hybrid'
-                                ? 'border-purple-500 ring-2 ring-purple-500/15'
-                                : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Hybrid'
+                            ? 'border-purple-500 ring-2 ring-purple-500/15'
+                            : 'border-slate-200/80 hover:border-slate-300'
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
@@ -502,11 +718,10 @@ const SalesReportAdmin: React.FC = () => {
                                             key={item.val}
                                             type="button"
                                             onClick={() => handleChannelChange(item.val)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                                                channelFilter === item.val
-                                                    ? 'bg-slate-900 text-white shadow-2xs'
-                                                    : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${channelFilter === item.val
+                                                ? 'bg-slate-900 text-white shadow-2xs'
+                                                : 'text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {item.label}
                                         </button>
@@ -520,11 +735,10 @@ const SalesReportAdmin: React.FC = () => {
                                             key={pm}
                                             type="button"
                                             onClick={() => handlePaymentChange(pm)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                                                paymentFilter === pm
-                                                    ? 'bg-orange-500 text-white shadow-2xs'
-                                                    : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${paymentFilter === pm
+                                                ? 'bg-orange-500 text-white shadow-2xs'
+                                                : 'text-slate-600 hover:bg-slate-200'
+                                                }`}
                                         >
                                             {pm}
                                         </button>
@@ -615,28 +829,26 @@ const SalesReportAdmin: React.FC = () => {
                                                 </td>
                                                 <td className="py-3 px-4">
                                                     <span
-                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                                                            (tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
                                                             (tx.paymentMethod || '').toLowerCase().includes('split')
-                                                                ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                            ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
+                                                            : (tx.paymentMethod || '').toLowerCase().includes('gcash')
                                                                 ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
                                                                 : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                                                                : 'bg-amber-50 text-amber-800 border border-amber-200/60'
-                                                        }`}
+                                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                                                                    : 'bg-amber-50 text-amber-800 border border-amber-200/60'
+                                                            }`}
                                                     >
                                                         <span
-                                                            className={`w-1.5 h-1.5 rounded-full ${
-                                                                (tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                                            className={`w-1.5 h-1.5 rounded-full ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
                                                                 (tx.paymentMethod || '').toLowerCase().includes('split')
-                                                                    ? 'bg-purple-500'
-                                                                    : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                                ? 'bg-purple-500'
+                                                                : (tx.paymentMethod || '').toLowerCase().includes('gcash')
                                                                     ? 'bg-blue-500'
                                                                     : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                    ? 'bg-emerald-500'
-                                                                    : 'bg-amber-500'
-                                                            }`}
+                                                                        ? 'bg-emerald-500'
+                                                                        : 'bg-amber-500'
+                                                                }`}
                                                         ></span>
                                                         {tx.paymentMethod || 'Cash'}
                                                     </span>
@@ -710,11 +922,10 @@ const SalesReportAdmin: React.FC = () => {
                                                 type="button"
                                                 onClick={() => setCurrentPage(pageNum)}
                                                 disabled={isLoading}
-                                                className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                                    isActive
-                                                        ? 'bg-orange-500 text-white shadow-2xs'
-                                                        : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
-                                                }`}
+                                                className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
+                                                    ? 'bg-orange-500 text-white shadow-2xs'
+                                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
+                                                    }`}
                                             >
                                                 {pageNum}
                                             </button>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
@@ -12,13 +13,9 @@ export interface LiveTransaction {
   items: string
   customer: string
   total: number
-  type: 'Dine In' | 'Take Out' | 'Delivery' | string
+  type: string
   paymentMethod?: string
   status?: string
-  notes?: string
-  cartItems?: any[]
-  cashReceived?: number | string
-  change?: number
 }
 
 interface SummaryData {
@@ -40,21 +37,24 @@ type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
 
 const PAGE_SIZE = 10
 
-export const SalesReportCashier: React.FC = () => {
+const SalesReportCashier: React.FC = () => {
+  const navigate = useNavigate()
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
 
-  const [activeTab, setActiveTab] = useState<TabType>('Today')
+  const location = useLocation()
+  const navState = location.state as { channel?: string; tab?: TabType; payment?: string } | null
+
+  const [activeTab, setActiveTab] = useState<TabType>(navState?.tab || 'Today')
   const [transactions, setTransactions] = useState<LiveTransaction[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'All' | 'Dine In' | 'Take Out' | 'Delivery'>('All')
-  const [paymentFilter, setPaymentFilter] = useState<'All' | 'Cash' | 'GCash' | 'COD'>('All')
-
-  // Selected transaction for inspecting official receipt modal
   const [selectedTransaction, setSelectedTransaction] = useState<LiveTransaction | null>(null)
 
-  // Pagination state (10 per page)
+  const [paymentFilter, setPaymentFilter] = useState<string>(navState?.payment || 'All')
+  const [channelFilter, setChannelFilter] = useState<string>(navState?.channel || 'All')
+
+  // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
   const [totalMatchingCount, setTotalMatchingCount] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
@@ -75,9 +75,9 @@ export const SalesReportCashier: React.FC = () => {
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
-  const [editingTransaction, setEditingTransaction] = useState<LiveTransaction | null>(null)
+  const [editingTransaction, setEditingTransaction] = useState<any | null>(null)
 
-  // Debounce search
+  // Debounce search input
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearch(searchQuery.trim())
@@ -86,21 +86,39 @@ export const SalesReportCashier: React.FC = () => {
     return () => clearTimeout(handler)
   }, [searchQuery])
 
-  // Helper to format backend order row
+  // If navigated from dashboard with specific state, sync them
+  useEffect(() => {
+    if (navState?.channel) setChannelFilter(navState.channel)
+    if (navState?.tab) setActiveTab(navState.tab)
+    if (navState?.payment) setPaymentFilter(navState.payment)
+  }, [navState])
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab)
+    setCurrentPage(1)
+  }
+
+  const handleChannelChange = (channel: string) => {
+    setChannelFilter(channel)
+    setCurrentPage(1)
+  }
+
+  const handlePaymentChange = (pm: string) => {
+    setPaymentFilter(pm)
+    setCurrentPage(1)
+  }
+
   const formatOrderRow = useCallback((dbO: any): LiveTransaction => {
     const rawType = dbO.order_type || dbO.type || ''
     const normalizedType =
-      rawType.toUpperCase() === 'ONLINE' || rawType === 'Delivery'
+      rawType.toUpperCase() === 'ONLINE'
         ? 'Delivery'
         : rawType.toUpperCase() === 'ON_SITE'
-        ? 'Dine In'
-        : rawType || 'Dine In'
+          ? 'POS Order'
+          : rawType || 'POS Order'
 
     let itemsSummary = 'Seafood Dish'
-    let rawItemsList: any[] = []
-
     if (Array.isArray(dbO.items) && dbO.items.length > 0) {
-      rawItemsList = dbO.items
       itemsSummary = dbO.items
         .map((i: any) => `${i.name || i.product_name_snapshot || 'Dish'} x${i.quantity || 1}`)
         .join(', ')
@@ -113,47 +131,196 @@ export const SalesReportCashier: React.FC = () => {
       ref: String(dbO.id),
       dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
       items: itemsSummary,
-      cartItems: rawItemsList,
       customer:
         dbO.customer_name ||
-        (normalizedType === 'Delivery' ? 'Online Customer' : 'Walk-In Customer'),
+        (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In Customer'),
       total: Number(dbO.total || 0),
       type: normalizedType,
       paymentMethod: dbO.payment_method || 'Cash',
       status: dbO.status || 'Completed',
-      notes: dbO.notes || '',
     }
   }, [])
 
-  // Fetch KPI summary from backend
   const fetchSummary = useCallback(async () => {
+    // Build the sales summary from the actual orders endpoint.
+    // The /sales/summary endpoint can return zero even when /orders
+    // already contains the transactions shown in the table.
     try {
-      const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`)
-      if (res.ok) {
-        const json = await res.json()
-        if (json.success && json.data) {
-          setSummaryData({
-            totalOrders: json.data.totalOrders || 0,
-            grossRevenue: json.data.grossRevenue || 0,
-            subtotalRevenue: json.data.subtotalRevenue || 0,
-            vatCollected: json.data.vatCollected || 0,
-            averageOrderValue: json.data.averageOrderValue || 0,
-            breakdown: json.data.breakdown || {
-              cash: { total: 0, count: 0 },
-              gcash: { total: 0, count: 0 },
-              maya: { total: 0, count: 0 },
-              hybrid: { total: 0, count: 0 },
-              cod: { total: 0, count: 0 },
-            },
-          })
-        }
+      const orderMap = new Map<string, any>()
+
+      const getOrderDate = (order: any) => {
+        const value =
+          order.created_at ??
+          order.createdAt ??
+          order.dateTime ??
+          order.date ??
+          null
+
+        if (!value) return null
+        const parsed = new Date(value)
+        return Number.isNaN(parsed.getTime()) ? null : parsed
       }
+
+      const isInSelectedPeriod = (order: any) => {
+        const orderDate = getOrderDate(order)
+        if (!orderDate) return true
+
+        const now = new Date()
+        const startOfToday = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate()
+        )
+        const startOfWeek = new Date(startOfToday)
+        startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
+        const startOfMonth = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          1
+        )
+        const startOfYear = new Date(now.getFullYear(), 0, 1)
+
+        if (activeTab === 'Today') return orderDate >= startOfToday
+        if (activeTab === 'This Week') return orderDate >= startOfWeek
+        if (activeTab === 'This Month') return orderDate >= startOfMonth
+        if (activeTab === 'This Year') return orderDate >= startOfYear
+
+        return true
+      }
+
+      // Include locally stored orders first.
+      try {
+        const localRaw = localStorage.getItem('seafudz_orders')
+
+        if (localRaw) {
+          const localOrders = JSON.parse(localRaw)
+
+          if (Array.isArray(localOrders)) {
+            localOrders
+              .filter(isInSelectedPeriod)
+              .forEach((order: any, index: number) => {
+                const key = String(
+                  order.id ??
+                  order.ref ??
+                  `local-${index}`
+                )
+                orderMap.set(key, order)
+              })
+          }
+        }
+      } catch (localErr) {
+        console.warn('Failed to read local orders for sales summary:', localErr)
+      }
+
+      // Get a large set of backend orders so the KPI cards use the
+      // same database records displayed by the transaction register.
+      try {
+        const ordersRes = await fetch(
+          `${API_BASE_URL}/orders?limit=1000&offset=0&tab=${encodeURIComponent(activeTab)}`
+        )
+
+        if (ordersRes.ok) {
+          const ordersJson = await ordersRes.json()
+          const backendOrders = Array.isArray(ordersJson.data)
+            ? ordersJson.data
+            : []
+
+          backendOrders
+            .filter(isInSelectedPeriod)
+            .forEach((order: any, index: number) => {
+              const key = String(
+                order.id ??
+                order.ref ??
+                `backend-${index}`
+              )
+              orderMap.set(key, order)
+            })
+        }
+      } catch (ordersErr) {
+        console.warn('Failed to fetch orders for sales summary:', ordersErr)
+      }
+
+      const orders = Array.from(orderMap.values())
+
+      const breakdown = {
+        cash: { total: 0, count: 0 },
+        gcash: { total: 0, count: 0 },
+        maya: { total: 0, count: 0 },
+        hybrid: { total: 0, count: 0 },
+        cod: { total: 0, count: 0 },
+      }
+
+      let grossRevenue = 0
+
+      orders.forEach((order: any) => {
+        const total = Number(
+          order.total ??
+          order.totalAmount ??
+          order.grandTotal ??
+          order.amount ??
+          0
+        ) || 0
+
+        grossRevenue += total
+
+        const payment = String(
+          order.payment_method ??
+          order.paymentMethod ??
+          order.payment ??
+          'Cash'
+        ).toLowerCase()
+
+        if (payment.includes('hybrid') || payment.includes('split')) {
+          breakdown.hybrid.total += total
+          breakdown.hybrid.count += 1
+        } else if (payment.includes('gcash')) {
+          breakdown.gcash.total += total
+          breakdown.gcash.count += 1
+        } else if (payment.includes('maya')) {
+          breakdown.maya.total += total
+          breakdown.maya.count += 1
+        } else if (payment.includes('cod')) {
+          breakdown.cod.total += total
+          breakdown.cod.count += 1
+        } else {
+          breakdown.cash.total += total
+          breakdown.cash.count += 1
+        }
+      })
+
+      if (orders.length > 0) {
+        setSummaryData({
+          totalOrders: orders.length,
+          grossRevenue,
+          subtotalRevenue: 0,
+          vatCollected: 0,
+          averageOrderValue: grossRevenue / orders.length,
+          breakdown,
+        })
+        return
+      }
+
+      // Keep the cards at zero only when there are genuinely no
+      // transactions for the selected period.
+      setSummaryData({
+        totalOrders: 0,
+        grossRevenue: 0,
+        subtotalRevenue: 0,
+        vatCollected: 0,
+        averageOrderValue: 0,
+        breakdown: {
+          cash: { total: 0, count: 0 },
+          gcash: { total: 0, count: 0 },
+          maya: { total: 0, count: 0 },
+          hybrid: { total: 0, count: 0 },
+          cod: { total: 0, count: 0 },
+        },
+      })
     } catch (err) {
-      console.warn('Failed to fetch cashier sales summary:', err)
+      console.warn('Failed to calculate sales summary:', err)
     }
   }, [activeTab])
 
-  // Fetch exact 10 orders for current page
   const fetchOrdersPage = useCallback(async () => {
     setIsLoading(true)
     try {
@@ -163,84 +330,110 @@ export const SalesReportCashier: React.FC = () => {
         offset: String(offset),
         tab: activeTab,
       })
-      if (typeFilter !== 'All') params.append('type', typeFilter)
+      if (channelFilter !== 'All') params.append('type', channelFilter)
       if (paymentFilter !== 'All') params.append('payment', paymentFilter)
       if (debouncedSearch) params.append('search', debouncedSearch)
 
-      const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
-      if (res.ok) {
-        const json = await res.json()
-        const list = json.data || []
-        const formatted = list.map(formatOrderRow)
-        setTransactions(formatted)
-        setTotalMatchingCount(typeof json.total === 'number' ? json.total : formatted.length)
+      let combinedOrders: LiveTransaction[] = []
+
+      try {
+        const localRaw = localStorage.getItem('seafudz_orders')
+        if (localRaw) {
+          const parsed = JSON.parse(localRaw)
+          if (Array.isArray(parsed)) {
+            combinedOrders = parsed.map((o: any) => {
+              let itemsStr = 'Seafood Dish'
+              if (typeof o.items === 'string') {
+                itemsStr = o.items
+              } else if (Array.isArray(o.items)) {
+                itemsStr = o.items
+                  .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                  .join(', ')
+              }
+              return {
+                id: String(o.id || o.ref),
+                ref: String(o.ref || o.id),
+                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
+                type: o.type || 'POS Order',
+                status: o.status || 'Completed',
+                customer: o.customerName || o.customer || 'Walk-In',
+                items: itemsStr,
+                total: Number(o.total || 0),
+                paymentMethod: o.paymentMethod || 'Cash',
+              }
+            })
+          }
+        }
+      } catch (e) {
+        console.warn('Error reading local orders:', e)
       }
+
+      if (channelFilter !== 'All') {
+        const isOnline = channelFilter === 'Online'
+        combinedOrders = combinedOrders.filter(o => {
+          const t = (o.type || '').toLowerCase()
+          const oIsOnline = t.includes('delivery') || t.includes('online')
+          return isOnline ? oIsOnline : !oIsOnline
+        })
+      }
+      if (paymentFilter !== 'All') {
+        const p = paymentFilter.toLowerCase()
+        if (p === 'hybrid') {
+          combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes('hybrid') || (o.paymentMethod || '').toLowerCase().includes('split'))
+        } else {
+          combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes(p))
+        }
+      }
+      if (debouncedSearch) {
+        const q = debouncedSearch.toLowerCase()
+        combinedOrders = combinedOrders.filter(o => (o.ref || '').toLowerCase().includes(q) || (o.customer || '').toLowerCase().includes(q))
+      }
+
+      let backendCount = 0
+      try {
+        const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
+        if (res.ok) {
+          const json = await res.json()
+          const list = json.data || []
+          const formatted = list.map(formatOrderRow)
+
+          formatted.forEach((dbO: LiveTransaction) => {
+            if (!combinedOrders.some(o => o.id === dbO.id || o.ref === dbO.id)) {
+              combinedOrders.push(dbO)
+            }
+          })
+          backendCount = typeof json.total === 'number' ? json.total : formatted.length
+        }
+      } catch (err) {
+        console.warn('Backend offline', err)
+      }
+
+      setTotalMatchingCount(Math.max(backendCount, combinedOrders.length))
+      setTransactions(combinedOrders.slice(offset, offset + PAGE_SIZE))
     } catch (err) {
-      console.error('Failed to fetch 10 orders for cashier:', err)
+      console.error('Failed to fetch page of orders:', err)
     } finally {
       setIsLoading(false)
     }
-  }, [currentPage, activeTab, typeFilter, paymentFilter, debouncedSearch, formatOrderRow])
+  }, [currentPage, activeTab, channelFilter, paymentFilter, debouncedSearch, formatOrderRow])
 
-  // Fetch KPI summary when activeTab changes
   useEffect(() => {
     void fetchSummary()
   }, [fetchSummary])
 
-  // Fetch exact 10 orders when page or filters change
   useEffect(() => {
     void fetchOrdersPage()
   }, [fetchOrdersPage])
 
-  // Auto-sync listener
-  useEffect(() => {
-    const handleSync = () => {
-      void fetchSummary()
-      void fetchOrdersPage()
-    }
-
-    window.addEventListener('seafudz_order_created', handleSync)
-    window.addEventListener('storage', handleSync)
-
-    return () => {
-      window.removeEventListener('seafudz_order_created', handleSync)
-      window.removeEventListener('storage', handleSync)
-    }
-  }, [fetchSummary, fetchOrdersPage])
-
-  const handleTabChange = (tab: TabType) => {
-    setActiveTab(tab)
-    setCurrentPage(1)
-  }
-
-  const handleTypeChange = (type: 'All' | 'Dine In' | 'Take Out' | 'Delivery') => {
-    setTypeFilter(type)
-    setCurrentPage(1)
-  }
-
-  const handlePaymentChange = (pm: 'All' | 'Cash' | 'GCash' | 'COD') => {
-    setPaymentFilter(pm)
-    setCurrentPage(1)
-  }
-
-  // Helper to parse items string into list
-  const getOrderedItems = (items: string) => {
-    if (!items) return []
-    return items
-      .split(',')
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
-  }
-
   const handleDeleteTransaction = async (id: string) => {
     const confirmDelete = window.confirm(
-      `⚠️ Admin Action: Are you sure you want to permanently delete transaction #${id}? This will remove it from the PostgreSQL database and all role views.`
+      `Are you sure you want to permanently delete transaction #${id}? This action cannot be undone.`
     )
     if (!confirmDelete) return
 
     try {
-      await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => {})
-    } catch {}
+      await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => { })
+    } catch { }
 
     try {
       const local = localStorage.getItem('seafudz_orders')
@@ -249,15 +442,21 @@ export const SalesReportCashier: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== id && o.ref !== id)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch {}
+    } catch { }
 
     if (selectedTransaction?.id === id) setSelectedTransaction(null)
     void fetchSummary()
     void fetchOrdersPage()
   }
 
-  // Calculate Pagination numbers
+  const getOrderedItems = (items: string) => {
+    if (!items) return []
+    return items
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+  }
+
   const totalPages = Math.max(1, Math.ceil(totalMatchingCount / PAGE_SIZE))
   const startItem = totalMatchingCount > 0 ? (currentPage - 1) * PAGE_SIZE + 1 : 0
   const endItem = Math.min(currentPage * PAGE_SIZE, totalMatchingCount)
@@ -276,494 +475,529 @@ export const SalesReportCashier: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f8f6f4] text-neutral-900 font-sans p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-24 lg:pb-6">
-      <div className="w-full flex flex-col gap-4 sm:gap-6">
-        {/* Integrated Cashier Navbar */}
+    <div className="min-h-screen bg-slate-50/70 text-slate-900 font-sans pb-16 antialiased">
+      {/* Navigation Header */}
+      <div className="p-4 sm:p-6 print:hidden">
         <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+      </div>
 
-        {/* Sales Register Title Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 sm:p-6 rounded-3xl border border-neutral-200/80 shadow-2xs">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xl">📊</span>
-              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-neutral-900">
-                Cashier Sales Register & Analytics
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
+        {/* Top Section: Breadcrumb, Title & Primary Actions */}
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              className="p-2.5 rounded-xl bg-slate-100 hover:bg-orange-50 text-slate-600 hover:text-orange-600 border border-slate-200/80 transition-all cursor-pointer group shrink-0"
+              title="Go Back"
+              aria-label="Back to Dashboard"
+            >
+              <svg className="w-5 h-5 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+              </svg>
+            </button>
+
+            <div>
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 tracking-wide uppercase">
+                <span>Cashier Portal</span>
+                <span>/</span>
+                <span className="text-orange-600">Sales Management</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight mt-1">
+                Sales Report Cashier
               </h1>
+              <p className="text-xs sm:text-sm text-slate-500 font-normal mt-0.5">
+                Real-time database audit ledger, revenue analytics, and transaction records.
+              </p>
             </div>
-            <p className="text-xs sm:text-sm text-neutral-500 font-medium mt-1">
-              Live ledger displaying 10 orders per page for Walk-In POS and Online Delivery
-            </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2.5 flex-wrap">
             {isAdmin && (
               <button
+                type="button"
                 onClick={() => setIsAdminCreateOpen(true)}
-                className="bg-[#ff7b00] hover:bg-[#e06c00] text-white font-extrabold px-4 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md shadow-orange-500/20 active:scale-95 flex items-center gap-1.5"
+                className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
               >
-                <span>➕</span> Create Transaction
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                <span>New Transaction</span>
               </button>
             )}
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-              Live Sync
-            </span>
+
             <button
+              type="button"
               onClick={() => {
                 void fetchSummary()
                 void fetchOrdersPage()
               }}
-              className="bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold px-4 py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-2xs active:scale-95"
+              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
+              title="Refresh data"
             >
-              ↻ Refresh Sales
+              <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span>Refresh Orders</span>
             </button>
+
+
           </div>
         </div>
 
-        {/* Time Period Filter Tabs */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2 rounded-2xl border border-neutral-200/80 shadow-2xs">
-          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none">
+        {/* Period Selector Tabs */}
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200/80 pb-3 print:hidden">
+          <div className="inline-flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
             {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
               <button
                 key={tab}
+                type="button"
                 onClick={() => handleTabChange(tab)}
-                className={`px-5 py-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer whitespace-nowrap ${
-                  activeTab === tab
-                    ? 'bg-[#ff7b00] text-white shadow-md shadow-orange-500/20'
-                    : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
-                }`}
+                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${activeTab === tab
+                  ? 'bg-orange-500 text-white shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
               >
                 {tab}
               </button>
             ))}
           </div>
 
-          <div className="flex items-center text-xs font-bold text-neutral-600 bg-neutral-50 px-4 py-2 rounded-xl border border-neutral-200">
-            Total Orders: <strong className="text-neutral-900 ml-1">{summaryData.totalOrders.toLocaleString()}</strong>
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>Database Aggregated</span>
           </div>
         </div>
 
-        {/* Analytics Summary Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
+        {/* KPI Metrics Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:hidden">
           {/* Total Revenue */}
-          <div className="bg-white p-5 rounded-3xl shadow-2xs border border-neutral-200/80 space-y-1">
-            <p className="text-[11px] uppercase font-black tracking-wider text-neutral-400">
-              Total Sales Revenue
-            </p>
-            <div className="text-2xl sm:text-3xl font-black text-[#ff7b00]">
-              ₱{summaryData.grossRevenue.toLocaleString()}
-            </div>
-            <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
-              Exact revenue for {activeTab.toLowerCase()}
-            </p>
-          </div>
-
-          {/* Orders Processed */}
-          <div className="bg-white p-5 rounded-3xl shadow-2xs border border-neutral-200/80 space-y-1">
-            <p className="text-[11px] uppercase font-black tracking-wider text-neutral-400">
-              Completed Orders
-            </p>
-            <div className="text-2xl sm:text-3xl font-black text-neutral-800">
-              {summaryData.totalOrders.toLocaleString()}
-            </div>
-            <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
-              Verified paid transactions
-            </p>
-          </div>
-
-          {/* Average Order Value */}
-          <div className="bg-white p-5 rounded-3xl shadow-2xs border border-neutral-200/80 space-y-1">
-            <p className="text-[11px] uppercase font-black tracking-wider text-neutral-400">
-              Average Transaction Value
-            </p>
-            <div className="text-2xl sm:text-3xl font-black text-emerald-600">
-              ₱{summaryData.averageOrderValue.toLocaleString()}
-            </div>
-            <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
-              Per order transaction average
-            </p>
-          </div>
-
-          {/* Cash vs GCash Breakdown */}
-          <div className="bg-white p-5 rounded-3xl shadow-2xs border border-neutral-200/80 space-y-1">
-            <p className="text-[11px] uppercase font-black tracking-wider text-neutral-400">
-              Cash vs GCash Total
-            </p>
-            <div className="text-sm font-bold text-slate-800 pt-1">
-              ₱{summaryData.breakdown.cash.total.toLocaleString()} Cash / ₱{summaryData.breakdown.gcash.total.toLocaleString()} GCash
-            </div>
-            <p className="text-[11px] font-semibold text-neutral-400 pt-0.5">
-              {summaryData.breakdown.cash.count} Cash • {summaryData.breakdown.gcash.count} GCash
-            </p>
-          </div>
-        </div>
-
-        {/* Filters Bar: Channel & Payment Mode */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-white p-4 rounded-3xl border border-neutral-200/80 shadow-2xs">
-          {/* Channel Filters */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
-            <span className="text-xs font-bold text-neutral-400 uppercase text-[10px]">Channel:</span>
-            {(['All', 'Dine In', 'Take Out', 'Delivery'] as const).map((type) => (
-              <button
-                key={type}
-                onClick={() => handleTypeChange(type)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  typeFilter === type
-                    ? 'bg-neutral-900 text-white shadow-2xs'
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-600'
-                }`}
-              >
-                {type}
-              </button>
-            ))}
-          </div>
-
-          {/* Payment Method Filters */}
-          <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
-            <span className="text-xs font-bold text-neutral-400 uppercase text-[10px]">Payment:</span>
-            {(['All', 'Cash', 'GCash', 'COD'] as const).map((method) => (
-              <button
-                key={method}
-                onClick={() => handlePaymentChange(method)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                  paymentFilter === method
-                    ? 'bg-orange-500 text-white shadow-2xs'
-                    : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-600'
-                }`}
-              >
-                {method}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Transactions Table Section */}
-        <div className="bg-white rounded-3xl border border-neutral-200/80 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-neutral-100 flex items-center justify-between">
-            <h2 className="font-extrabold text-sm text-neutral-800 flex items-center gap-2">
-              <span>🧾 Live Transactions</span>
-              <span className="text-xs font-bold bg-neutral-100 text-neutral-600 px-2.5 py-0.5 rounded-full">
-                Page {currentPage} of {totalPages}
+          <div
+            onClick={() => handlePaymentChange('All')}
+            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'All'
+              ? 'border-orange-500 ring-2 ring-orange-500/15'
+              : 'border-slate-200/80 hover:border-slate-300'
+              }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
+              <span className="text-[11px] font-semibold bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full border border-orange-200/60">
+                {summaryData.totalOrders.toLocaleString()} orders
               </span>
-            </h2>
-
-            <span className="text-xs text-neutral-400 font-semibold">
-              Period: <strong className="text-neutral-700">{activeTab}</strong>
-            </span>
+            </div>
+            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
+              ₱{summaryData.grossRevenue.toLocaleString()}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-normal">Gross sales across all channels</p>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-neutral-100 text-left text-xs font-medium">
-              <thead className="bg-neutral-50 text-[11px] uppercase font-extrabold tracking-wider text-neutral-400">
-                <tr>
-                  <th className="px-6 py-4">Reference #</th>
-                  <th className="px-6 py-4">Customer</th>
-                  <th className="px-6 py-4">Ordered Items Summary</th>
-                  <th className="px-6 py-4">Date & Time</th>
-                  <th className="px-6 py-4">Channel</th>
-                  <th className="px-6 py-4">Payment Method</th>
-                  <th className="px-6 py-4 text-right">Amount</th>
-                  <th className="px-6 py-4 text-center">Status</th>
-                  <th className="px-6 py-4 text-center">Receipt</th>
-                  {isAdmin && <th className="px-6 py-4 text-center">Admin Actions</th>}
-                </tr>
-              </thead>
+          {/* Cash */}
+          <div
+            onClick={() => handlePaymentChange('Cash')}
+            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Cash'
+              ? 'border-amber-500 ring-2 ring-amber-500/15'
+              : 'border-slate-200/80 hover:border-slate-300'
+              }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
+              <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200/60">
+                {summaryData.breakdown.cash.count.toLocaleString()} txns
+              </span>
+            </div>
+            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
+              ₱{summaryData.breakdown.cash.total.toLocaleString()}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-normal">Physical register payments</p>
+          </div>
 
-              <tbody className="divide-y divide-neutral-100">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={isAdmin ? 10 : 9} className="px-6 py-16 text-center text-orange-600">
-                      <div className="flex items-center justify-center gap-2 font-bold">
-                        <svg className="animate-spin h-5 w-5 text-orange-600" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                        </svg>
-                        <span>Loading page {currentPage}...</span>
-                      </div>
-                    </td>
+          {/* GCash */}
+          <div
+            onClick={() => handlePaymentChange('GCash')}
+            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'GCash'
+              ? 'border-blue-500 ring-2 ring-blue-500/15'
+              : 'border-slate-200/80 hover:border-slate-300'
+              }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
+              <span className="text-[11px] font-semibold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-200/60">
+                {summaryData.breakdown.gcash.count.toLocaleString()} txns
+              </span>
+            </div>
+            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
+              ₱{summaryData.breakdown.gcash.total.toLocaleString()}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-normal">Digital wallet & online orders</p>
+          </div>
+
+          {/* Hybrid / Split */}
+          <div
+            onClick={() => handlePaymentChange('Hybrid')}
+            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Hybrid'
+              ? 'border-purple-500 ring-2 ring-purple-500/15'
+              : 'border-slate-200/80 hover:border-slate-300'
+              }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
+              <span className="text-[11px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200/60">
+                {summaryData.breakdown.hybrid.count.toLocaleString()} txns
+              </span>
+            </div>
+            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
+              ₱{summaryData.breakdown.hybrid.total.toLocaleString()}
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 font-normal">Mixed payment methods</p>
+          </div>
+        </div>
+
+        {/* Main Content Area & Table */}
+        <div id="print-area">
+          {/* Table Container Card */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden print:shadow-none print:border print:rounded-none">
+            {/* Filter Toolbar */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4 print:hidden">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Transaction Register</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Audited ledger records with 10 rows per page
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 flex-wrap">
+                {/* Channel Filter */}
+                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                  {[
+                    { label: 'All Channels', val: 'All' },
+                    { label: 'POS Walk-In', val: 'POS' },
+                    { label: 'Online Delivery', val: 'Online' },
+                  ].map((item) => (
+                    <button
+                      key={item.val}
+                      type="button"
+                      onClick={() => handleChannelChange(item.val)}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${channelFilter === item.val
+                        ? 'bg-slate-900 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-200'
+                        }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Payment Filter */}
+                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                  {['All', 'Cash', 'GCash', 'Hybrid'].map((pm) => (
+                    <button
+                      key={pm}
+                      type="button"
+                      onClick={() => handlePaymentChange(pm)}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${paymentFilter === pm
+                        ? 'bg-orange-500 text-white shadow-2xs'
+                        : 'text-slate-600 hover:bg-slate-200'
+                        }`}
+                    >
+                      {pm}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search order ID or customer..."
+                    className="w-48 sm:w-60 bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:border-orange-500"
+                  />
+                  <svg
+                    className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            {/* Data Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50/75 text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                    <th className="py-3 px-4">Order ID</th>
+                    <th className="py-3 px-4">Customer & Channel</th>
+                    <th className="py-3 px-4">Ordered Items</th>
+                    <th className="py-3 px-4">Date & Time</th>
+                    <th className="py-3 px-4">Payment</th>
+                    <th className="py-3 px-4 text-right">Total Amount</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center print:hidden">Action</th>
                   </tr>
-                ) : transactions.length === 0 ? (
-                  <tr>
-                    <td colSpan={isAdmin ? 10 : 9} className="px-6 py-16 text-center text-neutral-400">
-                      <span className="text-3xl block mb-2">📋</span>
-                      <div className="font-bold text-neutral-700 text-base">No transactions recorded</div>
-                      <div className="text-xs mt-1 text-neutral-400">
-                        Completed sales placed at POS or by Online Customers will appear here automatically.
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  transactions.map((tx) => {
-                    const isCancelled = (tx.status || '').toUpperCase() === 'CANCELLED'
-
-                    return (
-                      <tr key={tx.id} className="hover:bg-orange-50/40 transition-colors">
-                        <td className="px-6 py-4 font-extrabold text-orange-600 uppercase tracking-wide">
-                          {tx.ref}
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs font-normal text-slate-700">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-12 text-slate-400">
+                        <div className="inline-flex items-center gap-2 text-orange-600 font-medium">
+                          <svg className="animate-spin h-4 w-4 text-orange-600" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                          </svg>
+                          <span>Loading page {currentPage}...</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : transactions.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-12 text-slate-400">
+                        <p className="font-semibold text-slate-600">No transactions found</p>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Transactions matching the selected period and filters will be displayed here.
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    transactions.map((tx) => (
+                      <tr key={tx.id || tx.ref} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-3 px-4 font-mono font-semibold text-slate-900">
+                          {tx.ref || tx.id}
                         </td>
-
-                        <td className="px-6 py-4">
-                          <span className="font-bold text-neutral-800 block">
-                            {tx.customer}
-                          </span>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-800">{tx.customer || 'Walk-In'}</div>
+                          <div className="text-[11px] text-slate-400">{tx.type}</div>
                         </td>
-
-                        <td className="px-6 py-4 max-w-xs truncate text-neutral-700 font-medium">
-                          {tx.items}
-                        </td>
-
-                        <td className="px-6 py-4 text-neutral-500 text-[11px] whitespace-nowrap">
-                          {tx.dateTime}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase whitespace-nowrap ${
-                              tx.type === 'Delivery'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : tx.type === 'Dine In'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-amber-50 text-amber-800 border border-amber-200'
-                            }`}
-                          >
-                            {tx.type}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase whitespace-nowrap ${
-                              (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                                : (tx.paymentMethod || '').toLowerCase().includes('cod')
-                                ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
-                                : 'bg-neutral-100 text-neutral-800 border border-neutral-200'
-                            }`}
-                          >
-                            {tx.paymentMethod || 'Cash'}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-4 text-right font-black text-base text-[#ff7b00]">
-                          ₱{tx.total.toLocaleString()}
-                        </td>
-
-                        <td className="px-6 py-4 text-center">
-                          <span
-                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase ${
-                              isCancelled
-                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                            }`}
-                          >
-                            {tx.status || 'Completed'}
-                          </span>
-                        </td>
-
-                        <td className="px-6 py-4 text-center">
+                        <td className="py-3 px-4 max-w-xs">
                           <button
                             type="button"
                             onClick={() => setSelectedTransaction(tx)}
-                            className="bg-neutral-100 hover:bg-orange-500 hover:text-white text-neutral-700 font-bold text-xs px-3 py-1.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center justify-center gap-1 mx-auto"
+                            className="text-left text-orange-600 hover:text-orange-700 font-medium hover:underline cursor-pointer truncate block max-w-xs"
+                            title="Click to view details"
                           >
-                            <span>🧾</span> Receipt
+                            {tx.items}
                           </button>
                         </td>
-
-                        {isAdmin && (
-                          <td className="px-6 py-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setEditingTransaction(tx)}
-                                title="Edit Transaction (Admin)"
-                                className="bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all border border-amber-200 cursor-pointer"
-                              >
-                                ✏️ Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteTransaction(tx.id)}
-                                title="Delete Transaction (Admin)"
-                                className="bg-red-600 hover:bg-red-700 text-red-600 font-bold px-2.5 py-1.5 rounded-xl text-xs transition-all border border-red-200 cursor-pointer"
-                              >
-                                🗑️
-                              </button>
-                            </div>
-                          </td>
-                        )}
+                        <td className="py-3 px-4 text-slate-500 text-[11px]">
+                          {tx.dateTime}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                              (tx.paymentMethod || '').toLowerCase().includes('split')
+                              ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
+                              : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
+                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                                  : 'bg-amber-50 text-amber-800 border border-amber-200/60'
+                              }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                (tx.paymentMethod || '').toLowerCase().includes('split')
+                                ? 'bg-purple-500'
+                                : (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                  ? 'bg-blue-500'
+                                  : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                    ? 'bg-emerald-500'
+                                    : 'bg-amber-500'
+                                }`}
+                            ></span>
+                            {tx.paymentMethod || 'Cash'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-semibold text-slate-900">
+                          ₱{Number(tx.total || 0).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                            {tx.status || 'Completed'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center print:hidden">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTransaction(tx)}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                            title="View details"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          </button>
+                        </td>
                       </tr>
-                    )
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* 1-10 PER PAGE PAGINATION CONTROLS */}
-          <div className="pt-4 pb-4 px-6 border-t border-neutral-100 flex flex-col sm:flex-row items-center justify-between gap-4">
-            {/* Showing 1-10 of N label */}
-            <div className="flex items-center gap-2 text-xs font-bold text-neutral-600">
-              <span className="bg-neutral-100 px-3 py-1.5 rounded-xl border border-neutral-200">
-                Showing <strong className="text-orange-600">{startItem}–{endItem}</strong> of{' '}
-                <strong className="text-neutral-900">{totalMatchingCount.toLocaleString()}</strong> orders
-              </span>
-              <span className="text-[11px] text-neutral-400 font-semibold">(10 per page)</span>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            {/* Page navigation buttons */}
-            {totalPages > 1 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {/* Prev Button */}
-                <button
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1 || isLoading}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
-                >
-                  <span>⬅️</span> Prev
-                </button>
-
-                {/* Numbered Page Buttons */}
-                {getPaginationRange().map((pageItem, idx) => {
-                  if (pageItem === '...') {
-                    return (
-                      <span key={`ellipsis-${idx}`} className="px-2 text-xs font-black text-neutral-400">
-                        …
-                      </span>
-                    )
-                  }
-
-                  const pageNum = Number(pageItem)
-                  const isActive = currentPage === pageNum
-
-                  return (
-                    <button
-                      key={`page-${pageNum}`}
-                      onClick={() => setCurrentPage(pageNum)}
-                      disabled={isLoading}
-                      className={`min-w-[34px] h-[34px] px-2.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-orange-500 text-white shadow-xs shadow-orange-500/30 ring-2 ring-orange-400/30'
-                          : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  )
-                })}
-
-                {/* Next Button */}
-                <button
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages || isLoading}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
-                >
-                  Next <span>➡️</span>
-                </button>
+            {/* Pagination Footer */}
+            <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
+              <div className="text-xs text-slate-500 font-medium">
+                Showing <span className="font-semibold text-slate-800">{startItem}–{endItem}</span> of{' '}
+                <span className="font-semibold text-slate-800">{totalMatchingCount.toLocaleString()}</span> orders
               </div>
-            )}
-          </div>
-        </div>
-      </div>
 
-      {/* OFFICIAL RECEIPT INSPECTION MODAL (POS Inspired Theme) */}
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1">
+                  {/* Previous Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1 || isLoading}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                    <span>Prev</span>
+                  </button>
+
+                  {/* Page Number Pills */}
+                  {getPaginationRange().map((pageItem, idx) => {
+                    if (pageItem === '...') {
+                      return (
+                        <span key={`ellipsis-${idx}`} className="px-2 text-xs font-medium text-slate-400">
+                          …
+                        </span>
+                      )
+                    }
+
+                    const pageNum = Number(pageItem)
+                    const isActive = currentPage === pageNum
+
+                    return (
+                      <button
+                        key={`page-${pageNum}`}
+                        type="button"
+                        onClick={() => setCurrentPage(pageNum)}
+                        disabled={isLoading}
+                        className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
+                          ? 'bg-orange-500 text-white shadow-2xs'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
+                          }`}
+                      >
+                        {pageNum}
+                      </button>
+                    )
+                  })}
+
+                  {/* Next Button */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages || isLoading}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                  >
+                    <span>Next</span>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+        </div>
+      </main>
+
+      {/* Transaction Details Modal */}
       {selectedTransaction && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-xs px-4"
           onClick={() => setSelectedTransaction(null)}
         >
           <div
-            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-neutral-200 space-y-4 animate-in zoom-in-95 duration-200"
+            className="w-full max-w-lg bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-5 border-b border-neutral-100">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">🧾</span>
-                <h3 className="font-extrabold text-neutral-900 text-lg tracking-tight">
-                  Transaction Receipt
-                </h3>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Transaction Details</h3>
+                <p className="text-xs text-slate-400 font-mono mt-0.5">
+                  ID: {selectedTransaction.ref || selectedTransaction.id}
+                </p>
               </div>
+
               <button
+                type="button"
                 onClick={() => setSelectedTransaction(null)}
-                className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                aria-label="Close"
               >
-                ✕
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
 
-            {/* Official Receipt Content */}
-            <div className="p-5 space-y-4 text-xs font-mono text-neutral-800">
-              <div className="text-center space-y-0.5 font-sans border-b border-dashed border-neutral-300 pb-4">
-                <h4 className="font-black text-lg text-neutral-900 tracking-tight">SEAFOOD NG BAYAN</h4>
-                <p className="text-[11px] text-neutral-500 font-medium">Point of Sale & Online Official Receipt</p>
-                <p className="text-[11px] text-neutral-400 font-medium">Ref #{selectedTransaction.ref}</p>
-                <p className="text-[10px] text-neutral-400 pt-1">{selectedTransaction.dateTime}</p>
+            <div className="px-6 py-4 bg-slate-50/70 border-b border-slate-100 grid grid-cols-2 gap-4 text-xs">
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Customer</span>
+                <span className="font-semibold text-slate-800 mt-0.5 block">
+                  {selectedTransaction.customer || 'Walk-In Customer'}
+                </span>
               </div>
-
-              {/* Order Info */}
-              <div className="space-y-1 font-sans text-xs bg-neutral-50 p-3 rounded-2xl border border-neutral-100">
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 font-semibold">Customer:</span>
-                  <strong className="text-neutral-800">{selectedTransaction.customer}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 font-semibold">Channel Type:</span>
-                  <strong className="text-orange-600">{selectedTransaction.type}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 font-semibold">Payment Mode:</span>
-                  <strong className="text-neutral-800">{selectedTransaction.paymentMethod || 'Cash'}</strong>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-neutral-400 font-semibold">Status:</span>
-                  <strong className={selectedTransaction.status === 'CANCELLED' ? 'text-rose-600' : 'text-emerald-600'}>
-                    {selectedTransaction.status || 'Completed'}
-                  </strong>
-                </div>
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Channel</span>
+                <span className="font-semibold text-slate-800 mt-0.5 block">{selectedTransaction.type}</span>
               </div>
-
-              {/* Ordered Items Breakdown */}
-              <div className="space-y-2 pt-2 border-t border-dashed border-neutral-300">
-                <p className="font-bold font-sans text-[11px] uppercase tracking-wider text-neutral-400">
-                  Itemized Order Breakdown:
-                </p>
-
-                <div className="space-y-1.5">
-                  {getOrderedItems(selectedTransaction.items).map((itemStr, idx) => {
-                    const match = itemStr.match(/^(.*?)\s*x(\d+)$/i)
-                    const name = match ? match[1].trim() : itemStr
-                    const qty = match ? parseInt(match[2], 10) : 1
-
-                    return (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="font-semibold text-neutral-800">{name} x{qty}</span>
-                        <span className="font-bold text-neutral-600">Item Total</span>
-                      </div>
-                    )
-                  })}
-                </div>
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Payment Method</span>
+                <span className="font-semibold text-slate-800 mt-0.5 block">{selectedTransaction.paymentMethod || 'Cash'}</span>
               </div>
-
-              {/* Financial Totals */}
-              <div className="pt-3 border-t border-dashed border-neutral-300 space-y-1.5 font-sans">
-                <div className="flex justify-between text-neutral-600">
-                  <span>Subtotal (Net of VAT):</span>
-                  <span>₱{Math.round(selectedTransaction.total / 1.12).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between text-neutral-600">
-                  <span>VAT (12%):</span>
-                  <span>₱{Math.round((selectedTransaction.total / 1.12) * 0.12).toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between font-black text-sm text-neutral-900 pt-1 border-t border-neutral-200">
-                  <span>Total Amount Paid:</span>
-                  <span className="text-orange-600">₱{selectedTransaction.total.toLocaleString()}</span>
-                </div>
+              <div>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block">Date & Time</span>
+                <span className="font-semibold text-slate-800 mt-0.5 block">{selectedTransaction.dateTime}</span>
               </div>
             </div>
 
-            {/* Modal Actions */}
-            <div className="p-5 border-t border-neutral-100 flex flex-wrap gap-2">
+            <div className="px-6 py-4 max-h-72 overflow-y-auto">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-2.5">
+                Ordered Items
+              </span>
+
+              <div className="space-y-2">
+                {getOrderedItems(selectedTransaction.items).map((item, index) => {
+                  const match = item.match(/^(.*?)\s*x(\d+)$/i)
+                  const itemName = match ? match[1].trim() : item
+                  const quantity = match ? match[2] : null
+
+                  return (
+                    <div
+                      key={`${selectedTransaction.id}-item-${index}`}
+                      className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs"
+                    >
+                      <span className="font-medium text-slate-800">{itemName}</span>
+                      {quantity && (
+                        <span className="text-xs font-semibold text-orange-600">
+                          Qty: {quantity}
+                        </span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <span className="text-xs font-semibold text-slate-500">Order Total</span>
+              <span className="text-lg font-bold text-slate-900">
+                ₱{Number(selectedTransaction.total || 0).toLocaleString()}
+              </span>
+            </div>
+
+            <div className="px-6 py-4 border-t border-slate-100 flex gap-2.5">
               {isAdmin && (
                 <>
                   <button
@@ -772,30 +1006,29 @@ export const SalesReportCashier: React.FC = () => {
                       setEditingTransaction(selectedTransaction)
                       setSelectedTransaction(null)
                     }}
-                    className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-2.5 rounded-2xl text-xs transition-colors cursor-pointer"
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold py-2 rounded-xl text-xs transition-colors cursor-pointer"
                   >
-                    ✏️ Edit
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                    </svg>
+                    <span>Edit</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => handleDeleteTransaction(selectedTransaction.id)}
-                    className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-4 py-2.5 rounded-2xl text-xs transition-colors cursor-pointer"
+                    className="inline-flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold px-3 py-2 rounded-xl text-xs transition-colors cursor-pointer"
                   >
-                    🗑️ Delete
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                    <span>Delete</span>
                   </button>
                 </>
               )}
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-extrabold py-2.5 rounded-2xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <span>🖨️</span> Print
-              </button>
-              <button
-                type="button"
                 onClick={() => setSelectedTransaction(null)}
-                className="px-5 bg-neutral-900 hover:bg-black text-white font-extrabold py-2.5 rounded-2xl text-xs transition-all cursor-pointer"
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-xl text-xs transition-colors cursor-pointer"
               >
                 Close
               </button>
@@ -804,7 +1037,7 @@ export const SalesReportCashier: React.FC = () => {
         </div>
       )}
 
-      {/* ADMIN CRUD MODALS */}
+      {/* Admin Action Modals */}
       <AdminCreateTransactionModal
         isOpen={isAdminCreateOpen}
         onClose={() => setIsAdminCreateOpen(false)}
@@ -823,6 +1056,7 @@ export const SalesReportCashier: React.FC = () => {
           void fetchOrdersPage()
         }}
       />
+
     </div>
   )
 }

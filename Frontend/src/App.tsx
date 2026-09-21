@@ -3,7 +3,7 @@ import { POS } from './features/POS'
 import { KitchenMode } from './features/KitchenMode'
 import { AssistantRole } from './features/AssistantRole'
 import { RideRoleDemo } from './features/rideRoleDemo'
-import { SalesReportCashier } from './features/salesReportCashier'
+import SalesReportCashier from './features/salesReportCashier'
 import { OnlineCustomer } from './features/OnlineCustomer'
 import { AccMan } from './features/AccMan'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
@@ -19,28 +19,51 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
+
         {/* Public Landing Page & Public Information Routes */}
         <Route path="/" element={<LandingPage />} />
+
         <Route path="/landingpage" element={<LandingPage />} />
+
         <Route path="/landing-page" element={<LandingPage />} />
+
         <Route path="/landing" element={<LandingPage />} />
+
         <Route path="/dashboard" element={<LandingPage />} />
+
         <Route path="/login" element={<Login />} />
+
         <Route path="/about" element={<AboutUs />} />
+
 
         {/* Customer Routes */}
         <Route path="/customer" element={<OnlineCustomer />} />
-        <Route path="/customer-dashboard" element={<Navigate to="/customer" replace />} />
+
+        <Route
+          path="/customer-dashboard"
+          element={<Navigate to="/customer" replace />}
+        />
+
 
         {/* Account Management */}
         <Route
           path="/account"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'cashier', 'kitchen', 'rider', 'assistant', 'customer']}>
+            <ProtectedRoute
+              allowedRoles={[
+                'admin',
+                'cashier',
+                'kitchen',
+                'rider',
+                'assistant',
+                'customer'
+              ]}
+            >
               <AccMan />
             </ProtectedRoute>
           }
         />
+
 
         {/* Cashier & POS Feature Routes */}
         <Route
@@ -51,6 +74,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/sales-report"
           element={
@@ -59,6 +83,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
 
         {/* Kitchen Feature Route */}
         <Route
@@ -70,6 +95,7 @@ function App() {
           }
         />
 
+
         {/* Assistant Floor Call Route */}
         <Route
           path="/assistant"
@@ -79,6 +105,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
 
         {/* Rider Delivery Route */}
         <Route
@@ -90,6 +117,7 @@ function App() {
           }
         />
 
+
         {/* Admin Management Dashboard Routes */}
         <Route
           path="/admin-dashboard"
@@ -99,6 +127,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin-sales-report"
           element={
@@ -107,6 +136,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/users"
           element={
@@ -115,6 +145,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/admin-customers"
           element={
@@ -124,8 +155,13 @@ function App() {
           }
         />
 
+
         {/* Fallback redirect to Landing Page */}
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route
+          path="*"
+          element={<Navigate to="/" replace />}
+        />
+
       </Routes>
     </BrowserRouter>
   )

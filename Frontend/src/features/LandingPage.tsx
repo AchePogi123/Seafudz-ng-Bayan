@@ -206,11 +206,10 @@ export const LandingPage: React.FC = () => {
     <div className="min-h-screen bg-white text-slate-800 font-sans antialiased selection:bg-orange-500 selection:text-white">
       {/* 1. HEADER */}
       <header
-        className={`sticky top-0 z-50 w-full transition-all duration-300 ${
-          isScrolled
-            ? 'bg-white/95 backdrop-blur-md shadow-sm border-b border-orange-100 py-3.5'
-            : 'bg-white border-b border-slate-100 py-4.5'
-        }`}
+        className={`sticky top-0 z-50 w-full transition-all duration-300 ${isScrolled
+          ? 'bg-white/95 backdrop-blur-md shadow-sm border-b border-orange-100 py-3.5'
+          : 'bg-white border-b border-slate-100 py-4.5'
+          }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
           {/* Revamped Aesthetic Typographic Brand Logo */}
@@ -247,20 +246,18 @@ export const LandingPage: React.FC = () => {
           {/* Header Action Button */}
           <div className="hidden sm:flex items-center gap-3">
             {activeUser ? (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleOrderOnline}
-                  className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer"
-                >
-                  Order Now
-                </button>
-                <Link
-                  to={activeUser.role === 'admin' ? '/admin-dashboard' : activeUser.role === 'cashier' ? '/pos' : '/account'}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-colors truncate max-w-[140px]"
-                >
-                  {activeUser.fullname || 'Account'}
-                </Link>
-              </div>
+              <Link
+                to={
+                  activeUser.role === 'admin'
+                    ? '/admin-dashboard'
+                    : activeUser.role === 'cashier'
+                      ? '/pos'
+                      : '/account'
+                }
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-colors truncate max-w-[140px]"
+              >
+                {activeUser.fullname || 'Account'}
+              </Link>
             ) : (
               <Link
                 to="/login"
@@ -350,9 +347,8 @@ export const LandingPage: React.FC = () => {
                   <span className="absolute left-0 top-0 text-orange-600 flex items-baseline">
                     {typedWord}
                     <span
-                      className={`inline-block w-[2px] h-[0.82em] bg-orange-600 ml-0.5 align-baseline transition-opacity duration-150 ${
-                        isLineDrawn ? 'opacity-0' : 'opacity-100 animate-pulse'
-                      }`}
+                      className={`inline-block w-[2px] h-[0.82em] bg-orange-600 ml-0.5 align-baseline transition-opacity duration-150 ${isLineDrawn ? 'opacity-0' : 'opacity-100 animate-pulse'
+                        }`}
                     />
                   </span>
 
@@ -725,7 +721,7 @@ export const LandingPage: React.FC = () => {
 
               <div className="mt-6 pt-5 border-t border-slate-100 space-y-3 text-xs sm:text-sm text-slate-600">
                 <div>
-                  <span className="font-bold text-slate-800">Operating Hours:</span> 10:00 AM to 10:00 PM Daily
+                  <span className="font-bold text-slate-800">Operating Hours:</span> 24/7 Daily
                 </div>
                 <div>
                   <span className="font-bold text-slate-800">Hotline:</span> (02) 8888-SEAFOOD / (02) 8888-7323
@@ -860,11 +856,10 @@ export const LandingPage: React.FC = () => {
       <button
         onClick={scrollToTop}
         aria-label="Scroll back to top"
-        className={`fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white shadow-lg shadow-orange-500/30 border border-white/25 hover:from-orange-500 hover:to-amber-400 hover:shadow-orange-500/50 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group ${
-          showScrollTop
-            ? 'opacity-100 translate-y-0 pointer-events-auto'
-            : 'opacity-0 translate-y-6 pointer-events-none'
-        }`}
+        className={`fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white shadow-lg shadow-orange-500/30 border border-white/25 hover:from-orange-500 hover:to-amber-400 hover:shadow-orange-500/50 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group ${showScrollTop
+          ? 'opacity-100 translate-y-0 pointer-events-auto'
+          : 'opacity-0 translate-y-6 pointer-events-none'
+          }`}
       >
         <svg
           className="w-5 h-5 text-white transition-transform duration-200 group-hover:-translate-y-0.5"

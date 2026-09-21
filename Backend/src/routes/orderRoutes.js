@@ -5,18 +5,25 @@ import { checkIfBulkOrder } from '../utils/bulkOrder.js';
 
 const router = Router();
 
-// GET /api/orders - Get all orders
+// GET /api/orders - Get orders with pagination, search, and filtering
 router.get('/orders', async (req, res) => {
   try {
-    const { status, type, limit } = req.query;
+    const { status, type, limit, offset, page, search, payment, tab, period } = req.query;
     let sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
              o.order_type AS type, o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
+             COALESCE(c.fullname, 'Walk-In Customer') AS customer_name,
+             c.phone AS customer_phone,
+             COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+             d.status AS delivery_status,
+             d.rider_id,
+             r_emp.fullname AS rider_name,
              t.name AS table_name,
              p_pay.payment_method,
              p_pay.status AS payment_status,
+             COUNT(*) OVER() AS full_count,
              COALESCE(
                json_agg(
                  json_build_object(
@@ -33,7 +40,14 @@ router.get('/orders', async (req, res) => {
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
       FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN tables t ON o.table_id = t.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id
+        FROM deliveries
+        ORDER BY order_id, created_at DESC
+      ) d ON o.id = d.order_id
+      LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products pr ON oi.product_id = pr.id
       LEFT JOIN (
@@ -51,23 +65,70 @@ router.get('/orders', async (req, res) => {
       params.push(status);
     }
 
-    if (type) {
-      sql += ` AND LOWER(o.order_type) = LOWER($${paramIndex++})`;
-      params.push(type);
+    const selectedPeriod = (tab || period || '').toLowerCase();
+    if (selectedPeriod === 'today') {
+      sql += ` AND o.created_at >= CURRENT_DATE`;
+    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
+      sql += ` AND o.created_at >= NOW() - INTERVAL '7 days'`;
+    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
+      sql += ` AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE)`;
+    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
+      sql += ` AND o.created_at >= DATE_TRUNC('year', CURRENT_DATE)`;
     }
 
-    sql += ` GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
+    if (type && type !== 'All') {
+      if (type.toLowerCase() === 'pos' || type.toLowerCase() === 'on_site') {
+        sql += ` AND LOWER(o.order_type) = 'on_site'`;
+      } else if (type.toLowerCase() === 'online' || type.toLowerCase() === 'delivery') {
+        sql += ` AND LOWER(o.order_type) = 'online'`;
+      } else {
+        sql += ` AND LOWER(o.order_type) = LOWER($${paramIndex++})`;
+        params.push(type);
+      }
+    }
 
-    if (limit) {
+    if (search && search.trim()) {
+      sql += ` AND (LOWER(o.id) LIKE LOWER($${paramIndex}) OR LOWER(COALESCE(c.fullname, '')) LIKE LOWER($${paramIndex}))`;
+      params.push(`%${search.trim()}%`);
+      paramIndex++;
+    }
+
+    if (payment && payment !== 'All') {
+      if (payment.toLowerCase() === 'hybrid' || payment.toLowerCase() === 'split') {
+        sql += ` AND (LOWER(COALESCE(p_pay.payment_method, '')) LIKE '%hybrid%' OR LOWER(COALESCE(p_pay.payment_method, '')) LIKE '%split%')`;
+      } else {
+        sql += ` AND LOWER(COALESCE(p_pay.payment_method, '')) LIKE LOWER($${paramIndex++})`;
+        params.push(`%${payment.trim()}%`);
+      }
+    }
+
+    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
+
+    const limitNum = limit ? parseInt(limit, 10) : null;
+    let offsetNum = offset ? parseInt(offset, 10) : 0;
+    if (page && limitNum && !offset) {
+      const pageNum = Math.max(1, parseInt(page, 10));
+      offsetNum = (pageNum - 1) * limitNum;
+    }
+
+    if (limitNum) {
       sql += ` LIMIT $${paramIndex++}`;
-      params.push(parseInt(limit, 10));
+      params.push(limitNum);
+    }
+    if (offsetNum > 0) {
+      sql += ` OFFSET $${paramIndex++}`;
+      params.push(offsetNum);
     }
 
     const { rows } = await query(sql, params);
+    const totalCount = rows.length > 0 ? parseInt(rows[0].full_count, 10) : 0;
 
     return res.status(200).json({
       success: true,
       count: rows.length,
+      total: totalCount,
+      limit: limitNum,
+      offset: offsetNum,
       data: rows,
     });
   } catch (error) {
@@ -404,7 +465,7 @@ router.put('/orders/:id', async (req, res) => {
              status = EXCLUDED.status,
              updated_at = NOW()`,
           [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED']
-        ).catch(() => {});
+        ).catch(() => { });
       }
     } catch (dbErr) {
       console.warn('DB update order note:', dbErr.message);
@@ -505,11 +566,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const isBulk = checkIfBulkOrder(items);
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD' 
-      ? 'PENDING_COD' 
-      : isBulk 
-      ? 'GCASH_PENDING_APPROVAL' 
-      : 'GCASH_AUTHORIZED';
+    const initialStatus = initialPaymentMethod === 'COD'
+      ? 'PENDING_COD'
+      : isBulk
+        ? 'GCASH_PENDING_APPROVAL'
+        : 'GCASH_AUTHORIZED';
 
     const orderRecord = {
       id: orderId,

@@ -44,10 +44,10 @@ export async function runMigrations() {
     const { rows } = await client.query('SELECT filename FROM schema_migrations;');
     const appliedFiles = new Set(rows.map((row) => row.filename));
 
-    // 3. Read migration directory for .sql files
+    // 3. Read migration directory for numbered .sql files (e.g. 001_initial_schema.sql)
     const files = fs
       .readdirSync(__dirname)
-      .filter((file) => file.endsWith('.sql'))
+      .filter((file) => /^\d+_.*\.sql$/.test(file))
       .sort();
 
     if (files.length === 0) {

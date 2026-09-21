@@ -63,7 +63,7 @@ const SIGNATURE_DISHES: DishItem[] = [
 const FAQ_LIST = [
   {
     q: 'How do I place an order for delivery or pickup?',
-    a: 'Click "Order Online Now" anywhere on this page to enter our storefront. Select your items, customize your spice level and add-ons, enter your delivery address, and proceed with online payment or cash on delivery.'
+    a: 'Click "Order Now" anywhere on this page to enter our storefront. Select your items, customize your spice level and add-ons, enter your delivery address, and proceed with online payment or cash on delivery.'
   },
   {
     q: 'How far in advance should I place my order?',
@@ -90,6 +90,75 @@ export const LandingPage: React.FC = () => {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
   const [activeUser, setActiveUser] = useState<ReturnType<typeof getActiveUser>>(null);
 
+  // Typewriter and bottom highlight line animation for "Bayan."
+  const [typedWord, setTypedWord] = useState('');
+  const [isLineDrawn, setIsLineDrawn] = useState(false);
+
+  useEffect(() => {
+    const fullWord = 'Bayan.';
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let isCancelled = false;
+
+    const runTypewriter = () => {
+      let currentIdx = 0;
+      setIsLineDrawn(false);
+      setTypedWord('');
+
+      const typeNextChar = () => {
+        if (isCancelled) return;
+        if (currentIdx <= fullWord.length) {
+          setTypedWord(fullWord.slice(0, currentIdx));
+          if (currentIdx === fullWord.length) {
+            // Finished spelling Bayan. -> trigger underline highlight
+            timeoutId = setTimeout(() => {
+              if (isCancelled) return;
+              setIsLineDrawn(true);
+
+              // Hold full highlight for 3.5 seconds before restarting loop
+              timeoutId = setTimeout(() => {
+                if (isCancelled) return;
+                deleteChars();
+              }, 3500);
+            }, 120);
+          } else {
+            currentIdx++;
+            timeoutId = setTimeout(typeNextChar, 140);
+          }
+        }
+      };
+
+      const deleteChars = () => {
+        if (isCancelled) return;
+        setIsLineDrawn(false);
+        let delIdx = fullWord.length;
+
+        const delNextChar = () => {
+          if (isCancelled) return;
+          if (delIdx >= 0) {
+            setTypedWord(fullWord.slice(0, delIdx));
+            if (delIdx === 0) {
+              timeoutId = setTimeout(runTypewriter, 500);
+            } else {
+              delIdx--;
+              timeoutId = setTimeout(delNextChar, 60);
+            }
+          }
+        };
+
+        timeoutId = setTimeout(delNextChar, 250);
+      };
+
+      timeoutId = setTimeout(typeNextChar, 400);
+    };
+
+    runTypewriter();
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, []);
+
   useEffect(() => {
     setActiveUser(getActiveUser());
     const handleScroll = () => {
@@ -101,12 +170,7 @@ export const LandingPage: React.FC = () => {
 
   const handleOrderOnline = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
-    const user = getActiveUser();
-    if (user) {
-      navigate('/customer');
-    } else {
-      navigate('/login', { state: { from: '/customer' } });
-    }
+    navigate('/customer');
   };
 
   const toggleFaq = (index: number) => {
@@ -129,12 +193,30 @@ export const LandingPage: React.FC = () => {
 
           {/* Desktop Navigation Links */}
           <nav className="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-600">
-            <a href="#hero" className="hover:text-orange-600 transition-colors">Home</a>
-            <a href="#specialties" className="hover:text-orange-600 transition-colors">Specialties</a>
-            <a href="#standards" className="hover:text-orange-600 transition-colors">Our Standard</a>
-            <a href="#our-story" className="hover:text-orange-600 transition-colors">Our Story</a>
-            <a href="#branches" className="hover:text-orange-600 transition-colors">Branches</a>
-            <a href="#faqs" className="hover:text-orange-600 transition-colors">FAQs</a>
+            <a href="#hero" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Home
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
+            <a href="#specialties" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Specialties
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
+            <a href="#standards" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Our Standard
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
+            <a href="#our-story" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Our Story
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
+            <a href="#branches" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Branches
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
+            <a href="#faqs" className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              FAQs
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
           </nav>
 
           {/* Header Action Button */}
@@ -145,7 +227,7 @@ export const LandingPage: React.FC = () => {
                   onClick={handleOrderOnline}
                   className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer"
                 >
-                  Order Online
+                  Order Now
                 </button>
                 <Link
                   to={activeUser.role === 'admin' ? '/admin-dashboard' : activeUser.role === 'cashier' ? '/sales-report' : '/account'}
@@ -201,7 +283,7 @@ export const LandingPage: React.FC = () => {
                 }}
                 className="block w-full text-center bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-xl text-sm cursor-pointer"
               >
-                Order Online Now
+                Order Now
               </button>
               {!activeUser && (
                 <Link
@@ -236,7 +318,20 @@ export const LandingPage: React.FC = () => {
                 Authentic seafood feasts,<br />
                 crafted for the{' '}
                 <span className="relative inline-block text-orange-600">
-                  Bayan.
+                  {/* Invisible placeholder maintaining exact layout stability */}
+                  <span className="invisible select-none">Bayan.</span>
+
+                  {/* Animated typing text overlay with blinking typewriter cursor */}
+                  <span className="absolute left-0 top-0 text-orange-600 flex items-baseline">
+                    {typedWord}
+                    <span
+                      className={`inline-block w-[2px] h-[0.82em] bg-orange-600 ml-0.5 align-baseline transition-opacity duration-150 ${
+                        isLineDrawn ? 'opacity-0' : 'opacity-100 animate-pulse'
+                      }`}
+                    />
+                  </span>
+
+                  {/* Animated bottom highlight line synchronized with the writing effect */}
                   <svg
                     className="absolute -bottom-1.5 left-0 w-full h-2.5 text-orange-500 overflow-visible pointer-events-none"
                     viewBox="0 0 160 12"
@@ -248,6 +343,11 @@ export const LandingPage: React.FC = () => {
                       stroke="currentColor"
                       strokeWidth="3"
                       strokeLinecap="round"
+                      style={{
+                        strokeDasharray: 200,
+                        strokeDashoffset: isLineDrawn ? 0 : 200,
+                        transition: 'stroke-dashoffset 0.75s cubic-bezier(0.4, 0, 0.2, 1)',
+                      }}
                     />
                   </svg>
                 </span>
@@ -264,7 +364,7 @@ export const LandingPage: React.FC = () => {
                   onClick={handleOrderOnline}
                   className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer"
                 >
-                  Order Online Now
+                  Order Now
                 </button>
 
                 <a
@@ -389,51 +489,25 @@ export const LandingPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-7">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {SIGNATURE_DISHES.map((dish) => (
               <div
                 key={dish.id}
-                className="bg-white rounded-2xl border border-slate-200 hover:border-orange-300 shadow-xs hover:shadow-md transition-all duration-200 overflow-hidden flex flex-col text-left"
+                onClick={handleOrderOnline}
+                className="relative h-72 sm:h-80 md:h-88 rounded-2xl sm:rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 group cursor-pointer border border-slate-200/80 bg-orange-50"
               >
-                <div className="relative h-48 overflow-hidden bg-orange-50">
-                  <img
-                    src={dish.image}
-                    alt={dish.name}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute top-3 left-3 bg-white/95 px-2.5 py-1 rounded-md text-[11px] font-bold text-orange-700 shadow-xs border border-orange-100">
-                    {dish.tag}
-                  </div>
-                  <div className="absolute bottom-3 right-3 bg-slate-900/85 px-2.5 py-1 rounded-md text-[10px] font-bold text-white">
-                    {dish.serves}
-                  </div>
+                <img
+                  src={dish.image}
+                  alt={dish.name}
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
+                />
+                <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-md px-3 py-1 rounded-full text-[11px] font-bold text-orange-700 shadow-sm border border-orange-100/80">
+                  {dish.tag}
                 </div>
-
-                <div className="p-5 flex-1 flex flex-col justify-between">
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900">
-                      {dish.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 mt-2 leading-relaxed">
-                      {dish.description}
-                    </p>
-                  </div>
-
-                  <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
-                    <div>
-                      <span className="text-[10px] font-bold text-slate-400 block uppercase tracking-wider">Price</span>
-                      <span className="text-base font-black text-orange-600 block leading-tight">
-                        ₱{dish.price.toLocaleString()}
-                      </span>
-                    </div>
-
-                    <button
-                      onClick={handleOrderOnline}
-                      className="bg-orange-50 hover:bg-orange-600 text-orange-700 hover:text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-colors cursor-pointer"
-                    >
-                      Order Now
-                    </button>
-                  </div>
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent flex flex-col justify-end p-5 text-white transition-opacity duration-300">
+                  <h3 className="font-extrabold text-lg sm:text-xl leading-snug drop-shadow-sm">
+                    {dish.name}
+                  </h3>
                 </div>
               </div>
             ))}
@@ -739,7 +813,7 @@ export const LandingPage: React.FC = () => {
                   onClick={handleOrderOnline}
                   className="bg-white hover:bg-orange-50 text-orange-600 font-bold text-sm sm:text-base px-8 py-4 rounded-xl shadow-xs transition-colors cursor-pointer"
                 >
-                  Order Online for Delivery
+                  Order Now
                 </button>
                 <a
                   href="tel:0288887323"

@@ -174,7 +174,7 @@ export const LandingPage: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, targetId: string) => {
+  const handleNavClick = (e: React.MouseEvent<HTMLElement>, targetId: string) => {
     e.preventDefault();
     if (targetId === 'hero') {
       window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -10,7 +10,7 @@ For quick system testing, use the pre-loaded PIN codes or register a new Supabas
 
 | Role | Username | Email | PIN Code | Default Dashboard Route |
 | :--- | :--- | :--- | :--- | :--- |
-| **Cashier** | `cashier1` | `cashier@seafudz.ph` | `1234` | `/sales-report` |
+| **Cashier** | `cashier1` | `cashier@seafudz.ph` | `1234` | `/pos` |
 | **Kitchen Staff** | `kitchen1` | `kitchen@seafudz.ph` | `5678` | `/kitchen` |
 | **Rider** | `rider1` | `rider@seafudz.ph` | `9999` | `/rider` |
 | **Assistant / Waiter** | `assistant1` | `assistant@seafudz.ph` | `4321` | `/assistant` |

@@ -51,7 +51,7 @@ export const ROLE_ROUTE_PERMISSIONS: Record<string, string[]> = {
  */
 export const ROLE_DEFAULT_ROUTES: Record<string, string> = {
   admin: '/admin-dashboard',
-  cashier: '/sales-report',
+  cashier: '/pos',
   kitchen: '/kitchen',
   rider: '/rider',
   assistant: '/assistant',

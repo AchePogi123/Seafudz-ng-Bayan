@@ -96,7 +96,7 @@ const Login = () => {
     const returnPath = typeof fromState === 'string' ? fromState : (fromState?.pathname || null);
 
     let targetPath = (normRole === 'customer' && returnPath) ? returnPath : '/customer';
-    if (normRole === 'cashier') targetPath = '/sales-report';
+    if (normRole === 'cashier') targetPath = '/pos';
     else if (normRole === 'kitchen') targetPath = '/kitchen';
     else if (normRole === 'rider') targetPath = '/rider';
     else if (normRole === 'assistant') targetPath = '/assistant';

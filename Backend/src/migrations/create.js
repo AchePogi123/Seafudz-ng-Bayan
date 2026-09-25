@@ -8,8 +8,8 @@ const __dirname = path.dirname(__filename);
 const nameArg = process.argv[2];
 
 if (!nameArg) {
-  console.error('❌ Please provide a migration description name.');
-  console.error('👉 Usage: npm run migrate:create add_discount_column_to_orders');
+  console.error('[ERROR] Please provide a migration description name.');
+  console.error('[INFO] Usage: npm run migrate:create add_discount_column_to_orders');
   process.exit(1);
 }
 
@@ -29,4 +29,4 @@ const template = `-- ===========================================================
 `;
 
 fs.writeFileSync(filePath, template, 'utf8');
-console.log(`✨ Created new migration file: ${filePath}`);
+console.log(`[SUCCESS] Created new migration file: ${filePath}`);

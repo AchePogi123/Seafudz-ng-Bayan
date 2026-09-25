@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 
 export async function runMigrations() {
   console.log('=================================================');
-  console.log('📦 Seafudz ng Bayan - Running Database Migrations');
+  console.log('[MIGRATIONS] Seafudz ng Bayan - Running Database Migrations');
   console.log('-------------------------------------------------');
 
   let pool;
@@ -24,8 +24,8 @@ export async function runMigrations() {
     );
     client = await Promise.race([connectPromise, timeoutPromise]);
   } catch (err) {
-    console.warn(`⚠️ Database connection unavailable (${err.message}).`);
-    console.warn(`👉 Skipping automatic startup migration.`);
+    console.warn(`[WARN] Database connection unavailable (${err.message}).`);
+    console.warn(`[INFO] Skipping automatic startup migration.`);
     console.log('=================================================');
     return;
   }
@@ -51,7 +51,7 @@ export async function runMigrations() {
       .sort();
 
     if (files.length === 0) {
-      console.log('ℹ️  No migration files found.');
+      console.log('[INFO] No migration files found.');
       return;
     }
 
@@ -59,12 +59,12 @@ export async function runMigrations() {
 
     for (const file of files) {
       if (appliedFiles.has(file)) {
-        console.log(`✅ Already applied: ${file}`);
+        console.log(`[OK] Already applied: ${file}`);
         continue;
       }
 
       pendingCount++;
-      console.log(`🚀 Executing migration: ${file}...`);
+      console.log(`[MIGRATION] Executing migration: ${file}...`);
       const filePath = path.join(__dirname, file);
       const sql = fs.readFileSync(filePath, 'utf8');
 
@@ -76,18 +76,18 @@ export async function runMigrations() {
           [file]
         );
         await client.query('COMMIT');
-        console.log(`✨ Successfully applied migration: ${file}`);
+        console.log(`[SUCCESS] Successfully applied migration: ${file}`);
       } catch (migrationErr) {
         await client.query('ROLLBACK');
-        console.error(`❌ Migration failed [${file}]:`, migrationErr.message);
+        console.error(`[ERROR] Migration failed [${file}]:`, migrationErr.message);
         throw migrationErr;
       }
     }
 
     if (pendingCount === 0) {
-      console.log('🎉 Database is up to date! No pending migrations.');
+      console.log('[SUCCESS] Database is up to date! No pending migrations.');
     } else {
-      console.log(`🎉 Completed ${pendingCount} pending migration(s) successfully.`);
+      console.log(`[SUCCESS] Completed ${pendingCount} pending migration(s) successfully.`);
     }
 
     // Sync sequence counters for auto-incrementing primary keys
@@ -97,13 +97,13 @@ export async function runMigrations() {
         SELECT setval(pg_get_serial_sequence('categories', 'id'), COALESCE(max(id), 1)) FROM categories;
         SELECT setval(pg_get_serial_sequence('payments', 'id'), COALESCE(max(id), 1)) FROM payments;
       `);
-      console.log('🔄 Serial sequence counters synchronized successfully.');
+      console.log('[SYNC] Serial sequence counters synchronized successfully.');
     } catch {
       // Ignore if table or sequence does not exist yet
     }
 
   } catch (err) {
-    console.error('❌ Migration process halted due to error:', err);
+    console.error('[ERROR] Migration process halted due to error:', err);
     process.exit(1);
   } finally {
     if (client) client.release();

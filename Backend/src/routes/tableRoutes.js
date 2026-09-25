@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 
 const router = Router();
 
@@ -47,8 +48,8 @@ router.get('/tables', async (req, res) => {
   }
 });
 
-// PATCH /api/tables/:id/status - Update table status
-router.patch('/tables/:id/status', async (req, res) => {
+// PATCH /api/tables/:id/status - Update table status (Staff action)
+router.patch('/tables/:id/status', requireAuth, requireRole(['admin', 'cashier', 'assistant']), async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;

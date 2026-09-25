@@ -4,7 +4,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import BrandLogo from '../components/BrandLogo';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
-import { saveSessionToken, saveActiveUser, generateClientHashToken } from '../cryptography/cryptoSession';
+import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
@@ -35,31 +35,6 @@ const Login = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Business role prevention code (Standard restaurant admin key)
-  const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
-
-  const MOCK_STAFF_ACCOUNTS: Record<string, { fullname: string; username: string; email: string; role: string }> = {
-    admin: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    admin1: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    admin2: { fullname: 'Super Admin Chief', username: 'admin2', email: 'admin2@seafudz.ph', role: 'admin' },
-    'admin@seafudz.ph': { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    cashier: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    cashier2: { fullname: 'Maria Santos', username: 'cashier2', email: 'maria.cashier@seafudz.ph', role: 'cashier' },
-    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    kitchen: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    kitchen2: { fullname: 'Chef Ben', username: 'kitchen2', email: 'chef.ben@seafudz.ph', role: 'kitchen' },
-    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant2: { fullname: 'Joy Flores', username: 'assistant2', email: 'joy.floor@seafudz.ph', role: 'assistant' },
-    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider2: { fullname: 'Dan Cruz', username: 'rider2', email: 'dan.rider@seafudz.ph', role: 'rider' },
-    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-  };
 
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
@@ -68,6 +43,7 @@ const Login = () => {
 
     const activeToken =
       token ||
+      getStoredSessionToken() ||
       generateClientHashToken(
         (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : 'user'),
         normRole,
@@ -90,7 +66,9 @@ const Login = () => {
       role: normRole,
       sessionToken: activeToken,
     });
-    saveSessionToken(activeToken);
+    if (activeToken) {
+      saveSessionToken(activeToken);
+    }
 
     const fromState = location.state?.from;
     const returnPath = typeof fromState === 'string' ? fromState : (fromState?.pathname || null);
@@ -120,6 +98,7 @@ const Login = () => {
     try {
       const isEmail = loginInput.trim().includes('@');
       let supabaseUser = null;
+      let supabaseAccessToken: string | null = null;
       let profileData = null;
       let supabaseAuthErr: string | null = null;
 
@@ -133,6 +112,7 @@ const Login = () => {
 
           if (data?.user) {
             supabaseUser = data.user;
+            supabaseAccessToken = data.session?.access_token || null;
           } else if (error) {
             supabaseAuthErr = error.message;
           }
@@ -141,14 +121,20 @@ const Login = () => {
         }
       }
 
-      // 2. Fetch or verify profile against Express backend
+      // 2. Authenticate and retrieve profile against Express backend
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (supabaseAccessToken) {
+          headers['Authorization'] = `Bearer ${supabaseAccessToken}`;
+        }
+
         const res = await fetch(`${API_BASE_URL}/auth/login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             email: isEmail ? loginInput.trim() : undefined,
             username: !isEmail ? loginInput.trim() : undefined,
+            password: loginPassword,
             pinCode: !isEmail ? loginPassword : undefined,
             supabaseUserId: supabaseUser?.id,
           }),
@@ -156,6 +142,11 @@ const Login = () => {
 
         if (res.ok) {
           profileData = await res.json();
+        } else {
+          const errData = await res.json().catch(() => null);
+          if (errData?.message) {
+            supabaseAuthErr = errData.message;
+          }
         }
       } catch (backendErr) {
         console.warn('Backend API connection note:', backendErr);
@@ -174,14 +165,7 @@ const Login = () => {
         } catch { }
       }
 
-      // 4. Mock Accounts Fallback if backend or Supabase is not reachable / not configured
       if (!profileData?.success && !supabaseUser) {
-        const mockMatch = MOCK_STAFF_ACCOUNTS[loginInput.trim().toLowerCase()];
-        if (mockMatch) {
-          setSuccessMessage(`Welcome back, ${mockMatch.fullname}! Redirecting to workspace...`);
-          navigateByRole(mockMatch.role, undefined, mockMatch);
-          return;
-        }
         if (supabaseAuthErr) {
           throw new Error(supabaseAuthErr);
         }
@@ -223,16 +207,10 @@ const Login = () => {
       return;
     }
 
-    // Validate employee key for business system roles
-    if (role !== 'customer') {
-      if (!verificationCode) {
-        setErrorMessage('Verification is required for business accounts. Please enter your Employee Access Token.');
-        return;
-      }
-      if (verificationCode.trim().toUpperCase() !== REQUIRED_STAFF_KEY) {
-        setErrorMessage('Access Denied: Invalid Employee Access Token. Please contact your administrator.');
-        return;
-      }
+    // Validate employee key requirement for business system roles
+    if (role !== 'customer' && !verificationCode) {
+      setErrorMessage('Verification is required for business accounts. Please enter your Employee Access Token.');
+      return;
     }
 
     setIsLoading(true);

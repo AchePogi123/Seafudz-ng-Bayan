@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { NavbarAdmin } from '../components/NavbarAdmin'
-import { API_BASE_URL } from '../utils/api'
+import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
@@ -114,8 +114,8 @@ const SalesReportAdmin: React.FC = () => {
             rawType.toUpperCase() === 'ONLINE'
                 ? 'Delivery'
                 : rawType.toUpperCase() === 'ON_SITE'
-                ? 'POS Order'
-                : rawType || 'POS Order'
+                    ? 'POS Order'
+                    : rawType || 'POS Order'
 
         let itemsSummary = 'Seafood Dish'
         if (Array.isArray(dbO.items) && dbO.items.length > 0) {
@@ -143,7 +143,8 @@ const SalesReportAdmin: React.FC = () => {
 
     const fetchSummary = useCallback(async () => {
         try {
-            const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`)
+            const authHeaders = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`, { headers: authHeaders })
             if (res.ok) {
                 const json = await res.json()
                 if (json.success && json.data) {
@@ -181,7 +182,8 @@ const SalesReportAdmin: React.FC = () => {
             if (paymentFilter !== 'All') params.append('payment', paymentFilter)
             if (debouncedSearch) params.append('search', debouncedSearch)
 
-            const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
+            const authHeaders = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`, { headers: authHeaders })
             if (res.ok) {
                 const json = await res.json()
                 const list = json.data || []
@@ -226,8 +228,9 @@ const SalesReportAdmin: React.FC = () => {
         if (!confirmDelete) return
 
         try {
-            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => {})
-        } catch {}
+            const authHeaders = await getAuthHeaders()
+            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE', headers: authHeaders }).catch(() => { })
+        } catch { }
 
         try {
             const local = localStorage.getItem('seafudz_orders')
@@ -237,7 +240,7 @@ const SalesReportAdmin: React.FC = () => {
                 localStorage.setItem('seafudz_orders', JSON.stringify(updated))
             }
             window.dispatchEvent(new Event('seafudz_order_created'))
-        } catch {}
+        } catch { }
 
         if (selectedTransaction?.id === id) setSelectedTransaction(null)
         void fetchSummary()
@@ -361,11 +364,10 @@ const SalesReportAdmin: React.FC = () => {
                                 key={tab}
                                 type="button"
                                 onClick={() => handleTabChange(tab)}
-                                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                    activeTab === tab
+                                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${activeTab === tab
                                         ? 'bg-orange-500 text-white shadow-2xs'
                                         : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                                }`}
+                                    }`}
                             >
                                 {tab}
                             </button>
@@ -383,11 +385,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Total Revenue */}
                     <div
                         onClick={() => handlePaymentChange('All')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'All'
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'All'
                                 ? 'border-orange-500 ring-2 ring-orange-500/15'
                                 : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
@@ -404,11 +405,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Cash */}
                     <div
                         onClick={() => handlePaymentChange('Cash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'Cash'
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Cash'
                                 ? 'border-amber-500 ring-2 ring-amber-500/15'
                                 : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
@@ -425,11 +425,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* GCash */}
                     <div
                         onClick={() => handlePaymentChange('GCash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'GCash'
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'GCash'
                                 ? 'border-blue-500 ring-2 ring-blue-500/15'
                                 : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
@@ -446,11 +445,10 @@ const SalesReportAdmin: React.FC = () => {
                     {/* Hybrid / Split */}
                     <div
                         onClick={() => handlePaymentChange('Hybrid')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${
-                            paymentFilter === 'Hybrid'
+                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Hybrid'
                                 ? 'border-purple-500 ring-2 ring-purple-500/15'
                                 : 'border-slate-200/80 hover:border-slate-300'
-                        }`}
+                            }`}
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
@@ -502,11 +500,10 @@ const SalesReportAdmin: React.FC = () => {
                                             key={item.val}
                                             type="button"
                                             onClick={() => handleChannelChange(item.val)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                                                channelFilter === item.val
+                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${channelFilter === item.val
                                                     ? 'bg-slate-900 text-white shadow-2xs'
                                                     : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                                }`}
                                         >
                                             {item.label}
                                         </button>
@@ -520,11 +517,10 @@ const SalesReportAdmin: React.FC = () => {
                                             key={pm}
                                             type="button"
                                             onClick={() => handlePaymentChange(pm)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                                                paymentFilter === pm
+                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${paymentFilter === pm
                                                     ? 'bg-orange-500 text-white shadow-2xs'
                                                     : 'text-slate-600 hover:bg-slate-200'
-                                            }`}
+                                                }`}
                                         >
                                             {pm}
                                         </button>
@@ -615,28 +611,26 @@ const SalesReportAdmin: React.FC = () => {
                                                 </td>
                                                 <td className="py-3 px-4">
                                                     <span
-                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                                                            (tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                                                            (tx.paymentMethod || '').toLowerCase().includes('split')
+                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                                                (tx.paymentMethod || '').toLowerCase().includes('split')
                                                                 ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
                                                                 : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                                                                : 'bg-amber-50 text-amber-800 border border-amber-200/60'
-                                                        }`}
+                                                                    ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
+                                                                    : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
+                                                                        : 'bg-amber-50 text-amber-800 border border-amber-200/60'
+                                                            }`}
                                                     >
                                                         <span
-                                                            className={`w-1.5 h-1.5 rounded-full ${
-                                                                (tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                                                                (tx.paymentMethod || '').toLowerCase().includes('split')
+                                                            className={`w-1.5 h-1.5 rounded-full ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                                                    (tx.paymentMethod || '').toLowerCase().includes('split')
                                                                     ? 'bg-purple-500'
                                                                     : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                    ? 'bg-blue-500'
-                                                                    : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                    ? 'bg-emerald-500'
-                                                                    : 'bg-amber-500'
-                                                            }`}
+                                                                        ? 'bg-blue-500'
+                                                                        : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                                            ? 'bg-emerald-500'
+                                                                            : 'bg-amber-500'
+                                                                }`}
                                                         ></span>
                                                         {tx.paymentMethod || 'Cash'}
                                                     </span>
@@ -710,11 +704,10 @@ const SalesReportAdmin: React.FC = () => {
                                                 type="button"
                                                 onClick={() => setCurrentPage(pageNum)}
                                                 disabled={isLoading}
-                                                className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                                    isActive
+                                                className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
                                                         ? 'bg-orange-500 text-white shadow-2xs'
                                                         : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
-                                                }`}
+                                                    }`}
                                             >
                                                 {pageNum}
                                             </button>

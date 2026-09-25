@@ -4,7 +4,7 @@ import NavbarAdmin from '../components/NavbarAdmin'
 import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { useMenuPrices } from '../utils/menuPriceManager'
-import { API_BASE_URL } from '../utils/api'
+import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 
 export interface LiveOrderRecord {
     id: string
@@ -183,16 +183,17 @@ const AdminDashboard: React.FC = () => {
                     timeRange === '1D'
                         ? 'Today'
                         : timeRange === '1W'
-                        ? 'This Week'
-                        : timeRange === '1M'
-                        ? 'This Month'
-                        : timeRange === '1Y'
-                        ? 'This Year'
-                        : ''
+                            ? 'This Week'
+                            : timeRange === '1M'
+                                ? 'This Month'
+                                : timeRange === '1Y'
+                                    ? 'This Year'
+                                    : ''
                 if (tabParam) queryParams.append('tab', tabParam)
             }
 
-            const res = await fetch(`${API_BASE_URL}/sales/summary?${queryParams.toString()}`)
+            const authHeaders = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/sales/summary?${queryParams.toString()}`, { headers: authHeaders })
             if (res.ok) {
                 const json = await res.json()
                 if (json.success && json.data) {
@@ -300,7 +301,8 @@ const AdminDashboard: React.FC = () => {
                 if (tabParam) queryParams.append('tab', tabParam)
                 queryParams.append('limit', '100')
 
-                const res = await fetch(`${API_BASE_URL}/orders?${queryParams.toString()}`)
+                const authHeaders = await getAuthHeaders()
+                const res = await fetch(`${API_BASE_URL}/orders?${queryParams.toString()}`, { headers: authHeaders })
                 if (res.ok) {
                     const json = await res.json()
                     const dbOrders = json.data || json || []
@@ -501,10 +503,10 @@ const AdminDashboard: React.FC = () => {
         return timeRange === '1D'
             ? 'Today'
             : timeRange === '1W'
-            ? 'This Week'
-            : timeRange === '1M'
-            ? 'This Month'
-            : 'This Year'
+                ? 'This Week'
+                : timeRange === '1M'
+                    ? 'This Month'
+                    : 'This Year'
     }, [timeRange])
 
     // Dynamic Time-Aware Smooth Curve SVG Paths for all 6 KPI Metric Cards

@@ -791,25 +791,44 @@ export const LandingPage: React.FC = () => {
               return (
                 <div
                   key={index}
-                  className="border border-slate-200 rounded-xl overflow-hidden"
+                  className={`border rounded-xl overflow-hidden transition-all duration-300 ${
+                    isOpen
+                      ? 'border-orange-200 bg-orange-50/10 shadow-sm'
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                  }`}
                 >
                   <button
                     onClick={() => toggleFaq(index)}
-                    className="w-full flex items-center justify-between p-5 text-left bg-white hover:bg-orange-50/30 transition-colors"
+                    aria-expanded={isOpen}
+                    className="w-full flex items-center justify-between p-5 text-left bg-transparent hover:bg-orange-50/30 transition-colors cursor-pointer"
                   >
                     <span className="text-sm sm:text-base font-bold text-slate-900 pr-4">
                       {faq.q}
                     </span>
-                    <span className="text-xs font-bold text-orange-600 font-mono shrink-0">
+                    <span
+                      className={`text-xs font-bold font-mono shrink-0 transition-all duration-300 px-2.5 py-1 rounded-full ${
+                        isOpen
+                          ? 'text-orange-700 bg-orange-100'
+                          : 'text-orange-600 bg-orange-50/80 hover:bg-orange-100'
+                      }`}
+                    >
                       {isOpen ? 'Close' : 'Details'}
                     </span>
                   </button>
 
-                  {isOpen && (
-                    <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-slate-600 leading-relaxed border-t border-slate-100">
-                      {faq.a}
+                  <div
+                    className={`grid transition-all duration-300 ease-in-out ${
+                      isOpen
+                        ? 'grid-rows-[1fr] opacity-100'
+                        : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="px-5 pb-5 pt-1 text-xs sm:text-sm text-slate-600 leading-relaxed border-t border-slate-100/80">
+                        {faq.a}
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}

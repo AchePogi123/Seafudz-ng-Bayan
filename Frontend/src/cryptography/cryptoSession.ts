@@ -103,11 +103,36 @@ export function isUuidString(str?: string): boolean {
 }
 
 /**
+ * Checks token timestamp expiration (24h validity window)
+ */
+export function isTokenExpired(token: string): boolean {
+  if (!token) return true;
+  try {
+    const payloadPart = token.split('.')[0];
+    if (!payloadPart) return true;
+    let base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+      base64 += '=';
+    }
+    const decoded = typeof atob === 'function' ? atob(base64) : '';
+    if (!decoded) return true;
+    const parsed = JSON.parse(decoded);
+    if (!parsed || typeof parsed.ts !== 'number') return false;
+    const age = Date.now() - parsed.ts;
+    return age > 24 * 60 * 60 * 1000 || age < -60000;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Parses JWT / base64 payload from token string
  */
 export function parseTokenPayload(token: string): UserProfile | null {
   if (!token) return null;
   try {
+    if (isTokenExpired(token)) return null;
+
     const payloadPart = token.split('.')[0];
     if (!payloadPart) return null;
     let base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
@@ -141,7 +166,7 @@ export function parseTokenPayload(token: string): UserProfile | null {
 }
 
 /**
- * Retrieves active user profile from session_token URL payload, sessionStorage, or localStorage
+ * Retrieves active user profile from sessionStorage or localStorage
  */
 export function getActiveUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
@@ -153,7 +178,13 @@ export function getActiveUser(): UserProfile | null {
     const sessionStored = sessionStorage.getItem(ACTIVE_USER_KEY);
     if (sessionStored) {
       const parsed = JSON.parse(sessionStored) as UserProfile;
-      if (parsed && parsed.role) userFromStorage = parsed;
+      if (parsed && parsed.role) {
+        if (parsed.sessionToken && isTokenExpired(parsed.sessionToken)) {
+          clearSession();
+          return null;
+        }
+        userFromStorage = parsed;
+      }
     }
   } catch { }
 
@@ -163,35 +194,20 @@ export function getActiveUser(): UserProfile | null {
       const localStored = localStorage.getItem(ACTIVE_USER_KEY) || localStorage.getItem('seafudz_user');
       if (localStored) {
         const parsed = JSON.parse(localStored) as UserProfile;
-        if (parsed && parsed.role) userFromStorage = parsed;
+        if (parsed && parsed.role) {
+          if (parsed.sessionToken && isTokenExpired(parsed.sessionToken)) {
+            clearSession();
+            return null;
+          }
+          userFromStorage = parsed;
+        }
       }
     } catch { }
   }
 
-  // 3. URL parameter session_token sync & merge
-  const tokenFromUrl = getSessionTokenFromUrl();
-  if (tokenFromUrl) {
-    const parsedFromUrl = parseTokenPayload(tokenFromUrl);
-    if (parsedFromUrl) {
-      const mergedUser: UserProfile = {
-        ...userFromStorage,
-        ...parsedFromUrl,
-        fullname: userFromStorage?.fullname || parsedFromUrl.fullname,
-        username: userFromStorage?.username || parsedFromUrl.username,
-        role: parsedFromUrl.role || userFromStorage?.role || 'customer',
-        sessionToken: tokenFromUrl,
-      };
-      try {
-        sessionStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(mergedUser));
-        sessionStorage.setItem(SESSION_TOKEN_KEY, tokenFromUrl);
-      } catch { }
-      return mergedUser;
-    }
-  }
-
   if (userFromStorage) return userFromStorage;
 
-  // 4. Token fallback from stored session token
+  // 3. Token fallback from stored session token
   const token = getStoredSessionToken();
   if (token) {
     const parsed = parseTokenPayload(token);
@@ -227,12 +243,15 @@ export function clearSession(): void {
  */
 export function getStoredSessionToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return (
-    getSessionTokenFromUrl() ||
+  const token =
     sessionStorage.getItem(SESSION_TOKEN_KEY) ||
     localStorage.getItem(SESSION_TOKEN_KEY) ||
-    localStorage.getItem('seafudz_token')
-  );
+    localStorage.getItem('seafudz_token');
+  if (token && isTokenExpired(token)) {
+    clearSession();
+    return null;
+  }
+  return token;
 }
 
 /**
@@ -265,12 +284,10 @@ export function generateClientHashToken(
 }
 
 /**
- * Appends session_token to a target route path
+ * Clean URL navigation without exposing tokens in query parameters
  */
-export function buildTokenizedUrl(path: string, token: string): string {
-  if (!token) return path;
-  const separator = path.includes('?') ? '&' : '?';
-  return `${path}${separator}session_token=${encodeURIComponent(token)}`;
+export function buildTokenizedUrl(path: string, _token?: string): string {
+  return path;
 }
 
 /**
@@ -293,6 +310,7 @@ export default {
   generateClientHashToken,
   buildTokenizedUrl,
   hasRoutePermission,
+  isTokenExpired,
   ROLE_ROUTE_PERMISSIONS,
   ROLE_DEFAULT_ROUTES,
 };

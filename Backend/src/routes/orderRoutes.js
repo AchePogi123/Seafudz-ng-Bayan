@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
 import { checkIfBulkOrder } from '../utils/bulkOrder.js';
 
 const router = Router();
 
-// GET /api/orders - Get orders with pagination, search, and filtering
-router.get('/orders', async (req, res) => {
+// GET /api/orders - Get orders with pagination, search, and filtering (Staff only)
+router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant', 'kitchen', 'rider']), async (req, res) => {
   try {
     const { status, type, limit, offset, page, search, payment, tab, period } = req.query;
     let sql = `
@@ -142,7 +143,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // GET /api/orders/:id - Get single order details
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const sql = `
@@ -203,8 +204,8 @@ router.get('/orders/:id', async (req, res) => {
   }
 });
 
-// POST /api/orders - Create a new order with transaction
-router.post('/orders', async (req, res) => {
+// POST /api/orders - Create a new order with transaction (Staff POS action)
+router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   const pool = await getDbPool();
   const client = await pool.connect();
 
@@ -341,8 +342,8 @@ router.post('/orders', async (req, res) => {
   }
 });
 
-// DELETE /api/orders/:id - Delete order from DB and memory (Admin action)
-router.delete('/orders/:id', async (req, res) => {
+// DELETE /api/orders/:id - Delete order from DB and memory (Admin only)
+router.delete('/orders/:id', requireAuth, requireRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     inMemoryOrders.delete(id);
@@ -357,7 +358,7 @@ router.delete('/orders/:id', async (req, res) => {
       console.warn('DB delete note:', dbErr.message);
     }
 
-    console.log(`🗑️ Order ${id} deleted from database and memory`);
+    console.log(`[DELETE] Order ${id} deleted from database and memory`);
 
     return res.status(200).json({
       success: true,
@@ -372,8 +373,8 @@ router.delete('/orders/:id', async (req, res) => {
   }
 });
 
-// PUT /api/orders/:id - Update full transaction details in DB (Admin action)
-router.put('/orders/:id', async (req, res) => {
+// PUT /api/orders/:id - Update full transaction details in DB (Admin/Cashier action)
+router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -471,7 +472,7 @@ router.put('/orders/:id', async (req, res) => {
       console.warn('DB update order note:', dbErr.message);
     }
 
-    console.log(`✏️ Admin updated order ${id} in DB and memory`);
+    console.log(`[UPDATE] Admin updated order ${id} in DB and memory`);
 
     return res.status(200).json({
       success: true,
@@ -488,8 +489,8 @@ router.put('/orders/:id', async (req, res) => {
   }
 });
 
-// PATCH /api/orders/:id/status - Update order status
-router.patch('/orders/:id/status', async (req, res) => {
+// PATCH /api/orders/:id/status - Update order status (Staff action)
+router.patch('/orders/:id/status', requireAuth, requireRole(['admin', 'cashier', 'kitchen', 'rider', 'assistant']), async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -625,7 +626,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     }
 
     const formatted = formatOrderResponse(orderRecord);
-    console.log(`🛒 [Order Flow] Customer order created ${orderId} -> Status: PENDING | Total: ₱${calcTotal}`);
+    console.log(`[ORDER] Customer order created ${orderId} -> Status: PENDING | Total: PHP ${calcTotal}`);
 
     return res.status(201).json({
       success: true,

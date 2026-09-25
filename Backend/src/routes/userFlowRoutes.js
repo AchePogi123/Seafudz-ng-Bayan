@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { optionalAuth } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { handleAssistantStatusUpdate } from './assistantRoutes.js';
 import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
@@ -169,7 +169,7 @@ router.patch('/user-flow/orders/:id/cancel', async (req, res) => {
  * Common PATCH /api/user-flow/orders/:id/status
  * Central Status Transition router: Delegates logic to respective role controllers
  */
-router.patch('/user-flow/orders/:id/status', async (req, res) => {
+router.patch('/user-flow/orders/:id/status', requireAuth, async (req, res) => {
   const { status } = req.body;
   const targetNorm = normalizeFlowStatus(status);
 
@@ -240,7 +240,7 @@ router.patch('/user-flow/orders/:id/status', async (req, res) => {
   }
 });
 
-// Common DELETE and cancel cleanup routes (handled by Rider deletion controller)
-router.delete(['/user-flow/orders/:id', '/kitchen/orders/:id'], handleDeleteOrder);
+// Common DELETE and cancel cleanup routes (Staff only action)
+router.delete(['/user-flow/orders/:id', '/kitchen/orders/:id'], requireAuth, requireRole(['admin', 'cashier', 'rider', 'kitchen']), handleDeleteOrder);
 
 export default router;

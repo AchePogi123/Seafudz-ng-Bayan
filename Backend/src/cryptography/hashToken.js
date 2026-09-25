@@ -86,10 +86,6 @@ export function verifySessionHashToken(sessionToken) {
 
     return true;
   } catch {
-    // Fallback for legacy 64.64 hex tokens during rollout
-    if (payloadEncoded.length === 64 && providedHashHex.length === 64) {
-      return true;
-    }
     return false;
   }
 }

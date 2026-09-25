@@ -129,17 +129,17 @@ Examples:
     base_url = args.url.rstrip("/")
 
     print("=" * 80)
-    print("🚀 SEAFUDZ NG BAYAN — LOAD & STRESS TEST ENGINE")
+    print("SEAFUDZ NG BAYAN - LOAD & STRESS TEST ENGINE")
     print(f"   Target Server: {base_url}")
     print("=" * 80)
 
     # 1. Health check
     if not check_server_health(base_url):
-        print(f"\n[!] ERROR: Could not connect to {base_url}.")
+        print(f"\n[ERROR] Could not connect to {base_url}.")
         print("    Please make sure your backend server is running (e.g., ./start-dev.sh)")
         sys.exit(1)
 
-    print("[✓] Backend server is online and responding.")
+    print("[OK] Backend server is online and responding.")
 
     # 2. Configure Scenarios
     scenarios_to_run = []
@@ -232,7 +232,7 @@ Examples:
 
     # 4. Final Executive Summary Table
     print("\n" + "=" * 80)
-    print("📊 OVERALL BENCHMARK SUMMARY")
+    print("OVERALL BENCHMARK SUMMARY")
     print("=" * 80)
     print(f"Total Requests Executed : {total_completed_reqs:,}")
     print(f"Total Benchmark Time    : {total_elapsed:.2f} seconds")

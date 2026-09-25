@@ -22,7 +22,7 @@ export async function getDbPool() {
 
   if (instanceConnectionName) {
     // Cloud SQL Connector setup with timeout safety
-    console.log(`🔌 Initializing Cloud SQL Connector for: ${instanceConnectionName}`);
+    console.log(`[DB] Initializing Cloud SQL Connector for: ${instanceConnectionName}`);
     try {
       const connector = new Connector();
       const optionsPromise = connector.getOptions({
@@ -43,7 +43,7 @@ export async function getDbPool() {
         idleTimeoutMillis: 30000,
       });
     } catch (connErr) {
-      console.warn(`⚠️ Cloud SQL Connector note (${connErr.message}). Using standard TCP pool.`);
+      console.warn(`[WARN] Cloud SQL Connector note (${connErr.message}). Using standard TCP pool.`);
       pool = new Pool({
         host: process.env.DB_HOST || 'localhost',
         port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -57,7 +57,7 @@ export async function getDbPool() {
     }
   } else {
     // Standard PostgreSQL pool using process.env
-    console.log(`🔌 Initializing PostgreSQL Pool (Host: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}, Database: ${process.env.DB_NAME || 'seafudz_db'})`);
+    console.log(`[DB] Initializing PostgreSQL Pool (Host: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}, Database: ${process.env.DB_NAME || 'seafudz_db'})`);
     pool = new Pool({
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -71,7 +71,7 @@ export async function getDbPool() {
   }
 
   pool.on('error', (err) => {
-    console.error('❌ Unexpected database pool error:', err);
+    console.error('[ERROR] Unexpected database pool error:', err);
   });
 
   return pool;
@@ -92,12 +92,12 @@ export async function testDbConnection() {
   try {
     const res = await query('SELECT NOW() AS current_time, current_database() AS db_name');
     const { current_time, db_name } = res.rows[0];
-    console.log(`✅ PostgreSQL Connected Successfully!`);
+    console.log(`[DB] PostgreSQL Connected Successfully!`);
     console.log(`   Database: ${db_name} | Host: ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || '5432'}`);
     return { connected: true, database: db_name, time: current_time };
   } catch (err) {
-    console.error(`❌ PostgreSQL Connection Error: ${err.message}`);
-    console.error(`👉 Verify process.env values in Backend/.env (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)`);
+    console.error(`[ERROR] PostgreSQL Connection Error: ${err.message}`);
+    console.error(`[INFO] Verify process.env values in Backend/.env (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)`);
     return { connected: false, error: err.message };
   }
 }

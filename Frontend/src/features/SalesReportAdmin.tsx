@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { NavbarAdmin } from '../components/NavbarAdmin'
-import { API_BASE_URL } from '../utils/api'
+import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
@@ -195,6 +195,33 @@ const SalesReportAdmin: React.FC = () => {
 
     const fetchSummary = useCallback(async () => {
         try {
+            const authHeaders = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`, { headers: authHeaders })
+            if (res.ok) {
+                const json = await res.json()
+                if (json.success && json.data) {
+                    setSummaryData({
+                        totalOrders: json.data.totalOrders || 0,
+                        grossRevenue: json.data.grossRevenue || 0,
+                        subtotalRevenue: json.data.subtotalRevenue || 0,
+                        vatCollected: json.data.vatCollected || 0,
+                        averageOrderValue: json.data.averageOrderValue || 0,
+                        breakdown: json.data.breakdown || {
+                            cash: { total: 0, count: 0 },
+                            gcash: { total: 0, count: 0 },
+                            maya: { total: 0, count: 0 },
+                            hybrid: { total: 0, count: 0 },
+                            cod: { total: 0, count: 0 },
+                        },
+                    })
+                    return
+                }
+            }
+        } catch (localErr) {
+            console.warn('Failed to read sales summary API:', localErr)
+        }
+
+        try {
             const orderMap = new Map<string, any>()
 
             // 1. Include locally stored orders matching selected period
@@ -352,11 +379,12 @@ const SalesReportAdmin: React.FC = () => {
 
             // 2. Fetch backend orders matching period
             try {
+                const authHeaders = await getAuthHeaders()
                 const params = new URLSearchParams({
                     limit: '1000',
                     tab: activeTab,
                 })
-                const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
+                const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`, { headers: authHeaders })
                 if (res.ok) {
                     const json = await res.json()
                     const list = json.data || []
@@ -455,7 +483,8 @@ const SalesReportAdmin: React.FC = () => {
         if (!confirmDelete) return
 
         try {
-            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => { })
+            const authHeaders = await getAuthHeaders()
+            await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE', headers: authHeaders }).catch(() => { })
         } catch { }
 
         try {

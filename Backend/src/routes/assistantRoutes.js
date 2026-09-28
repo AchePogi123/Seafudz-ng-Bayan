@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 
 const router = Router();
 
 // GET /api/assistant/calls - Get active table assistance requests
-router.get('/assistant/calls', async (req, res) => {
+router.get('/assistant/calls', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const sql = `
       SELECT ac.id, ac.type AS type, ac.status, ac.created_at AS timestamp,
@@ -70,7 +71,7 @@ router.post('/assistant/call', async (req, res) => {
 });
 
 // PATCH /api/assistant/calls/:id/resolve - Resolve assistance call
-router.patch('/assistant/calls/:id/resolve', async (req, res) => {
+router.patch('/assistant/calls/:id/resolve', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     const { employeeId } = req.body;
@@ -107,7 +108,7 @@ router.patch('/assistant/calls/:id/resolve', async (req, res) => {
 });
 
 // GET /api/assistant/orders - Get online orders for payment verification
-router.get('/assistant/orders', async (req, res) => {
+router.get('/assistant/orders', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.id AS ref, o.order_type, o.status, o.total, o.notes, o.created_at,
@@ -168,7 +169,7 @@ router.get('/assistant/orders', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/verify - Verify online payment and send order to Kitchen
-router.patch('/assistant/orders/:id/verify', async (req, res) => {
+router.patch('/assistant/orders/:id/verify', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   const pool = await getDbPool();
   const client = await pool.connect();
 
@@ -231,7 +232,7 @@ router.patch('/assistant/orders/:id/verify', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/authorize-gcash - Authorize customer GCash payment
-router.patch('/assistant/orders/:id/authorize-gcash', async (req, res) => {
+router.patch('/assistant/orders/:id/authorize-gcash', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -291,7 +292,7 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/verify-receipt - Assistant approves receipt screenshot
-router.patch('/assistant/orders/:id/verify-receipt', async (req, res) => {
+router.patch('/assistant/orders/:id/verify-receipt', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -324,7 +325,7 @@ router.patch('/assistant/orders/:id/verify-receipt', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/reject-receipt - Assistant rejects invalid screenshot
-router.patch('/assistant/orders/:id/reject-receipt', async (req, res) => {
+router.patch('/assistant/orders/:id/reject-receipt', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -355,7 +356,7 @@ router.patch('/assistant/orders/:id/reject-receipt', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/confirm-cod - Assistant confirms COD availability
-router.patch('/assistant/orders/:id/confirm-cod', async (req, res) => {
+router.patch('/assistant/orders/:id/confirm-cod', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -441,7 +442,7 @@ export async function handleAssistantStatusUpdate(req, res) {
       updatedOrder = formatOrderResponse(newRec);
     }
 
-    console.log(`🔄 [Assistant Flow] Order ${id} verified -> Status: ${nextStatus}`);
+    console.log(`[ASSISTANT] Order ${id} verified -> Status: ${nextStatus}`);
 
     return res.status(200).json({
       success: true,

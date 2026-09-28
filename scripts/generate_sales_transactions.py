@@ -393,26 +393,26 @@ def execute_seed_to_database(sql_file_path: str, count: int = 1000):
         cmd = f"docker exec -i seafudz_postgres psql -U postgres -d seafudz_db < {sql_file_path}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0 and "ERROR:" not in result.stderr and "ERROR:" not in result.stdout:
-            print(f"[✓] Successfully seeded {count:,} transactions into docker container 'seafudz_postgres'!")
+            print(f"[OK] Successfully seeded {count:,} transactions into docker container 'seafudz_postgres'!")
             return True
         else:
             err_msg = (result.stderr or result.stdout).strip()[:300]
-            print(f"[!] Docker seeding error: {err_msg}")
+            print(f"[ERROR] Docker seeding error: {err_msg}")
     except Exception as e:
-        print(f"[!] Docker exec failed: {e}")
+        print(f"[ERROR] Docker exec failed: {e}")
 
     # Fallback to local psql if available
     try:
         cmd = f"PGPASSWORD=postgrespassword psql -h localhost -p 5432 -U postgres -d seafudz_db -f {sql_file_path}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0 and "ERROR:" not in result.stderr and "ERROR:" not in result.stdout:
-            print(f"[✓] Successfully seeded {count:,} transactions via local psql!")
+            print(f"[OK] Successfully seeded {count:,} transactions via local psql!")
             return True
         else:
             err_msg = (result.stderr or result.stdout).strip()[:300]
-            print(f"[!] Local psql error: {err_msg}")
+            print(f"[ERROR] Local psql error: {err_msg}")
     except Exception as e:
-        print(f"[!] Local psql failed: {e}")
+        print(f"[ERROR] Local psql failed: {e}")
 
     return False
 
@@ -454,12 +454,12 @@ def clean_database():
         cmd = f'docker exec -i seafudz_postgres psql -U postgres -d seafudz_db -c "{clean_sql}"'
         res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if res.returncode == 0:
-            print("[✓] Successfully cleaned all generated orders and restored clean seed orders in PostgreSQL!")
+            print("[OK] Successfully cleaned all generated orders and restored clean seed orders in PostgreSQL!")
             return True
         else:
-            print(f"[!] Docker clean warning: {res.stderr.strip()}")
+            print(f"[WARN] Docker clean warning: {res.stderr.strip()}")
     except Exception as e:
-        print(f"[!] Docker clean error: {e}")
+        print(f"[ERROR] Docker clean error: {e}")
     return False
 
 
@@ -528,13 +528,13 @@ def main():
     pos_sales = sum(t["total"] for t in transactions if t["order_type"] == "ON_SITE" and t["status"] != "CANCELLED")
     
     print("\n" + "=" * 65)
-    print(" 📊 SALES TRANSACTIONS GENERATION SUMMARY")
+    print(" SALES TRANSACTIONS GENERATION SUMMARY")
     print("=" * 65)
     print(f" Total Transactions Generated: {total_orders:,}")
-    print(f" 🛵 Online Delivery Orders:    {online_orders:,} (₱{online_sales:,.2f})")
-    print(f" 🏪 On-Site POS Orders:        {pos_orders:,} (₱{pos_sales:,.2f})")
-    print(f" Completed Orders:            {completed_orders:,} ({completed_orders/total_orders*100:.1f}%)")
-    print(f" Total Gross Sales Revenue:   ₱{total_sales:,.2f}")
+    print(f" Online Delivery Orders:       {online_orders:,} (PHP {online_sales:,.2f})")
+    print(f" On-Site POS Orders:           {pos_orders:,} (PHP {pos_sales:,.2f})")
+    print(f" Completed Orders:             {completed_orders:,} ({completed_orders/total_orders*100:.1f}%)")
+    print(f" Total Gross Sales Revenue:    PHP {total_sales:,.2f}")
     print(f" Generated Files:")
     print(f"   - SQL Script: {sql_path}")
     print(f"   - JSON Feed:  {json_path}")

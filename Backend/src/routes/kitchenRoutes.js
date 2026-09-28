@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 
 const router = Router();
 
 // GET /api/kitchen/orders - Get active kitchen order tickets
-router.get('/kitchen/orders', async (req, res) => {
+router.get('/kitchen/orders', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
@@ -59,7 +60,7 @@ router.get('/kitchen/orders', async (req, res) => {
 });
 
 // PATCH /api/kitchen/orders/:id/status - Update ticket status
-router.patch('/kitchen/orders/:id/status', async (req, res) => {
+router.patch('/kitchen/orders/:id/status', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -135,7 +136,7 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
 });
 
 // DELETE /api/kitchen/orders/:id - Cancel/remove ticket
-router.delete('/kitchen/orders/:id', async (req, res) => {
+router.delete('/kitchen/orders/:id', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -223,7 +224,7 @@ export async function handleKitchenStatusUpdate(req, res) {
       updatedOrder = formatOrderResponse(newRec);
     }
 
-    console.log(`🍳 [Kitchen Flow] Order ${id} -> Status: ${nextStatus}`);
+    console.log(`[KITCHEN] Order ${id} -> Status: ${nextStatus}`);
 
     return res.status(200).json({
       success: true,

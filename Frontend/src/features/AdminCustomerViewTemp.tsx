@@ -167,8 +167,8 @@ export const AdminCustomerView: React.FC = () => {
                                             <td className="p-4">
                                                 <span
                                                     className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${customer.status === 'active'
-                                                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                                            : 'bg-rose-50 text-rose-600 border border-rose-200'
+                                                        ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                                        : 'bg-rose-50 text-rose-600 border border-rose-200'
                                                         }`}
                                                 >
                                                     {customer.status}
@@ -179,8 +179,8 @@ export const AdminCustomerView: React.FC = () => {
                                                     <button
                                                         onClick={(e) => toggleAccountStatus(customer.id, e)}
                                                         className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${customer.status === 'active'
-                                                                ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
-                                                                : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
+                                                            ? 'bg-rose-50 text-rose-600 hover:bg-rose-100'
+                                                            : 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100'
                                                             }`}
                                                     >
                                                         {customer.status === 'active' ? 'Suspend' : 'Activate'}

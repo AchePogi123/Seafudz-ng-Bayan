@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { requireAuth } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { generateSessionHashToken, verifySessionHashToken } from '../cryptography/index.js';
 
 const router = Router();
@@ -27,9 +27,9 @@ router.get('/auth/me', requireAuth, async (req, res) => {
 
 /**
  * GET /api/users
- * Returns list of all employee staff profiles for management dashboard
+ * Returns list of all employee staff profiles for management dashboard (Admin only)
  */
-router.get('/users', async (req, res) => {
+router.get('/users', requireAuth, requireRole(['admin']), async (req, res) => {
   try {
     const sql = `
       SELECT id, supabase_user_id, fullname, username, email, role, is_active, created_at
@@ -55,21 +55,47 @@ router.get('/users', async (req, res) => {
 
 /**
  * POST /api/auth/login
- * Validates login credentials against employees or customers in PostgreSQL
- * Accepts supabaseUserId, email, or username
+ * Authenticates user credentials and returns an HMAC session token and user profile
  */
 router.post('/auth/login', async (req, res) => {
   try {
-    const { username, supabaseUserId, email } = req.body;
+    const { username, supabaseUserId, email, password, pinCode } = req.body;
     const searchValue = (email || username || '').trim();
 
-    // 1. Search employees table
+    let verifiedSupabaseUserId = supabaseUserId || null;
+
+    // 1. If an Authorization Bearer token is passed, verify via Supabase
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const { data: sbData } = await supabase.auth.getUser(token);
+        if (sbData?.user) {
+          verifiedSupabaseUserId = sbData.user.id;
+        }
+      } catch { }
+    }
+
+    // 2. If email + password are provided and user is not yet verified, verify via Supabase Auth
+    if (!verifiedSupabaseUserId && email && password) {
+      try {
+        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+        if (!loginError && loginData?.user) {
+          verifiedSupabaseUserId = loginData.user.id;
+        }
+      } catch { }
+    }
+
+    // 3. Search employees table
     let empSql = `SELECT * FROM employees WHERE 1=0`;
     let empParams = [];
 
-    if (supabaseUserId) {
+    if (verifiedSupabaseUserId) {
       empSql = `SELECT * FROM employees WHERE supabase_user_id = $1`;
-      empParams = [supabaseUserId];
+      empParams = [verifiedSupabaseUserId];
     } else if (email) {
       empSql = `SELECT * FROM employees WHERE LOWER(email) = LOWER($1)`;
       empParams = [email.trim()];
@@ -82,6 +108,15 @@ router.post('/auth/login', async (req, res) => {
       const empRes = await query(empSql, empParams);
       if (empRes.rows.length > 0) {
         const emp = empRes.rows[0];
+
+        // PIN or password verification if PIN code is set on employee record
+        if (emp.pin_code && pinCode && emp.pin_code !== pinCode) {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid employee PIN code',
+          });
+        }
+
         const cryptoSession = generateSessionHashToken({ userId: emp.id, email: emp.email, role: emp.role });
         return res.status(200).json({
           success: true,
@@ -89,18 +124,17 @@ router.post('/auth/login', async (req, res) => {
           data: emp,
           sessionToken: cryptoSession.sessionToken,
           hashToken: cryptoSession.hashToken,
-          sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
         });
       }
     }
 
-    // 2. Search customers table
+    // 4. Search customers table
     let custSql = `SELECT * FROM customers WHERE 1=0`;
     let custParams = [];
 
-    if (supabaseUserId) {
+    if (verifiedSupabaseUserId) {
       custSql = `SELECT * FROM customers WHERE supabase_user_id = $1`;
-      custParams = [supabaseUserId];
+      custParams = [verifiedSupabaseUserId];
     } else if (searchValue) {
       custSql = `SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1)`;
       custParams = [searchValue];
@@ -117,7 +151,6 @@ router.post('/auth/login', async (req, res) => {
           data: { ...cust, role: 'customer' },
           sessionToken: cryptoSession.sessionToken,
           hashToken: cryptoSession.hashToken,
-          sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
         });
       }
     }
@@ -157,11 +190,11 @@ router.post('/auth/register', async (req, res) => {
 
     // Staff/Employee account creation
     if (selectedRole !== 'customer') {
-      const validStaffToken = (process.env.STAFF_REGISTRATION_TOKEN || 'SFB-STAFF-99').toUpperCase();
-      if (token && token.trim().toUpperCase() !== validStaffToken) {
+      const validStaffToken = (process.env.STAFF_REGISTRATION_TOKEN || '').trim().toUpperCase();
+      if (!validStaffToken || !token || token.trim().toUpperCase() !== validStaffToken) {
         return res.status(403).json({
           success: false,
-          message: 'Access Denied: Invalid Employee Access Token for staff account.',
+          message: 'Access Denied: Invalid or unconfigured Employee Access Token for staff account.',
         });
       }
 
@@ -199,7 +232,6 @@ router.post('/auth/register', async (req, res) => {
         data: emp,
         sessionToken: cryptoSession.sessionToken,
         hashToken: cryptoSession.hashToken,
-        sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
       });
     } else {
       // Customer account creation
@@ -231,7 +263,6 @@ router.post('/auth/register', async (req, res) => {
         data: { ...cust, role: 'customer' },
         sessionToken: cryptoSession.sessionToken,
         hashToken: cryptoSession.hashToken,
-        sessionTokenUrlParam: `session_token=${cryptoSession.sessionToken}`,
       });
     }
   } catch (error) {
@@ -249,7 +280,9 @@ router.post('/auth/register', async (req, res) => {
  * Validates a cryptographic session hash token
  */
 router.get('/auth/verify-token', (req, res) => {
-  const token = req.query.session_token || req.query.token;
+  const authHeader = req.headers.authorization;
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+  const token = bearerToken || req.query.session_token || req.query.token;
   const isValid = verifySessionHashToken(token);
 
   if (!isValid) {

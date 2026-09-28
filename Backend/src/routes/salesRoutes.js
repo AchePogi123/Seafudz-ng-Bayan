@@ -1,11 +1,11 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { optionalAuth } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 
 const router = Router();
 
 // GET /api/sales/summary - Get sales summary analytics from database
-router.get('/sales/summary', optionalAuth, async (req, res) => {
+router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { tab, period } = req.query;
     const selectedPeriod = (tab || period || '').toLowerCase();
@@ -130,7 +130,7 @@ router.get('/sales/summary', optionalAuth, async (req, res) => {
 });
 
 // GET /api/sales/transactions - Get list of transactions ledger from database
-router.get('/sales/transactions', optionalAuth, async (req, res) => {
+router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   try {
     const sql = `
       SELECT o.id AS "orderId", 

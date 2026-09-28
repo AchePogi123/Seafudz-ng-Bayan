@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 
 const router = Router();
 
 // GET /api/rider/deliveries - Get active delivery jobs
-router.get('/rider/deliveries', async (req, res) => {
+router.get('/rider/deliveries', requireAuth, requireRole(['admin', 'rider']), async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.order_type, o.status AS order_status, o.total, o.created_at,
@@ -53,7 +54,7 @@ router.get('/rider/deliveries', async (req, res) => {
 });
 
 // PATCH /api/rider/deliveries/:id/status - Update delivery status
-router.patch('/rider/deliveries/:id/status', async (req, res) => {
+router.patch('/rider/deliveries/:id/status', requireAuth, requireRole(['admin', 'rider']), async (req, res) => {
   try {
     const { status, employeeId } = req.body;
     const { id } = req.params;
@@ -151,7 +152,7 @@ export async function handleRiderStatusUpdate(req, res) {
       updatedOrder = formatOrderResponse(newRec);
     }
 
-    console.log(`🏍️ [Rider Flow] Order ${id} -> Status: ${nextStatus}`);
+    console.log(`[RIDER] Order ${id} -> Status: ${nextStatus}`);
 
     return res.status(200).json({
       success: true,
@@ -186,7 +187,7 @@ export async function handleDeleteOrder(req, res) {
       console.warn('DB delete note (Rider Flow Cleanup):', dbErr.message);
     }
 
-    console.log(`🗑️ [Rider Flow] Removed order ${id}`);
+    console.log(`[DELETE] Removed order ${id}`);
 
     return res.status(200).json({
       success: true,

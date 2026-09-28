@@ -141,54 +141,63 @@ const SalesReportAdmin: React.FC = () => {
         }
     }, [])
 
+    const getOrderDate = (order: any): Date | null => {
+        const value =
+            order.created_at ??
+            order.createdAt ??
+            order.dateTime ??
+            order.date ??
+            null
+
+        if (!value) return null
+        if (value instanceof Date) return isNaN(value.getTime()) ? null : value
+        const parsed = new Date(value)
+        if (!isNaN(parsed.getTime())) return parsed
+        const num = Number(value)
+        if (!isNaN(num)) {
+            const d = new Date(num)
+            if (!isNaN(d.getTime())) return d
+        }
+        return null
+    }
+
+    const checkIsInSelectedPeriod = useCallback((order: any, tab: TabType): boolean => {
+        const orderDate = getOrderDate(order)
+        if (!orderDate) return true
+
+        const now = new Date()
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+
+        if (tab === 'Today') {
+            return orderDate >= startOfToday && orderDate <= endOfToday
+        }
+
+        if (tab === 'This Week') {
+            const startOfWeek = new Date(startOfToday)
+            startOfWeek.setDate(startOfWeek.getDate() - 6)
+            startOfWeek.setHours(0, 0, 0, 0)
+            return orderDate >= startOfWeek
+        }
+
+        if (tab === 'This Month') {
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+            return orderDate >= startOfMonth
+        }
+
+        if (tab === 'This Year') {
+            const startOfYear = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
+            return orderDate >= startOfYear
+        }
+
+        return true
+    }, [])
+
     const fetchSummary = useCallback(async () => {
-        // Build the sales summary from the actual orders endpoint.
-        // The /sales/summary endpoint can return zero even when /orders
-        // already contains the transactions shown in the table.
         try {
             const orderMap = new Map<string, any>()
 
-            const getOrderDate = (order: any) => {
-                const value =
-                    order.created_at ??
-                    order.createdAt ??
-                    order.dateTime ??
-                    order.date ??
-                    null
-
-                if (!value) return null
-                const parsed = new Date(value)
-                return Number.isNaN(parsed.getTime()) ? null : parsed
-            }
-
-            const isInSelectedPeriod = (order: any) => {
-                const orderDate = getOrderDate(order)
-                if (!orderDate) return true
-
-                const now = new Date()
-                const startOfToday = new Date(
-                    now.getFullYear(),
-                    now.getMonth(),
-                    now.getDate()
-                )
-                const startOfWeek = new Date(startOfToday)
-                startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay())
-                const startOfMonth = new Date(
-                    now.getFullYear(),
-                    now.getMonth(),
-                    1
-                )
-                const startOfYear = new Date(now.getFullYear(), 0, 1)
-
-                if (activeTab === 'Today') return orderDate >= startOfToday
-                if (activeTab === 'This Week') return orderDate >= startOfWeek
-                if (activeTab === 'This Month') return orderDate >= startOfMonth
-                if (activeTab === 'This Year') return orderDate >= startOfYear
-
-                return true
-            }
-
-            // Include locally stored orders first.
+            // 1. Include locally stored orders matching selected period
             try {
                 const localRaw = localStorage.getItem('seafudz_orders')
 
@@ -197,7 +206,7 @@ const SalesReportAdmin: React.FC = () => {
 
                     if (Array.isArray(localOrders)) {
                         localOrders
-                            .filter(isInSelectedPeriod)
+                            .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
                             .forEach((order: any, index: number) => {
                                 const key = String(
                                     order.id ??
@@ -212,8 +221,7 @@ const SalesReportAdmin: React.FC = () => {
                 console.warn('Failed to read local orders for sales summary:', localErr)
             }
 
-            // Get a large set of backend orders so the KPI cards use the
-            // same database records displayed by the transaction register.
+            // 2. Fetch backend orders matching selected period
             try {
                 const ordersRes = await fetch(
                     `${API_BASE_URL}/orders?limit=1000&offset=0&tab=${encodeURIComponent(activeTab)}`
@@ -226,7 +234,7 @@ const SalesReportAdmin: React.FC = () => {
                         : []
 
                     backendOrders
-                        .filter(isInSelectedPeriod)
+                        .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
                         .forEach((order: any, index: number) => {
                             const key = String(
                                 order.id ??
@@ -288,78 +296,52 @@ const SalesReportAdmin: React.FC = () => {
                 }
             })
 
-            if (orders.length > 0) {
-                setSummaryData({
-                    totalOrders: orders.length,
-                    grossRevenue,
-                    subtotalRevenue: 0,
-                    vatCollected: 0,
-                    averageOrderValue: grossRevenue / orders.length,
-                    breakdown,
-                })
-                return
-            }
-
-            // Keep the cards at zero only when there are genuinely no
-            // transactions for the selected period.
             setSummaryData({
-                totalOrders: 0,
-                grossRevenue: 0,
+                totalOrders: orders.length,
+                grossRevenue,
                 subtotalRevenue: 0,
                 vatCollected: 0,
-                averageOrderValue: 0,
-                breakdown: {
-                    cash: { total: 0, count: 0 },
-                    gcash: { total: 0, count: 0 },
-                    maya: { total: 0, count: 0 },
-                    hybrid: { total: 0, count: 0 },
-                    cod: { total: 0, count: 0 },
-                },
+                averageOrderValue: orders.length > 0 ? grossRevenue / orders.length : 0,
+                breakdown,
             })
         } catch (err) {
             console.warn('Failed to calculate sales summary:', err)
         }
-    }, [activeTab])
+    }, [activeTab, checkIsInSelectedPeriod])
 
     const fetchOrdersPage = useCallback(async () => {
         setIsLoading(true)
         try {
-            const offset = (currentPage - 1) * PAGE_SIZE
-            const params = new URLSearchParams({
-                limit: String(PAGE_SIZE),
-                offset: String(offset),
-                tab: activeTab,
-            })
-            if (channelFilter !== 'All') params.append('type', channelFilter)
-            if (paymentFilter !== 'All') params.append('payment', paymentFilter)
-            if (debouncedSearch) params.append('search', debouncedSearch)
+            const orderMap = new Map<string, LiveTransaction>()
 
-            let combinedOrders: LiveTransaction[] = []
-
+            // 1. Read local orders matching period
             try {
                 const localRaw = localStorage.getItem('seafudz_orders')
                 if (localRaw) {
                     const parsed = JSON.parse(localRaw)
                     if (Array.isArray(parsed)) {
-                        combinedOrders = parsed.map((o: any) => {
-                            let itemsStr = 'Seafood Dish'
-                            if (typeof o.items === 'string') {
-                                itemsStr = o.items
-                            } else if (Array.isArray(o.items)) {
-                                itemsStr = o.items
-                                    .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
-                                    .join(', ')
-                            }
-                            return {
-                                id: String(o.id || o.ref),
-                                ref: String(o.ref || o.id),
-                                dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
-                                type: o.type || 'POS Order',
-                                status: o.status || 'Completed',
-                                customer: o.customerName || o.customer || 'Walk-In',
-                                items: itemsStr,
-                                total: Number(o.total || 0),
-                                paymentMethod: o.paymentMethod || 'Cash',
+                        parsed.forEach((o: any, idx: number) => {
+                            if (checkIsInSelectedPeriod(o, activeTab)) {
+                                let itemsStr = 'Seafood Dish'
+                                if (typeof o.items === 'string') {
+                                    itemsStr = o.items
+                                } else if (Array.isArray(o.items)) {
+                                    itemsStr = o.items
+                                        .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
+                                        .join(', ')
+                                }
+                                const tx: LiveTransaction = {
+                                    id: String(o.id || o.ref || `local-${idx}`),
+                                    ref: String(o.ref || o.id || `local-${idx}`),
+                                    dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
+                                    type: o.type || 'POS Order',
+                                    status: o.status || 'Completed',
+                                    customer: o.customerName || o.customer || 'Walk-In',
+                                    items: itemsStr,
+                                    total: Number(o.total || 0),
+                                    paymentMethod: o.paymentMethod || 'Cash',
+                                }
+                                orderMap.set(tx.id, tx)
                             }
                         })
                     }
@@ -368,54 +350,80 @@ const SalesReportAdmin: React.FC = () => {
                 console.warn('Error reading local orders:', e)
             }
 
-            if (channelFilter !== 'All') {
-                const isOnline = channelFilter === 'Online'
-                combinedOrders = combinedOrders.filter(o => {
-                    const t = (o.type || '').toLowerCase()
-                    const oIsOnline = t.includes('delivery') || t.includes('online')
-                    return isOnline ? oIsOnline : !oIsOnline
-                })
-            }
-            if (paymentFilter !== 'All') {
-                const p = paymentFilter.toLowerCase()
-                if (p === 'hybrid') {
-                    combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes('hybrid') || (o.paymentMethod || '').toLowerCase().includes('split'))
-                } else {
-                    combinedOrders = combinedOrders.filter(o => (o.paymentMethod || '').toLowerCase().includes(p))
-                }
-            }
-            if (debouncedSearch) {
-                const q = debouncedSearch.toLowerCase()
-                combinedOrders = combinedOrders.filter(o => (o.ref || '').toLowerCase().includes(q) || (o.customer || '').toLowerCase().includes(q))
-            }
-
-            let backendCount = 0
+            // 2. Fetch backend orders matching period
             try {
+                const params = new URLSearchParams({
+                    limit: '1000',
+                    tab: activeTab,
+                })
                 const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
                 if (res.ok) {
                     const json = await res.json()
                     const list = json.data || []
                     const formatted = list.map(formatOrderRow)
-
                     formatted.forEach((dbO: LiveTransaction) => {
-                        if (!combinedOrders.some(o => o.id === dbO.id || o.ref === dbO.id)) {
-                            combinedOrders.push(dbO)
+                        if (checkIsInSelectedPeriod(dbO, activeTab)) {
+                            orderMap.set(dbO.id, dbO)
                         }
                     })
-                    backendCount = typeof json.total === 'number' ? json.total : formatted.length
                 }
             } catch (err) {
                 console.warn('Backend offline', err)
             }
 
-            setTotalMatchingCount(Math.max(backendCount, combinedOrders.length))
-            setTransactions(combinedOrders.slice(offset, offset + PAGE_SIZE))
+            let allMatching = Array.from(orderMap.values())
+
+            // 3. Apply channel filter
+            if (channelFilter !== 'All') {
+                const isOnline = channelFilter === 'Online'
+                allMatching = allMatching.filter((o) => {
+                    const t = (o.type || '').toLowerCase()
+                    const oIsOnline = t.includes('delivery') || t.includes('online')
+                    return isOnline ? oIsOnline : !oIsOnline
+                })
+            }
+
+            // 4. Apply payment filter
+            if (paymentFilter !== 'All') {
+                const p = paymentFilter.toLowerCase()
+                if (p === 'hybrid') {
+                    allMatching = allMatching.filter(
+                        (o) =>
+                            (o.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                            (o.paymentMethod || '').toLowerCase().includes('split')
+                    )
+                } else {
+                    allMatching = allMatching.filter((o) => (o.paymentMethod || '').toLowerCase().includes(p))
+                }
+            }
+
+            // 5. Apply search query filter
+            if (debouncedSearch) {
+                const q = debouncedSearch.toLowerCase()
+                allMatching = allMatching.filter(
+                    (o) =>
+                        (o.ref || '').toLowerCase().includes(q) ||
+                        (o.customer || '').toLowerCase().includes(q) ||
+                        (o.items || '').toLowerCase().includes(q)
+                )
+            }
+
+            // Sort descending by date
+            allMatching.sort((a, b) => {
+                const dA = getOrderDate(a)?.getTime() || 0
+                const dB = getOrderDate(b)?.getTime() || 0
+                return dB - dA
+            })
+
+            setTotalMatchingCount(allMatching.length)
+            const offset = (currentPage - 1) * PAGE_SIZE
+            setTransactions(allMatching.slice(offset, offset + PAGE_SIZE))
         } catch (err) {
             console.error('Failed to fetch page of orders:', err)
         } finally {
             setIsLoading(false)
         }
-    }, [currentPage, activeTab, channelFilter, paymentFilter, debouncedSearch, formatOrderRow])
+    }, [currentPage, activeTab, channelFilter, paymentFilter, debouncedSearch, formatOrderRow, checkIsInSelectedPeriod])
 
     useEffect(() => {
         void fetchSummary()

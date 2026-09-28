@@ -67,13 +67,13 @@ router.get('/orders', async (req, res) => {
 
     const selectedPeriod = (tab || period || '').toLowerCase();
     if (selectedPeriod === 'today') {
-      sql += ` AND o.created_at >= CURRENT_DATE`;
+      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date`;
     } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
-      sql += ` AND o.created_at >= NOW() - INTERVAL '7 days'`;
+      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'`;
     } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
-      sql += ` AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE)`;
+      sql += ` AND o.created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila')`;
     } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
-      sql += ` AND o.created_at >= DATE_TRUNC('year', CURRENT_DATE)`;
+      sql += ` AND o.created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila')`;
     }
 
     if (type && type !== 'All') {
@@ -703,4 +703,190 @@ export async function handleGetCustomerFlowOrder(req, res) {
   }
 }
 
+/**
+ * GET /api/cashier/online-receipts
+ * Cashier view for confirmed online orders needing restaurant receipts.
+ */
+router.get('/cashier/online-receipts', async (req, res) => {
+  try {
+    const { receiptStatus, search } = req.query;
+
+    let dbOrders = [];
+    try {
+      const { rows } = await query(`
+        SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+               o.receipt_status, o.created_at, o.updated_at,
+               COALESCE(c.fullname, 'Online Customer') AS customer_name,
+               c.phone AS customer_phone,
+               COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+               p_pay.payment_method,
+               COALESCE(
+                 json_agg(
+                   json_build_object(
+                     'id', oi.id,
+                     'name', oi.product_name_snapshot,
+                     'quantity', oi.quantity,
+                     'price', oi.unit_price
+                   )
+                 ) FILTER (WHERE oi.id IS NOT NULL), '[]'
+               ) AS items
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.id
+        LEFT JOIN (
+          SELECT DISTINCT ON (order_id) order_id, delivery_address
+          FROM deliveries
+          ORDER BY order_id, created_at DESC
+        ) d ON o.id = d.order_id
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        LEFT JOIN (
+          SELECT DISTINCT ON (order_id) order_id, payment_method
+          FROM payments
+          ORDER BY order_id, created_at DESC
+        ) p_pay ON o.id = p_pay.order_id
+        WHERE UPPER(COALESCE(o.order_type, 'ONLINE')) = 'ONLINE'
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, p_pay.payment_method
+        ORDER BY o.created_at ASC
+      `);
+      dbOrders = rows;
+    } catch (dbErr) {
+      console.warn('DB query note (cashier online receipts):', dbErr.message);
+    }
+
+    const mergedMap = new Map();
+
+    inMemoryOrders.forEach((val, key) => {
+      const formatted = formatOrderResponse(val);
+      const normType = (val.orderType || val.order_type || val.type || 'ONLINE').toUpperCase();
+      if (normType.includes('ONLINE') || val.deliveryAddress || val.address || val.phone) {
+        mergedMap.set(key, formatted);
+      }
+    });
+
+    dbOrders.forEach(row => {
+      if (!mergedMap.has(row.id)) {
+        mergedMap.set(row.id, formatOrderResponse(row));
+      } else {
+        const existing = mergedMap.get(row.id);
+        mergedMap.set(row.id, {
+          ...existing,
+          receiptStatus: existing.receiptStatus || row.receipt_status || 'UNPRINTED',
+          isReceiptPrinted: existing.isReceiptPrinted || row.receipt_status === 'PRINTED',
+        });
+      }
+    });
+
+    let result = Array.from(mergedMap.values());
+
+    const confirmedStatuses = ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+    result = result.filter(o => confirmedStatuses.includes((o.status || '').toUpperCase()));
+
+    if (receiptStatus) {
+      const target = receiptStatus.toUpperCase();
+      if (target === 'UNPRINTED') {
+        result = result.filter(o => !o.isReceiptPrinted && o.receiptStatus !== 'PRINTED');
+      } else if (target === 'PRINTED') {
+        result = result.filter(o => o.isReceiptPrinted || o.receiptStatus === 'PRINTED');
+      }
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(o =>
+        (o.id && o.id.toLowerCase().includes(q)) ||
+        (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+        (o.phone && o.phone.toLowerCase().includes(q))
+      );
+    }
+
+    // Sort FIFO: Oldest creation time first
+    result.sort((a, b) => {
+      const tA = new Date(a.createdAt || a.created_at).getTime() || 0;
+      const tB = new Date(b.createdAt || b.created_at).getTime() || 0;
+      return tA - tB;
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error fetching cashier online receipts:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve online receipts',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * PATCH /api/cashier/online-receipts/:id/print
+ * Records that Cashier printed the restaurant receipt for an online order.
+ * Does NOT modify order fulfillment status (status remains intact).
+ */
+router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let updatedOrder = null;
+
+    if (inMemoryOrders.has(id)) {
+      const rec = inMemoryOrders.get(id);
+      rec.receipt_status = 'PRINTED';
+      rec.receiptStatus = 'PRINTED';
+      rec.is_receipt_printed = true;
+      rec.isReceiptPrinted = true;
+      rec.receipt_printed_at = new Date().toISOString();
+      inMemoryOrders.set(id, rec);
+      updatedOrder = formatOrderResponse(rec);
+    }
+
+    try {
+      await query(
+        `UPDATE orders SET receipt_status = 'PRINTED', updated_at = NOW() WHERE id = $1`,
+        [id]
+      ).catch(() => {});
+
+      const { rows } = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
+      if (rows.length > 0 && !updatedOrder) {
+        updatedOrder = formatOrderResponse({
+          ...rows[0],
+          receipt_status: 'PRINTED',
+          is_receipt_printed: true,
+        });
+      }
+    } catch (dbErr) {
+      console.warn('DB receipt print update note:', dbErr.message);
+    }
+
+    if (!updatedOrder) {
+      const fallback = {
+        id,
+        receipt_status: 'PRINTED',
+        is_receipt_printed: true,
+        status: 'CONFIRMED',
+      };
+      inMemoryOrders.set(id, fallback);
+      updatedOrder = formatOrderResponse(fallback);
+    }
+
+    console.log(`🧾 [Cashier Receipt] Official receipt printed for online order ${id}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt printed successfully for order ${id}`,
+      data: updatedOrder,
+    });
+  } catch (error) {
+    console.error('Error recording receipt print:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to record receipt print action',
+      error: error.message,
+    });
+  }
+});
+
 export default router;
+

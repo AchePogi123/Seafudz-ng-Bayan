@@ -237,46 +237,6 @@ export const AssistantRole: React.FC = () => {
     }
   }, [])
 
-  // PASS ORDER TO CASHIER & KITCHEN (CONFIRMED)
-  const handleApproveSendToKitchen = async () => {
-    if (!selectedOrderId || !selectedOrder) return
-
-    try {
-      await fetch(`${API_BASE_URL}/user-flow/orders/${selectedOrderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'CONFIRMED' }),
-      })
-    } catch (err) { }
-
-    // Update in LocalStorage for instant live broadcast to Cashier & Kitchen
-    try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: any) =>
-        o.id === selectedOrderId || o.ref === selectedOrderId
-          ? { ...o, status: 'CONFIRMED', paymentStatus: 'Paid' }
-          : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-
-      // Also update active online customer order if matching
-      const savedActive = localStorage.getItem('seafudz_active_online_order')
-      if (savedActive) {
-        const activeObj = JSON.parse(savedActive)
-        if (activeObj && (activeObj.id === selectedOrderId || activeObj.ref === selectedOrderId)) {
-          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
-        }
-      }
-
-      window.dispatchEvent(new Event('seafudz_order_created'))
-    } catch { }
-
-    setOrders((prev) =>
-      prev.map((o) => (o.id === selectedOrderId ? { ...o, status: 'confirmed' } : o))
-    )
-    setSelectedOrderId(null)
-    setNotification(`Order ${selectedOrder.ref} approved! Sent to Cashier & Kitchen!`)
-  }
 
   const handleAuthorizeGCash = async (orderId: string) => {
     try {
@@ -786,30 +746,22 @@ export const AssistantRole: React.FC = () => {
                     // 3. GCash Order WITH Reference Screenshot Submitted
                     if (hasReceipt) {
                       return (
-                        <div className="space-y-3">
-                          <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
-                            <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleVerifyReceipt(selectedOrder.id)}
-                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
-                              >
-                                Approve Receipt & Send to Kitchen
-                              </button>
-                              <button
-                                onClick={() => handleRejectReceipt(selectedOrder.id)}
-                                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
-                              >
-                                Reject (Invalid Image)
-                              </button>
-                            </div>
+                        <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
+                          <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleVerifyReceipt(selectedOrder.id)}
+                              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
+                            >
+                              Approve Receipt & Send to Kitchen
+                            </button>
+                            <button
+                              onClick={() => handleRejectReceipt(selectedOrder.id)}
+                              className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
+                            >
+                              Reject (Invalid Image)
+                            </button>
                           </div>
-                          <button
-                            onClick={() => handleApproveSendToKitchen()}
-                            className="w-full bg-[#ff7b00] hover:bg-[#e66f00] text-white font-black py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-orange-500/30 active:scale-98"
-                          >
-                            <span>✅ Confirm Order & Send to Kitchen</span>
-                          </button>
                         </div>
                       )
                     }

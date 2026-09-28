@@ -6,7 +6,7 @@ interface SuccessModalProps {
   onClose: () => void
   onConfirm: (cashReceived: string, change: number | null, paymentMethod: string) => void
   orderDetails: {
-    table: string
+    table?: string
     type: string
     total: number
     cartItems: CartItem[]

@@ -31,6 +31,8 @@ export function formatOrderResponse(row) {
   const items = Array.isArray(row.items) ? row.items : [];
   const calcTotal = parseFloat(row.total || 0);
   const isBulk = Boolean(row.is_bulk || row.isBulk || checkIfBulkOrder(items));
+  const isReceiptPrinted = Boolean(row.is_receipt_printed || row.isReceiptPrinted || row.receipt_printed || row.receiptStatus === 'PRINTED' || row.receipt_status === 'PRINTED');
+  const receiptStatus = isReceiptPrinted ? 'PRINTED' : (row.receipt_status || row.receiptStatus || 'UNPRINTED');
 
   return {
     id: row.id,
@@ -43,7 +45,9 @@ export function formatOrderResponse(row) {
     paymentMethod: row.payment_method || row.paymentMethod || 'GCash',
     paymentReceipt: row.payment_receipt || row.paymentReceipt || undefined,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized),
-    receiptStatus: row.receipt_status || row.receiptStatus || 'NONE',
+    receiptStatus: receiptStatus,
+    isReceiptPrinted: isReceiptPrinted,
+    is_receipt_printed: isReceiptPrinted,
     rejectionReason: row.rejection_reason || row.rejectionReason || '',
     isBulk: isBulk,
     is_bulk: isBulk,
@@ -64,3 +68,4 @@ export function formatOrderResponse(row) {
     updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
   };
 }
+

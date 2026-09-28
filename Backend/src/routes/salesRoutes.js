@@ -12,13 +12,13 @@ router.get('/sales/summary', optionalAuth, async (req, res) => {
 
     let dateFilter = '';
     if (selectedPeriod === 'today') {
-      dateFilter = ` AND o.created_at >= CURRENT_DATE`;
+      dateFilter = ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date`;
     } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
-      dateFilter = ` AND o.created_at >= NOW() - INTERVAL '7 days'`;
+      dateFilter = ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'`;
     } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
-      dateFilter = ` AND o.created_at >= DATE_TRUNC('month', CURRENT_DATE)`;
+      dateFilter = ` AND o.created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila')`;
     } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
-      dateFilter = ` AND o.created_at >= DATE_TRUNC('year', CURRENT_DATE)`;
+      dateFilter = ` AND o.created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila')`;
     }
 
     const summarySql = `

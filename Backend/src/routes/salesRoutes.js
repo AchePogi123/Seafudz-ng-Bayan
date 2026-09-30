@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { inMemoryOrders } from './sharedFlowStore.js';
 
 const router = Router();
 
@@ -28,17 +29,53 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         COALESCE(SUM(o.subtotal), 0)::float AS "subtotalRevenue",
         COALESCE(SUM(o.tax), 0)::float AS "vatCollected",
         COALESCE(AVG(o.total), 0)::float AS "averageOrderValue",
-        COALESCE(COUNT(CASE WHEN LOWER(o.order_type) = 'on_site' THEN 1 END), 0)::int AS "posOrders",
-        COALESCE(SUM(CASE WHEN LOWER(o.order_type) = 'on_site' THEN o.total ELSE 0 END), 0)::float AS "posRevenue",
-        COALESCE(COUNT(CASE WHEN LOWER(o.order_type) = 'online' THEN 1 END), 0)::int AS "deliveryOrders",
-        COALESCE(SUM(CASE WHEN LOWER(o.order_type) = 'online' THEN o.total ELSE 0 END), 0)::float AS "deliveryRevenue",
+        COALESCE(COUNT(CASE WHEN LOWER(o.order_type) IN ('on_site', 'pos', 'on-site', 'walk-in', 'walk_in', 'pos order') THEN 1 END), 0)::int AS "posOrders",
+        COALESCE(SUM(CASE WHEN LOWER(o.order_type) IN ('on_site', 'pos', 'on-site', 'walk-in', 'walk_in', 'pos order') THEN o.total ELSE 0 END), 0)::float AS "posRevenue",
+        COALESCE(COUNT(CASE WHEN LOWER(o.order_type) IN ('online', 'delivery', 'online customer', 'online order') THEN 1 END), 0)::int AS "deliveryOrders",
+        COALESCE(SUM(CASE WHEN LOWER(o.order_type) IN ('online', 'delivery', 'online customer', 'online order') THEN o.total ELSE 0 END), 0)::float AS "deliveryRevenue",
         COALESCE(COUNT(DISTINCT COALESCE(o.customer_id::text, c.fullname)), 0)::int AS "uniqueCustomers"
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       WHERE UPPER(o.status) != 'CANCELLED' ${dateFilter}
     `;
     const summaryRes = await query(summarySql);
-    const summary = summaryRes.rows[0];
+    const summary = summaryRes.rows[0] || {};
+
+    // Check DB order IDs to merge in-memory orders if any exist
+    let memPosOrders = 0;
+    let memPosRevenue = 0;
+    let memDeliveryOrders = 0;
+    let memDeliveryRevenue = 0;
+
+    try {
+      const dbOrderIdsRes = await query(`SELECT id FROM orders WHERE UPPER(status) != 'CANCELLED' ${dateFilter}`);
+      const dbOrderIds = new Set(dbOrderIdsRes.rows.map(r => String(r.id)));
+
+      inMemoryOrders.forEach((ord, id) => {
+        if (!dbOrderIds.has(String(id)) && String(ord.status || '').toUpperCase() !== 'CANCELLED') {
+          const type = String(ord.order_type || ord.type || 'ONLINE').toUpperCase();
+          const tot = parseFloat(ord.total || 0);
+          if (type.includes('ON_SITE') || type.includes('POS') || type.includes('WALK')) {
+            memPosOrders++;
+            memPosRevenue += tot;
+          } else {
+            memDeliveryOrders++;
+            memDeliveryRevenue += tot;
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Error merging in-memory orders in sales summary:', e);
+    }
+
+    const posOrders = (summary.posOrders || 0) + memPosOrders;
+    const deliveryOrders = (summary.deliveryOrders || 0) + memDeliveryOrders;
+    const totalOrders = posOrders + deliveryOrders;
+
+    const posRevenue = (summary.posRevenue || 0) + memPosRevenue;
+    const deliveryRevenue = (summary.deliveryRevenue || 0) + memDeliveryRevenue;
+    const grossRevenue = posRevenue + deliveryRevenue;
+    const averageOrderValue = totalOrders > 0 ? Math.round(grossRevenue / totalOrders) : 0;
 
     const paymentSql = `
       SELECT 
@@ -98,16 +135,16 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
     return res.status(200).json({
       success: true,
       data: {
-        totalOrders: summary.totalOrders,
-        grossRevenue: summary.grossRevenue,
-        subtotalRevenue: summary.subtotalRevenue,
-        vatCollected: summary.vatCollected,
-        averageOrderValue: Math.round(summary.averageOrderValue || 0),
-        posOrders: summary.posOrders,
-        posRevenue: summary.posRevenue,
-        deliveryOrders: summary.deliveryOrders,
-        deliveryRevenue: summary.deliveryRevenue,
-        uniqueCustomers: summary.uniqueCustomers,
+        totalOrders,
+        grossRevenue,
+        subtotalRevenue: summary.subtotalRevenue || grossRevenue,
+        vatCollected: summary.vatCollected || 0,
+        averageOrderValue,
+        posOrders,
+        posRevenue,
+        deliveryOrders,
+        deliveryRevenue,
+        uniqueCustomers: summary.uniqueCustomers || 0,
         breakdown,
         paymentMethods: {
           CASH: breakdown.cash.total,

@@ -214,16 +214,16 @@ def generate_transactions(count: int = 1000, channel_mode: str = 'mixed', online
             order_status = "CANCELLED"
             payment_status = random.choice(["REFUNDED", "FAILED", "PENDING"])
 
-        # Payment Method: Cash, GCash, Hybrid / Split, Maya, COD
+        # Payment Method: Cash, GCash, Card, Online (valid DB constraint values)
         if is_online:
             payment_method = random.choices(
-                ["GCASH", "HYBRID (Cash + GCash)", "SPLIT (Cash + GCash)", "MAYA", "CASH", "COD"],
-                weights=[0.45, 0.15, 0.12, 0.12, 0.10, 0.06]
+                ["GCASH", "ONLINE", "CASH", "CARD"],
+                weights=[0.50, 0.25, 0.15, 0.10]
             )[0]
         else:
             payment_method = random.choices(
-                ["CASH", "GCASH", "HYBRID (Cash + GCash)", "SPLIT (Cash + GCash)", "MAYA"],
-                weights=[0.42, 0.28, 0.15, 0.10, 0.05]
+                ["CASH", "GCASH", "CARD", "ONLINE"],
+                weights=[0.55, 0.30, 0.10, 0.05]
             )[0]
 
         ref_number = f"TXN-{payment_method[:3]}-{random.randint(10000000, 99999999)}" if payment_status == "PAID" else None
@@ -390,7 +390,7 @@ def execute_seed_to_database(sql_file_path: str, count: int = 1000):
     
     # Try Docker container first
     try:
-        cmd = f"docker exec -i seafudz_postgres psql -U postgres -d seafudz_db < {sql_file_path}"
+        cmd = f'docker exec -i seafudz_postgres psql -U postgres -d seafudz_db < "{sql_file_path}"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0 and "ERROR:" not in result.stderr and "ERROR:" not in result.stdout:
             print(f"[OK] Successfully seeded {count:,} transactions into docker container 'seafudz_postgres'!")
@@ -403,7 +403,7 @@ def execute_seed_to_database(sql_file_path: str, count: int = 1000):
 
     # Fallback to local psql if available
     try:
-        cmd = f"PGPASSWORD=postgrespassword psql -h localhost -p 5432 -U postgres -d seafudz_db -f {sql_file_path}"
+        cmd = f'PGPASSWORD=postgrespassword psql -h localhost -p 5433 -U postgres -d seafudz_db -f "{sql_file_path}"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         if result.returncode == 0 and "ERROR:" not in result.stderr and "ERROR:" not in result.stdout:
             print(f"[OK] Successfully seeded {count:,} transactions via local psql!")

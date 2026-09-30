@@ -36,12 +36,46 @@ router.get('/rider/deliveries', requireAuth, requireRole(['admin', 'rider']), as
       GROUP BY o.id, d.id, d.delivery_address, d.status, d.rider_id, c.fullname, c.phone, e.fullname
       ORDER BY o.created_at DESC
     `;
-    const { rows } = await query(sql);
+    let dbRows = [];
+    try {
+      const { rows } = await query(sql);
+      dbRows = rows;
+    } catch (dbErr) {
+      /* ignore DB errors */
+    }
+
+    const mergedMap = new Map();
+    dbRows.forEach((row) => mergedMap.set(row.id, row));
+
+    inMemoryOrders.forEach((order, id) => {
+      const isOnline = (order.order_type || 'ONLINE').toUpperCase() === 'ONLINE' || Boolean(order.delivery_address || order.customer_name || order.customer);
+      if (isOnline) {
+        const existing = mergedMap.get(id) || {};
+        const normStatus = normalizeFlowStatus(order.status);
+        mergedMap.set(id, {
+          id: id,
+          order_type: order.order_type || existing.order_type || 'ONLINE',
+          order_status: normStatus,
+          status: normStatus,
+          total: order.total || existing.total || 0,
+          created_at: order.created_at || existing.created_at || new Date().toISOString(),
+          delivery_id: existing.delivery_id || `DEL-${id}`,
+          delivery_address: order.delivery_address || order.address || existing.delivery_address || 'Metro Manila Address',
+          customer_name: order.customer_name || order.customer || existing.customer_name || 'Online Customer',
+          customer_phone: order.customer_phone || order.phone || existing.customer_phone || '0917-000-0000',
+          rider_name: order.riderName || existing.rider_name || null,
+          rider_id: order.riderId || existing.rider_id || null,
+          items: order.items || existing.items || [],
+        });
+      }
+    });
+
+    const finalDeliveries = Array.from(mergedMap.values());
 
     return res.status(200).json({
       success: true,
-      count: rows.length,
-      data: rows,
+      count: finalDeliveries.length,
+      data: finalDeliveries,
     });
   } catch (error) {
     console.error('Error fetching rider deliveries:', error);

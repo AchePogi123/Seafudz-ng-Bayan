@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import NavbarCustomer from '../components/NavbarCustomer'
 import NavbarAdmin from '../components/NavbarAdmin'
 import NavbarAssistant from '../components/NavbarAssistant'
@@ -41,6 +41,8 @@ export const AccMan: React.FC = () => {
     // Edit form states (shadow state to allow cancel/reset)
     const [editForm, setEditForm] = useState<UserProfile>({ ...profile })
 
+    const fetchedProfileRef = useRef(false)
+
     useEffect(() => {
         const active = getActiveUser()
         if (active) {
@@ -56,6 +58,9 @@ export const AccMan: React.FC = () => {
             }
             setProfile(initial)
             setEditForm(initial)
+
+            if (fetchedProfileRef.current) return
+            fetchedProfileRef.current = true
 
             // Fetch latest user profile from PostgreSQL DB
             const cleanEmail = active.email || ''
@@ -73,7 +78,9 @@ export const AccMan: React.FC = () => {
                                 email: dbUser.email || active.email,
                                 address: dbUser.address || dbUser.delivery_address || active.address,
                             }
-                            saveActiveUser(updatedActive)
+                            if (updatedActive.fullname !== active.fullname || updatedActive.phone !== active.phone || updatedActive.address !== active.address) {
+                                saveActiveUser(updatedActive)
+                            }
                             const updated = {
                                 fullName: updatedActive.fullname || '',
                                 phone: updatedActive.phone || '',

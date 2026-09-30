@@ -10,6 +10,7 @@ export interface LiveTransaction {
     id: string
     ref: string
     dateTime: string
+    created_at?: string
     items: string
     customer: string
     total: number
@@ -130,6 +131,7 @@ const SalesReportAdmin: React.FC = () => {
             id: String(dbO.id),
             ref: String(dbO.id),
             dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
+            created_at: dbO.created_at,
             items: itemsSummary,
             customer:
                 dbO.customer_name ||
@@ -199,7 +201,7 @@ const SalesReportAdmin: React.FC = () => {
             const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`, { headers: authHeaders })
             if (res.ok) {
                 const json = await res.json()
-                if (json.success && json.data) {
+                if (json.success && json.data && ((json.data.totalOrders || 0) > 0 || (json.data.grossRevenue || 0) > 0)) {
                     setSummaryData({
                         totalOrders: json.data.totalOrders || 0,
                         grossRevenue: json.data.grossRevenue || 0,
@@ -250,8 +252,10 @@ const SalesReportAdmin: React.FC = () => {
 
             // 2. Fetch backend orders matching selected period
             try {
+                const authHeaders = await getAuthHeaders()
                 const ordersRes = await fetch(
-                    `${API_BASE_URL}/orders?limit=1000&offset=0&tab=${encodeURIComponent(activeTab)}`
+                    `${API_BASE_URL}/orders?limit=10000&offset=0&tab=${encodeURIComponent(activeTab)}`,
+                    { headers: authHeaders }
                 )
 
                 if (ordersRes.ok) {
@@ -308,12 +312,9 @@ const SalesReportAdmin: React.FC = () => {
                 if (payment.includes('hybrid') || payment.includes('split')) {
                     breakdown.hybrid.total += total
                     breakdown.hybrid.count += 1
-                } else if (payment.includes('gcash')) {
+                } else if (payment.includes('gcash') || payment.includes('online') || payment.includes('card') || payment.includes('maya')) {
                     breakdown.gcash.total += total
                     breakdown.gcash.count += 1
-                } else if (payment.includes('maya')) {
-                    breakdown.maya.total += total
-                    breakdown.maya.count += 1
                 } else if (payment.includes('cod')) {
                     breakdown.cod.total += total
                     breakdown.cod.count += 1
@@ -326,7 +327,7 @@ const SalesReportAdmin: React.FC = () => {
             setSummaryData({
                 totalOrders: orders.length,
                 grossRevenue,
-                subtotalRevenue: 0,
+                subtotalRevenue: grossRevenue,
                 vatCollected: 0,
                 averageOrderValue: orders.length > 0 ? grossRevenue / orders.length : 0,
                 breakdown,
@@ -381,7 +382,7 @@ const SalesReportAdmin: React.FC = () => {
             try {
                 const authHeaders = await getAuthHeaders()
                 const params = new URLSearchParams({
-                    limit: '1000',
+                    limit: '10000',
                     tab: activeTab,
                 })
                 const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`, { headers: authHeaders })
@@ -400,6 +401,48 @@ const SalesReportAdmin: React.FC = () => {
             }
 
             let allMatching = Array.from(orderMap.values())
+
+            // Always synchronize summary metrics with all transactions created in this time period
+            if (allMatching.length > 0) {
+                let grossRevenue = 0
+                const breakdown = {
+                    cash: { total: 0, count: 0 },
+                    gcash: { total: 0, count: 0 },
+                    maya: { total: 0, count: 0 },
+                    hybrid: { total: 0, count: 0 },
+                    cod: { total: 0, count: 0 },
+                }
+                allMatching.forEach((o: any) => {
+                    const tot = Number(o.total || 0)
+                    grossRevenue += tot
+                    const p = String(o.paymentMethod || 'Cash').toLowerCase()
+                    if (p.includes('hybrid') || p.includes('split')) {
+                        breakdown.hybrid.total += tot
+                        breakdown.hybrid.count += 1
+                    } else if (p.includes('gcash') || p.includes('online') || p.includes('card') || p.includes('maya')) {
+                        breakdown.gcash.total += tot
+                        breakdown.gcash.count += 1
+                    } else if (p.includes('cod')) {
+                        breakdown.cod.total += tot
+                        breakdown.cod.count += 1
+                    } else {
+                        breakdown.cash.total += tot
+                        breakdown.cash.count += 1
+                    }
+                })
+
+                setSummaryData((prev) => {
+                    if (prev.totalOrders >= allMatching.length && prev.grossRevenue > 0) return prev
+                    return {
+                        totalOrders: allMatching.length,
+                        grossRevenue,
+                        subtotalRevenue: grossRevenue,
+                        vatCollected: 0,
+                        averageOrderValue: allMatching.length > 0 ? Math.round(grossRevenue / allMatching.length) : 0,
+                        breakdown,
+                    }
+                })
+            }
 
             // 3. Apply channel filter
             if (channelFilter !== 'All') {
@@ -647,8 +690,8 @@ const SalesReportAdmin: React.FC = () => {
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
-                            <span className="text-[11px] font-semibold bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full border border-orange-200/60">
-                                {summaryData.totalOrders.toLocaleString()} orders
+                            <span className="text-base sm:text-lg font-extrabold text-orange-600">
+                                {summaryData.totalOrders.toLocaleString()}
                             </span>
                         </div>
                         <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -667,8 +710,8 @@ const SalesReportAdmin: React.FC = () => {
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
-                            <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200/60">
-                                {summaryData.breakdown.cash.count.toLocaleString()} txns
+                            <span className="text-base sm:text-lg font-extrabold text-amber-600">
+                                {summaryData.breakdown.cash.count.toLocaleString()}
                             </span>
                         </div>
                         <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -687,8 +730,8 @@ const SalesReportAdmin: React.FC = () => {
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
-                            <span className="text-[11px] font-semibold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-200/60">
-                                {summaryData.breakdown.gcash.count.toLocaleString()} txns
+                            <span className="text-base sm:text-lg font-extrabold text-blue-600">
+                                {summaryData.breakdown.gcash.count.toLocaleString()}
                             </span>
                         </div>
                         <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -707,8 +750,8 @@ const SalesReportAdmin: React.FC = () => {
                     >
                         <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
-                            <span className="text-[11px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200/60">
-                                {summaryData.breakdown.hybrid.count.toLocaleString()} txns
+                            <span className="text-base sm:text-lg font-extrabold text-purple-600">
+                                {summaryData.breakdown.hybrid.count.toLocaleString()}
                             </span>
                         </div>
                         <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -851,14 +894,29 @@ const SalesReportAdmin: React.FC = () => {
                                                     <div className="font-semibold text-slate-800">{tx.customer || 'Walk-In'}</div>
                                                     <div className="text-[11px] text-slate-400">{tx.type}</div>
                                                 </td>
-                                                <td className="py-3 px-4 max-w-xs">
+                                                <td className="py-3 px-4 max-w-sm">
                                                     <button
                                                         type="button"
                                                         onClick={() => setSelectedTransaction(tx)}
-                                                        className="text-left text-orange-600 hover:text-orange-700 font-medium hover:underline cursor-pointer truncate block max-w-xs"
+                                                        className="text-left font-medium hover:underline cursor-pointer block max-w-sm text-xs text-slate-800"
                                                         title="Click to view details"
                                                     >
-                                                        {tx.items}
+                                                        {getOrderedItems(tx.items).map((item, idx) => {
+                                                            const match = item.match(/^(.*?)\s*x(\d+)$/i)
+                                                            if (match) {
+                                                                return (
+                                                                    <span key={idx} className="inline-flex items-center gap-1.5 mr-2 mb-1 bg-orange-50 border border-orange-200/80 px-2 py-0.5 rounded-lg">
+                                                                        <span className="text-slate-800 font-semibold">{match[1].trim()}</span>
+                                                                        <span className="text-sm font-black text-orange-600">x{match[2]}</span>
+                                                                    </span>
+                                                                )
+                                                            }
+                                                            return (
+                                                                <span key={idx} className="mr-2 text-xs font-semibold text-slate-800">
+                                                                    {item}
+                                                                </span>
+                                                            )
+                                                        })}
                                                     </button>
                                                 </td>
                                                 <td className="py-3 px-4 text-slate-500 text-[11px]">
@@ -1060,11 +1118,11 @@ const SalesReportAdmin: React.FC = () => {
                                     return (
                                         <div
                                             key={`${selectedTransaction.id}-item-${index}`}
-                                            className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs"
+                                            className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3 text-xs"
                                         >
-                                            <span className="font-medium text-slate-800">{itemName}</span>
+                                            <span className="font-bold text-slate-800 text-sm">{itemName}</span>
                                             {quantity && (
-                                                <span className="text-xs font-semibold text-orange-600">
+                                                <span className="text-sm font-black text-orange-600 bg-orange-50 border border-orange-200 px-3 py-1 rounded-lg">
                                                     Qty: {quantity}
                                                 </span>
                                             )}

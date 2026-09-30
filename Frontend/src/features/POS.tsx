@@ -8,6 +8,7 @@ import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
 import { API_BASE_URL } from '../utils/api'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { NavbarCashier } from '../components/NavbarCashier'
 import { getActiveUser } from '../cryptography/cryptoSession'
@@ -62,7 +63,7 @@ export const POS: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchPosOrders()
@@ -197,20 +198,17 @@ export const POS: React.FC = () => {
       void fetchOnlineReceipts()
     }, 0)
 
-    const handleSync = () => {
+    const unsubscribe = subscribeOrderSync(() => {
       fetchPosOrders()
       void fetchOnlineReceipts()
-    }
-    window.addEventListener('seafudz_order_created', handleSync)
-    window.addEventListener('storage', handleSync)
+    })
     const interval = setInterval(() => {
       fetchPosOrders()
       void fetchOnlineReceipts()
-    }, 4000)
+    }, 8000)
     return () => {
       clearTimeout(timer)
-      window.removeEventListener('seafudz_order_created', handleSync)
-      window.removeEventListener('storage', handleSync)
+      unsubscribe()
       clearInterval(interval)
     }
   }, [fetchPosOrders, fetchOnlineReceipts])
@@ -254,7 +252,7 @@ export const POS: React.FC = () => {
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchPosOrders()
@@ -290,7 +288,7 @@ export const POS: React.FC = () => {
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchPosOrders()
@@ -424,7 +422,7 @@ export const POS: React.FC = () => {
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     setLastOrderDetails(handlePrepareReceiptDetails(order))
@@ -613,7 +611,7 @@ export const POS: React.FC = () => {
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
       localStorage.setItem('seafudz_orders', JSON.stringify([localOrderObj, ...existing]))
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch (e) {
       console.warn('LocalStorage save warning:', e)
     }

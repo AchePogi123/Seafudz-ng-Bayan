@@ -5,6 +5,7 @@ import { checkIfBulkOrder } from '../utils/bulkOrder'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 interface OrderItem {
   name: string
@@ -56,7 +57,7 @@ export const KitchenMode: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     setOrders((prev) => prev.filter((o) => o.id !== orderId))
@@ -155,8 +156,12 @@ export const KitchenMode: React.FC = () => {
                 const orderType = (o.order_type || o.type || '').toLowerCase()
                 const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || (o.id && String(o.id).startsWith('SFB-'))
 
-                // Online delivery orders won't show in kitchen until verified & confirmed by Assistant
-                if (isDelivery && ['PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED', 'NEW', 'ORDER PLACED'].includes(raw)) {
+                const unconfirmedStatuses = [
+                  'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                  'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                  'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
+                ]
+                if (raw === 'CANCELLED' || (isDelivery && unconfirmedStatuses.includes(raw))) {
                   return false
                 }
                 return true
@@ -209,18 +214,18 @@ export const KitchenMode: React.FC = () => {
       const fetchedLocalOrders = getLocalOrders()
       const mergedMap = new Map<string, KitchenOrder>()
 
-      // Priority to local updates (most real-time for live interactions)
-      fetchedLocalOrders.forEach((item) => {
-        mergedMap.set(item.id, item)
+      // 1. Priority to API orders (Authoritative server truth)
+      fetchedApiOrders.forEach((apiItem) => {
+        mergedMap.set(apiItem.id, apiItem)
       })
 
-      // Merge API orders without duplicating already existing local tickets
-      fetchedApiOrders.forEach((apiItem) => {
+      // 2. Merge local orders only for orders not yet returned by backend API
+      fetchedLocalOrders.forEach((item) => {
         const exists = Array.from(mergedMap.values()).some(
-          (local) => local.id === apiItem.id || local.queue === apiItem.queue || local.queue === apiItem.id || local.id === apiItem.queue
+          (api) => api.id === item.id || api.queue === item.queue || api.queue === item.id || api.id === item.queue
         )
         if (!exists) {
-          mergedMap.set(apiItem.id, apiItem)
+          mergedMap.set(item.id, item)
         }
       })
 
@@ -232,18 +237,18 @@ export const KitchenMode: React.FC = () => {
 
   useEffect(() => {
     void fetchKitchenOrders()
+
+    const unsubscribe = subscribeOrderSync(() => {
+      void fetchKitchenOrders(true)
+    })
+
     const pollTimer = setInterval(() => {
       void fetchKitchenOrders()
-    }, 5000)
+    }, 8000)
 
-    const handleSync = () => {
-      void fetchKitchenOrders(true)
-    }
-
-    window.addEventListener('seafudz_order_created', handleSync)
     return () => {
+      unsubscribe()
       clearInterval(pollTimer)
-      window.removeEventListener('seafudz_order_created', handleSync)
     }
   }, [])
 
@@ -329,7 +334,7 @@ export const KitchenMode: React.FC = () => {
         }
       }
 
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {
       /* fallback silent */
     }

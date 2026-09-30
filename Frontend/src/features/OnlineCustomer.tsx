@@ -8,6 +8,7 @@ import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 import { checkIfBulkOrder } from '../utils/bulkOrder'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 interface CartItem {
     item: MenuItem
@@ -174,6 +175,8 @@ export const OnlineCustomer: React.FC = () => {
         }
     }, [cartItems])
 
+    const fetchedProfileRef = useRef(false)
+
     // Helper to fetch latest profile credentials from database and update state + local active user
     const syncUserProfileFromDB = (user?: ReturnType<typeof getActiveUser>) => {
         const currentUser = user || getActiveUser()
@@ -183,6 +186,9 @@ export const OnlineCustomer: React.FC = () => {
         if (currentUser.fullname) setCustomerName(currentUser.fullname)
         if (currentUser.phone) setPhone(currentUser.phone)
         if (currentUser.address) setAddress(currentUser.address)
+
+        if (fetchedProfileRef.current) return
+        fetchedProfileRef.current = true
 
         const email = currentUser.email || ''
         const id = currentUser.id || ''
@@ -197,13 +203,15 @@ export const OnlineCustomer: React.FC = () => {
                     const dbPhone = dbUser.phone || currentUser.phone || ''
                     const dbAddress = dbUser.address || dbUser.delivery_address || currentUser.address || ''
 
-                    const updatedActive = {
-                        ...currentUser,
-                        fullname: dbName,
-                        phone: dbPhone,
-                        address: dbAddress,
+                    if (dbName !== currentUser.fullname || dbPhone !== currentUser.phone || dbAddress !== currentUser.address) {
+                        const updatedActive = {
+                            ...currentUser,
+                            fullname: dbName,
+                            phone: dbPhone,
+                            address: dbAddress,
+                        }
+                        saveActiveUser(updatedActive)
                     }
-                    saveActiveUser(updatedActive)
 
                     if (dbName) setCustomerName(dbName)
                     if (dbPhone) setPhone(dbPhone)
@@ -330,7 +338,7 @@ export const OnlineCustomer: React.FC = () => {
                         status: 'RECEIPT_SUBMITTED'
                     }))
                 }
-                window.dispatchEvent(new Event('seafudz_order_created'))
+                notifyOrderSync()
             } catch { }
 
             const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
@@ -398,7 +406,7 @@ export const OnlineCustomer: React.FC = () => {
             localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobalOrders))
         } catch { }
 
-        window.dispatchEvent(new Event('seafudz_order_created'))
+        notifyOrderSync()
         setIsCancellingOrder(false)
     }
 
@@ -544,28 +552,17 @@ export const OnlineCustomer: React.FC = () => {
         }
 
         void checkOrderStatus()
+        const unsubscribe = subscribeOrderSync(() => {
+            void checkOrderStatus(true)
+        })
+
         const interval = setInterval(() => {
             void checkOrderStatus()
-        }, 5000)
-
-        const handleSync = (e?: Event) => {
-            if (e && e instanceof StorageEvent && e.key) {
-                const activeKey = getActiveOrderKey(currentUser)
-                const ordersKey = getOrdersKey(currentUser)
-                if (e.key !== activeKey && e.key !== ordersKey && e.key !== 'seafudz_orders' && e.key !== 'seafudz_order_created') {
-                    return
-                }
-            }
-            void checkOrderStatus(true)
-        }
-
-        window.addEventListener('seafudz_order_created', handleSync)
-        window.addEventListener('storage', handleSync)
+        }, 8000)
 
         return () => {
+            unsubscribe()
             clearInterval(interval)
-            window.removeEventListener('seafudz_order_created', handleSync)
-            window.removeEventListener('storage', handleSync)
         }
     }, [activeOrder?.id])
 
@@ -746,7 +743,7 @@ export const OnlineCustomer: React.FC = () => {
                 setIsVerificationModalOpen(true)
             }
             setIsMobileCartOpen(false)
-            window.dispatchEvent(new Event('seafudz_order_created'))
+            notifyOrderSync()
         } catch (err) {
             console.error('Error sending order to backend API:', err)
         }

@@ -4,6 +4,7 @@ import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 interface DeliveryItem {
   name: string
@@ -53,7 +54,7 @@ export const RideRoleDemo: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     if (selectedOrder?.id === orderId) setSelectedOrder(null)
@@ -92,20 +93,64 @@ export const RideRoleDemo: React.FC = () => {
         if (saved) hiddenSet = new Set(JSON.parse(saved))
       } catch {}
 
-      // 1. Read from shared LocalStorage (Delivery Orders ONLY)
+      // 1. Read from backend API FIRST (Online Delivery Orders ONLY - Central Truth)
+      try {
+        const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.data)) {
+            data.data.forEach((o: any) => {
+              const orderType = (o.order_type || o.type || '').toLowerCase()
+              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
+              if (isPos) return
+
+              const id = o.id
+              if (hiddenSet.has(id)) return
+
+              const rawStatus = (o.status || '').toUpperCase()
+              const unconfirmedStatuses = [
+                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
+                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+              ]
+              if (unconfirmedStatuses.includes(rawStatus)) return
+              let displayStatus = 'Ready'
+              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
+              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
+              else if (rawStatus === 'READY') displayStatus = 'Ready'
+              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
+              else return // Skip pending / unconfirmed orders in Rider UI
+
+              combinedMap.set(id, {
+                id,
+                ref: id,
+                customer: o.customer || o.customerName || 'Online Customer',
+                phone: o.phone || '0917-000-0000',
+                address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                items: o.items || [],
+                total: o.total || 0,
+                status: displayStatus,
+                createdAt: o.createdAt || new Date().toISOString(),
+                paymentMethod: o.paymentMethod || 'GCash',
+              })
+            })
+          }
+        }
+      } catch (err) {}
+
+      // 2. Read from shared LocalStorage (only overlay for orders not yet in backend API)
       try {
         const local = localStorage.getItem('seafudz_orders')
         if (local) {
           const parsed = JSON.parse(local)
           if (Array.isArray(parsed)) {
             parsed.forEach((o: any) => {
-              // STRICT: Ignore POS Walk-in orders (Dine In & Take Out). ONLY online Delivery orders reflect to Rider!
               const orderType = (o.type || o.order_type || '').toLowerCase()
               const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
               if (isPos) return
 
               const id = o.id || o.ref
-              if (hiddenSet.has(id) || hiddenSet.has(o.ref)) return
+              if (!id || hiddenSet.has(id) || hiddenSet.has(o.ref) || combinedMap.has(id)) return
 
               const rawStatus = (o.status || '').toUpperCase()
               const unconfirmedStatuses = [
@@ -120,7 +165,7 @@ export const RideRoleDemo: React.FC = () => {
               else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
               else if (rawStatus === 'READY') displayStatus = 'Ready'
               else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else return // Skip pending / unconfirmed orders in Rider UI
+              else return
 
               const items: DeliveryItem[] = Array.isArray(o.cartItems)
                 ? o.cartItems.map((ci: any) => ({
@@ -154,53 +199,6 @@ export const RideRoleDemo: React.FC = () => {
         console.warn('Rider LocalStorage note:', e)
       }
 
-      // 2. Read from backend API (Online Delivery Orders ONLY)
-      try {
-        const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
-        if (res.ok) {
-          const data = await res.json()
-          if (Array.isArray(data.data)) {
-            data.data.forEach((o: any) => {
-              const orderType = (o.order_type || o.type || '').toLowerCase()
-              const isPos = Boolean(o.isPosOrder || o.is_pos_order || orderType.includes('dine') || orderType.includes('take') || o.customer === 'Walk-In' || String(o.id || o.ref || '').startsWith('POS-'))
-              if (isPos) return
-
-              const id = o.id
-              if (hiddenSet.has(id)) return
-
-              const rawStatus = (o.status || '').toUpperCase()
-              const unconfirmedStatuses = [
-                'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
-                'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
-              ]
-              if (unconfirmedStatuses.includes(rawStatus)) return
-              let displayStatus = 'Ready'
-              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
-              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
-              else if (rawStatus === 'READY') displayStatus = 'Ready'
-              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else return // Skip pending / unconfirmed orders in Rider UI
-
-              if (!combinedMap.has(id)) {
-                combinedMap.set(id, {
-                  id,
-                  ref: id,
-                  customer: o.customer || o.customerName || 'Online Customer',
-                  phone: o.phone || '0917-000-0000',
-                  address: o.address || o.deliveryAddress || 'Metro Manila Address',
-                  items: o.items || [],
-                  total: o.total || 0,
-                  status: displayStatus,
-                  createdAt: o.createdAt || new Date().toISOString(),
-                  paymentMethod: o.paymentMethod || 'GCash',
-                })
-              }
-            })
-          }
-        }
-      } catch (err) {}
-
       setDeliveries(Array.from(combinedMap.values()))
     } finally {
       isFetchingRef.current = false
@@ -210,20 +208,16 @@ export const RideRoleDemo: React.FC = () => {
   useEffect(() => {
     void fetchDeliveries()
 
-    const handleSync = () => {
+    const unsubscribe = subscribeOrderSync(() => {
       void fetchDeliveries(true)
-    }
-
-    window.addEventListener('seafudz_order_created', handleSync)
-    window.addEventListener('storage', handleSync)
+    })
 
     const interval = setInterval(() => {
       void fetchDeliveries()
-    }, 6000)
+    }, 8000)
 
     return () => {
-      window.removeEventListener('seafudz_order_created', handleSync)
-      window.removeEventListener('storage', handleSync)
+      unsubscribe()
       clearInterval(interval)
     }
   }, [fetchDeliveries])
@@ -271,7 +265,7 @@ export const RideRoleDemo: React.FC = () => {
         }
       }
 
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     // Update in backend API

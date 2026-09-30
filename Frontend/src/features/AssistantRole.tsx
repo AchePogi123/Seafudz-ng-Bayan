@@ -5,6 +5,7 @@ import { checkIfBulkOrder } from '../utils/bulkOrder'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 export interface OrderItem {
   name: string
@@ -71,7 +72,7 @@ export const AssistantRole: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     if (selectedOrderId === orderId) setSelectedOrderId(null)
@@ -122,59 +123,7 @@ export const AssistantRole: React.FC = () => {
     try {
       const combinedMap = new Map<string, OnlineOrder>()
 
-      // 1. Read from shared LocalStorage (Online Delivery Orders ONLY)
-      try {
-        const local = localStorage.getItem('seafudz_orders')
-        if (local) {
-          const parsed = JSON.parse(local)
-          if (Array.isArray(parsed)) {
-            parsed.forEach((o: any) => {
-              const orderType = (o.type || o.order_type || '').toLowerCase()
-              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
-              if (!isDelivery) return // Ignore POS walk-in orders
-
-              const rawStatus = (o.status || 'PENDING').toLowerCase()
-              const id = o.id || o.ref
-              const items: OrderItem[] = Array.isArray(o.cartItems)
-                ? o.cartItems.map((ci: any) => ({
-                  name: ci.item?.name || ci.name || 'Seafood Dish',
-                  quantity: ci.quantity || 1,
-                  price: ci.item?.price || ci.price || 0,
-                }))
-                : (o.items || '').split(',').map((part: string) => {
-                  const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
-                  return {
-                    name: match ? match[1].trim() : part.trim(),
-                    quantity: match ? parseInt(match[2], 10) : 1,
-                    price: 0,
-                  }
-                })
-
-              combinedMap.set(id, {
-                id,
-                ref: id,
-                customer: o.customer || 'Online Customer',
-                phone: o.phone || '0917-000-0000',
-                address: o.address || 'Delivery Address',
-                paymentMethod: o.paymentMethod || 'GCash',
-                paymentReference: o.paymentReference || o.paymentRef,
-                paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
-                status: rawStatus,
-                items,
-                total: Number(o.total || 0),
-                createdAt: o.dateTime || 'Just now',
-                correctionNote: o.notes,
-                riderId: o.riderId,
-                assignedRiderName: o.assignedRiderName,
-              })
-            })
-          }
-        }
-      } catch (e) {
-        console.warn('LocalStorage error in AssistantRole:', e)
-      }
-
-      // 2. Read from backend API (Online Delivery Orders ONLY)
+      // 1. Read from backend API FIRST (Online Delivery Orders ONLY - Central Truth)
       try {
         const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
         if (res.ok) {
@@ -186,20 +135,70 @@ export const AssistantRole: React.FC = () => {
               if (!isDelivery) return // Ignore POS walk-in orders
 
               const id = o.id
+              combinedMap.set(id, {
+                id,
+                ref: id,
+                customer: o.customer || o.customerName || 'Online Customer',
+                phone: o.phone || '0917-000-0000',
+                address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                paymentMethod: o.paymentMethod || 'GCash',
+                paymentReference: o.paymentReference || o.paymentRef,
+                paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
+                status: (o.status || 'PENDING').toLowerCase(),
+                items: o.items || [],
+                total: o.total || 0,
+                createdAt: o.createdAt || 'Just now',
+                correctionNote: o.notes,
+                riderId: o.riderId,
+                assignedRiderName: o.assignedRiderName,
+              })
+            })
+          }
+        }
+      } catch (err) { }
+
+      // 2. Read from shared LocalStorage (only overlay for orders not yet in backend API)
+      try {
+        const local = localStorage.getItem('seafudz_orders')
+        if (local) {
+          const parsed = JSON.parse(local)
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              const orderType = (o.type || o.order_type || '').toLowerCase()
+              const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
+              if (!isDelivery) return // Ignore POS walk-in orders
+
+              const id = o.id || o.ref
               if (!combinedMap.has(id)) {
+                const rawStatus = (o.status || 'PENDING').toLowerCase()
+                const items: OrderItem[] = Array.isArray(o.cartItems)
+                  ? o.cartItems.map((ci: any) => ({
+                    name: ci.item?.name || ci.name || 'Seafood Dish',
+                    quantity: ci.quantity || 1,
+                    price: ci.item?.price || ci.price || 0,
+                  }))
+                  : (o.items || '').split(',').map((part: string) => {
+                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                    return {
+                      name: match ? match[1].trim() : part.trim(),
+                      quantity: match ? parseInt(match[2], 10) : 1,
+                      price: 0,
+                    }
+                  })
+
                 combinedMap.set(id, {
                   id,
                   ref: id,
-                  customer: o.customer || o.customerName || 'Online Customer',
+                  customer: o.customer || 'Online Customer',
                   phone: o.phone || '0917-000-0000',
-                  address: o.address || o.deliveryAddress || 'Metro Manila Address',
+                  address: o.address || 'Delivery Address',
                   paymentMethod: o.paymentMethod || 'GCash',
                   paymentReference: o.paymentReference || o.paymentRef,
                   paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
-                  status: (o.status || 'PENDING').toLowerCase(),
-                  items: o.items || [],
-                  total: o.total || 0,
-                  createdAt: o.createdAt || 'Just now',
+                  status: rawStatus,
+                  items,
+                  total: Number(o.total || 0),
+                  createdAt: o.dateTime || 'Just now',
                   correctionNote: o.notes,
                   riderId: o.riderId,
                   assignedRiderName: o.assignedRiderName,
@@ -208,7 +207,9 @@ export const AssistantRole: React.FC = () => {
             })
           }
         }
-      } catch (err) { }
+      } catch (e) {
+        console.warn('LocalStorage error in AssistantRole:', e)
+      }
 
       setOrders(Array.from(combinedMap.values()))
     } finally {
@@ -219,20 +220,16 @@ export const AssistantRole: React.FC = () => {
   useEffect(() => {
     void fetchAssistantOrders()
 
-    const handleSync = () => {
+    const unsubscribe = subscribeOrderSync(() => {
       void fetchAssistantOrders(true)
-    }
-
-    window.addEventListener('seafudz_order_created', handleSync)
-    window.addEventListener('storage', handleSync)
+    })
 
     const timer = setInterval(() => {
       void fetchAssistantOrders()
-    }, 6000)
+    }, 8000)
 
     return () => {
-      window.removeEventListener('seafudz_order_created', handleSync)
-      window.removeEventListener('storage', handleSync)
+      unsubscribe()
       clearInterval(timer)
     }
   }, [])
@@ -260,7 +257,7 @@ export const AssistantRole: React.FC = () => {
           localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'GCASH_AUTHORIZED' }))
         }
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchAssistantOrders(true)
@@ -289,7 +286,7 @@ export const AssistantRole: React.FC = () => {
           localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
         }
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchAssistantOrders(true)
@@ -321,7 +318,7 @@ export const AssistantRole: React.FC = () => {
           localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'RECEIPT_REJECTED', rejectionReason: reason }))
         }
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchAssistantOrders(true)
@@ -350,7 +347,7 @@ export const AssistantRole: React.FC = () => {
           localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
         }
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch {}
 
     fetchAssistantOrders(true)

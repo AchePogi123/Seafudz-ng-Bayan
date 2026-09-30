@@ -105,7 +105,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
 
     sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
 
-    const limitNum = limit ? parseInt(limit, 10) : null;
+    const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;
     if (page && limitNum && !offset) {
       const pageNum = Math.max(1, parseInt(page, 10));
@@ -716,7 +716,7 @@ router.get('/cashier/online-receipts', async (req, res) => {
     try {
       const { rows } = await query(`
         SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
-               o.receipt_status, o.created_at, o.updated_at,
+               'UNPRINTED' AS receipt_status, o.created_at, o.updated_at,
                COALESCE(c.fullname, 'Online Customer') AS customer_name,
                c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,

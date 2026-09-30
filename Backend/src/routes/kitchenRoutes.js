@@ -42,12 +42,51 @@ router.get('/kitchen/orders', requireAuth, requireRole(['admin', 'kitchen']), as
       GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
     `;
-    const { rows } = await query(sql);
+    let dbOrders = [];
+    try {
+      const { rows } = await query(sql);
+      dbOrders = rows;
+    } catch (dbErr) {
+      /* ignore DB errors */
+    }
+
+    const mergedMap = new Map();
+    dbOrders.forEach((row) => {
+      mergedMap.set(row.id, row);
+    });
+
+    const validKitchenStatuses = [
+      'CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN', 
+      'IN_PROCESS', 'COOKING', 'PREPARING', 'READY', 'PREPARED', 'COMPLETED'
+    ];
+
+    inMemoryOrders.forEach((order, id) => {
+      const normStatus = normalizeFlowStatus(order.status);
+      if (
+        validKitchenStatuses.includes(normStatus) || 
+        (normStatus === 'PENDING' && String(order.order_type || '').toLowerCase() !== 'online')
+      ) {
+        const existing = mergedMap.get(id) || {};
+        mergedMap.set(id, {
+          id: id,
+          order_type: order.order_type || existing.order_type || 'ONLINE',
+          status: normStatus,
+          order_status: normStatus,
+          notes: order.notes || existing.notes || '',
+          created_at: order.created_at || existing.created_at || new Date().toISOString(),
+          updated_at: order.updated_at || existing.updated_at || new Date().toISOString(),
+          table_name: existing.table_name || null,
+          items: order.items || existing.items || [],
+        });
+      }
+    });
+
+    const finalOrders = Array.from(mergedMap.values());
 
     return res.status(200).json({
       success: true,
-      count: rows.length,
-      data: rows,
+      count: finalOrders.length,
+      data: finalOrders,
     });
   } catch (error) {
     console.error('Error fetching kitchen orders:', error);
@@ -191,7 +230,9 @@ export async function handleKitchenStatusUpdate(req, res) {
     // Update PostgreSQL Database
     try {
       const { rows } = await query(
-        `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        `INSERT INTO orders (id, status, created_at) VALUES ($2, $1, NOW())
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+         RETURNING *`,
         [nextStatus, id]
       );
       

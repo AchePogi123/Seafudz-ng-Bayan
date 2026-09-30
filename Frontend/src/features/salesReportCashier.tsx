@@ -224,7 +224,7 @@ const SalesReportCashier: React.FC = () => {
       // 2. Fetch backend orders matching selected period
       try {
         const ordersRes = await fetch(
-          `${API_BASE_URL}/orders?limit=1000&offset=0&tab=${encodeURIComponent(activeTab)}`
+          `${API_BASE_URL}/orders?limit=200&offset=0&tab=${encodeURIComponent(activeTab)}`
         )
 
         if (ordersRes.ok) {
@@ -589,8 +589,8 @@ const SalesReportCashier: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
-              <span className="text-[11px] font-semibold bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full border border-orange-200/60">
-                {summaryData.totalOrders.toLocaleString()} orders
+              <span className="text-base sm:text-lg font-extrabold text-orange-600">
+                {summaryData.totalOrders.toLocaleString()}
               </span>
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -609,8 +609,8 @@ const SalesReportCashier: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
-              <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200/60">
-                {summaryData.breakdown.cash.count.toLocaleString()} txns
+              <span className="text-base sm:text-lg font-extrabold text-amber-600">
+                {summaryData.breakdown.cash.count.toLocaleString()}
               </span>
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -629,8 +629,8 @@ const SalesReportCashier: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
-              <span className="text-[11px] font-semibold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full border border-blue-200/60">
-                {summaryData.breakdown.gcash.count.toLocaleString()} txns
+              <span className="text-base sm:text-lg font-extrabold text-blue-600">
+                {summaryData.breakdown.gcash.count.toLocaleString()}
               </span>
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -649,8 +649,8 @@ const SalesReportCashier: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
-              <span className="text-[11px] font-semibold bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full border border-purple-200/60">
-                {summaryData.breakdown.hybrid.count.toLocaleString()} txns
+              <span className="text-base sm:text-lg font-extrabold text-purple-600">
+                {summaryData.breakdown.hybrid.count.toLocaleString()}
               </span>
             </div>
             <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
@@ -781,14 +781,29 @@ const SalesReportCashier: React.FC = () => {
                           <div className="font-semibold text-slate-800">{tx.customer || 'Walk-In'}</div>
                           <div className="text-[11px] text-slate-400">{tx.type}</div>
                         </td>
-                        <td className="py-3 px-4 max-w-xs">
+                        <td className="py-3 px-4 max-w-sm">
                           <button
                             type="button"
                             onClick={() => setSelectedTransaction(tx)}
-                            className="text-left text-orange-600 hover:text-orange-700 font-medium hover:underline cursor-pointer truncate block max-w-xs"
+                            className="text-left font-medium hover:underline cursor-pointer block max-w-sm text-xs text-slate-800"
                             title="Click to view details"
                           >
-                            {tx.items}
+                            {getOrderedItems(tx.items).map((item, idx) => {
+                              const match = item.match(/^(.*?)\s*x(\d+)$/i)
+                              if (match) {
+                                return (
+                                  <span key={idx} className="inline-flex items-center gap-1.5 mr-2 mb-1 bg-orange-50 border border-orange-200/80 px-2 py-0.5 rounded-lg">
+                                    <span className="text-slate-800 font-semibold">{match[1].trim()}</span>
+                                    <span className="text-sm font-black text-orange-600">x{match[2]}</span>
+                                  </span>
+                                )
+                              }
+                              return (
+                                <span key={idx} className="mr-2 text-xs font-semibold text-slate-800">
+                                  {item}
+                                </span>
+                              )
+                            })}
                           </button>
                         </td>
                         <td className="py-3 px-4 text-slate-500 text-[11px]">
@@ -984,11 +999,11 @@ const SalesReportCashier: React.FC = () => {
                   return (
                     <div
                       key={`${selectedTransaction.id}-item-${index}`}
-                      className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-100 rounded-xl px-3.5 py-2.5 text-xs"
+                      className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-3 text-xs"
                     >
-                      <span className="font-medium text-slate-800">{itemName}</span>
+                      <span className="font-bold text-slate-800 text-sm">{itemName}</span>
                       {quantity && (
-                        <span className="text-xs font-semibold text-orange-600">
+                        <span className="text-sm font-black text-orange-600 bg-orange-50 border border-orange-200 px-3 py-1 rounded-lg">
                           Qty: {quantity}
                         </span>
                       )}

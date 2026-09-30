@@ -304,7 +304,11 @@ router.patch('/assistant/orders/:id/verify-receipt', requireAuth, requireRole(['
     inMemoryOrders.set(id, order);
 
     try {
-      await query(`UPDATE orders SET status = 'CONFIRMED', updated_at = NOW() WHERE id = $1`, [id]);
+      await query(
+        `INSERT INTO orders (id, status, created_at) VALUES ($1, 'CONFIRMED', NOW())
+         ON CONFLICT (id) DO UPDATE SET status = 'CONFIRMED', updated_at = NOW()`,
+        [id]
+      );
       await query(
         `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
          ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,

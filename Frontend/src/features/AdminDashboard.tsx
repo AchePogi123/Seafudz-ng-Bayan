@@ -5,11 +5,13 @@ import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
+import { subscribeOrderSync } from '../utils/orderSync'
 
 export interface LiveOrderRecord {
     id: string
     ref: string
     dateTime: string
+    created_at?: string
     type: string
     status: string
     paymentStatus?: string
@@ -34,7 +36,11 @@ export interface LiveOrderRecord {
 
 export type TimeRangeOption = 'ALL' | '1D' | '1W' | '1M' | '1Y' | 'CUSTOM'
 
-const parseOrderDate = (dateStr?: string): Date => {
+const parseOrderDate = (dateStr?: string, createdAtRaw?: string): Date => {
+    if (createdAtRaw) {
+        const d = new Date(createdAtRaw)
+        if (!isNaN(d.getTime())) return d
+    }
     if (!dateStr) return new Date()
     const d = new Date(dateStr)
     if (!isNaN(d.getTime())) return d
@@ -299,43 +305,51 @@ const AdminDashboard: React.FC = () => {
 
                 const queryParams = new URLSearchParams()
                 if (tabParam) queryParams.append('tab', tabParam)
-                queryParams.append('limit', '100')
+                queryParams.append('limit', '10000')
 
                 const authHeaders = await getAuthHeaders()
                 const res = await fetch(`${API_BASE_URL}/orders?${queryParams.toString()}`, { headers: authHeaders })
                 if (res.ok) {
                     const json = await res.json()
                     const dbOrders = json.data || json || []
-                    if (Array.isArray(dbOrders)) {
-                        dbOrders.forEach((dbO: any) => {
-                            const exists = combinedOrders.some((o) => o.id === dbO.id || o.ref === dbO.id)
-                            if (!exists) {
-                                const rawType = dbO.order_type || dbO.type || ''
-                                const normalizedType =
-                                    rawType.toUpperCase() === 'ONLINE'
-                                        ? 'Delivery'
-                                        : rawType.toUpperCase() === 'ON_SITE'
-                                            ? 'POS Order'
-                                            : rawType || 'POS Order'
+                    if (Array.isArray(dbOrders) && dbOrders.length > 0) {
+                        const dbList: LiveOrderRecord[] = dbOrders.map((dbO: any) => {
+                            const rawType = dbO.order_type || dbO.type || ''
+                            const normalizedType =
+                                rawType.toUpperCase() === 'ONLINE'
+                                    ? 'Delivery'
+                                    : rawType.toUpperCase() === 'ON_SITE'
+                                        ? 'POS Order'
+                                        : rawType || 'POS Order'
 
-                                combinedOrders.push({
-                                    id: dbO.id,
-                                    ref: dbO.id,
-                                    dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
-                                    type: normalizedType,
-                                    status: dbO.status || 'Completed',
-                                    paymentStatus: dbO.payment_status || 'Paid',
-                                    customer:
-                                        dbO.customer_name ||
-                                        (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In'),
-                                    items: Array.isArray(dbO.items)
-                                        ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')
-                                        : 'Assorted Seafoods',
-                                    total: Number(dbO.total || 0),
-                                    paymentMethod: dbO.payment_method || 'Cash',
-                                })
+                            return {
+                                id: dbO.id,
+                                ref: dbO.id,
+                                dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
+                                created_at: dbO.created_at,
+                                type: normalizedType,
+                                status: dbO.status || 'Completed',
+                                paymentStatus: dbO.payment_status || 'Paid',
+                                customer:
+                                    dbO.customer_name ||
+                                    (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In'),
+                                items: Array.isArray(dbO.items)
+                                    ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')
+                                    : 'Assorted Seafoods',
+                                total: Number(dbO.total || 0),
+                                paymentMethod: dbO.payment_method || 'Cash',
                             }
                         })
+
+                        // Combine DB orders with any unique local orders
+                        const dbMap = new Map<string, LiveOrderRecord>()
+                        dbList.forEach((o) => dbMap.set(o.id, o))
+                        combinedOrders.forEach((o) => {
+                            if (!dbMap.has(o.id) && !dbMap.has(o.ref)) {
+                                dbMap.set(o.id, o)
+                            }
+                        })
+                        combinedOrders = Array.from(dbMap.values())
                     }
                 }
             } catch (err) {
@@ -352,22 +366,18 @@ const AdminDashboard: React.FC = () => {
     useEffect(() => {
         void fetchLiveOrders()
 
-        const handleSync = () => {
+        const unsubscribe = subscribeOrderSync(() => {
             void fetchSummary()
             void fetchLiveOrders(true)
-        }
-
-        window.addEventListener('seafudz_order_created', handleSync)
-        window.addEventListener('storage', handleSync)
+        })
 
         const interval = setInterval(() => {
             void fetchSummary()
             void fetchLiveOrders()
-        }, 10000)
+        }, 8000)
 
         return () => {
-            window.removeEventListener('seafudz_order_created', handleSync)
-            window.removeEventListener('storage', handleSync)
+            unsubscribe()
             clearInterval(interval)
         }
     }, [fetchLiveOrders, fetchSummary])
@@ -380,7 +390,7 @@ const AdminDashboard: React.FC = () => {
         const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
 
         return orders.filter((o) => {
-            const orderDate = parseOrderDate(o.dateTime)
+            const orderDate = parseOrderDate(o.dateTime, o.created_at)
             const orderTime = orderDate.getTime()
 
             if (timeRange === '1D') {
@@ -455,39 +465,46 @@ const AdminDashboard: React.FC = () => {
     }, [dateFilteredOrders, orderTableFilter, orderSearchQuery])
 
     // --- SYNCHRONIZED METRICS WITH DATABASE SUMMARY ---
-    const totalLiveRevenue = useMemo(() => {
-        if (summaryData.grossRevenue > 0) return summaryData.grossRevenue
-        return dateFilteredOrders.reduce((sum, o) => sum + Number(o.total || 0), 0)
-    }, [summaryData.grossRevenue, dateFilteredOrders])
-
-    const totalOrdersCount = useMemo(() => {
-        if (summaryData.totalOrders > 0) return summaryData.totalOrders
-        return dateFilteredOrders.length
-    }, [summaryData.totalOrders, dateFilteredOrders])
-
     const posOrdersCount = useMemo(() => {
-        if (summaryData.posOrders > 0) return summaryData.posOrders
-        return dateFilteredOrders.filter((o) => !isOnlineOrder(o.type)).length
+        if (dateFilteredOrders.length > 0) {
+            return dateFilteredOrders.filter((o) => !isOnlineOrder(o.type)).length
+        }
+        return summaryData.posOrders || 0
     }, [summaryData.posOrders, dateFilteredOrders])
 
     const deliveryOrdersCount = useMemo(() => {
-        if (summaryData.deliveryOrders > 0) return summaryData.deliveryOrders
-        return dateFilteredOrders.filter((o) => isOnlineOrder(o.type)).length
+        if (dateFilteredOrders.length > 0) {
+            return dateFilteredOrders.filter((o) => isOnlineOrder(o.type)).length
+        }
+        return summaryData.deliveryOrders || 0
     }, [summaryData.deliveryOrders, dateFilteredOrders])
 
+    // Total Orders is ALWAYS the sum of On-site (POS) and Online (Delivery) orders created
+    const totalOrdersCount = useMemo(() => {
+        return posOrdersCount + deliveryOrdersCount
+    }, [posOrdersCount, deliveryOrdersCount])
+
     const posRevenue = useMemo(() => {
-        if (summaryData.posRevenue > 0) return summaryData.posRevenue
-        return dateFilteredOrders
-            .filter((o) => !isOnlineOrder(o.type))
-            .reduce((sum, o) => sum + Number(o.total || 0), 0)
+        if (dateFilteredOrders.length > 0) {
+            return dateFilteredOrders
+                .filter((o) => !isOnlineOrder(o.type))
+                .reduce((sum, o) => sum + Number(o.total || 0), 0)
+        }
+        return summaryData.posRevenue || 0
     }, [summaryData.posRevenue, dateFilteredOrders])
 
     const deliveryRevenue = useMemo(() => {
-        if (summaryData.deliveryRevenue > 0) return summaryData.deliveryRevenue
-        return dateFilteredOrders
-            .filter((o) => isOnlineOrder(o.type))
-            .reduce((sum, o) => sum + Number(o.total || 0), 0)
+        if (dateFilteredOrders.length > 0) {
+            return dateFilteredOrders
+                .filter((o) => isOnlineOrder(o.type))
+                .reduce((sum, o) => sum + Number(o.total || 0), 0)
+        }
+        return summaryData.deliveryRevenue || 0
     }, [summaryData.deliveryRevenue, dateFilteredOrders])
+
+    const totalLiveRevenue = useMemo(() => {
+        return posRevenue + deliveryRevenue
+    }, [posRevenue, deliveryRevenue])
 
     const posRevenuePercent = useMemo(() => {
         if (totalLiveRevenue === 0) return 0
@@ -496,8 +513,8 @@ const AdminDashboard: React.FC = () => {
 
     const deliveryRevenuePercent = useMemo(() => {
         if (totalLiveRevenue === 0) return 0
-        return Math.round((deliveryRevenue / totalLiveRevenue) * 100)
-    }, [deliveryRevenue, totalLiveRevenue])
+        return 100 - posRevenuePercent
+    }, [posRevenuePercent, totalLiveRevenue])
 
     const mappedActiveTab = useMemo(() => {
         return timeRange === '1D'
@@ -521,15 +538,15 @@ const AdminDashboard: React.FC = () => {
 
         if (dateFilteredOrders.length > 0) {
             const sorted = [...dateFilteredOrders].sort(
-                (a, b) => parseOrderDate(a.dateTime).getTime() - parseOrderDate(b.dateTime).getTime()
+                (a, b) => parseOrderDate(a.dateTime, a.created_at).getTime() - parseOrderDate(b.dateTime, b.created_at).getTime()
             )
 
-            const minTime = parseOrderDate(sorted[0].dateTime).getTime()
-            const maxTime = parseOrderDate(sorted[sorted.length - 1].dateTime).getTime()
+            const minTime = parseOrderDate(sorted[0].dateTime, sorted[0].created_at).getTime()
+            const maxTime = parseOrderDate(sorted[sorted.length - 1].dateTime, sorted[sorted.length - 1].created_at).getTime()
             const timeSpan = maxTime - minTime || 1
 
             sorted.forEach((ord) => {
-                const t = parseOrderDate(ord.dateTime).getTime()
+                const t = parseOrderDate(ord.dateTime, ord.created_at).getTime()
                 let idx = Math.floor(((t - minTime) / timeSpan) * slotsCount)
                 if (idx >= slotsCount) idx = slotsCount - 1
                 if (idx < 0) idx = 0

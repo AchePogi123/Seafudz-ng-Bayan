@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { CLIENT_MENU_ITEMS } from './MenuCard'
 import { API_BASE_URL } from '../utils/api'
+import { notifyOrderSync } from '../utils/orderSync'
 
 interface AdminCreateTransactionModalProps {
   isOpen: boolean
@@ -107,7 +108,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
       const parsed = stored ? JSON.parse(stored) : []
       const updated = [newOrderPayload, ...parsed]
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch (e) {
       console.warn('Error saving local order:', e)
     }

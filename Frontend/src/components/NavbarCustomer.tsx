@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
 import { API_BASE_URL } from '../utils/api'
@@ -9,34 +9,41 @@ export const NavbarCustomer: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const location = useLocation()
   const [activeUser, setActiveUser] = useState(() => getActiveUser())
+  const fetchedProfileRef = useRef(false)
 
   useEffect(() => {
     const user = getActiveUser()
+    if (!user) return
     setActiveUser(user)
 
-    if (user) {
-      const email = user.email || ''
-      const id = user.id || ''
-      if (email || id) {
-        fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(email)}&id=${encodeURIComponent(id)}`)
-          .then((res) => res.json())
-          .then((data) => {
-            if (data.success && data.data && data.data.fullname) {
-              const dbName = data.data.fullname
-              if (!isUuidString(dbName)) {
+    if (fetchedProfileRef.current) return
+    fetchedProfileRef.current = true
+
+    const email = user.email || ''
+    const id = user.id || ''
+    if (email || id) {
+      fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(email)}&id=${encodeURIComponent(id)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.data && data.data.fullname) {
+            const dbName = data.data.fullname
+            if (!isUuidString(dbName)) {
+              const dbPhone = data.data.phone || user.phone
+              const dbAddress = data.data.address || data.data.delivery_address || user.address
+              if (dbName !== user.fullname || dbPhone !== user.phone || dbAddress !== user.address) {
                 const updated = {
                   ...user,
                   fullname: dbName,
-                  phone: data.data.phone || user.phone,
-                  address: data.data.address || data.data.delivery_address || user.address,
+                  phone: dbPhone,
+                  address: dbAddress,
                 }
                 saveActiveUser(updated)
                 setActiveUser(updated)
               }
             }
-          })
-          .catch(() => {})
-      }
+          }
+        })
+        .catch(() => {})
     }
   }, [location.pathname])
 

@@ -566,25 +566,30 @@ export const OnlineCustomer: React.FC = () => {
         }
     }, [activeOrder?.id])
 
-    // Calculations with live effective prices (VAT-Inclusive Menu Pricing)
+    // Calculations: Base Subtotal + 12% VAT + Detailed Delivery/Shipping Fee
     const subtotal = useMemo(() => {
         return cartItems.reduce((acc, ci) => {
-            const effectivePrice = getEffectivePrice(ci.item.id, ci.item.price)
-            return acc + effectivePrice * ci.quantity
+            const basePrice = (ci.item as any).basePrice || getEffectivePrice(ci.item.id, ci.item.price)
+            return acc + basePrice * ci.quantity
         }, 0)
     }, [cartItems, getEffectivePrice])
-    // 12% VAT is included in menu price: VAT = Subtotal * (0.12 / 1.12)
-    const vat = useMemo(() => (subtotal > 0 ? (subtotal * 0.12) / 1.12 : 0), [subtotal])
+    // 12% VAT added on top of base subtotal
+    const vat = useMemo(() => subtotal * 0.12, [subtotal])
+    // Shipping/Delivery fee detailed in breakdown (NOT in item display price)
     const deliveryFee = useMemo(() => (subtotal > 0 ? 50 : 0), [subtotal])
-    const total = useMemo(() => Math.round(subtotal + deliveryFee), [subtotal, deliveryFee])
+    const total = useMemo(() => Math.round(subtotal + vat + deliveryFee), [subtotal, vat, deliveryFee])
 
-    // Filters with effective price applied
+    // Filters: Menu Display Price = Base Price + 12% VAT (e.g. 199 + 12% VAT = ₱223)
     const filteredItems = useMemo(() => {
         return menuItems
-            .map((item) => ({
-                ...item,
-                price: getEffectivePrice(item.id, item.price),
-            }))
+            .map((item) => {
+                const basePrice = getEffectivePrice(item.id, item.price)
+                return {
+                    ...item,
+                    basePrice,
+                    price: Math.round(basePrice * 1.12),
+                }
+            })
             .filter((item) => {
                 const matchesSearch =
                     item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1014,7 +1019,7 @@ export const OnlineCustomer: React.FC = () => {
                                             <span>₱{subtotal.toLocaleString()}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span>VAT (12% incl.)</span>
+                                            <span>VAT (12%)</span>
                                             <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                         <div className="flex justify-between">
@@ -1231,7 +1236,7 @@ export const OnlineCustomer: React.FC = () => {
                                     <span>₱{subtotal.toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-neutral-500">
-                                    <span>VAT (12% incl.)</span>
+                                    <span>VAT (12%)</span>
                                     <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-neutral-500">

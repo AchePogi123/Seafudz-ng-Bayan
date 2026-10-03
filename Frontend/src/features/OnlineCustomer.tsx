@@ -566,16 +566,17 @@ export const OnlineCustomer: React.FC = () => {
         }
     }, [activeOrder?.id])
 
-    // Calculations with live effective prices
+    // Calculations with live effective prices (VAT-Inclusive Menu Pricing)
     const subtotal = useMemo(() => {
         return cartItems.reduce((acc, ci) => {
             const effectivePrice = getEffectivePrice(ci.item.id, ci.item.price)
             return acc + effectivePrice * ci.quantity
         }, 0)
     }, [cartItems, getEffectivePrice])
-    const vat = useMemo(() => subtotal * 0.12, [subtotal])
+    // 12% VAT is included in menu price: VAT = Subtotal * (0.12 / 1.12)
+    const vat = useMemo(() => (subtotal > 0 ? (subtotal * 0.12) / 1.12 : 0), [subtotal])
     const deliveryFee = useMemo(() => (subtotal > 0 ? 50 : 0), [subtotal])
-    const total = useMemo(() => Math.round(subtotal + vat + deliveryFee), [subtotal, vat, deliveryFee])
+    const total = useMemo(() => Math.round(subtotal + deliveryFee), [subtotal, deliveryFee])
 
     // Filters with effective price applied
     const filteredItems = useMemo(() => {
@@ -1013,8 +1014,8 @@ export const OnlineCustomer: React.FC = () => {
                                             <span>₱{subtotal.toLocaleString()}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span>VAT (12%)</span>
-                                            <span>₱{vat.toLocaleString()}</span>
+                                            <span>VAT (12% incl.)</span>
+                                            <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span>Delivery Fee</span>
@@ -1230,8 +1231,8 @@ export const OnlineCustomer: React.FC = () => {
                                     <span>₱{subtotal.toLocaleString()}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-neutral-500">
-                                    <span>VAT (12%)</span>
-                                    <span>₱{vat.toLocaleString()}</span>
+                                    <span>VAT (12% incl.)</span>
+                                    <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                                 <div className="flex justify-between text-xs text-neutral-500">
                                     <span>Delivery Fee</span>

@@ -15,25 +15,44 @@ For quick system testing, use the pre-loaded PIN codes or register a new Supabas
 | **Rider** | `rider1` | `rider@seafudz.ph` | `9999` | `/rider` |
 | **Assistant / Waiter** | `assistant1` | `assistant@seafudz.ph` | `4321` | `/assistant` |
 | **Admin / Manager** | `admin1` | `admin@seafudz.ph` | `0000` | `/dashboard` |
-| **Customer** | *(Self Sign Up)* | *(Your Email)* | *(Your Password)* | `/customer` |
+| **Customer** | `Z.Realista` | `zacris024@gmail.com` | *(Your Password)* | `/customer` |
 
 > 🔒 **Employee Access Token**: Staff registrations require token: `SFB-STAFF-99`
+
+---
+
+## 🔐 Authentication, OTP Verification & Password Reset
+
+### 1. Flexible Login (Email or Username)
+- Users and staff can log in using either their **Email address** or their **Username** (e.g. `Z.Realista` or `zacris024@gmail.com`).
+
+### 2. 6-Digit Email OTP Verification
+- Upon registering a new customer account (First Name & Last Name), a 6-digit OTP code is sent to the user's email via Resend API.
+- Users verify their email in a modal before their account is created in PostgreSQL.
+
+### 3. Forgot Password & Persistent Password Reset Flow (`/reset-password`)
+- Clicking **Forgot Password?** on the login screen prompts for the registered email or username.
+- A password reset link with a 5-minute expiry token (`/reset-password?token=...`) is emailed via Resend.
+- Token validation is managed persistently in the PostgreSQL `password_resets` table.
 
 ---
 
 ## 🛍️ 1. Online Customer Ordering Portal (`/customer`)
 
 ### Feature Overview
-Allows online customers to browse seafood bilao feasts, cajun boils, drinks, and sides dynamically fetched from the live database menu catalog.
+Allows online customers to browse seafood bilao feasts, cajun boils, drinks, and sides dynamically fetched from the live menu catalog.
 
 ### Step-by-Step Instructions:
-1. **Browse Menu**: Use category tabs (*Seafood*, *Shrimp*, *Crab*, *Drinks*, *Sides*) or search by dish name.
-2. **Customize & Add to Cart**: Click on any dish card to choose quantity and special notes (e.g. *"Extra spicy sauce"*), then click **Add to Cart**.
-3. **Review Cart**: Open the shopping cart drawer on the right to view subtotal, VAT (12%), and grand total.
-4. **Select Order Type**: Choose between **Take Out** or **Delivery**.
-   - If **Delivery** is selected, enter your full delivery address and contact phone number.
-5. **Select Payment Method**: Choose **GCash**, **Maya**, **Card**, or **Cash on Delivery**.
-6. **Place Order**: Click **Place Order**. You will receive an instant order reference ID (e.g., `ORD-1002`).
+1. **Browse Menu & Search**: Search by dish name directly inside the integrated Category Pills Toolbar (*All Menu*, *Seafoods*, *Value Meals*, *Siomai*, *Add Ons*, *Shake & Lemonade*, *Desserts*, *Drinks*).
+2. **Item Pricing**: Displayed menu card prices include 12% VAT (`Base Price + 12% VAT`).
+3. **Customize & Add to Cart**: Click on any dish card to choose quantity and special notes (e.g. *"Extra spicy sauce"*), then click **Add to Cart**.
+4. **Review Cart Breakdown**: The right-hand Cart panel provides a detailed cost breakdown:
+   - **Subtotal (Base Price)**
+   - **VAT (12%)**
+   - **Delivery / Shipping Fee** (detailed in breakdown, not added into food item display price)
+   - **Total Amount**
+5. **Select Payment Method**: Choose **GCash** or **Cash on Delivery (COD)**.
+6. **Real-Time Order Tracking**: Once placed, customers are automatically navigated to the live **Track Order** tab to monitor order status (`Pending` ➔ `Authorized` ➔ `Preparing` ➔ `Ready` ➔ `Out for Delivery` ➔ `Completed`) in real-time without page refreshes.
 
 ---
 

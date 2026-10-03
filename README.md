@@ -9,7 +9,21 @@
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS (Hosted on **Firebase Hosting**)
 - **Backend:** Node.js, Express (Containerized & Deployed to **GCP Cloud Run**)
 - **Database:** PostgreSQL (Production: **GCP Cloud SQL**, Local Dev: **Docker Desktop**)
+- **Email Service:** Resend API (6-digit OTP verification & Password Reset links)
+- **Real-Time Engine:** Hybrid 3-tier sync (`BroadcastChannel`, local event bus, storage events, and automated 8s HTTP polling)
 - **CI/CD Pipeline:** Google Cloud Build
+
+---
+
+## ✨ Key Platform Features
+
+- 🔐 **Flexible Authentication**: Log in using **Email** or **Username** (with username editing in profile settings).
+- 📧 **6-Digit OTP Email Verification**: Verifies new registration emails via Resend API.
+- 🔑 **Persistent Password Reset (`/reset-password`)**: Secure token reset links with 5-minute expiry, backed by PostgreSQL `password_resets`.
+- ⚡ **Automated Real-Time Order Sync**: Cross-device, zero-config real-time synchronization between Customer, POS, Kitchen KDS, Rider, and Admin views.
+- 🛒 **Transparent Pricing Model**: Menu item display prices (`Base Price + 12% VAT`) with detailed base subtotal, VAT (12%), and shipping fee breakdowns.
+- 🍳 **Kitchen Display System (KDS)**: Real-time ticket management, preparation timers, and availability toggles.
+- 🛵 **Rider Delivery Tracking**: Live status updates and delivery routing.
 
 ---
 

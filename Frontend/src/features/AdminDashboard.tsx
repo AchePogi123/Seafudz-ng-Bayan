@@ -819,11 +819,12 @@ const AdminDashboard: React.FC = () => {
     return (
         <div className="min-h-screen bg-[#f4f7f6] text-slate-800 font-sans pb-16 transition-all">
             {/* Top Admin Navigation */}
-            <div className="p-3 sm:p-5 print:hidden">
+            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
                 <NavbarAdmin />
             </div>
 
-            <div className="max-w-[1440px] mx-auto px-3 sm:px-6 space-y-6">
+            {/* Full Width Body Container */}
+            <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
                 {/* Header Greeting & Action Bar */}
                 <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs print:hidden">
                     <div>

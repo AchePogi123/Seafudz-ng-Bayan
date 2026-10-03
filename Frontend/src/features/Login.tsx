@@ -19,7 +19,23 @@ const Login = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
-  const [fullname, setFullname] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const fullname = `${firstName.trim()} ${lastName.trim()}`.trim();
+
+  const handleFirstNameChange = (val: string) => {
+    setFirstName(val);
+    if (val.trim() && lastName.trim()) {
+      setUsername(`${val.trim().charAt(0).toUpperCase()}.${lastName.trim()}`);
+    }
+  };
+
+  const handleLastNameChange = (val: string) => {
+    setLastName(val);
+    if (firstName.trim() && val.trim()) {
+      setUsername(`${firstName.trim().charAt(0).toUpperCase()}.${val.trim()}`);
+    }
+  };
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -33,10 +49,36 @@ const Login = () => {
   // Terms and Conditions modal
   const [showTerms, setShowTerms] = useState(false);
 
+  // OTP Verification Modal States
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [otpTimer, setOtpTimer] = useState(30);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
+
+  // Forgot Password Modal States
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingForgot, setIsSendingForgot] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState('');
+
   // UI states
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // OTP Resend Countdown Timer
+  React.useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (showOtpModal && otpTimer > 0) {
+      interval = setInterval(() => {
+        setOtpTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [showOtpModal, otpTimer]);
 
 
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
@@ -198,8 +240,9 @@ const Login = () => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+    setOtpError('');
 
-    if (!fullname || !username || !email || !phone || !password || !confirmPassword) {
+    if (!firstName.trim() || !lastName.trim() || !username || !email || !phone || !password || !confirmPassword) {
       setErrorMessage('Please fill in all required fields.');
       return;
     }
@@ -220,6 +263,144 @@ const Login = () => {
       return;
     }
 
+    setIsSendingOtp(true);
+    setIsLoading(true);
+
+    try {
+      // Send 5-digit OTP verification code to user email
+      const otpRes = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const otpJson = await otpRes.json();
+
+      if (!otpRes.ok || !otpJson.success) {
+        throw new Error(otpJson.message || 'Failed to send verification code.');
+      }
+
+      setOtpDigits(['', '', '', '', '', '']);
+      setOtpTimer(30);
+      setShowOtpModal(true);
+
+      setTimeout(() => {
+        document.getElementById('otp-slot-0')?.focus();
+      }, 200);
+
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
+      setErrorMessage(msg);
+    } finally {
+      setIsSendingOtp(false);
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setOtpError('');
+    setIsSendingOtp(true);
+    try {
+      const otpRes = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const otpJson = await otpRes.json();
+      if (!otpRes.ok || !otpJson.success) {
+        throw new Error(otpJson.message || 'Failed to resend code.');
+      }
+
+      setOtpDigits(['', '', '', '', '', '']);
+      setOtpTimer(30);
+      document.getElementById('otp-slot-0')?.focus();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Resend failed.';
+      setOtpError(msg);
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    const cleanValue = value.replace(/[^0-9]/g, '');
+    const newDigits = [...otpDigits];
+
+    if (cleanValue.length > 0) {
+      newDigits[index] = cleanValue.slice(-1);
+      setOtpDigits(newDigits);
+
+      if (index < 5) {
+        document.getElementById(`otp-slot-${index + 1}`)?.focus();
+      }
+    } else {
+      newDigits[index] = '';
+      setOtpDigits(newDigits);
+    }
+
+    if (newDigits.join('').length === 6) {
+      handleVerifyOtp(newDigits.join(''));
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      document.getElementById(`otp-slot-${index - 1}`)?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/[^0-9]/g, '').slice(0, 6);
+    if (pasted) {
+      const digits = pasted.split('');
+      const newDigits = ['', '', '', '', '', ''];
+      digits.forEach((d, i) => {
+        newDigits[i] = d;
+      });
+      setOtpDigits(newDigits);
+      if (digits.length === 6) {
+        document.getElementById('otp-slot-5')?.focus();
+        handleVerifyOtp(pasted);
+      } else {
+        document.getElementById(`otp-slot-${digits.length - 1}`)?.focus();
+      }
+    }
+  };
+
+  const handleVerifyOtp = async (codeToVerify: string) => {
+    if (codeToVerify.length < 6) {
+      setOtpError('Please enter all 6 digits.');
+      return;
+    }
+
+    setOtpError('');
+    setIsVerifyingOtp(true);
+
+    try {
+      const verifyRes = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), otp: codeToVerify }),
+      });
+
+      const verifyJson = await verifyRes.json();
+      if (!verifyRes.ok || !verifyJson.success) {
+        throw new Error(verifyJson.message || 'Invalid verification code.');
+      }
+
+      setShowOtpModal(false);
+      await executeRegistration();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Verification failed.';
+      setOtpError(msg);
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const executeRegistration = async () => {
     setIsLoading(true);
 
     try {
@@ -266,11 +447,16 @@ const Login = () => {
       const regUserData = regJson?.data;
 
       // Clear input fields
+      setFirstName('');
+      setLastName('');
+      setUsername('');
+      setEmail('');
+      setPhone('');
       setPassword('');
       setConfirmPassword('');
       setVerificationCode('');
 
-      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
+      setSuccessMessage(`Account created & email verified successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
 
       setTimeout(() => {
         navigateByRole(role, regSessionToken, regUserData);
@@ -281,6 +467,40 @@ const Login = () => {
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSendForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotSuccess('');
+
+    if (!forgotEmail || !forgotEmail.trim()) {
+      setForgotError('Please enter your registered email address.');
+      return;
+    }
+
+    setIsSendingForgot(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to send password reset link.');
+      }
+
+      setForgotSuccess(data.message || 'Password reset link sent! Please check your email inbox.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to send reset link.';
+      setForgotError(msg);
+    } finally {
+      setIsSendingForgot(false);
     }
   };
 
@@ -398,7 +618,7 @@ const Login = () => {
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
-                  placeholder="Username"
+                  placeholder="Email or Username"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={loginInput}
@@ -471,6 +691,12 @@ const Login = () => {
 
                 <button
                   type="button"
+                  onClick={() => {
+                    setForgotError('');
+                    setForgotSuccess('');
+                    setForgotEmail(loginInput.includes('@') ? loginInput : '');
+                    setShowForgotPasswordModal(true);
+                  }}
                   className="bg-none border-none text-[#e74c3c] font-semibold font-sans text-[0.9rem] cursor-pointer p-0 transition-all hover:text-[#c0392b] hover:underline"
                 >
                   Forgot Password?
@@ -517,14 +743,22 @@ const Login = () => {
                 Join us to start ordering fresh seafood
               </p>
 
-              <div className="mb-[1.2rem]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-[1.2rem]">
                 <input
                   type="text"
-                  placeholder="Full Name"
+                  placeholder="First Name"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={fullname}
-                  onChange={(e) => setFullname(e.target.value)}
+                  value={firstName}
+                  onChange={(e) => handleFirstNameChange(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="Last Name"
+                  required
+                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
+                  value={lastName}
+                  onChange={(e) => handleLastNameChange(e.target.value)}
                 />
               </div>
 
@@ -858,6 +1092,145 @@ const Login = () => {
                 >
                   Close
                 </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+        {/* Forgot Password Modal */}
+        {showForgotPasswordModal && (
+          <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex justify-center items-center p-4 animate-[fadeIn_0.2s_ease-out]">
+            <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-neutral-100 p-7 sm:p-9 relative animate-[scaleUp_0.2s_ease-out] text-center">
+
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowForgotPasswordModal(false)}
+                className="absolute top-5 right-5 text-neutral-400 hover:text-neutral-700 p-1.5 rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-bold text-neutral-900 mb-1">
+                Reset Your Password
+              </h3>
+              <p className="text-xs text-neutral-500 mb-6">
+                Enter your registered email address and we'll send you a link to reset your password.
+              </p>
+
+              {forgotError && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-red-50 text-red-600 text-xs font-semibold border border-red-200/80 text-left">
+                  {forgotError}
+                </div>
+              )}
+
+              {forgotSuccess && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200/80 text-left">
+                  {forgotSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleSendForgotPassword} className="text-left">
+                <div className="mb-5">
+                  <label className="block text-xs font-bold text-neutral-600 uppercase tracking-wider mb-1.5">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="Enter your registered email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    className="w-full py-3.5 px-4 rounded-xl border border-neutral-200 font-medium text-sm text-neutral-900 bg-neutral-50/80 focus:outline-none focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-500/10 transition-all box-border"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSendingForgot || !forgotEmail.trim()}
+                  className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSendingForgot ? 'SENDING RESET LINK...' : 'SEND RESET LINK'}
+                </button>
+              </form>
+
+            </div>
+          </div>
+        )}
+
+        {/* 6-Digit Email Verification OTP Modal */}
+        {showOtpModal && (
+          <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex justify-center items-center p-4 animate-[fadeIn_0.2s_ease-out]">
+            <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-neutral-100 p-7 sm:p-9 relative animate-[scaleUp_0.2s_ease-out] text-center">
+
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowOtpModal(false)}
+                className="absolute top-5 right-5 text-neutral-400 hover:text-neutral-700 p-1.5 rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-bold text-neutral-900 mb-1">
+                Enter Verification Code
+              </h3>
+              <p className="text-xs text-neutral-500 mb-6">
+                We sent a 6-digit code to <strong className="text-neutral-800 font-semibold">{email}</strong>
+              </p>
+
+              {otpError && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-red-50 text-red-600 text-xs font-semibold border border-red-200/80">
+                  {otpError}
+                </div>
+              )}
+
+              {/* 6-Slot Digit Input Boxes */}
+              <div className="flex justify-center gap-2 mb-6" onPaste={handleOtpPaste}>
+                {otpDigits.map((digit, index) => (
+                  <input
+                    key={index}
+                    id={`otp-slot-${index}`}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(index, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                    className="w-11 h-14 text-center text-xl font-bold text-neutral-800 bg-neutral-50/80 border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-500/10 transition-all duration-200 shadow-2xs"
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={isVerifyingOtp || otpDigits.join('').length < 6}
+                onClick={() => handleVerifyOtp(otpDigits.join(''))}
+                className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer mb-5"
+              >
+                {isVerifyingOtp ? 'Verifying Code...' : 'Verify & Continue'}
+              </button>
+
+              <div className="flex justify-between items-center text-xs text-neutral-500 font-medium px-1">
+                <span>Didn't receive code?</span>
+                {otpTimer > 0 ? (
+                  <span className="text-neutral-400 font-medium">Resend in {otpTimer}s</span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isSendingOtp}
+                    onClick={handleResendOtp}
+                    className="text-orange-600 font-bold hover:underline cursor-pointer"
+                  >
+                    {isSendingOtp ? 'Sending...' : 'Resend Code'}
+                  </button>
+                )}
               </div>
 
             </div>

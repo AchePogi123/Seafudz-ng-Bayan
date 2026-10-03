@@ -11,6 +11,7 @@ import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
 import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
+import ResetPassword from './features/ResetPassword'
 import AboutUs from './features/AboutUs'
 import UserManagement from './features/UserManagement'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -32,6 +33,8 @@ function App() {
         <Route path="/dashboard" element={<LandingPage />} />
 
         <Route path="/login" element={<Login />} />
+
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         <Route path="/about" element={<AboutUs />} />
 

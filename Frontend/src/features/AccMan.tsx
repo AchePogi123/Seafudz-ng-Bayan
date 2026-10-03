@@ -10,6 +10,7 @@ import { API_BASE_URL } from '../utils/api'
 
 interface UserProfile {
     fullName: string
+    username: string
     phone: string
     email: string
     address: string
@@ -28,6 +29,7 @@ export const AccMan: React.FC = () => {
         const active = getActiveUser()
         return {
             fullName: active?.fullname || '',
+            username: active?.username || '',
             phone: active?.phone || '',
             email: active?.email || '',
             address: active?.address || '',
@@ -48,6 +50,7 @@ export const AccMan: React.FC = () => {
         if (active) {
             const initial = {
                 fullName: active.fullname || '',
+                username: active.username || '',
                 phone: active.phone || '',
                 email: active.email || '',
                 address: active.address || '',
@@ -74,15 +77,17 @@ export const AccMan: React.FC = () => {
                             const updatedActive = {
                                 ...active,
                                 fullname: dbUser.fullname || dbUser.fullName || active.fullname,
+                                username: dbUser.username || active.username,
                                 phone: dbUser.phone || active.phone,
                                 email: dbUser.email || active.email,
                                 address: dbUser.address || dbUser.delivery_address || active.address,
                             }
-                            if (updatedActive.fullname !== active.fullname || updatedActive.phone !== active.phone || updatedActive.address !== active.address) {
+                            if (updatedActive.fullname !== active.fullname || updatedActive.username !== active.username || updatedActive.phone !== active.phone || updatedActive.address !== active.address) {
                                 saveActiveUser(updatedActive)
                             }
                             const updated = {
                                 fullName: updatedActive.fullname || '',
+                                username: updatedActive.username || '',
                                 phone: updatedActive.phone || '',
                                 email: updatedActive.email || '',
                                 address: updatedActive.address || '',
@@ -136,10 +141,10 @@ export const AccMan: React.FC = () => {
                     id: currentActive?.id,
                     originalEmail: currentActive?.email,
                     fullname: editForm.fullName,
+                    username: editForm.username,
                     phone: editForm.phone,
                     email: editForm.email,
                     address: editForm.address,
-                    username: currentActive?.username,
                     role: currentActive?.role || 'customer',
                 }),
             })
@@ -404,6 +409,16 @@ export const AccMan: React.FC = () => {
                                             required
                                             value={editForm.fullName}
                                             onChange={(e) => handleProfileChange('fullName', e.target.value)}
+                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Username</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={editForm.username}
+                                            onChange={(e) => handleProfileChange('username', e.target.value)}
                                             className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
                                         />
                                     </div>

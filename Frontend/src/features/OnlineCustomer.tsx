@@ -765,146 +765,161 @@ export const OnlineCustomer: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
-            <div className="w-full flex flex-col gap-6">
-                {/* Integrated Customer Navbar */}
-                <NavbarCustomer />
+        <div className="w-full flex flex-col gap-6">
+            {/* Integrated Customer Navbar */}
+            <NavbarCustomer />
 
-                {/* Browse Menu & Minimal Search Bar Container */}
-                <div className="flex flex-col gap-4 items-start">
-                    {/* Browse Menu Button */}
-                    <div className="flex bg-white p-1 rounded-2xl border border-neutral-100 shadow-2xs">
-                        <button
-                            onClick={() => setActiveTab('menu')}
-                            className="px-6 py-2.5 rounded-xl text-sm font-bold bg-orange-500 text-white shadow-md shadow-orange-500/20 cursor-pointer"
-                        >
-                            Browse Menu
-                        </button>
-                    </div>
+            {/* VIEW 1: MENU / BROWSE */}
+            {activeTab === 'menu' && (
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                    {/* Main Menu Area (Left 3 Columns) */}
+                    <main className="lg:col-span-3 flex flex-col gap-6">
+                        {/* Category Toolbar Row with Integrated Search Bar */}
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-neutral-100 shadow-2xs">
+                            {/* Left: Browse Menu Button + Category Pills */}
+                            <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 scrollbar-thin flex-1 min-w-0">
+                                <button
+                                    onClick={() => setActiveTab('menu')}
+                                    className="px-5 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer bg-orange-500 text-white shadow-md shadow-orange-500/20"
+                                >
+                                    Browse Menu
+                                </button>
 
-                    {/* Minimal Search Bar directly BELOW Browse Menu */}
-                    <div className="flex items-center px-1 py-1 w-full max-w-sm">
-                        <svg className="w-4 h-4 text-slate-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        <input
-                            type="text"
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            placeholder="Search dishes..."
-                            className="bg-transparent border-none outline-none text-slate-800 placeholder-slate-400 text-xs sm:text-sm w-full focus:outline-none"
-                        />
-                        {searchQuery && (
-                            <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600 p-0.5 text-xs cursor-pointer">
-                                ✕
-                            </button>
-                        )}
-                    </div>
-                </div>
-
-                {/* VIEW 1: MENU / BROWSE */}
-                {activeTab === 'menu' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-stretch">
-                        {/* Menu Items Grid */}
-                        <main className="lg:col-span-3 flex flex-col gap-6">
-                            {/* Category tabs */}
-                            <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-thin">
-                                {categories.map((cat) => (
+                                {activeOrder && (
                                     <button
-                                        key={cat}
-                                        onClick={() => setSelectedCategory(cat)}
-                                        className={`px-5 py-2.5 rounded-full text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
-                                            ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
-                                            : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                                        onClick={() => setActiveTab('tracking')}
+                                        className="px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100"
+                                    >
+                                        <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
+                                        Track Order ({activeOrder.id})
+                                    </button>
+                                )}
+
+                                <div className="h-6 w-px bg-neutral-200 shrink-0 mx-1 hidden sm:block" />
+
+                                {/* Category Pills */}
+                                <div className="flex items-center gap-2">
+                                    {categories.map((cat) => (
+                                        <button
+                                            key={cat}
+                                            onClick={() => setSelectedCategory(cat)}
+                                            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${
+                                                selectedCategory === cat
+                                                    ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
+                                                    : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                                            }`}
+                                        >
+                                            {cat}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Right: Search Bar Inside Category Toolbar */}
+                            <div className="relative w-full md:w-56 lg:w-60 xl:w-64 shrink-0">
+                                <div className="flex items-center px-3 py-1.5 bg-neutral-50 hover:bg-white rounded-xl border border-neutral-200 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all shadow-2xs">
+                                    <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search dishes..."
+                                        className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
+                                    />
+                                    {searchQuery && (
+                                        <button onClick={() => setSearchQuery('')} className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold">
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Grid of Dishes */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                            {filteredItems.map((item) => {
+                                const available = isAvailable(item.id)
+                                return (
+                                    <div
+                                        key={item.id}
+                                        className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
+                                            ? 'border-rose-200 bg-neutral-50/70 opacity-80'
+                                            : 'border-neutral-100 shadow-xs hover:shadow-md'
                                             }`}
                                     >
-                                        {cat}
-                                    </button>
-                                ))}
-                            </div>
+                                        <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                                            <img
+                                                src={item.image}
+                                                alt={item.name}
+                                                className={`w-full h-full object-cover transition-transform duration-300 ${!available
+                                                    ? 'grayscale-75 opacity-60 contrast-125'
+                                                    : 'group-hover:scale-105'
+                                                    }`}
+                                                onError={(e) => {
+                                                    ; (e.target as HTMLImageElement).src =
+                                                        'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
+                                                }}
+                                            />
+                                            <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                                                {item.category}
+                                            </span>
 
-                            {/* Grid of Dishes */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {filteredItems.map((item) => {
-                                    const available = isAvailable(item.id)
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
-                                                ? 'border-rose-200 bg-neutral-50/70 opacity-80'
-                                                : 'border-neutral-100 shadow-xs hover:shadow-md'
-                                                }`}
-                                        >
-                                            <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
-                                                <img
-                                                    src={item.image}
-                                                    alt={item.name}
-                                                    className={`w-full h-full object-cover transition-transform duration-300 ${!available
-                                                        ? 'grayscale-75 opacity-60 contrast-125'
-                                                        : 'group-hover:scale-105'
+                                            {!available && (
+                                                <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
+                                                    <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
+                                                        Unavailable / Sold Out
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="p-5 flex-grow flex flex-col justify-between gap-4">
+                                            <div>
+                                                <h3
+                                                    className={`font-bold text-lg leading-snug transition-colors ${!available
+                                                        ? 'text-neutral-500 line-through'
+                                                        : 'text-neutral-800'
                                                         }`}
-                                                    onError={(e) => {
-                                                        ; (e.target as HTMLImageElement).src =
-                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
-                                                    }}
-                                                />
-                                                <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
-                                                    {item.category}
+                                                >
+                                                    {item.name}
+                                                </h3>
+                                                <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
+                                                    {item.description}
+                                                </p>
+                                            </div>
+
+                                            <div className="flex items-center justify-between mt-auto">
+                                                <span
+                                                    className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
+                                                        }`}
+                                                >
+                                                    ₱{item.price.toLocaleString()}
                                                 </span>
 
-                                                {!available && (
-                                                    <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
-                                                        <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                                            Unavailable / Sold Out
-                                                        </span>
-                                                    </div>
+                                                {available ? (
+                                                    <button
+                                                        onClick={() => handleAddToCart(item)}
+                                                        className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
+                                                    >
+                                                        <span>+</span> Add
+                                                    </button>
+                                                ) : (
+                                                    <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
+                                                        Sold Out
+                                                    </span>
                                                 )}
                                             </div>
-
-                                            <div className="p-5 flex-grow flex flex-col justify-between gap-4">
-                                                <div>
-                                                    <h3
-                                                        className={`font-bold text-lg leading-snug transition-colors ${!available
-                                                            ? 'text-neutral-500 line-through'
-                                                            : 'text-neutral-800'
-                                                            }`}
-                                                    >
-                                                        {item.name}
-                                                    </h3>
-                                                    <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
-                                                        {item.description}
-                                                    </p>
-                                                </div>
-
-                                                <div className="flex items-center justify-between mt-auto">
-                                                    <span
-                                                        className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
-                                                            }`}
-                                                    >
-                                                        ₱{item.price.toLocaleString()}
-                                                    </span>
-
-                                                    {available ? (
-                                                        <button
-                                                            onClick={() => handleAddToCart(item)}
-                                                            className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
-                                                        >
-                                                            <span>+</span> Add
-                                                        </button>
-                                                    ) : (
-                                                        <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
-                                                            Sold Out
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
                                         </div>
-                                    )
-                                })}
-                            </div>
-                        </main>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </main>
 
-                        {/* Desktop Side Cart Drawer */}
-                        <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto">
+                    {/* Desktop Right Side Column (1 Column) - Original Cart */}
+                    <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto sticky top-6">
                             <div>
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
                                     Your Cart

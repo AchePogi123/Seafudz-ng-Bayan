@@ -600,7 +600,6 @@ router.post('/auth/send-otp', async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Verification code sent to ${cleanEmail}.`,
-      demoOtp: otp, // Development convenience flag
     });
   } catch (error) {
     console.error('Error sending OTP:', error);

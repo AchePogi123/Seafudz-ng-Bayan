@@ -1190,15 +1190,9 @@ const Login = () => {
               <h3 className="text-xl font-bold text-neutral-900 mb-1">
                 Enter Verification Code
               </h3>
-              <p className="text-xs text-neutral-500 mb-4">
+              <p className="text-xs text-neutral-500 mb-6">
                 We sent a 6-digit code to <strong className="text-neutral-800 font-semibold">{email}</strong>
               </p>
-
-              {currentDemoOtp && (
-                <div className="mb-4 py-2.5 px-4 rounded-xl bg-orange-50 text-orange-800 text-xs font-semibold border border-orange-200/80 text-center shadow-2xs animate-[fadeIn_0.2s_ease-out]">
-                  Verification Code: <span className="font-mono text-sm tracking-widest font-extrabold text-orange-600 bg-orange-100/80 px-2 py-0.5 rounded ml-1">{currentDemoOtp}</span>
-                </div>
-              )}
 
               {otpError && (
                 <div className="mb-4 py-2.5 px-3 rounded-xl bg-red-50 text-red-600 text-xs font-semibold border border-red-200/80">

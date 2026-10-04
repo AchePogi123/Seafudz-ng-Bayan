@@ -523,8 +523,14 @@ router.post('/auth/send-otp', async (req, res) => {
     const cleanEmail = email.trim().toLowerCase();
 
     // Check if email already exists in customers or employees table
-    const checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-    const checkEmp = await query('SELECT id, supabase_user_id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+    let checkCust = { rows: [] };
+    let checkEmp = { rows: [] };
+    try {
+      checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
+      checkEmp = await query('SELECT id, supabase_user_id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+    } catch (dbErr) {
+      console.warn('[AUTH OTP] DB query check notice:', dbErr.message);
+    }
 
     if (checkCust.rows.length > 0 || checkEmp.rows.length > 0) {
       // Check if user still exists in Supabase Auth
@@ -601,6 +607,7 @@ router.post('/auth/send-otp', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to send verification code. Please try again.',
+      details: error.message,
     });
   }
 });

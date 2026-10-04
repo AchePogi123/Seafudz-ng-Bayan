@@ -467,7 +467,7 @@ router.post('/auth/login', async (req, res) => {
       custSql = `SELECT * FROM customers WHERE supabase_user_id = $1`;
       custParams = [verifiedSupabaseUserId];
     } else if (searchValue) {
-      custSql = `SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1) OR LOWER(username) = LOWER($1)`;
+      custSql = `SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1)`;
       custParams = [searchValue];
     }
 

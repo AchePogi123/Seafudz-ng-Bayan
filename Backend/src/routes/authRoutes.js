@@ -534,7 +534,7 @@ router.post('/auth/send-otp', async (req, res) => {
         existsInSupabase = !!usersData?.users?.some(u => u.email?.toLowerCase() === cleanEmail);
       } catch (sErr) {
         console.warn('Supabase Auth sync check note:', sErr.message);
-        existsInSupabase = true; // Fallback to safe check
+        existsInSupabase = false; // Fallback to database check only if Supabase admin list is unavailable
       }
 
       if (!existsInSupabase) {

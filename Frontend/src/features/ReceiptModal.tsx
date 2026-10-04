@@ -12,24 +12,49 @@ interface CartItem {
 interface ReceiptModalProps {
   isOpen: boolean
   onClose: () => void
+  onPrintSuccess?: () => void
   orderDetails: {
-    table: string
+    orderId?: string
+    table?: string
     type: string
     total: number
+    subtotal?: number
+    vat?: number
+    deliveryFee?: number
     cartItems: CartItem[]
     cashReceived?: string
     change?: number | null
     paymentMethod?: string
+    customerName?: string
+    phone?: string
+    address?: string
   } | null
 }
 
-export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, orderDetails }) => {
+export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onPrintSuccess, orderDetails }) => {
   if (!isOpen || !orderDetails) return null
 
-  const { table, type, total, cartItems, cashReceived, change, paymentMethod = 'Cash' } = orderDetails
+  const {
+    orderId,
+    table = 'N/A',
+    type,
+    total,
+    subtotal,
+    vat,
+    deliveryFee = 0,
+    cartItems,
+    cashReceived,
+    change,
+    paymentMethod = 'Cash',
+    customerName,
+    phone,
+    address,
+  } = orderDetails
 
-  const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
-  const vatAmount = rawSubtotal * 0.12
+  const rawSubtotal = typeof subtotal === 'number'
+    ? subtotal
+    : cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
+  const vatAmount = typeof vat === 'number' ? vat : rawSubtotal * 0.12
   const formattedTotal = Math.round(total)
   const dateStr = new Date().toLocaleString()
 
@@ -77,9 +102,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
             <div class="divider"></div>
 
             <div>
-              <div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>
+              ${orderId ? `<div class="flex-row"><span>Order Ref:</span><span class="font-bold">${orderId}</span></div>` : ''}
               <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
-              <div class="flex-row"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
+              ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>` : ''}
+              ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${customerName}</span></div>` : ''}
+              ${phone ? `<div class="flex-row"><span>Phone:</span><span>${phone}</span></div>` : ''}
+              ${address ? `<div style="font-size: 10px; margin-top: 2px;"><span>Address: </span><span>${address}</span></div>` : ''}
+              <div class="flex-row" style="margin-top:2px;"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
             </div>
 
             <div class="divider"></div>
@@ -112,6 +141,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
             <div>
               <div class="flex-row"><span>Subtotal:</span><span>₱${Math.round(rawSubtotal).toLocaleString()}</span></div>
               <div class="flex-row"><span>VAT (12%):</span><span>₱${Math.round(vatAmount).toLocaleString()}</span></div>
+              ${deliveryFee > 0 ? `<div class="flex-row"><span>Delivery Fee:</span><span>₱${Math.round(deliveryFee).toLocaleString()}</span></div>` : ''}
               <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${formattedTotal.toLocaleString()}</span></div>
             </div>
 
@@ -145,6 +175,9 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
         </html>
       `)
       printWindow.document.close()
+    }
+    if (onPrintSuccess) {
+      onPrintSuccess()
     }
     onClose()
   }
@@ -187,15 +220,41 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
 
             {/* Order Meta */}
             <div className="space-y-1 text-[11px] text-neutral-600 font-bold">
-              <div className="flex justify-between">
-                <span>Location:</span>
-                <span className="text-neutral-800">{table}</span>
-              </div>
+              {orderId && (
+                <div className="flex justify-between">
+                  <span>Order Ref:</span>
+                  <span className="text-neutral-800">{orderId}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Type:</span>
                 <span className="text-neutral-800">{type}</span>
               </div>
-              <div className="flex justify-between">
+              {table && table !== 'N/A' && (
+                <div className="flex justify-between">
+                  <span>Location:</span>
+                  <span className="text-neutral-800">{table}</span>
+                </div>
+              )}
+              {customerName && (
+                <div className="flex justify-between">
+                  <span>Customer:</span>
+                  <span className="text-neutral-800 truncate max-w-[140px]">{customerName}</span>
+                </div>
+              )}
+              {phone && (
+                <div className="flex justify-between">
+                  <span>Phone:</span>
+                  <span className="text-neutral-800">{phone}</span>
+                </div>
+              )}
+              {address && (
+                <div className="text-[10px] leading-tight text-neutral-700 mt-1">
+                  <span className="font-semibold text-neutral-500">Address: </span>
+                  {address}
+                </div>
+              )}
+              <div className="flex justify-between pt-1">
                 <span>Date:</span>
                 <span className="text-neutral-800 text-[10px]">{dateStr}</span>
               </div>
@@ -235,6 +294,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, ord
                 <span>VAT (12%)</span>
                 <span className="text-neutral-800">₱{Math.round(vatAmount).toLocaleString()}</span>
               </div>
+              {deliveryFee > 0 && (
+                <div className="flex justify-between">
+                  <span>Delivery Fee</span>
+                  <span className="text-neutral-800">₱{Math.round(deliveryFee).toLocaleString()}</span>
+                </div>
+              )}
               <div className="flex justify-between text-sm font-black text-[#ff7a00] pt-1">
                 <span>TOTAL DUE</span>
                 <span>₱{formattedTotal.toLocaleString()}</span>

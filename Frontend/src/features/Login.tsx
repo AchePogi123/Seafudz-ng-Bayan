@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import React from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import logo from '../assets/logoseafudsngbayan.png';
+import BrandLogo from '../components/BrandLogo';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
-import { saveSessionToken, saveActiveUser, generateClientHashToken } from '../cryptography/cryptoSession';
+import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
@@ -19,7 +19,23 @@ const Login = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
 
-  const [fullname, setFullname] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const fullname = `${firstName.trim()} ${lastName.trim()}`.trim();
+
+  const handleFirstNameChange = (val: string) => {
+    setFirstName(val);
+    if (val.trim() && lastName.trim()) {
+      setUsername(`${val.trim().charAt(0).toUpperCase()}.${lastName.trim()}`);
+    }
+  };
+
+  const handleLastNameChange = (val: string) => {
+    setLastName(val);
+    if (firstName.trim() && val.trim()) {
+      setUsername(`${firstName.trim().charAt(0).toUpperCase()}.${val.trim()}`);
+    }
+  };
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -30,36 +46,40 @@ const Login = () => {
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
 
+  // Terms and Conditions modal
+  const [showTerms, setShowTerms] = useState(false);
+
+  // OTP Verification Modal States
+  const [showOtpModal, setShowOtpModal] = useState(false);
+  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [otpTimer, setOtpTimer] = useState(30);
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
+
+  // Forgot Password Modal States
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingForgot, setIsSendingForgot] = useState(false);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState('');
+
   // UI states
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Business role prevention code (Standard restaurant admin key)
-  const REQUIRED_STAFF_KEY = 'SFB-STAFF-99';
+  // OTP Resend Countdown Timer
+  React.useEffect(() => {
+    let interval: ReturnType<typeof setInterval>;
+    if (showOtpModal && otpTimer > 0) {
+      interval = setInterval(() => {
+        setOtpTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [showOtpModal, otpTimer]);
 
-  const MOCK_STAFF_ACCOUNTS: Record<string, { fullname: string; username: string; email: string; role: string }> = {
-    admin: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    admin1: { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    admin2: { fullname: 'Super Admin Chief', username: 'admin2', email: 'admin2@seafudz.ph', role: 'admin' },
-    'admin@seafudz.ph': { fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin' },
-    cashier: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    cashier1: { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    cashier2: { fullname: 'Maria Santos', username: 'cashier2', email: 'maria.cashier@seafudz.ph', role: 'cashier' },
-    'cashier@seafudz.ph': { fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier' },
-    kitchen: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    kitchen1: { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    kitchen2: { fullname: 'Chef Ben', username: 'kitchen2', email: 'chef.ben@seafudz.ph', role: 'kitchen' },
-    'kitchen@seafudz.ph': { fullname: 'Chef Juan', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen' },
-    assistant: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant1: { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    assistant2: { fullname: 'Joy Flores', username: 'assistant2', email: 'joy.floor@seafudz.ph', role: 'assistant' },
-    'assistant@seafudz.ph': { fullname: 'Assistant Cashier Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant' },
-    rider: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider1: { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-    rider2: { fullname: 'Dan Cruz', username: 'rider2', email: 'dan.rider@seafudz.ph', role: 'rider' },
-    'rider@seafudz.ph': { fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider' },
-  };
 
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
@@ -68,6 +88,7 @@ const Login = () => {
 
     const activeToken =
       token ||
+      getStoredSessionToken() ||
       generateClientHashToken(
         (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : 'user'),
         normRole,
@@ -90,13 +111,16 @@ const Login = () => {
       role: normRole,
       sessionToken: activeToken,
     });
-    saveSessionToken(activeToken);
+    if (activeToken) {
+      saveSessionToken(activeToken);
+    }
 
     const fromState = location.state?.from;
     const returnPath = typeof fromState === 'string' ? fromState : (fromState?.pathname || null);
 
     let targetPath = (normRole === 'customer' && returnPath) ? returnPath : '/customer';
-    if (normRole === 'cashier') targetPath = '/sales-report';
+
+    if (normRole === 'cashier') targetPath = '/pos';
     else if (normRole === 'kitchen') targetPath = '/kitchen';
     else if (normRole === 'rider') targetPath = '/rider';
     else if (normRole === 'assistant') targetPath = '/assistant';
@@ -120,6 +144,7 @@ const Login = () => {
     try {
       const isEmail = loginInput.trim().includes('@');
       let supabaseUser = null;
+      let supabaseAccessToken: string | null = null;
       let profileData = null;
       let supabaseAuthErr: string | null = null;
 
@@ -133,6 +158,7 @@ const Login = () => {
 
           if (data?.user) {
             supabaseUser = data.user;
+            supabaseAccessToken = data.session?.access_token || null;
           } else if (error) {
             supabaseAuthErr = error.message;
           }
@@ -141,14 +167,20 @@ const Login = () => {
         }
       }
 
-      // 2. Fetch or verify profile against Express backend
+      // 2. Authenticate and retrieve profile against Express backend
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (supabaseAccessToken) {
+          headers['Authorization'] = `Bearer ${supabaseAccessToken}`;
+        }
+
         const res = await fetch(`${API_BASE_URL}/auth/login`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             email: isEmail ? loginInput.trim() : undefined,
             username: !isEmail ? loginInput.trim() : undefined,
+            password: loginPassword,
             pinCode: !isEmail ? loginPassword : undefined,
             supabaseUserId: supabaseUser?.id,
           }),
@@ -156,6 +188,11 @@ const Login = () => {
 
         if (res.ok) {
           profileData = await res.json();
+        } else {
+          const errData = await res.json().catch(() => null);
+          if (errData?.message) {
+            supabaseAuthErr = errData.message;
+          }
         }
       } catch (backendErr) {
         console.warn('Backend API connection note:', backendErr);
@@ -168,23 +205,19 @@ const Login = () => {
             email: profileData.data.email,
             password: loginPassword,
           });
+
           if (data?.user) {
             supabaseUser = data.user;
           }
         } catch { }
       }
 
-      // 4. Mock Accounts Fallback if backend or Supabase is not reachable / not configured
       if (!profileData?.success && !supabaseUser) {
-        const mockMatch = MOCK_STAFF_ACCOUNTS[loginInput.trim().toLowerCase()];
-        if (mockMatch) {
-          setSuccessMessage(`Welcome back, ${mockMatch.fullname}! Redirecting to workspace...`);
-          navigateByRole(mockMatch.role, undefined, mockMatch);
-          return;
-        }
+
         if (supabaseAuthErr) {
           throw new Error(supabaseAuthErr);
         }
+
         throw new Error('Invalid email/username or password. Please check your credentials.');
       }
 
@@ -207,8 +240,9 @@ const Login = () => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+    setOtpError('');
 
-    if (!fullname || !username || !email || !phone || !password || !confirmPassword) {
+    if (!firstName.trim() || !lastName.trim() || !username || !email || !phone || !password || !confirmPassword) {
       setErrorMessage('Please fill in all required fields.');
       return;
     }
@@ -223,18 +257,150 @@ const Login = () => {
       return;
     }
 
-    // Validate employee key for business system roles
-    if (role !== 'customer') {
-      if (!verificationCode) {
-        setErrorMessage('Verification is required for business accounts. Please enter your Employee Access Token.');
-        return;
-      }
-      if (verificationCode.trim().toUpperCase() !== REQUIRED_STAFF_KEY) {
-        setErrorMessage('Access Denied: Invalid Employee Access Token. Please contact your administrator.');
-        return;
-      }
+    // Validate employee key requirement for business system roles
+    if (role !== 'customer' && !verificationCode) {
+      setErrorMessage('Verification is required for business accounts. Please enter your Employee Access Token.');
+      return;
     }
 
+    setIsSendingOtp(true);
+    setIsLoading(true);
+
+    try {
+      // Send 5-digit OTP verification code to user email
+      const otpRes = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const otpJson = await otpRes.json();
+
+      if (!otpRes.ok || !otpJson.success) {
+        throw new Error(otpJson.message || 'Failed to send verification code.');
+      }
+
+      setOtpDigits(['', '', '', '', '', '']);
+      setOtpTimer(30);
+      setShowOtpModal(true);
+
+      setTimeout(() => {
+        document.getElementById('otp-slot-0')?.focus();
+      }, 200);
+
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
+      setErrorMessage(msg);
+    } finally {
+      setIsSendingOtp(false);
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setOtpError('');
+    setIsSendingOtp(true);
+    try {
+      const otpRes = await fetch(`${API_BASE_URL}/auth/send-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim() }),
+      });
+
+      const otpJson = await otpRes.json();
+      if (!otpRes.ok || !otpJson.success) {
+        throw new Error(otpJson.message || 'Failed to resend code.');
+      }
+
+      setOtpDigits(['', '', '', '', '', '']);
+      setOtpTimer(30);
+      document.getElementById('otp-slot-0')?.focus();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Resend failed.';
+      setOtpError(msg);
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  const handleOtpChange = (index: number, value: string) => {
+    const cleanValue = value.replace(/[^0-9]/g, '');
+    const newDigits = [...otpDigits];
+
+    if (cleanValue.length > 0) {
+      newDigits[index] = cleanValue.slice(-1);
+      setOtpDigits(newDigits);
+
+      if (index < 5) {
+        document.getElementById(`otp-slot-${index + 1}`)?.focus();
+      }
+    } else {
+      newDigits[index] = '';
+      setOtpDigits(newDigits);
+    }
+
+    if (newDigits.join('').length === 6) {
+      handleVerifyOtp(newDigits.join(''));
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      document.getElementById(`otp-slot-${index - 1}`)?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/[^0-9]/g, '').slice(0, 6);
+    if (pasted) {
+      const digits = pasted.split('');
+      const newDigits = ['', '', '', '', '', ''];
+      digits.forEach((d, i) => {
+        newDigits[i] = d;
+      });
+      setOtpDigits(newDigits);
+      if (digits.length === 6) {
+        document.getElementById('otp-slot-5')?.focus();
+        handleVerifyOtp(pasted);
+      } else {
+        document.getElementById(`otp-slot-${digits.length - 1}`)?.focus();
+      }
+    }
+  };
+
+  const handleVerifyOtp = async (codeToVerify: string) => {
+    if (codeToVerify.length < 6) {
+      setOtpError('Please enter all 6 digits.');
+      return;
+    }
+
+    setOtpError('');
+    setIsVerifyingOtp(true);
+
+    try {
+      const verifyRes = await fetch(`${API_BASE_URL}/auth/verify-otp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), otp: codeToVerify }),
+      });
+
+      const verifyJson = await verifyRes.json();
+      if (!verifyRes.ok || !verifyJson.success) {
+        throw new Error(verifyJson.message || 'Invalid verification code.');
+      }
+
+      setShowOtpModal(false);
+      await executeRegistration();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Verification failed.';
+      setOtpError(msg);
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
+
+  const executeRegistration = async () => {
     setIsLoading(true);
 
     try {
@@ -281,11 +447,17 @@ const Login = () => {
       const regUserData = regJson?.data;
 
       // Clear input fields
+      setFirstName('');
+      setLastName('');
+      setUsername('');
+      setEmail('');
+      setPhone('');
       setPassword('');
       setConfirmPassword('');
       setVerificationCode('');
 
-      setSuccessMessage(`Account created successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
+      setSuccessMessage(`Account created & email verified successfully as ${role.toUpperCase()}! Redirecting to workspace...`);
+
       setTimeout(() => {
         navigateByRole(role, regSessionToken, regUserData);
       }, 1200);
@@ -298,14 +470,51 @@ const Login = () => {
     }
   };
 
+  const handleSendForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError('');
+    setForgotSuccess('');
+
+    if (!forgotEmail || !forgotEmail.trim()) {
+      setForgotError('Please enter your registered email address.');
+      return;
+    }
+
+    setIsSendingForgot(true);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to send password reset link.');
+      }
+
+      setForgotSuccess(data.message || 'Password reset link sent! Please check your email inbox.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to send reset link.';
+      setForgotError(msg);
+    } finally {
+      setIsSendingForgot(false);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     try {
       setErrorMessage('');
+
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: window.location.origin + '/customer' }
+        options: { redirectTo: window.location.origin + '/customer' },
       });
+
       if (error) throw error;
+
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Google authentication failed';
       setErrorMessage(msg);
@@ -314,6 +523,7 @@ const Login = () => {
 
   return (
     <div className="font-sans min-h-screen bg-[#faf9f6] flex flex-col">
+
       {/* Navbar */}
       <nav className="flex justify-between items-center py-4 px-[4%] bg-white sticky top-0 z-50 border-b border-neutral-200/80 shadow-2xs">
         <div>
@@ -321,8 +531,18 @@ const Login = () => {
             to="/landingpage"
             className="inline-flex items-center gap-2 text-xl font-bold text-neutral-900 hover:text-orange-600 tracking-tight transition-colors duration-200"
           >
-            <svg className="w-5 h-5 text-current transition-colors duration-200" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+            <svg
+              className="w-5 h-5 text-current transition-colors duration-200"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.75 19.5L8.25 12l7.5-7.5"
+              />
             </svg>
             <span>Seafudz Ng Bayan</span>
           </Link>
@@ -332,44 +552,80 @@ const Login = () => {
       {/* Main Auth Container */}
       <div className="flex-1 flex justify-center items-center py-12 px-6">
         <div className="bg-white w-full max-w-[480px] rounded-2xl shadow-2xs border border-neutral-200/80 p-8 sm:p-10 transition-all">
+
           {/* Logo */}
-          <div className="text-center mb-8">
-            <Link to="/landingpage" className="inline-block group">
-              <img src={logo} alt="Logo" className="w-16 h-16 object-cover rounded-full mb-3 border border-neutral-200 mx-auto group-hover:scale-105 transition-transform" />
-              <h1 className="text-xl font-bold text-neutral-900 tracking-tight group-hover:text-orange-600 transition-colors">SEAFUDZ NG BAYAN</h1>
-            </Link>
-            <p className="text-xs text-neutral-400 mt-1 font-medium">By: Joemarie Gobangco & Gelyn Basilio-Alday</p>
+          <div className="text-center mb-8 flex flex-col items-center">
+            <BrandLogo
+              to="/"
+              size="lg"
+              subtitle="FRESH SEAFOOD & BILAO FEASTS"
+            />
+            <p className="text-xs text-neutral-400 mt-2 font-medium">
+              By: Joemarie Gobangco & Gelyn Basilio-Alday
+            </p>
           </div>
 
           {/* Notice when redirected from Order Online */}
-          {(location.state?.from === '/customer' || (typeof location.state?.from === 'object' && location.state?.from?.pathname === '/customer')) && !errorMessage && !successMessage && (
-            <div className="py-2.5 px-3.5 rounded-xl text-xs font-semibold mb-5 bg-orange-50 text-orange-900 border border-orange-200 flex items-center gap-2.5 text-left">
-              <svg className="w-4 h-4 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>Please sign in or create an account to verify your details and complete your seafood order.</span>
+          {(location.state?.from === '/customer' ||
+            (typeof location.state?.from === 'object' &&
+              location.state?.from?.pathname === '/customer')) &&
+            !errorMessage &&
+            !successMessage && (
+              <div className="py-2.5 px-3.5 rounded-xl text-xs font-semibold mb-5 bg-orange-50 text-orange-900 border border-orange-200 flex items-center gap-2.5 text-left">
+                <svg
+                  className="w-4 h-4 text-orange-600 shrink-0"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span>
+                  Please sign in or create an account to verify your details
+                  and complete your seafood order.
+                </span>
+              </div>
+            )}
+
+          {errorMessage && (
+            <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#fff5f5] text-[#c53030] border border-[#fed7d7]">
+              {errorMessage}
             </div>
           )}
 
-          {errorMessage && <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#fff5f5] text-[#c53030] border border-[#fed7d7]">{errorMessage}</div>}
-          {successMessage && <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#f0fff4] text-[#22543d] border border-[#c6f6d5]">{successMessage}</div>}
+          {successMessage && (
+            <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#f0fff4] text-[#22543d] border border-[#c6f6d5]">
+              {successMessage}
+            </div>
+          )}
 
           {!showCreateAccount ? (
             /* Login Form */
             <form onSubmit={handleLogin}>
-              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Welcome Back</h2>
-              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Sign in with your Supabase credentials</p>
+              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">
+                Welcome Back
+              </h2>
+
+              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">
+                Sign in with your Supabase credentials
+              </p>
 
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
-                  placeholder="Username"
+                  placeholder="Email or Username"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
                   value={loginInput}
                   onChange={(e) => setLoginInput(e.target.value)}
                 />
               </div>
+
               <div className="mb-[1.2rem] relative">
                 <input
                   type={showLoginPassword ? 'text' : 'password'}
@@ -379,6 +635,7 @@ const Login = () => {
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
                 />
+
                 <button
                   type="button"
                   onClick={() => setShowLoginPassword(!showLoginPassword)}
@@ -386,13 +643,37 @@ const Login = () => {
                   aria-label="Toggle password visibility"
                 >
                   {showLoginPassword ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
+                      />
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                      />
                     </svg>
                   )}
                 </button>
@@ -400,9 +681,26 @@ const Login = () => {
 
               <div className="flex justify-between items-center mb-[2rem] text-[0.9rem]">
                 <label className="flex items-center gap-[0.5rem] text-[#4a5568] cursor-pointer font-medium">
-                  <input type="checkbox" className="accent-[#e74c3c]" defaultChecked /> Remember me
+                  <input
+                    type="checkbox"
+                    className="accent-[#e74c3c]"
+                    defaultChecked
+                  />
+                  Remember me
                 </label>
-                <button type="button" className="bg-none border-none text-[#e74c3c] font-semibold font-sans text-[0.9rem] cursor-pointer p-0 transition-all hover:text-[#c0392b] hover:underline">Forgot Password?</button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForgotError('');
+                    setForgotSuccess('');
+                    setForgotEmail(loginInput.includes('@') ? loginInput : '');
+                    setShowForgotPasswordModal(true);
+                  }}
+                  className="bg-none border-none text-[#e74c3c] font-semibold font-sans text-[0.9rem] cursor-pointer p-0 transition-all hover:text-[#c0392b] hover:underline"
+                >
+                  Forgot Password?
+                </button>
               </div>
 
               <button
@@ -418,29 +716,52 @@ const Login = () => {
                 onClick={handleGoogleLogin}
                 className="w-full p-[0.9rem] bg-white text-[#4a5568] border border-[#e2e8f0] rounded-[12px] font-semibold text-[0.95rem] font-sans cursor-pointer transition-all duration-[0.25s] flex items-center justify-center gap-[0.8rem] mb-[2rem] hover:bg-[#f7fafc] hover:border-[#cbd5e0]"
               >
-                <span className="font-extrabold bg-gradient-to-r from-[#4285f4] via-[#ea4335] via-[#fbbc05] to-[#34a853] bg-clip-text text-transparent">G</span> Sign in with Google
+                <span className="font-extrabold bg-gradient-to-r from-[#4285f4] via-[#ea4335] via-[#fbbc05] to-[#34a853] bg-clip-text text-transparent">
+                  G
+                </span>
+                Sign in with Google
               </button>
 
               <p className="text-center text-[0.9rem] text-[#718096] m-0">
-                Don't have an account? <span className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline" onClick={() => setShowCreateAccount(true)}>Create Account</span>
+                Don't have an account?{' '}
+                <span
+                  className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline"
+                  onClick={() => setShowCreateAccount(true)}
+                >
+                  Create Account
+                </span>
               </p>
             </form>
           ) : (
             /* Create Account Form */
             <form onSubmit={handleRegister}>
-              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">Create Account</h2>
-              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">Join us to start ordering fresh seafood</p>
+              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">
+                Create Account
+              </h2>
 
-              <div className="mb-[1.2rem]">
+              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">
+                Join us to start ordering fresh seafood
+              </p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-[1.2rem]">
                 <input
                   type="text"
-                  placeholder="Full Name"
+                  placeholder="First Name"
                   required
                   className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={fullname}
-                  onChange={(e) => setFullname(e.target.value)}
+                  value={firstName}
+                  onChange={(e) => handleFirstNameChange(e.target.value)}
+                />
+                <input
+                  type="text"
+                  placeholder="Last Name"
+                  required
+                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
+                  value={lastName}
+                  onChange={(e) => handleLastNameChange(e.target.value)}
                 />
               </div>
+
               <div className="mb-[1.2rem]">
                 <input
                   type="text"
@@ -451,6 +772,7 @@ const Login = () => {
                   onChange={(e) => setUsername(e.target.value)}
                 />
               </div>
+
               <div className="mb-[1.2rem]">
                 <input
                   type="email"
@@ -461,6 +783,7 @@ const Login = () => {
                   onChange={(e) => setEmail(e.target.value)}
                 />
               </div>
+
               <div className="mb-[1.2rem]">
                 <input
                   type="tel"
@@ -471,6 +794,7 @@ const Login = () => {
                   onChange={(e) => setPhone(e.target.value)}
                 />
               </div>
+
               <div className="mb-[1.2rem] relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -480,6 +804,7 @@ const Login = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
+
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
@@ -487,17 +812,42 @@ const Login = () => {
                   aria-label="Toggle password visibility"
                 >
                   {showPassword ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
+                      />
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-3.057-9.542-7z"
+                      />
                     </svg>
                   )}
                 </button>
               </div>
+
               <div className="mb-[1.2rem] relative">
                 <input
                   type={showConfirmPassword ? 'text' : 'password'}
@@ -507,6 +857,7 @@ const Login = () => {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                 />
+
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
@@ -514,18 +865,43 @@ const Login = () => {
                   aria-label="Toggle confirm password visibility"
                 >
                   {showConfirmPassword ? (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
+                      />
                     </svg>
                   ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7z"
+                      />
                     </svg>
                   )}
                 </button>
               </div>
 
+              {/* Terms and Conditions Checkbox */}
               <label className="flex items-center gap-[0.5rem] mb-[2rem] text-[0.9rem] text-[#4a5568] cursor-pointer font-medium">
                 <input
                   type="checkbox"
@@ -533,7 +909,17 @@ const Login = () => {
                   checked={termsAccepted}
                   onChange={(e) => setTermsAccepted(e.target.checked)}
                 />
-                I agree to the Terms and Conditions
+
+                <span>
+                  I agree to the{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowTerms(true)}
+                    className="text-[#e74c3c] font-semibold hover:text-[#c0392b] hover:underline"
+                  >
+                    Terms and Conditions
+                  </button>
+                </span>
               </label>
 
               <button
@@ -545,11 +931,311 @@ const Login = () => {
               </button>
 
               <p className="text-center text-[0.9rem] text-[#718096] m-0">
-                Already have an Account? <span className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline" onClick={() => setShowCreateAccount(false)}>Login</span>
+                Already have an Account?{' '}
+                <span
+                  className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline"
+                  onClick={() => setShowCreateAccount(false)}
+                >
+                  Login
+                </span>
               </p>
             </form>
           )}
         </div>
+
+        {/* Terms and Conditions Modal */}
+        {showTerms && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+
+            <div className="bg-white w-full max-w-3xl max-h-[85vh] rounded-2xl shadow-2xl border border-neutral-200 flex flex-col">
+
+              {/* Modal Header */}
+              <div className="flex items-center justify-between px-6 py-5 border-b border-neutral-200">
+                <div>
+                  <h2 className="text-xl font-bold text-[#2d3748]">
+                    TERMS AND CONDITIONS
+                  </h2>
+
+                  <p className="text-xs text-neutral-500 mt-1">
+                    Effective Date: 9/20/2026
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowTerms(false)}
+                  className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold leading-none"
+                  aria-label="Close Terms and Conditions"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="overflow-y-auto px-6 py-6 text-sm text-[#4a5568] leading-relaxed">
+
+                <p className="mb-5">
+                  Welcome to Seafudz ng Bayan. These Terms and Conditions
+                  govern the use of the Seafudz ng Bayan Online Ordering and Delivery System. By
+                  creating an account, logging in, or using the system, the customer agrees to
+                  comply with these terms.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  1. Account Registration
+                </h3>
+
+                <p className="mb-3">
+                  Customers may create an account by providing the required
+                  information.
+                </p>
+
+                <p className="mb-5">
+                  Customers are required to provide accurate and complete
+                  information when creating an account. The information provided should be kept
+                  updated when necessary.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  2. Account Security
+                </h3>
+
+                <p className="mb-3">
+                  Customers are responsible for keeping their username and
+                  password confidential. Customers should not share their login credentials with
+                  other individuals. Any activity performed through the customer's account may be
+                  associated with that account.
+                </p>
+
+                <p className="mb-5">
+                  If a customer believes that their account or password has
+                  been compromised, they should use the available password recovery option or
+                  contact the restaurant for assistance.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  3. Login
+                </h3>
+
+                <p className="mb-3">
+                  Customers may access their account using their registered
+                  username and password. The system also provides a{' '}
+                  <strong>Google Sign-In</strong> option
+                  for account access.
+                </p>
+
+                <p className="mb-5">
+                  The <strong>Remember Me</strong> option may be used to keep the
+                  customer's login session active on the device, subject to the system's
+                  authentication settings.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  4. Password Recovery
+                </h3>
+
+                <p className="mb-5">
+                  Customers who forget their password may use the{' '}
+                  <strong>Forgot Password</strong> option provided on the login page to recover or
+                  reset their account password.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  5. Account Creation and Terms Agreement
+                </h3>
+
+                <p className="mb-5">
+                  Customers must agree to the <strong>Terms and Conditions</strong>
+                  before creating an account. By selecting the agreement option and clicking{' '}
+                  <strong>Create Account</strong>, the customer confirms that they have read and
+                  accepted these Terms and Conditions.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  6. Proper Use of the Account
+                </h3>
+
+                <p className="mb-5">
+                  Customers are expected to use their accounts only for legitimate
+                  purposes related to the services provided by Seafudz ng Bayan.
+                  Customers must not attempt to access another person's account or use the system
+                  in a way that may interfere with its normal operation.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  7. System Access
+                </h3>
+
+                <p className="mb-5">
+                  Access to the system may depend on the availability of the
+                  internet and the system itself. Temporary interruptions may occur due to
+                  maintenance, technical problems, or other circumstances affecting system
+                  availability.
+                </p>
+
+                <h3 className="font-bold text-[#2d3748] mb-2">
+                  8. Acceptance of Terms
+                </h3>
+
+                <p>
+                  By creating an account and using the Seafudz ng Bayan Online Ordering and Delivery System, the customer acknowledges that they have read, understood, and agreed to these Terms and Conditions.
+                </p>
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="px-6 py-4 border-t border-neutral-200 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowTerms(false)}
+                  className="px-5 py-2.5 bg-[#e74c3c] hover:bg-[#c0392b] text-white rounded-xl font-semibold text-sm transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+        {/* Forgot Password Modal */}
+        {showForgotPasswordModal && (
+          <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex justify-center items-center p-4 animate-[fadeIn_0.2s_ease-out]">
+            <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-neutral-100 p-7 sm:p-9 relative animate-[scaleUp_0.2s_ease-out] text-center">
+
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowForgotPasswordModal(false)}
+                className="absolute top-5 right-5 text-neutral-400 hover:text-neutral-700 p-1.5 rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-bold text-neutral-900 mb-1">
+                Reset Your Password
+              </h3>
+              <p className="text-xs text-neutral-500 mb-6">
+                Enter your registered email address and we'll send you a link to reset your password.
+              </p>
+
+              {forgotError && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-red-50 text-red-600 text-xs font-semibold border border-red-200/80 text-left">
+                  {forgotError}
+                </div>
+              )}
+
+              {forgotSuccess && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-semibold border border-emerald-200/80 text-left">
+                  {forgotSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleSendForgotPassword} className="text-left">
+                <div className="mb-5">
+                  <label className="block text-xs font-bold text-neutral-600 uppercase tracking-wider mb-1.5">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="Enter your registered email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    className="w-full py-3.5 px-4 rounded-xl border border-neutral-200 font-medium text-sm text-neutral-900 bg-neutral-50/80 focus:outline-none focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-500/10 transition-all box-border"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSendingForgot || !forgotEmail.trim()}
+                  className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSendingForgot ? 'SENDING RESET LINK...' : 'SEND RESET LINK'}
+                </button>
+              </form>
+
+            </div>
+          </div>
+        )}
+
+        {/* 6-Digit Email Verification OTP Modal */}
+        {showOtpModal && (
+          <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex justify-center items-center p-4 animate-[fadeIn_0.2s_ease-out]">
+            <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-neutral-100 p-7 sm:p-9 relative animate-[scaleUp_0.2s_ease-out] text-center">
+
+              {/* Close Button */}
+              <button
+                type="button"
+                onClick={() => setShowOtpModal(false)}
+                className="absolute top-5 right-5 text-neutral-400 hover:text-neutral-700 p-1.5 rounded-full hover:bg-neutral-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+
+              <h3 className="text-xl font-bold text-neutral-900 mb-1">
+                Enter Verification Code
+              </h3>
+              <p className="text-xs text-neutral-500 mb-6">
+                We sent a 6-digit code to <strong className="text-neutral-800 font-semibold">{email}</strong>
+              </p>
+
+              {otpError && (
+                <div className="mb-4 py-2.5 px-3 rounded-xl bg-red-50 text-red-600 text-xs font-semibold border border-red-200/80">
+                  {otpError}
+                </div>
+              )}
+
+              {/* 6-Slot Digit Input Boxes */}
+              <div className="flex justify-center gap-2 mb-6" onPaste={handleOtpPaste}>
+                {otpDigits.map((digit, index) => (
+                  <input
+                    key={index}
+                    id={`otp-slot-${index}`}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(index, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                    className="w-11 h-14 text-center text-xl font-bold text-neutral-800 bg-neutral-50/80 border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 focus:bg-white focus:ring-4 focus:ring-orange-500/10 transition-all duration-200 shadow-2xs"
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                disabled={isVerifyingOtp || otpDigits.join('').length < 6}
+                onClick={() => handleVerifyOtp(otpDigits.join(''))}
+                className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer mb-5"
+              >
+                {isVerifyingOtp ? 'Verifying Code...' : 'Verify & Continue'}
+              </button>
+
+              <div className="flex justify-between items-center text-xs text-neutral-500 font-medium px-1">
+                <span>Didn't receive code?</span>
+                {otpTimer > 0 ? (
+                  <span className="text-neutral-400 font-medium">Resend in {otpTimer}s</span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isSendingOtp}
+                    onClick={handleResendOtp}
+                    className="text-orange-600 font-bold hover:underline cursor-pointer"
+                  >
+                    {isSendingOtp ? 'Sending...' : 'Resend Code'}
+                  </button>
+                )}
+              </div>
+
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

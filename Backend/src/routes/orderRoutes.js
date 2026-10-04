@@ -1,22 +1,30 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
 import { checkIfBulkOrder } from '../utils/bulkOrder.js';
 
 const router = Router();
 
-// GET /api/orders - Get all orders
-router.get('/orders', async (req, res) => {
+// GET /api/orders - Get orders with pagination, search, and filtering (Staff only)
+router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant', 'kitchen', 'rider']), async (req, res) => {
   try {
-    const { status, type, limit } = req.query;
+    const { status, type, limit, offset, page, search, payment, tab, period } = req.query;
     let sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
              o.order_type AS type, o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
+             COALESCE(c.fullname, 'Walk-In Customer') AS customer_name,
+             c.phone AS customer_phone,
+             COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+             d.status AS delivery_status,
+             d.rider_id,
+             r_emp.fullname AS rider_name,
              t.name AS table_name,
              p_pay.payment_method,
              p_pay.status AS payment_status,
+             COUNT(*) OVER() AS full_count,
              COALESCE(
                json_agg(
                  json_build_object(
@@ -33,7 +41,14 @@ router.get('/orders', async (req, res) => {
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
       FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN tables t ON o.table_id = t.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id
+        FROM deliveries
+        ORDER BY order_id, created_at DESC
+      ) d ON o.id = d.order_id
+      LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products pr ON oi.product_id = pr.id
       LEFT JOIN (
@@ -51,23 +66,70 @@ router.get('/orders', async (req, res) => {
       params.push(status);
     }
 
-    if (type) {
-      sql += ` AND LOWER(o.order_type) = LOWER($${paramIndex++})`;
-      params.push(type);
+    const selectedPeriod = (tab || period || '').toLowerCase();
+    if (selectedPeriod === 'today') {
+      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date`;
+    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
+      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'`;
+    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
+      sql += ` AND o.created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
+      sql += ` AND o.created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila')`;
     }
 
-    sql += ` GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
+    if (type && type !== 'All') {
+      if (type.toLowerCase() === 'pos' || type.toLowerCase() === 'on_site') {
+        sql += ` AND LOWER(o.order_type) = 'on_site'`;
+      } else if (type.toLowerCase() === 'online' || type.toLowerCase() === 'delivery') {
+        sql += ` AND LOWER(o.order_type) = 'online'`;
+      } else {
+        sql += ` AND LOWER(o.order_type) = LOWER($${paramIndex++})`;
+        params.push(type);
+      }
+    }
 
-    if (limit) {
+    if (search && search.trim()) {
+      sql += ` AND (LOWER(o.id) LIKE LOWER($${paramIndex}) OR LOWER(COALESCE(c.fullname, '')) LIKE LOWER($${paramIndex}))`;
+      params.push(`%${search.trim()}%`);
+      paramIndex++;
+    }
+
+    if (payment && payment !== 'All') {
+      if (payment.toLowerCase() === 'hybrid' || payment.toLowerCase() === 'split') {
+        sql += ` AND (LOWER(COALESCE(p_pay.payment_method, '')) LIKE '%hybrid%' OR LOWER(COALESCE(p_pay.payment_method, '')) LIKE '%split%')`;
+      } else {
+        sql += ` AND LOWER(COALESCE(p_pay.payment_method, '')) LIKE LOWER($${paramIndex++})`;
+        params.push(`%${payment.trim()}%`);
+      }
+    }
+
+    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
+
+    const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
+    let offsetNum = offset ? parseInt(offset, 10) : 0;
+    if (page && limitNum && !offset) {
+      const pageNum = Math.max(1, parseInt(page, 10));
+      offsetNum = (pageNum - 1) * limitNum;
+    }
+
+    if (limitNum) {
       sql += ` LIMIT $${paramIndex++}`;
-      params.push(parseInt(limit, 10));
+      params.push(limitNum);
+    }
+    if (offsetNum > 0) {
+      sql += ` OFFSET $${paramIndex++}`;
+      params.push(offsetNum);
     }
 
     const { rows } = await query(sql, params);
+    const totalCount = rows.length > 0 ? parseInt(rows[0].full_count, 10) : 0;
 
     return res.status(200).json({
       success: true,
       count: rows.length,
+      total: totalCount,
+      limit: limitNum,
+      offset: offsetNum,
       data: rows,
     });
   } catch (error) {
@@ -81,7 +143,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // GET /api/orders/:id - Get single order details
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const sql = `
@@ -142,8 +204,8 @@ router.get('/orders/:id', async (req, res) => {
   }
 });
 
-// POST /api/orders - Create a new order with transaction
-router.post('/orders', async (req, res) => {
+// POST /api/orders - Create a new order with transaction (Staff POS action)
+router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   const pool = await getDbPool();
   const client = await pool.connect();
 
@@ -280,8 +342,8 @@ router.post('/orders', async (req, res) => {
   }
 });
 
-// DELETE /api/orders/:id - Delete order from DB and memory (Admin action)
-router.delete('/orders/:id', async (req, res) => {
+// DELETE /api/orders/:id - Delete order from DB and memory (Admin only)
+router.delete('/orders/:id', requireAuth, requireRole(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     inMemoryOrders.delete(id);
@@ -296,7 +358,7 @@ router.delete('/orders/:id', async (req, res) => {
       console.warn('DB delete note:', dbErr.message);
     }
 
-    console.log(`🗑️ Order ${id} deleted from database and memory`);
+    console.log(`[DELETE] Order ${id} deleted from database and memory`);
 
     return res.status(200).json({
       success: true,
@@ -311,8 +373,8 @@ router.delete('/orders/:id', async (req, res) => {
   }
 });
 
-// PUT /api/orders/:id - Update full transaction details in DB (Admin action)
-router.put('/orders/:id', async (req, res) => {
+// PUT /api/orders/:id - Update full transaction details in DB (Admin/Cashier action)
+router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   try {
     const { id } = req.params;
     const {
@@ -404,13 +466,13 @@ router.put('/orders/:id', async (req, res) => {
              status = EXCLUDED.status,
              updated_at = NOW()`,
           [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED']
-        ).catch(() => {});
+        ).catch(() => { });
       }
     } catch (dbErr) {
       console.warn('DB update order note:', dbErr.message);
     }
 
-    console.log(`✏️ Admin updated order ${id} in DB and memory`);
+    console.log(`[UPDATE] Admin updated order ${id} in DB and memory`);
 
     return res.status(200).json({
       success: true,
@@ -427,8 +489,8 @@ router.put('/orders/:id', async (req, res) => {
   }
 });
 
-// PATCH /api/orders/:id/status - Update order status
-router.patch('/orders/:id/status', async (req, res) => {
+// PATCH /api/orders/:id/status - Update order status (Staff action)
+router.patch('/orders/:id/status', requireAuth, requireRole(['admin', 'cashier', 'kitchen', 'rider', 'assistant']), async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -505,11 +567,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const isBulk = checkIfBulkOrder(items);
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD' 
-      ? 'PENDING_COD' 
-      : isBulk 
-      ? 'GCASH_PENDING_APPROVAL' 
-      : 'GCASH_AUTHORIZED';
+    const initialStatus = initialPaymentMethod === 'COD'
+      ? 'PENDING_COD'
+      : isBulk
+        ? 'GCASH_PENDING_APPROVAL'
+        : 'GCASH_AUTHORIZED';
 
     const orderRecord = {
       id: orderId,
@@ -564,7 +626,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     }
 
     const formatted = formatOrderResponse(orderRecord);
-    console.log(`🛒 [Order Flow] Customer order created ${orderId} -> Status: PENDING | Total: ₱${calcTotal}`);
+    console.log(`[ORDER] Customer order created ${orderId} -> Status: PENDING | Total: PHP ${calcTotal}`);
 
     return res.status(201).json({
       success: true,
@@ -642,4 +704,190 @@ export async function handleGetCustomerFlowOrder(req, res) {
   }
 }
 
+/**
+ * GET /api/cashier/online-receipts
+ * Cashier view for confirmed online orders needing restaurant receipts.
+ */
+router.get('/cashier/online-receipts', async (req, res) => {
+  try {
+    const { receiptStatus, search } = req.query;
+
+    let dbOrders = [];
+    try {
+      const { rows } = await query(`
+        SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+               'UNPRINTED' AS receipt_status, o.created_at, o.updated_at,
+               COALESCE(c.fullname, 'Online Customer') AS customer_name,
+               c.phone AS customer_phone,
+               COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+               p_pay.payment_method,
+               COALESCE(
+                 json_agg(
+                   json_build_object(
+                     'id', oi.id,
+                     'name', oi.product_name_snapshot,
+                     'quantity', oi.quantity,
+                     'price', oi.unit_price
+                   )
+                 ) FILTER (WHERE oi.id IS NOT NULL), '[]'
+               ) AS items
+        FROM orders o
+        LEFT JOIN customers c ON o.customer_id = c.id
+        LEFT JOIN (
+          SELECT DISTINCT ON (order_id) order_id, delivery_address
+          FROM deliveries
+          ORDER BY order_id, created_at DESC
+        ) d ON o.id = d.order_id
+        LEFT JOIN order_items oi ON o.id = oi.order_id
+        LEFT JOIN (
+          SELECT DISTINCT ON (order_id) order_id, payment_method
+          FROM payments
+          ORDER BY order_id, created_at DESC
+        ) p_pay ON o.id = p_pay.order_id
+        WHERE UPPER(COALESCE(o.order_type, 'ONLINE')) = 'ONLINE'
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, p_pay.payment_method
+        ORDER BY o.created_at ASC
+      `);
+      dbOrders = rows;
+    } catch (dbErr) {
+      console.warn('DB query note (cashier online receipts):', dbErr.message);
+    }
+
+    const mergedMap = new Map();
+
+    inMemoryOrders.forEach((val, key) => {
+      const formatted = formatOrderResponse(val);
+      const normType = (val.orderType || val.order_type || val.type || 'ONLINE').toUpperCase();
+      if (normType.includes('ONLINE') || val.deliveryAddress || val.address || val.phone) {
+        mergedMap.set(key, formatted);
+      }
+    });
+
+    dbOrders.forEach(row => {
+      if (!mergedMap.has(row.id)) {
+        mergedMap.set(row.id, formatOrderResponse(row));
+      } else {
+        const existing = mergedMap.get(row.id);
+        mergedMap.set(row.id, {
+          ...existing,
+          receiptStatus: existing.receiptStatus || row.receipt_status || 'UNPRINTED',
+          isReceiptPrinted: existing.isReceiptPrinted || row.receipt_status === 'PRINTED',
+        });
+      }
+    });
+
+    let result = Array.from(mergedMap.values());
+
+    const confirmedStatuses = ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+    result = result.filter(o => confirmedStatuses.includes((o.status || '').toUpperCase()));
+
+    if (receiptStatus) {
+      const target = receiptStatus.toUpperCase();
+      if (target === 'UNPRINTED') {
+        result = result.filter(o => !o.isReceiptPrinted && o.receiptStatus !== 'PRINTED');
+      } else if (target === 'PRINTED') {
+        result = result.filter(o => o.isReceiptPrinted || o.receiptStatus === 'PRINTED');
+      }
+    }
+
+    if (search && search.trim()) {
+      const q = search.trim().toLowerCase();
+      result = result.filter(o =>
+        (o.id && o.id.toLowerCase().includes(q)) ||
+        (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+        (o.phone && o.phone.toLowerCase().includes(q))
+      );
+    }
+
+    // Sort FIFO: Oldest creation time first
+    result.sort((a, b) => {
+      const tA = new Date(a.createdAt || a.created_at).getTime() || 0;
+      const tB = new Date(b.createdAt || b.created_at).getTime() || 0;
+      return tA - tB;
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: result.length,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error fetching cashier online receipts:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve online receipts',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * PATCH /api/cashier/online-receipts/:id/print
+ * Records that Cashier printed the restaurant receipt for an online order.
+ * Does NOT modify order fulfillment status (status remains intact).
+ */
+router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let updatedOrder = null;
+
+    if (inMemoryOrders.has(id)) {
+      const rec = inMemoryOrders.get(id);
+      rec.receipt_status = 'PRINTED';
+      rec.receiptStatus = 'PRINTED';
+      rec.is_receipt_printed = true;
+      rec.isReceiptPrinted = true;
+      rec.receipt_printed_at = new Date().toISOString();
+      inMemoryOrders.set(id, rec);
+      updatedOrder = formatOrderResponse(rec);
+    }
+
+    try {
+      await query(
+        `UPDATE orders SET receipt_status = 'PRINTED', updated_at = NOW() WHERE id = $1`,
+        [id]
+      ).catch(() => {});
+
+      const { rows } = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
+      if (rows.length > 0 && !updatedOrder) {
+        updatedOrder = formatOrderResponse({
+          ...rows[0],
+          receipt_status: 'PRINTED',
+          is_receipt_printed: true,
+        });
+      }
+    } catch (dbErr) {
+      console.warn('DB receipt print update note:', dbErr.message);
+    }
+
+    if (!updatedOrder) {
+      const fallback = {
+        id,
+        receipt_status: 'PRINTED',
+        is_receipt_printed: true,
+        status: 'CONFIRMED',
+      };
+      inMemoryOrders.set(id, fallback);
+      updatedOrder = formatOrderResponse(fallback);
+    }
+
+    console.log(`🧾 [Cashier Receipt] Official receipt printed for online order ${id}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Receipt printed successfully for order ${id}`,
+      data: updatedOrder,
+    });
+  } catch (error) {
+    console.error('Error recording receipt print:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to record receipt print action',
+      error: error.message,
+    });
+  }
+});
+
 export default router;
+

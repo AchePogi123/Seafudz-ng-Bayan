@@ -1,12 +1,16 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 
-interface BrandLogoProps {
+export interface BrandLogoProps {
   variant?: 'light' | 'dark'; // 'light' for light backgrounds, 'dark' for dark backgrounds
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showSubtitle?: boolean;
+  subtitle?: string; // Custom subtitle e.g. 'Admin Dashboard', 'Cashier POS Terminal', etc.
+  badge?: string; // e.g. 'ADMIN', 'CASHIER', 'KITCHEN', 'RIDER', 'ASSISTANT'
+  badgeColor?: string; // optional custom badge style classes
   clickable?: boolean;
-  onClick?: (e: React.MouseEvent<HTMLAnchorElement>) => void;
+  to?: string;
+  onClick?: (e: React.MouseEvent<HTMLElement>) => void;
   className?: string;
 }
 
@@ -14,7 +18,11 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   variant = 'light',
   size = 'md',
   showSubtitle = true,
+  subtitle,
+  badge,
+  badgeColor,
   clickable = true,
+  to = '/',
   onClick,
   className = ''
 }) => {
@@ -40,6 +48,10 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     lg: 'text-[9.5px] sm:text-[10px] tracking-[0.22em]',
     xl: 'text-xs tracking-[0.25em]'
   };
+
+  const defaultBadgeClasses = isDarkBg
+    ? 'bg-slate-800 text-orange-400 border border-slate-700'
+    : 'bg-orange-50 text-orange-700 border border-orange-200/80';
 
   const content = (
     <div className={`group inline-flex flex-col select-none text-left transition-all duration-200 ${className}`}>
@@ -73,16 +85,27 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
             />
           </svg>
         </span>
+
+        {/* Optional Role / Status Badge */}
+        {badge && (
+          <span
+            className={`ml-1.5 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider inline-flex items-center align-middle shadow-2xs ${
+              badgeColor || defaultBadgeClasses
+            }`}
+          >
+            {badge}
+          </span>
+        )}
       </div>
 
-      {/* Clean Tagline */}
+      {/* Clean Tagline / Subtitle */}
       {showSubtitle && (
         <span
           className={`uppercase font-semibold block mt-1 ${subtitleSizes[size]} ${
             isDarkBg ? 'text-slate-400 group-hover:text-slate-300' : 'text-slate-400 group-hover:text-slate-600'
           } transition-colors`}
         >
-          Fresh Seafood &amp; Bilao Feasts
+          {subtitle || 'Fresh Seafood & Bilao Feasts'}
         </span>
       )}
     </div>
@@ -90,13 +113,22 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
   if (clickable) {
     return (
-      <Link to="/" onClick={onClick} className="inline-block outline-none focus-visible:ring-2 focus-visible:ring-orange-500 rounded-md py-0.5 cursor-pointer">
+      <Link
+        to={to}
+        onClick={onClick}
+        className="inline-block outline-none focus-visible:ring-2 focus-visible:ring-orange-500 rounded-md py-0.5 cursor-pointer"
+      >
         {content}
       </Link>
     );
   }
 
-  return content;
+  return (
+    <div onClick={onClick} className={onClick ? 'cursor-pointer' : ''}>
+      {content}
+    </div>
+  );
 };
 
 export default BrandLogo;
+

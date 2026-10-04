@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
+import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 
 const router = Router();
 
 // GET /api/kitchen/orders - Get active kitchen order tickets
-router.get('/kitchen/orders', async (req, res) => {
+router.get('/kitchen/orders', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
@@ -41,12 +42,51 @@ router.get('/kitchen/orders', async (req, res) => {
       GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
     `;
-    const { rows } = await query(sql);
+    let dbOrders = [];
+    try {
+      const { rows } = await query(sql);
+      dbOrders = rows;
+    } catch (dbErr) {
+      /* ignore DB errors */
+    }
+
+    const mergedMap = new Map();
+    dbOrders.forEach((row) => {
+      mergedMap.set(row.id, row);
+    });
+
+    const validKitchenStatuses = [
+      'CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN', 
+      'IN_PROCESS', 'COOKING', 'PREPARING', 'READY', 'PREPARED', 'COMPLETED'
+    ];
+
+    inMemoryOrders.forEach((order, id) => {
+      const normStatus = normalizeFlowStatus(order.status);
+      if (
+        validKitchenStatuses.includes(normStatus) || 
+        (normStatus === 'PENDING' && String(order.order_type || '').toLowerCase() !== 'online')
+      ) {
+        const existing = mergedMap.get(id) || {};
+        mergedMap.set(id, {
+          id: id,
+          order_type: order.order_type || existing.order_type || 'ONLINE',
+          status: normStatus,
+          order_status: normStatus,
+          notes: order.notes || existing.notes || '',
+          created_at: order.created_at || existing.created_at || new Date().toISOString(),
+          updated_at: order.updated_at || existing.updated_at || new Date().toISOString(),
+          table_name: existing.table_name || null,
+          items: order.items || existing.items || [],
+        });
+      }
+    });
+
+    const finalOrders = Array.from(mergedMap.values());
 
     return res.status(200).json({
       success: true,
-      count: rows.length,
-      data: rows,
+      count: finalOrders.length,
+      data: finalOrders,
     });
   } catch (error) {
     console.error('Error fetching kitchen orders:', error);
@@ -59,7 +99,7 @@ router.get('/kitchen/orders', async (req, res) => {
 });
 
 // PATCH /api/kitchen/orders/:id/status - Update ticket status
-router.patch('/kitchen/orders/:id/status', async (req, res) => {
+router.patch('/kitchen/orders/:id/status', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -135,7 +175,7 @@ router.patch('/kitchen/orders/:id/status', async (req, res) => {
 });
 
 // DELETE /api/kitchen/orders/:id - Cancel/remove ticket
-router.delete('/kitchen/orders/:id', async (req, res) => {
+router.delete('/kitchen/orders/:id', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -190,7 +230,9 @@ export async function handleKitchenStatusUpdate(req, res) {
     // Update PostgreSQL Database
     try {
       const { rows } = await query(
-        `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        `INSERT INTO orders (id, status, created_at) VALUES ($2, $1, NOW())
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()
+         RETURNING *`,
         [nextStatus, id]
       );
       
@@ -223,7 +265,7 @@ export async function handleKitchenStatusUpdate(req, res) {
       updatedOrder = formatOrderResponse(newRec);
     }
 
-    console.log(`🍳 [Kitchen Flow] Order ${id} -> Status: ${nextStatus}`);
+    console.log(`[KITCHEN] Order ${id} -> Status: ${nextStatus}`);
 
     return res.status(200).json({
       success: true,

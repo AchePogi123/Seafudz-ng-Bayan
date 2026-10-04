@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { API_BASE_URL } from '../utils/api'
+import { notifyOrderSync } from '../utils/orderSync'
 
 export interface TransactionData {
   id: string
@@ -100,7 +101,7 @@ export const AdminEditTransactionModal: React.FC<AdminEditTransactionModalProps>
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      window.dispatchEvent(new Event('seafudz_order_created'))
+      notifyOrderSync()
     } catch (e) {
       console.warn('Error updating local order:', e)
     }

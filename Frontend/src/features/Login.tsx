@@ -280,10 +280,6 @@ const Login = () => {
         throw new Error(otpJson.message || 'Failed to send verification code.');
       }
 
-      if (otpJson.demoOtp) {
-        setCurrentDemoOtp(otpJson.demoOtp);
-      }
-
       setOtpDigits(['', '', '', '', '', '']);
       setOtpTimer(30);
       setShowOtpModal(true);
@@ -314,10 +310,6 @@ const Login = () => {
       const otpJson = await otpRes.json();
       if (!otpRes.ok || !otpJson.success) {
         throw new Error(otpJson.message || 'Failed to resend code.');
-      }
-
-      if (otpJson.demoOtp) {
-        setCurrentDemoOtp(otpJson.demoOtp);
       }
 
       setOtpDigits(['', '', '', '', '', '']);

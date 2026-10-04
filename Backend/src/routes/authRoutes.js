@@ -392,8 +392,8 @@ router.post('/auth/cleanup-user', async (req, res) => {
  */
 router.post('/auth/login', async (req, res) => {
   try {
-    const { username, supabaseUserId, email, password, pinCode } = req.body;
-    const searchValue = (email || username || '').trim();
+    const { username, supabaseUserId, email, password, pinCode, loginInput } = req.body;
+    const searchValue = (loginInput || email || username || '').trim();
 
     let verifiedSupabaseUserId = supabaseUserId || null;
 
@@ -409,11 +409,12 @@ router.post('/auth/login', async (req, res) => {
       } catch { }
     }
 
-    // 2. If email + password are provided and user is not yet verified, verify via Supabase Auth
-    if (!verifiedSupabaseUserId && email && password) {
+    // 2. If email/loginInput + password are provided and user is not yet verified, verify via Supabase Auth
+    const targetEmail = (email || loginInput || '').trim();
+    if (!verifiedSupabaseUserId && targetEmail && password) {
       try {
         const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: targetEmail,
           password,
         });
         if (!loginError && loginData?.user) {
@@ -429,12 +430,9 @@ router.post('/auth/login', async (req, res) => {
     if (verifiedSupabaseUserId) {
       empSql = `SELECT * FROM employees WHERE supabase_user_id = $1`;
       empParams = [verifiedSupabaseUserId];
-    } else if (email) {
-      empSql = `SELECT * FROM employees WHERE LOWER(email) = LOWER($1)`;
-      empParams = [email.trim()];
-    } else if (username) {
-      empSql = `SELECT * FROM employees WHERE LOWER(username) = LOWER($1)`;
-      empParams = [username.trim()];
+    } else if (searchValue) {
+      empSql = `SELECT * FROM employees WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`;
+      empParams = [searchValue];
     }
 
     if (empParams.length > 0) {

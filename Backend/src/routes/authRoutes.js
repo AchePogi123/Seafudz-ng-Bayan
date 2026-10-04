@@ -917,21 +917,19 @@ router.post('/auth/register', async (req, res) => {
       const cleanUsername = (username || cleanEmail.split('@')[0]).trim();
 
       const sql = `
-        INSERT INTO customers (supabase_user_id, fullname, username, email, phone, delivery_address)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (email) DO UPDATE SET
           supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, customers.supabase_user_id),
           fullname = EXCLUDED.fullname,
-          username = EXCLUDED.username,
           phone = COALESCE(EXCLUDED.phone, customers.phone),
           delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address)
-        RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address, created_at
+        RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
       `;
 
       const { rows } = await query(sql, [
         req.body.supabaseUserId || null,
         cleanFullname,
-        cleanUsername,
         cleanEmail,
         phone || null,
         address || null,

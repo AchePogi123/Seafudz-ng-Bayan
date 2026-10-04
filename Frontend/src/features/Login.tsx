@@ -56,7 +56,6 @@ const Login = () => {
   const [isSendingOtp, setIsSendingOtp] = useState(false);
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
   const [otpError, setOtpError] = useState('');
-  const [currentDemoOtp, setCurrentDemoOtp] = useState('');
 
   // Forgot Password Modal States
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);

@@ -6,6 +6,13 @@ const getResolvedApiBaseUrl = (): string => {
     import.meta.env.VITE_RAILWAY_API_URL ||
     import.meta.env.VITE_GCP_API_URL;
 
+  if (typeof window !== 'undefined') {
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (!isLocalhost && (!envUrl || envUrl.includes('localhost'))) {
+      return 'https://seafudz-ng-bayan-production.up.railway.app/api';
+    }
+  }
+
   return envUrl || 'http://localhost:5000/api';
 };
 

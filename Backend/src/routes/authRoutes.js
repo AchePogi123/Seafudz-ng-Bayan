@@ -706,6 +706,16 @@ router.post('/auth/forgot-password', async (req, res) => {
     const token = crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).substring(2) + Date.now().toString(36);
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 60 minutes
 
+    // Ensure password_resets table exists before inserting
+    await query(`
+      CREATE TABLE IF NOT EXISTS password_resets (
+        email VARCHAR(255) PRIMARY KEY,
+        token VARCHAR(255) NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     // Store in PostgreSQL password_resets table for full persistence across server reloads
     await query(
       `INSERT INTO password_resets (email, token, expires_at)

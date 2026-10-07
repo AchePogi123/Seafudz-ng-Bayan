@@ -7,6 +7,7 @@ import NavbarKitchen from '../components/NavbarKitchen'
 import NavbarRider from '../components/Navbarrider'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 import { API_BASE_URL } from '../utils/api'
+import { supabase } from '../utils/supabase'
 
 interface UserProfile {
     fullName: string
@@ -220,8 +221,12 @@ export const AccMan: React.FC = () => {
         setMessage(null)
     }
 
-    const handleSaveSecurity = (e: React.FormEvent) => {
+    const handleSaveSecurity = async (e: React.FormEvent) => {
         e.preventDefault()
+        if (!newPassword || newPassword.length < 6) {
+            setMessage({ type: 'error', text: 'New password must be at least 6 characters long.' })
+            return
+        }
         if (newPassword !== confirmPassword) {
             setMessage({ type: 'error', text: 'New passwords do not match.' })
             return
@@ -229,16 +234,22 @@ export const AccMan: React.FC = () => {
         setIsSaving(true)
         setMessage(null)
 
-        // Simulate API delay
-        setTimeout(() => {
-            setIsSaving(false)
+        try {
+            const { error } = await supabase.auth.updateUser({ password: newPassword })
+            if (error) {
+                throw new Error(error.message)
+            }
             setCurrentPassword('')
             setNewPassword('')
             setConfirmPassword('')
             setMessage({ type: 'success', text: 'Password changed successfully!' })
-
-            setTimeout(() => setMessage(null), 3000)
-        }, 800)
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Failed to change password. Please try logging in again.'
+            setMessage({ type: 'error', text: msg })
+        } finally {
+            setIsSaving(false)
+            setTimeout(() => setMessage(null), 4000)
+        }
     }
 
     const handleSaveNotifications = (e: React.FormEvent) => {

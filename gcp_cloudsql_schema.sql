@@ -17,6 +17,7 @@ DROP TABLE IF EXISTS menu_items CASCADE;
 DROP TABLE IF EXISTS categories CASCADE;
 DROP TABLE IF EXISTS customers CASCADE;
 DROP TABLE IF EXISTS employees CASCADE;
+DROP TABLE IF EXISTS password_resets CASCADE;
 
 -- ============================================
 -- 1. EMPLOYEES
@@ -254,6 +255,18 @@ CREATE TABLE assistant_calls (
     status VARCHAR(50) NOT NULL DEFAULT 'Pending',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- ============================================
+-- 11. PASSWORD RESETS
+-- ============================================
+
+CREATE TABLE password_resets (
+    email VARCHAR(255) PRIMARY KEY,
+    token VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 

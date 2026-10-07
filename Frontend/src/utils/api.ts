@@ -1,13 +1,11 @@
 import { supabase } from './supabase';
 
 const getResolvedApiBaseUrl = (): string => {
-  const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_GCP_API_URL;
-  if (typeof window !== 'undefined') {
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocalhost && (!envUrl || envUrl.includes('localhost'))) {
-      return 'https://seafudz-backend-925771991157.asia-southeast1.run.app/api';
-    }
-  }
+  const envUrl =
+    import.meta.env.VITE_API_BASE_URL ||
+    import.meta.env.VITE_RAILWAY_API_URL ||
+    import.meta.env.VITE_GCP_API_URL;
+
   return envUrl || 'http://localhost:5000/api';
 };
 

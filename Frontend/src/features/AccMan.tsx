@@ -235,20 +235,35 @@ export const AccMan: React.FC = () => {
         setMessage(null)
 
         try {
-            const { error } = await supabase.auth.updateUser({ password: newPassword })
-            if (error) {
-                throw new Error(error.message)
+            const res = await fetch(`${API_BASE_URL}/auth/change-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: profile.email,
+                    newPassword,
+                }),
+            })
+
+            const data = await res.json()
+
+            if (!res.ok || !data.success) {
+                // Fallback to client-side Supabase Auth updateUser if backend fails
+                const { error: sbErr } = await supabase.auth.updateUser({ password: newPassword })
+                if (sbErr) {
+                    throw new Error(data.message || sbErr.message || 'Failed to update password.')
+                }
             }
+
             setCurrentPassword('')
             setNewPassword('')
             setConfirmPassword('')
-            setMessage({ type: 'success', text: 'Password changed successfully!' })
+            setMessage({ type: 'success', text: 'Password updated successfully! You can now log in with your new password.' })
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : 'Failed to change password. Please try logging in again.'
             setMessage({ type: 'error', text: msg })
         } finally {
             setIsSaving(false)
-            setTimeout(() => setMessage(null), 4000)
+            setTimeout(() => setMessage(null), 5000)
         }
     }
 

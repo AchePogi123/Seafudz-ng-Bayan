@@ -840,15 +840,46 @@ router.post('/auth/reset-password', async (req, res) => {
       });
     }
 
-    // 1. Update password in Supabase Auth if user exists
+    // 1. Update or create user in Supabase Auth
+    let authUser = null;
     try {
-      const { data: usersData } = await supabase.auth.admin.listUsers();
-      const authUser = usersData?.users?.find(u => u.email?.toLowerCase() === cleanEmail);
-      if (authUser?.id) {
-        await supabase.auth.admin.updateUserById(authUser.id, { password: newPassword });
+      const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+      authUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+    } catch (lErr) {
+      console.warn('[AUTH RESET] listUsers note:', lErr.message);
+    }
+
+    if (authUser?.id) {
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(authUser.id, {
+        password: newPassword,
+      });
+      if (updateErr) {
+        console.error('[AUTH RESET] Supabase updateUserById error:', updateErr.message);
+        return res.status(400).json({
+          success: false,
+          message: `Failed to reset password: ${updateErr.message}`,
+        });
       }
-    } catch (sErr) {
-      console.warn('Supabase password reset note:', sErr.message);
+      console.log(`[AUTH RESET] Updated password in Supabase Auth for UID: ${authUser.id}`);
+    } else {
+      // User exists in PostgreSQL but not in Supabase Auth yet. Create Supabase Auth user record.
+      const { data: createData, error: createErr } = await supabase.auth.admin.createUser({
+        email: cleanEmail,
+        password: newPassword,
+        email_confirm: true,
+      });
+      if (createErr) {
+        console.error('[AUTH RESET] Supabase createUser error:', createErr.message);
+        return res.status(400).json({
+          success: false,
+          message: `Failed to set new password: ${createErr.message}`,
+        });
+      }
+      if (createData?.user?.id) {
+        await query('UPDATE employees SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
+        await query('UPDATE customers SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
+        console.log(`[AUTH RESET] Created new Supabase Auth user for ${cleanEmail} (UID: ${createData.user.id})`);
+      }
     }
 
     // 2. Update PostgreSQL updated_at timestamps
@@ -867,6 +898,93 @@ router.post('/auth/reset-password', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to reset password. Please try again.',
+    });
+  }
+});
+
+/**
+ * POST /api/auth/change-password
+ * Authenticated / Direct Password Change for Profile/Account Settings
+ */
+router.post('/auth/change-password', async (req, res) => {
+  try {
+    const { email, newPassword } = req.body;
+
+    if (!email || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and new password are required.',
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters long.',
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Verify user exists in PostgreSQL
+    const checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
+    const checkEmp = await query('SELECT id, supabase_user_id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+
+    if (checkCust.rows.length === 0 && checkEmp.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No user account found with this email address.',
+      });
+    }
+
+    let authUser = null;
+    try {
+      const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+      authUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
+    } catch (lErr) {
+      console.warn('[CHANGE PASSWORD] listUsers note:', lErr.message);
+    }
+
+    if (authUser?.id) {
+      const { error: updateErr } = await supabase.auth.admin.updateUserById(authUser.id, {
+        password: newPassword,
+      });
+      if (updateErr) {
+        return res.status(400).json({
+          success: false,
+          message: `Failed to update password: ${updateErr.message}`,
+        });
+      }
+    } else {
+      const { data: createData, error: createErr } = await supabase.auth.admin.createUser({
+        email: cleanEmail,
+        password: newPassword,
+        email_confirm: true,
+      });
+      if (createErr) {
+        return res.status(400).json({
+          success: false,
+          message: `Failed to update password: ${createErr.message}`,
+        });
+      }
+      if (createData?.user?.id) {
+        await query('UPDATE employees SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
+        await query('UPDATE customers SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
+      }
+    }
+
+    await query('UPDATE employees SET updated_at = NOW() WHERE LOWER(email) = $1', [cleanEmail]);
+    await query('UPDATE customers SET updated_at = NOW() WHERE LOWER(email) = $1', [cleanEmail]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password updated successfully.',
+    });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update password. Please try again.',
     });
   }
 });

@@ -855,7 +855,7 @@ export const OnlineCustomer: React.FC = () => {
                                             : 'border-neutral-100 shadow-xs hover:shadow-md'
                                             }`}
                                     >
-                                        <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                                        <div className="relative aspect-[16/9] sm:aspect-4/3 max-h-48 sm:max-h-none w-full overflow-hidden bg-neutral-50">
                                             <img
                                                 src={item.image}
                                                 alt={item.name}
@@ -881,7 +881,7 @@ export const OnlineCustomer: React.FC = () => {
                                             )}
                                         </div>
 
-                                        <div className="p-5 flex-grow flex flex-col justify-between gap-4">
+                                        <div className="p-4 sm:p-5 flex-grow flex flex-col justify-between gap-3 sm:gap-4">
                                             <div>
                                                 <h3
                                                     className={`font-bold text-lg leading-snug transition-colors ${!available

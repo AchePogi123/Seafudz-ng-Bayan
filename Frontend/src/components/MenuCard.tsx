@@ -417,7 +417,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
         }`}
     >
       {/* Food Image Container */}
-      <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-100 flex-shrink-0">
+      <div className="relative aspect-[16/9] sm:aspect-[16/10] max-h-48 sm:max-h-none w-full overflow-hidden bg-neutral-100 flex-shrink-0">
         <img
           src={item.image}
           alt={item.name}

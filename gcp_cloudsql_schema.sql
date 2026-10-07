@@ -37,6 +37,7 @@ CREATE TABLE employees (
             'kitchen',
             'rider'
         )),
+    password_hash TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -54,6 +55,7 @@ CREATE TABLE customers (
     email VARCHAR(255) UNIQUE NOT NULL,
     phone VARCHAR(50),
     delivery_address TEXT,
+    password_hash TEXT,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

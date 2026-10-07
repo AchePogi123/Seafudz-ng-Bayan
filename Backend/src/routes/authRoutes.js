@@ -395,9 +395,16 @@ router.post('/auth/login', async (req, res) => {
     const { username, supabaseUserId, email, password, pinCode, loginInput } = req.body;
     const searchValue = (loginInput || email || username || '').trim();
 
+    if (!searchValue && !supabaseUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email or username is required.',
+      });
+    }
+
     let verifiedSupabaseUserId = supabaseUserId || null;
 
-    // 1. If an Authorization Bearer token is passed, verify via Supabase
+    // 1. If an Authorization Bearer token is passed in header, verify via Supabase Auth
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -409,86 +416,95 @@ router.post('/auth/login', async (req, res) => {
       } catch { }
     }
 
-    // 2. If email/loginInput + password are provided and user is not yet verified, verify via Supabase Auth
-    const targetEmail = (email || loginInput || '').trim();
-    if (!verifiedSupabaseUserId && targetEmail && password) {
-      try {
-        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
-          email: targetEmail,
-          password,
-        });
-        if (!loginError && loginData?.user) {
-          verifiedSupabaseUserId = loginData.user.id;
-        }
-      } catch { }
-    }
-
-    // 3. Search employees table
-    let empSql = `SELECT * FROM employees WHERE 1=0`;
-    let empParams = [];
+    // 2. Locate user in employees or customers database table
+    let emp = null;
+    let cust = null;
 
     if (verifiedSupabaseUserId) {
-      empSql = `SELECT * FROM employees WHERE supabase_user_id = $1`;
-      empParams = [verifiedSupabaseUserId];
-    } else if (searchValue) {
-      empSql = `SELECT * FROM employees WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)`;
-      empParams = [searchValue];
+      const empRes = await query('SELECT * FROM employees WHERE supabase_user_id = $1', [verifiedSupabaseUserId]);
+      if (empRes.rows.length > 0) emp = empRes.rows[0];
+
+      if (!emp) {
+        const custRes = await query('SELECT * FROM customers WHERE supabase_user_id = $1', [verifiedSupabaseUserId]);
+        if (custRes.rows.length > 0) cust = custRes.rows[0];
+      }
     }
 
-    if (empParams.length > 0) {
-      const empRes = await query(empSql, empParams);
-      if (empRes.rows.length > 0) {
-        const emp = empRes.rows[0];
+    if (!emp && !cust && searchValue) {
+      const empRes = await query(
+        'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)',
+        [searchValue]
+      );
+      if (empRes.rows.length > 0) emp = empRes.rows[0];
 
-        // PIN or password verification if PIN code is set on employee record
-        if (emp.pin_code && pinCode && emp.pin_code !== pinCode) {
-          return res.status(401).json({
-            success: false,
-            message: 'Invalid employee PIN code',
+      if (!emp) {
+        const custRes = await query(
+          'SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1)',
+          [searchValue]
+        );
+        if (custRes.rows.length > 0) cust = custRes.rows[0];
+      }
+    }
+
+    // 3. Reject if no employee or customer account exists for the given username/email
+    if (!emp && !cust) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid email/username or password. Please try again.',
+      });
+    }
+
+    const userRecord = emp || cust;
+    const isEmployee = !!emp;
+    const userRole = emp ? emp.role : 'customer';
+
+    // 4. Verify password / PIN if user is not already authenticated via Bearer token
+    if (!verifiedSupabaseUserId) {
+      let isVerified = false;
+
+      // Check PIN code first for staff/employees if PIN is configured
+      const submittedPin = pinCode || password;
+      if (isEmployee && emp.pin_code && submittedPin && emp.pin_code.trim() === String(submittedPin).trim()) {
+        isVerified = true;
+      }
+
+      // Check password via Supabase Auth using the user's registered email
+      if (!isVerified && password && userRecord.email) {
+        try {
+          const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+            email: userRecord.email.trim(),
+            password,
           });
-        }
 
-        const cryptoSession = generateSessionHashToken({ userId: emp.id, email: emp.email, role: emp.role });
-        return res.status(200).json({
-          success: true,
-          message: `Login successful for ${emp.fullname}`,
-          data: emp,
-          sessionToken: cryptoSession.sessionToken,
-          hashToken: cryptoSession.hashToken,
+          if (!loginError && loginData?.user) {
+            isVerified = true;
+            verifiedSupabaseUserId = loginData.user.id;
+          }
+        } catch { }
+      }
+
+      // STRICT SECURITY ENFORCEMENT: If neither PIN nor password verified, block login!
+      if (!isVerified) {
+        return res.status(401).json({
+          success: false,
+          message: 'Invalid email/username or password. Please try again.',
         });
       }
     }
 
-    // 4. Search customers table
-    let custSql = `SELECT * FROM customers WHERE 1=0`;
-    let custParams = [];
+    // 5. Generate HMAC session token and return authenticated profile
+    const cryptoSession = generateSessionHashToken({
+      userId: userRecord.id,
+      email: userRecord.email,
+      role: userRole,
+    });
 
-    if (verifiedSupabaseUserId) {
-      custSql = `SELECT * FROM customers WHERE supabase_user_id = $1`;
-      custParams = [verifiedSupabaseUserId];
-    } else if (searchValue) {
-      custSql = `SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1)`;
-      custParams = [searchValue];
-    }
-
-    if (custParams.length > 0) {
-      const custRes = await query(custSql, custParams);
-      if (custRes.rows.length > 0) {
-        const cust = custRes.rows[0];
-        const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
-        return res.status(200).json({
-          success: true,
-          message: `Login successful for ${cust.fullname}`,
-          data: { ...cust, role: 'customer' },
-          sessionToken: cryptoSession.sessionToken,
-          hashToken: cryptoSession.hashToken,
-        });
-      }
-    }
-
-    return res.status(404).json({
-      success: false,
-      message: 'User profile record not found in database',
+    return res.status(200).json({
+      success: true,
+      message: `Login successful for ${userRecord.fullname}`,
+      data: isEmployee ? emp : { ...cust, role: 'customer' },
+      sessionToken: cryptoSession.sessionToken,
+      hashToken: cryptoSession.hashToken,
     });
   } catch (error) {
     console.error('Error authenticating user:', error);

@@ -602,7 +602,7 @@ router.post('/auth/send-otp', async (req, res) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: 'Seafudz ng Bayan <onboarding@resend.dev>',
+            from: process.env.RESEND_FROM_EMAIL || 'Seafudz ng Bayan <noreply@seafudzngbayan.app>',
             to: [cleanEmail],
             subject: `${otp} is your Seafudz email verification code`,
             html: `
@@ -769,7 +769,7 @@ router.post('/auth/forgot-password', async (req, res) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: 'Seafudz ng Bayan <onboarding@resend.dev>',
+            from: process.env.RESEND_FROM_EMAIL || 'Seafudz ng Bayan <noreply@seafudzngbayan.app>',
             to: [cleanEmail],
             subject: 'Reset Your Password - Seafudz ng Bayan',
             html: `

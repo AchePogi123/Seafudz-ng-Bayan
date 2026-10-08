@@ -561,45 +561,53 @@ export const LandingPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-left">
-            <div className="bg-white p-7 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-3">
-                Standard 01
-              </span>
-              <h3 className="text-base font-bold text-slate-900 mb-2">Daily Dawn Harvest</h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Directly gathered from local coastal fishports at dawn. No aged frozen inventory is ever used in our platters.
-              </p>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 text-left">
+            <div className="bg-white p-4 sm:p-7 rounded-xl sm:rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] sm:text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-1.5 sm:mb-3">
+                  Standard 01
+                </span>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 mb-1.5 sm:mb-2 leading-tight">Daily Dawn Harvest</h3>
+                <p className="text-[11px] sm:text-sm text-slate-600 leading-relaxed">
+                  Directly gathered from local coastal fishports at dawn. No aged frozen inventory is ever used in our platters.
+                </p>
+              </div>
             </div>
 
-            <div className="bg-white p-7 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-3">
-                Standard 02
-              </span>
-              <h3 className="text-base font-bold text-slate-900 mb-2">Insulated Heat Delivery</h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Transported in thermal heat-retention packaging so every Cajun boil arrives sizzling and ready to feast.
-              </p>
+            <div className="bg-white p-4 sm:p-7 rounded-xl sm:rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] sm:text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-1.5 sm:mb-3">
+                  Standard 02
+                </span>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 mb-1.5 sm:mb-2 leading-tight">Insulated Heat Delivery</h3>
+                <p className="text-[11px] sm:text-sm text-slate-600 leading-relaxed">
+                  Transported in thermal heat-retention packaging so every Cajun boil arrives sizzling and ready to feast.
+                </p>
+              </div>
             </div>
 
-            <div className="bg-white p-7 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-3">
-                Standard 03
-              </span>
-              <h3 className="text-base font-bold text-slate-900 mb-2">Scratch-Made Sauces</h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Cooked with natural dairy butter, fresh native garlic, and custom spice blends with selectable heat intensities.
-              </p>
+            <div className="bg-white p-4 sm:p-7 rounded-xl sm:rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] sm:text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-1.5 sm:mb-3">
+                  Standard 03
+                </span>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 mb-1.5 sm:mb-2 leading-tight">Scratch-Made Sauces</h3>
+                <p className="text-[11px] sm:text-sm text-slate-600 leading-relaxed">
+                  Cooked with natural dairy butter, fresh native garlic, and custom spice blends with selectable heat intensities.
+                </p>
+              </div>
             </div>
 
-            <div className="bg-white p-7 rounded-2xl border border-slate-200 shadow-xs">
-              <span className="text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-3">
-                Standard 04
-              </span>
-              <h3 className="text-base font-bold text-slate-900 mb-2">Bayanihan Portions</h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                Substantial family-scale platters designed for gatherings, celebrations, and memorable group feasts.
-              </p>
+            <div className="bg-white p-4 sm:p-7 rounded-xl sm:rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] sm:text-xs font-extrabold text-orange-600 uppercase tracking-widest font-mono block mb-1.5 sm:mb-3">
+                  Standard 04
+                </span>
+                <h3 className="text-sm sm:text-base font-bold text-slate-900 mb-1.5 sm:mb-2 leading-tight">Bayanihan Portions</h3>
+                <p className="text-[11px] sm:text-sm text-slate-600 leading-relaxed">
+                  Substantial family-scale platters designed for gatherings, celebrations, and memorable group feasts.
+                </p>
+              </div>
             </div>
           </div>
         </div>

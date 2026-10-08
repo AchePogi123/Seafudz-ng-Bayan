@@ -69,11 +69,11 @@ export const NavbarCustomer: React.FC = () => {
           {/* Dedicated Hamburger Menu Trigger */}
           <button
             onClick={() => setIsSidebarOpen(true)}
-            className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200/80 text-slate-700 border border-slate-200/90 flex items-center justify-center transition-all cursor-pointer shadow-2xs hover:scale-105 active:scale-95 focus:outline-none focus:ring-2 focus:ring-orange-500/30 shrink-0"
+            className="p-1.5 text-slate-800 hover:text-orange-600 transition-colors cursor-pointer focus:outline-none shrink-0 flex items-center justify-center"
             aria-label="Open Navigation Menu"
             title="Open Navigation Menu"
           >
-            <svg className="w-5 h-5 text-slate-700" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+            <svg className="w-6.5 h-6.5 text-current" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
           </button>

@@ -511,23 +511,23 @@ export const LandingPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
             {SIGNATURE_DISHES.map((dish) => (
               <div
                 key={dish.id}
                 onClick={handleOrderOnline}
-                className="relative h-72 sm:h-80 md:h-88 rounded-2xl sm:rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 group cursor-pointer border border-slate-200/80 bg-orange-50"
+                className="relative h-48 sm:h-80 md:h-88 rounded-xl sm:rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 group cursor-pointer border border-slate-200/80 bg-orange-50"
               >
                 <img
                   src={dish.image}
                   alt={dish.name}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
                 />
-                <div className="absolute top-4 left-4 bg-white/95 backdrop-blur-md px-3 py-1 rounded-full text-[11px] font-bold text-orange-700 shadow-sm border border-orange-100/80">
+                <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 bg-white/95 backdrop-blur-md px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold text-orange-700 shadow-sm border border-orange-100/80">
                   {dish.tag}
                 </div>
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent flex flex-col justify-end p-5 text-white transition-opacity duration-300">
-                  <h3 className="font-extrabold text-lg sm:text-xl leading-snug drop-shadow-sm">
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent flex flex-col justify-end p-3 sm:p-5 text-white transition-opacity duration-300">
+                  <h3 className="font-extrabold text-xs sm:text-xl leading-snug drop-shadow-sm line-clamp-2">
                     {dish.name}
                   </h3>
                 </div>

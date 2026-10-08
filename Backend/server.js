@@ -41,14 +41,22 @@ const allowedOrigins = [
   'https://seafudz-ng-bayan.web.app',
   'https://seafudz-ng-bayan.firebaseapp.com',
   'https://seafudz-ng-bayan.vercel.app',
+  'https://seafudzngbayan.app',
+  'https://www.seafudzngbayan.app',
   ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()) : []),
 ];
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, Cloud Run health probes) or any vercel.app subdomain
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      // Allow requests with no origin (e.g. mobile apps, curl, Cloud Run health probes) or authorized domains
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.seafudzngbayan.app') ||
+        origin === 'https://seafudzngbayan.app'
+      ) {
         return callback(null, true);
       }
       return callback(new Error(`Access blocked by CORS policy: Origin '${origin}' is not authorized.`));

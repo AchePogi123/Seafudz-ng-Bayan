@@ -4,10 +4,10 @@ import BrandLogo from './BrandLogo';
 
 export const Footer: React.FC = () => {
   return (
-    <footer className="bg-[#0B132B] text-white pt-16 pb-12 px-4 sm:px-6 lg:px-8 border-t border-cyan-950/60 font-sans">
-      <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 pb-12 border-b border-cyan-950/60">
+    <footer className="bg-[#0B132B] text-white pt-10 sm:pt-16 pb-8 sm:pb-12 px-4 sm:px-6 lg:px-8 border-t border-cyan-950/60 font-sans">
+      <div className="max-w-7xl mx-auto grid grid-cols-2 md:grid-cols-2 lg:grid-cols-5 gap-6 sm:gap-10 pb-8 sm:pb-12 border-b border-cyan-950/60">
         {/* Column 1: Brand Info */}
-        <div className="lg:col-span-2 space-y-4 text-left">
+        <div className="col-span-2 lg:col-span-2 space-y-3.5 text-left">
           <BrandLogo
             variant="dark"
             size="md"
@@ -21,18 +21,18 @@ export const Footer: React.FC = () => {
             Serving authentic Filipino seafood bilao platters, Cajun boils, and fresh catch daily sourced directly from local coastal fishermen straight to your family's table.
           </p>
 
-          <div className="pt-2 text-xs text-slate-300/80 flex items-center gap-2">
+          <div className="pt-1 text-xs text-slate-300/80 flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse"></span>
-            <span><strong className="text-white">Daily Hours:</strong> 10:00 AM to 10:00 PM (Monday to Sunday)</span>
+            <span><strong className="text-white">Daily Hours:</strong> 10:00 AM to 10:00 PM</span>
           </div>
         </div>
 
         {/* Column 2: Quick Links */}
-        <div className="space-y-3 text-left">
+        <div className="col-span-1 space-y-3 text-left">
           <h4 className="text-xs font-bold text-orange-400 tracking-wider uppercase">
             Navigation
           </h4>
-          <ul className="space-y-2.5 text-xs sm:text-sm text-slate-300/90">
+          <ul className="space-y-2 text-xs sm:text-sm text-slate-300/90">
             <li>
               <Link to="/customer" className="hover:text-cyan-300 transition-colors duration-200">
                 Order Online
@@ -55,19 +55,48 @@ export const Footer: React.FC = () => {
             </li>
             <li>
               <a href="#branches" className="hover:text-cyan-300 transition-colors duration-200">
-                Branch Locations
+                Branches
               </a>
             </li>
             <li>
               <a href="#faqs" className="hover:text-cyan-300 transition-colors duration-200">
-                Frequently Asked Questions
+                FAQs
               </a>
             </li>
           </ul>
         </div>
 
-        {/* Column 3: Active Branch */}
-        <div className="space-y-3 text-left">
+        {/* Column 3: Contact & Support */}
+        <div className="col-span-1 space-y-3 text-left">
+          <h4 className="text-xs font-bold text-orange-400 tracking-wider uppercase">
+            Contact & Support
+          </h4>
+          <ul className="space-y-2 text-xs sm:text-sm text-slate-300/90">
+            <li>
+              <span className="text-slate-400 block text-[10px] sm:text-[11px] uppercase tracking-wider font-semibold">Hotline</span>
+              <span className="text-white font-semibold text-xs sm:text-sm">(02) 8888-SEAFOOD</span>
+            </li>
+            <li>
+              <span className="text-slate-400 block text-[10px] sm:text-[11px] uppercase tracking-wider font-semibold">Mobile</span>
+              <span className="text-slate-200 text-xs sm:text-sm">+63 917 123 4567</span>
+            </li>
+            <li>
+              <span className="text-slate-400 block text-[10px] sm:text-[11px] uppercase tracking-wider font-semibold">Email</span>
+              <span className="text-slate-200 text-xs sm:text-sm break-all">orders@seafudzngbayan.ph</span>
+            </li>
+            <li className="pt-1">
+              <Link
+                to="/login"
+                className="inline-flex items-center gap-1 text-xs font-bold text-orange-400 hover:text-cyan-300 transition-colors"
+              >
+                Staff Portal <span>→</span>
+              </Link>
+            </li>
+          </ul>
+        </div>
+
+        {/* Column 4: Active Branch */}
+        <div className="col-span-2 lg:col-span-1 space-y-3 text-left">
           <h4 className="text-xs font-bold text-orange-400 tracking-wider uppercase">
             Active Branch
           </h4>
@@ -83,42 +112,13 @@ export const Footer: React.FC = () => {
             </div>
           </ul>
         </div>
-
-        {/* Column 4: Contact & Hotline */}
-        <div className="space-y-3 text-left">
-          <h4 className="text-xs font-bold text-orange-400 tracking-wider uppercase">
-            Contact & Support
-          </h4>
-          <ul className="space-y-2.5 text-xs sm:text-sm text-slate-300/90">
-            <li>
-              <span className="text-slate-400 block text-[11px] uppercase tracking-wider font-semibold">Hotline</span>
-              <span className="text-white font-semibold text-sm">(02) 8888-SEAFOOD</span>
-            </li>
-            <li>
-              <span className="text-slate-400 block text-[11px] uppercase tracking-wider font-semibold">Mobile</span>
-              <span className="text-slate-200">+63 917 123 4567</span>
-            </li>
-            <li>
-              <span className="text-slate-400 block text-[11px] uppercase tracking-wider font-semibold">Email</span>
-              <span className="text-slate-200">orders@seafudzngbayan.ph</span>
-            </li>
-            <li className="pt-2">
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-400 hover:text-cyan-300 transition-colors"
-              >
-                Staff & Customer Portal <span>→</span>
-              </Link>
-            </li>
-          </ul>
-        </div>
       </div>
 
       {/* Bottom Copyright Bar */}
-      <div className="max-w-7xl mx-auto pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-4">
+      <div className="max-w-7xl mx-auto pt-6 sm:pt-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-400 gap-3 text-center sm:text-left">
         <p>© 2026 Seafudz Ng Bayan Inc. All rights reserved.</p>
-        <div className="flex items-center gap-6">
-          <span className="text-slate-300">Fresh Catch Daily Guaranteed</span>
+        <div className="flex items-center gap-4 sm:gap-6 text-[11px] sm:text-xs">
+          <span className="text-slate-300">Fresh Catch Daily</span>
           <span className="text-slate-600">•</span>
           <span className="text-slate-300">Metro Manila Delivery</span>
         </div>

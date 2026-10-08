@@ -656,11 +656,11 @@ export const OnlineCustomer: React.FC = () => {
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
         const isBulk = checkIfBulkOrder(cartItems)
-        const initialStatus = paymentMethod === 'COD' 
-            ? 'PENDING_COD' 
-            : isBulk 
-            ? 'GCASH_PENDING_APPROVAL' 
-            : 'GCASH_AUTHORIZED'
+        const initialStatus = paymentMethod === 'COD'
+            ? 'PENDING_COD'
+            : isBulk
+                ? 'GCASH_PENDING_APPROVAL'
+                : 'GCASH_AUTHORIZED'
 
         const orderPayload = {
             type: 'Delivery',
@@ -771,161 +771,160 @@ export const OnlineCustomer: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
-        <div className="w-full flex flex-col gap-6">
-            {/* Integrated Customer Navbar */}
-            <NavbarCustomer />
+            <div className="w-full flex flex-col gap-6">
+                {/* Integrated Customer Navbar */}
+                <NavbarCustomer />
 
-            {/* VIEW 1: MENU / BROWSE */}
-            {activeTab === 'menu' && (
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                    {/* Main Menu Area (Left 3 Columns) */}
-                    <main className="lg:col-span-3 flex flex-col gap-6">
-                        {/* Category Toolbar Row with Integrated Search Bar */}
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-neutral-100 shadow-2xs">
-                            {/* Left: Browse Menu Button + Category Pills */}
-                            <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 scrollbar-thin flex-1 min-w-0">
-                                <button
-                                    onClick={() => setActiveTab('menu')}
-                                    className="px-5 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer bg-orange-500 text-white shadow-md shadow-orange-500/20"
-                                >
-                                    Browse Menu
-                                </button>
-
-                                {activeOrder && (
+                {/* VIEW 1: MENU / BROWSE */}
+                {activeTab === 'menu' && (
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+                        {/* Main Menu Area (Left 3 Columns) */}
+                        <main className="lg:col-span-3 flex flex-col gap-6">
+                            {/* Category Toolbar Row with Integrated Search Bar */}
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-neutral-100 shadow-2xs">
+                                {/* Left: Browse Menu Button + Category Pills */}
+                                <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 scrollbar-thin flex-1 min-w-0">
                                     <button
-                                        onClick={() => setActiveTab('tracking')}
-                                        className="px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100"
+                                        onClick={() => setActiveTab('menu')}
+                                        className="px-5 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer bg-orange-500 text-white shadow-md shadow-orange-500/20"
                                     >
-                                        <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-                                        Track Order ({activeOrder.id})
+                                        Browse Menu
                                     </button>
-                                )}
 
-                                <div className="h-6 w-px bg-neutral-200 shrink-0 mx-1 hidden sm:block" />
-
-                                {/* Category Pills */}
-                                <div className="flex items-center gap-2">
-                                    {categories.map((cat) => (
+                                    {activeOrder && (
                                         <button
-                                            key={cat}
-                                            onClick={() => setSelectedCategory(cat)}
-                                            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${
-                                                selectedCategory === cat
-                                                    ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
-                                                    : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
-                                            }`}
+                                            onClick={() => setActiveTab('tracking')}
+                                            className="px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100"
                                         >
-                                            {cat}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            {/* Right: Search Bar Inside Category Toolbar */}
-                            <div className="relative w-full md:w-56 lg:w-60 xl:w-64 shrink-0">
-                                <div className="flex items-center px-3 py-1.5 bg-neutral-50 hover:bg-white rounded-xl border border-neutral-200 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all shadow-2xs">
-                                    <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search dishes..."
-                                        className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
-                                    />
-                                    {searchQuery && (
-                                        <button onClick={() => setSearchQuery('')} className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold">
-                                            ✕
+                                            <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
+                                            Track Order ({activeOrder.id})
                                         </button>
                                     )}
+
+                                    <div className="h-6 w-px bg-neutral-200 shrink-0 mx-1 hidden sm:block" />
+
+                                    {/* Category Pills */}
+                                    <div className="flex items-center gap-2">
+                                        {categories.map((cat) => (
+                                            <button
+                                                key={cat}
+                                                onClick={() => setSelectedCategory(cat)}
+                                                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
+                                                        ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
+                                                        : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                                                    }`}
+                                            >
+                                                {cat}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Right: Search Bar Inside Category Toolbar */}
+                                <div className="relative w-full md:w-56 lg:w-60 xl:w-64 shrink-0">
+                                    <div className="flex items-center px-3 py-1.5 bg-neutral-50 hover:bg-white rounded-xl border border-neutral-200 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all shadow-2xs">
+                                        <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                        </svg>
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Search dishes..."
+                                            className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
+                                        />
+                                        {searchQuery && (
+                                            <button onClick={() => setSearchQuery('')} className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold">
+                                                ✕
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {/* Grid of Dishes */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                            {filteredItems.map((item) => {
-                                const available = isAvailable(item.id)
-                                return (
-                                    <div
-                                        key={item.id}
-                                        className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
-                                            ? 'border-rose-200 bg-neutral-50/70 opacity-80'
-                                            : 'border-neutral-100 shadow-xs hover:shadow-md'
-                                            }`}
-                                    >
-                                        <div className="relative aspect-[16/9] sm:aspect-4/3 max-h-48 sm:max-h-none w-full overflow-hidden bg-neutral-50">
-                                            <img
-                                                src={item.image}
-                                                alt={item.name}
-                                                className={`w-full h-full object-cover transition-transform duration-300 ${!available
-                                                    ? 'grayscale-75 opacity-60 contrast-125'
-                                                    : 'group-hover:scale-105'
-                                                    }`}
-                                                onError={(e) => {
-                                                    ; (e.target as HTMLImageElement).src =
-                                                        'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
-                                                }}
-                                            />
-                                            <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
-                                                {item.category}
-                                            </span>
-
-                                            {!available && (
-                                                <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
-                                                    <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                                        Unavailable / Sold Out
-                                                    </span>
-                                                </div>
-                                            )}
-                                        </div>
-
-                                        <div className="p-4 sm:p-5 flex-grow flex flex-col justify-between gap-3 sm:gap-4">
-                                            <div>
-                                                <h3
-                                                    className={`font-bold text-lg leading-snug transition-colors ${!available
-                                                        ? 'text-neutral-500 line-through'
-                                                        : 'text-neutral-800'
+                            {/* Grid of Dishes */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                                {filteredItems.map((item) => {
+                                    const available = isAvailable(item.id)
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
+                                                ? 'border-rose-200 bg-neutral-50/70 opacity-80'
+                                                : 'border-neutral-100 shadow-xs hover:shadow-md'
+                                                }`}
+                                        >
+                                            <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                                                <img
+                                                    src={item.image}
+                                                    alt={item.name}
+                                                    className={`w-full h-full object-cover transition-transform duration-300 ${!available
+                                                        ? 'grayscale-75 opacity-60 contrast-125'
+                                                        : 'group-hover:scale-105'
                                                         }`}
-                                                >
-                                                    {item.name}
-                                                </h3>
-                                                <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
-                                                    {item.description}
-                                                </p>
-                                            </div>
-
-                                            <div className="flex items-center justify-between mt-auto">
-                                                <span
-                                                    className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
-                                                        }`}
-                                                >
-                                                    ₱{item.price.toLocaleString()}
+                                                    onError={(e) => {
+                                                        ; (e.target as HTMLImageElement).src =
+                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
+                                                    }}
+                                                />
+                                                <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                                                    {item.category}
                                                 </span>
 
-                                                {available ? (
-                                                    <button
-                                                        onClick={() => handleAddToCart(item)}
-                                                        className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
-                                                    >
-                                                        <span>+</span> Add
-                                                    </button>
-                                                ) : (
-                                                    <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
-                                                        Sold Out
-                                                    </span>
+                                                {!available && (
+                                                    <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
+                                                        <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
+                                                            Unavailable / Sold Out
+                                                        </span>
+                                                    </div>
                                                 )}
                                             </div>
-                                        </div>
-                                    </div>
-                                )
-                            })}
-                        </div>
-                    </main>
 
-                    {/* Desktop Right Side Column (1 Column) - Original Cart */}
-                    <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto sticky top-6">
+                                            <div className="p-5 flex-grow flex flex-col justify-between gap-4">
+                                                <div>
+                                                    <h3
+                                                        className={`font-bold text-lg leading-snug transition-colors ${!available
+                                                            ? 'text-neutral-500 line-through'
+                                                            : 'text-neutral-800'
+                                                            }`}
+                                                    >
+                                                        {item.name}
+                                                    </h3>
+                                                    <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
+                                                        {item.description}
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex items-center justify-between mt-auto">
+                                                    <span
+                                                        className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
+                                                            }`}
+                                                    >
+                                                        ₱{item.price.toLocaleString()}
+                                                    </span>
+
+                                                    {available ? (
+                                                        <button
+                                                            onClick={() => handleAddToCart(item)}
+                                                            className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
+                                                        >
+                                                            <span>+</span> Add
+                                                        </button>
+                                                    ) : (
+                                                        <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
+                                                            Sold Out
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </main>
+
+                        {/* Desktop Right Side Column (1 Column) - Original Cart */}
+                        <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto sticky top-6">
                             <div>
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
                                     Your Cart
@@ -1070,188 +1069,188 @@ export const OnlineCustomer: React.FC = () => {
                         )}
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                        {/* Customer Details Form */}
-                        <form
-                            onSubmit={handlePlaceOrder}
-                            className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
-                        >
-                            <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
-                                Delivery & Billing Details
-                            </h3>
+                            {/* Customer Details Form */}
+                            <form
+                                onSubmit={handlePlaceOrder}
+                                className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
+                            >
+                                <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
+                                    Delivery & Billing Details
+                                </h3>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                        Full Name *
-                                    </label>
-                                    <input
-                                        type="text"
-                                        required
-                                        placeholder="Full Name"
-                                        value={customerName}
-                                        onChange={(e) => setCustomerName(e.target.value)}
-                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                        Phone Number *
-                                    </label>
-                                    <input
-                                        type="tel"
-                                        required
-                                        placeholder="Phone Number"
-                                        value={phone}
-                                        onChange={(e) => setPhone(e.target.value)}
-                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                    Delivery Address *
-                                </label>
-                                <textarea
-                                    required
-                                    rows={3}
-                                    placeholder="Enter your complete delivery address"
-                                    value={address}
-                                    onChange={(e) => setAddress(e.target.value)}
-                                    className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
-                                />
-                            </div>
-
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                    Special Instructions / Kitchen Notes
-                                </label>
-                                <textarea
-                                    rows={2}
-                                    placeholder="e.g. Please ring doorbell, less spicy, extra garlic..."
-                                    value={orderNotes}
-                                    onChange={(e) => setOrderNotes(e.target.value)}
-                                    className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
-                                />
-                            </div>
-
-                            {/* Payment Type Selection */}
-                            <div className="flex flex-col gap-3">
-                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                    Select Payment Method
-                                </label>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                    {/* GCash Option */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setPaymentMethod('GCash')}
-                                        className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'GCash'
-                                            ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 shadow-sm'
-                                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between w-full">
-                                            <span className="font-black text-neutral-900 text-sm">GCash</span>
-                                            <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
-                                        </div>
-                                        <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
-                                            {checkIfBulkOrder(cartItems)
-                                                ? 'Your GCash payment requires verification from staff before payment authorization and order confirmation.'
-                                                : 'Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.'}
-                                        </p>
-                                    </button>
-
-                                    {/* COD Option */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setPaymentMethod('COD')}
-                                        className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'COD'
-                                            ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20 shadow-sm'
-                                            : 'border-neutral-200 hover:border-neutral-300 bg-white'
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between w-full">
-                                            <span className="font-black text-neutral-900 text-sm">Cash on Delivery</span>
-                                            <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full">COD</span>
-                                        </div>
-                                        <p className="text-[11px] font-semibold text-emerald-900/80 mt-2 leading-tight">
-                                            Cash on Delivery requires staff product availability verification before order confirmation.
-                                        </p>
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
-                                <button
-                                    type="submit"
-                                    className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                    {checkIfBulkOrder(cartItems) ? 'Request Order' : 'Confirm & Submit Order'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setActiveTab('menu')}
-                                    className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200 cursor-pointer"
-                                >
-                                    Back
-                                </button>
-                            </div>
-                        </form>
-
-                        {/* Right Summary Billing Panel */}
-                        <div className="bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6">
-                            <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
-                                Final Order Summary
-                            </h3>
-
-                            <div className="divide-y divide-neutral-50 max-h-[300px] overflow-y-auto pr-1">
-                                {cartItems.map((ci) => (
-                                    <div key={ci.item.id} className="py-3 first:pt-0">
-                                        <div className="flex justify-between text-sm">
-                                            <span className="font-medium text-neutral-700">
-                                                {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
-                                            </span>
-                                            <span className="font-bold text-neutral-800">
-                                                ₱{(ci.item.price * ci.quantity).toLocaleString()}
-                                            </span>
-                                        </div>
-                                        {ci.specialNote && (
-                                            <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
-                                        )}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                            Full Name *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            required
+                                            placeholder="Full Name"
+                                            value={customerName}
+                                            onChange={(e) => setCustomerName(e.target.value)}
+                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                                        />
                                     </div>
-                                ))}
-                            </div>
 
-                            {orderNotes && (
-                                <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100 text-xs">
-                                    <p className="font-bold text-neutral-500 uppercase text-[10px]">Special Instructions:</p>
-                                    <p className="text-neutral-700 italic mt-0.5">{orderNotes}</p>
+                                    <div className="flex flex-col gap-1.5">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                            Phone Number *
+                                        </label>
+                                        <input
+                                            type="tel"
+                                            required
+                                            placeholder="Phone Number"
+                                            value={phone}
+                                            onChange={(e) => setPhone(e.target.value)}
+                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                                        />
+                                    </div>
                                 </div>
-                            )}
 
-                            <div className="border-t border-neutral-100 pt-4 space-y-2">
-                                <div className="flex justify-between text-xs text-neutral-500">
-                                    <span>Subtotal</span>
-                                    <span>₱{subtotal.toLocaleString()}</span>
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                        Delivery Address *
+                                    </label>
+                                    <textarea
+                                        required
+                                        rows={3}
+                                        placeholder="Enter your complete delivery address"
+                                        value={address}
+                                        onChange={(e) => setAddress(e.target.value)}
+                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
+                                    />
                                 </div>
-                                <div className="flex justify-between text-xs text-neutral-500">
-                                    <span>VAT (12%)</span>
-                                    <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                        Special Instructions / Kitchen Notes
+                                    </label>
+                                    <textarea
+                                        rows={2}
+                                        placeholder="e.g. Please ring doorbell, less spicy, extra garlic..."
+                                        value={orderNotes}
+                                        onChange={(e) => setOrderNotes(e.target.value)}
+                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
+                                    />
                                 </div>
-                                <div className="flex justify-between text-xs text-neutral-500">
-                                    <span>Delivery Fee</span>
-                                    <span>₱{deliveryFee.toLocaleString()}</span>
+
+                                {/* Payment Type Selection */}
+                                <div className="flex flex-col gap-3">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                        Select Payment Method
+                                    </label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                        {/* GCash Option */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setPaymentMethod('GCash')}
+                                            className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'GCash'
+                                                ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 shadow-sm'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between w-full">
+                                                <span className="font-black text-neutral-900 text-sm">GCash</span>
+                                                <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
+                                            </div>
+                                            <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
+                                                {checkIfBulkOrder(cartItems)
+                                                    ? 'Your GCash payment requires verification from staff before payment authorization and order confirmation.'
+                                                    : 'Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.'}
+                                            </p>
+                                        </button>
+
+                                        {/* COD Option */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setPaymentMethod('COD')}
+                                            className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'COD'
+                                                ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20 shadow-sm'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                                }`}
+                                        >
+                                            <div className="flex items-center justify-between w-full">
+                                                <span className="font-black text-neutral-900 text-sm">Cash on Delivery</span>
+                                                <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full">COD</span>
+                                            </div>
+                                            <p className="text-[11px] font-semibold text-emerald-900/80 mt-2 leading-tight">
+                                                Cash on Delivery requires staff product availability verification before order confirmation.
+                                            </p>
+                                        </button>
+                                    </div>
                                 </div>
-                                <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
-                                    <span>Total Amount</span>
-                                    <span className="text-orange-600 text-lg">₱{total.toLocaleString()}</span>
+
+                                <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
+                                    <button
+                                        type="submit"
+                                        className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                    >
+                                        {checkIfBulkOrder(cartItems) ? 'Request Order' : 'Confirm & Submit Order'}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('menu')}
+                                        className="w-full md:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200 cursor-pointer"
+                                    >
+                                        Back
+                                    </button>
+                                </div>
+                            </form>
+
+                            {/* Right Summary Billing Panel */}
+                            <div className="bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6">
+                                <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
+                                    Final Order Summary
+                                </h3>
+
+                                <div className="divide-y divide-neutral-50 max-h-[300px] overflow-y-auto pr-1">
+                                    {cartItems.map((ci) => (
+                                        <div key={ci.item.id} className="py-3 first:pt-0">
+                                            <div className="flex justify-between text-sm">
+                                                <span className="font-medium text-neutral-700">
+                                                    {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
+                                                </span>
+                                                <span className="font-bold text-neutral-800">
+                                                    ₱{(ci.item.price * ci.quantity).toLocaleString()}
+                                                </span>
+                                            </div>
+                                            {ci.specialNote && (
+                                                <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {orderNotes && (
+                                    <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100 text-xs">
+                                        <p className="font-bold text-neutral-500 uppercase text-[10px]">Special Instructions:</p>
+                                        <p className="text-neutral-700 italic mt-0.5">{orderNotes}</p>
+                                    </div>
+                                )}
+
+                                <div className="border-t border-neutral-100 pt-4 space-y-2">
+                                    <div className="flex justify-between text-xs text-neutral-500">
+                                        <span>Subtotal</span>
+                                        <span>₱{subtotal.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-neutral-500">
+                                        <span>VAT (12%)</span>
+                                        <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-neutral-500">
+                                        <span>Delivery Fee</span>
+                                        <span>₱{deliveryFee.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
+                                        <span>Total Amount</span>
+                                        <span className="text-orange-600 text-lg">₱{total.toLocaleString()}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
@@ -1645,7 +1644,7 @@ export const OnlineCustomer: React.FC = () => {
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Items ordered:</span>{' '}
                                         {activeOrder.items.reduce((acc, ci) => acc + ci.quantity, 0)} items
                                     </p>
-                                    
+
                                     {/* Itemized Price & VAT Breakdown */}
                                     <div className="pt-2 border-t border-neutral-200/70 space-y-1 text-[11px] text-neutral-500">
                                         <div className="flex justify-between">
@@ -1860,170 +1859,145 @@ export const OnlineCustomer: React.FC = () => {
 
                         {/* 1st POPUP MODAL FOR BULK ORDERS: WAITING FOR ASSISTANT VERIFICATION & PERMISSION */}
                         {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) &&
-                         (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
-                            <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
-                                <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
-                                    ⏳
-                                </div>
-                                <div className="space-y-1">
-                                    <h3 className="font-extrabold text-neutral-900 text-2xl tracking-tight">
-                                        Order #{activeOrder.id} Requested
-                                    </h3>
-                                    <p className="text-sm font-extrabold text-amber-600 uppercase tracking-wider bg-amber-50 py-1.5 px-4 rounded-xl inline-block border border-amber-200">
-                                        Waiting for assistant to verify
-                                    </p>
-                                </div>
-
-                                <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4.5 text-left space-y-2 shadow-xs">
-                                    <div className="flex items-center gap-2 text-amber-950 font-extrabold text-xs uppercase tracking-wide">
-                                        <span>⚠️ Bulk Order Verification Required</span>
+                            (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
+                                <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
+                                    <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
+                                        ⏳
                                     </div>
-                                    <p className="text-xs text-amber-800 leading-relaxed">
-                                        Your order is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
+                                    <div className="space-y-1">
+                                        <h3 className="font-extrabold text-neutral-900 text-2xl tracking-tight">
+                                            Order #{activeOrder.id} Requested
+                                        </h3>
+                                        <p className="text-sm font-extrabold text-amber-600 uppercase tracking-wider bg-amber-50 py-1.5 px-4 rounded-xl inline-block border border-amber-200">
+                                            Waiting for assistant to verify
+                                        </p>
+                                    </div>
+
+                                    <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4.5 text-left space-y-2 shadow-xs">
+                                        <div className="flex items-center gap-2 text-amber-950 font-extrabold text-xs uppercase tracking-wide">
+                                            <span>⚠️ Bulk Order Verification Required</span>
+                                        </div>
+                                        <p className="text-xs text-amber-800 leading-relaxed">
+                                            Your order is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
+                                        </p>
+                                    </div>
+
+                                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 flex items-center justify-between">
+                                        <span className="font-semibold text-slate-500">Requested Order Total:</span>
+                                        <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong>
+                                    </div>
+
+                                    <p className="text-[11px] text-neutral-400 font-medium pt-1">
+                                        This screen will automatically update once an assistant clicks "Allow Customer to Pay".
                                     </p>
                                 </div>
-
-                                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 flex items-center justify-between">
-                                    <span className="font-semibold text-slate-500">Requested Order Total:</span>
-                                    <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong>
-                                </div>
-
-                                <p className="text-[11px] text-neutral-400 font-medium pt-1">
-                                    This screen will automatically update once an assistant clicks "Allow Customer to Pay".
-                                </p>
-                            </div>
-                        )}
+                            )}
 
                         {/* 2nd POPUP MODAL FOR BULK ORDERS & GCASH VERIFICATION (AUTHORIZED OR REGULAR ORDER) */}
                         {activeOrder.paymentMethod === 'GCash' &&
-                         !((checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
-                            <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
-                                {/* Header badge if bulk order authorized */}
-                                {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
-                                    <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
-                                        <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
-                                            <span>✅ Permission Granted by Staff!</span>
-                                        </div>
-                                        <p className="text-xs text-emerald-700">
-                                            Staff has authorized your bulk order. Please transfer <strong>₱{activeOrder.total.toLocaleString()}</strong> to GCash below and submit your screenshot.
-                                        </p>
-                                    </div>
-                                )}
-
-                                {/* Store GCash Account Details Box */}
-                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
-                                        <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
-                                    </div>
-                                    <div className="space-y-1 text-xs text-blue-950">
-                                        <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
-                                        <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
-                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
-                                    </div>
-                                </div>
-
-                                {/* Reference Screenshot Selection Input */}
-                                <div className="space-y-2 pt-1">
-                                    <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
-                                        <span>Upload GCash Reference Picture / Screenshot</span>
-                                        <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
-                                    </label>
-
-                                    {activeOrder.status === 'RECEIPT_REJECTED' && (
-                                        <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
-                                            <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
-                                            <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
-                                        </div>
-                                    )}
-
-                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
-                                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
-                                            <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
-                                                <span>📸 Payment Screenshot Submitted</span>
+                            !((checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
+                                <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
+                                    {/* Header badge if bulk order authorized */}
+                                    {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
+                                        <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
+                                            <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
+                                                <span>✅ Permission Granted by Staff!</span>
                                             </div>
-                                            <p className="text-xs text-blue-800 leading-relaxed">
-                                                Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                            <p className="text-xs text-emerald-700">
+                                                Staff has authorized your bulk order. Please transfer <strong>₱{activeOrder.total.toLocaleString()}</strong> to GCash below and submit your screenshot.
                                             </p>
                                         </div>
                                     )}
 
-                                    {selectedReceiptPreview ? (
-                                        <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
-                                                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
-                                            </div>
-                                            <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
-                                                <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
-                                                <div className="space-y-1">
-                                                    <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
-                                                    <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
-                                                        Change Selected Picture
-                                                        <input
-                                                            type="file"
-                                                            accept="image/*"
-                                                            className="hidden"
-                                                            onChange={(e) => {
-                                                                const file = e.target.files?.[0]
-                                                                if (file) {
-                                                                    const reader = new FileReader()
-                                                                    reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
-                                                                    reader.readAsDataURL(file)
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-2 pt-1">
-                                                <button
-                                                    type="button"
-                                                    onClick={handleSubmitReceipt}
-                                                    disabled={isSubmittingReceipt}
-                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
-                                                >
-                                                    {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSelectedReceiptPreview(null)}
-                                                    className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
-                                                >
-                                                    Cancel
-                                                </button>
-                                            </div>
+                                    {/* Store GCash Account Details Box */}
+                                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
+                                            <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
                                         </div>
-                                    ) : !activeOrder.paymentReceipt ? (
-                                        <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
-                                            <span className="text-2xl">📱</span>
-                                            <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
-                                            <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                className="hidden"
-                                                onChange={(e) => {
-                                                    const file = e.target.files?.[0]
-                                                    if (file) {
-                                                        const reader = new FileReader()
-                                                        reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
-                                                        reader.readAsDataURL(file)
-                                                    }
-                                                }}
-                                            />
+                                        <div className="space-y-1 text-xs text-blue-950">
+                                            <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
+                                            <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
+                                            <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
+                                        </div>
+                                    </div>
+
+                                    {/* Reference Screenshot Selection Input */}
+                                    <div className="space-y-2 pt-1">
+                                        <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
+                                            <span>Upload GCash Reference Picture / Screenshot</span>
+                                            <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
                                         </label>
-                                    ) : (
-                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
-                                            <div className="flex items-center gap-3">
-                                                <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
-                                                <div>
-                                                    <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
-                                                    <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
+
+                                        {activeOrder.status === 'RECEIPT_REJECTED' && (
+                                            <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
+                                                <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
+                                                <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
+                                            </div>
+                                        )}
+
+                                        {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
+                                            <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
+                                                <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
+                                                    <span>📸 Payment Screenshot Submitted</span>
+                                                </div>
+                                                <p className="text-xs text-blue-800 leading-relaxed">
+                                                    Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {selectedReceiptPreview ? (
+                                            <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
+                                                    <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
+                                                </div>
+                                                <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
+                                                    <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
+                                                    <div className="space-y-1">
+                                                        <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
+                                                        <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
+                                                            Change Selected Picture
+                                                            <input
+                                                                type="file"
+                                                                accept="image/*"
+                                                                className="hidden"
+                                                                onChange={(e) => {
+                                                                    const file = e.target.files?.[0]
+                                                                    if (file) {
+                                                                        const reader = new FileReader()
+                                                                        reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                        reader.readAsDataURL(file)
+                                                                    }
+                                                                }}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleSubmitReceipt}
+                                                        disabled={isSubmittingReceipt}
+                                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                    >
+                                                        {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setSelectedReceiptPreview(null)}
+                                                        className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
+                                                    >
+                                                        Cancel
+                                                    </button>
                                                 </div>
                                             </div>
-                                            <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
-                                                Change Reference Picture
+                                        ) : !activeOrder.paymentReceipt ? (
+                                            <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
+                                                <span className="text-2xl">📱</span>
+                                                <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
+                                                <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
                                                 <input
                                                     type="file"
                                                     accept="image/*"
@@ -2038,11 +2012,36 @@ export const OnlineCustomer: React.FC = () => {
                                                     }}
                                                 />
                                             </label>
-                                        </div>
-                                    )}
+                                        ) : (
+                                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
+                                                    <div>
+                                                        <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
+                                                        <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
+                                                    </div>
+                                                </div>
+                                                <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
+                                                    Change Reference Picture
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        className="hidden"
+                                                        onChange={(e) => {
+                                                            const file = e.target.files?.[0]
+                                                            if (file) {
+                                                                const reader = new FileReader()
+                                                                reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                reader.readAsDataURL(file)
+                                                            }
+                                                        }}
+                                                    />
+                                                </label>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        )}
+                            )}
 
                         {/* COD Verification Details */}
                         {activeOrder.paymentMethod === 'COD' && (

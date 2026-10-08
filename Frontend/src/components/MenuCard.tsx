@@ -412,18 +412,18 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   return (
     <div
       className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col h-full overflow-hidden group ${!isAvailable
-          ? 'border-rose-200 bg-neutral-50/70 opacity-90'
-          : 'border-neutral-200/80 shadow-2xs hover:shadow-md hover:border-orange-200'
+        ? 'border-rose-200 bg-neutral-50/70 opacity-90'
+        : 'border-neutral-200/80 shadow-2xs hover:shadow-md hover:border-orange-200'
         }`}
     >
       {/* Food Image Container */}
-      <div className="relative aspect-[16/9] sm:aspect-[16/10] max-h-48 sm:max-h-none w-full overflow-hidden bg-neutral-100 flex-shrink-0">
+      <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-100 flex-shrink-0">
         <img
           src={item.image}
           alt={item.name}
           className={`w-full h-full object-cover transition-transform duration-300 ease-out ${!isAvailable
-              ? 'grayscale-[75%] opacity-60 contrast-125'
-              : 'group-hover:scale-105'
+            ? 'grayscale-[75%] opacity-60 contrast-125'
+            : 'group-hover:scale-105'
             }`}
           onError={(e) => {
             (e.target as HTMLImageElement).src =
@@ -452,8 +452,8 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           <div className="flex items-start justify-between gap-2">
             <h3
               className={`font-bold text-sm sm:text-base line-clamp-1 transition-colors ${!isAvailable
-                  ? 'text-neutral-500 line-through'
-                  : 'text-neutral-900 group-hover:text-orange-600'
+                ? 'text-neutral-500 line-through'
+                : 'text-neutral-900 group-hover:text-orange-600'
                 }`}
             >
               {item.name}
@@ -532,8 +532,8 @@ export const MenuCard: React.FC<MenuCardProps> = ({
                 }}
                 title={isAvailable ? 'Click to mark this product as Unavailable' : 'Click to make this product Available'}
                 className={`text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all cursor-pointer active:scale-95 flex items-center gap-1 shadow-2xs ${isAvailable
-                    ? 'bg-neutral-50 hover:bg-rose-50 text-neutral-600 hover:text-rose-700 border-neutral-200 hover:border-rose-300'
-                    : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-300'
+                  ? 'bg-neutral-50 hover:bg-rose-50 text-neutral-600 hover:text-rose-700 border-neutral-200 hover:border-rose-300'
+                  : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-300'
                   }`}
               >
                 <span>{isAvailable ? 'Out of Stock' : 'Set Available'}</span>

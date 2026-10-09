@@ -21,6 +21,8 @@ export interface OnlineOrder {
   paymentMethod: string
   paymentReference?: string
   paymentReceipt?: string
+  gcashAuthorized?: boolean
+  gcash_authorized?: boolean
   status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | string
   items: OrderItem[]
   total: number

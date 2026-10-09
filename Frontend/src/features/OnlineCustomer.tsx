@@ -1197,9 +1197,10 @@ export const OnlineCustomer: React.FC = () => {
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                        disabled={isSubmittingOrder}
+                                        className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        Confirm & Submit Order
+                                        {isSubmittingOrder ? 'Submitting Order...' : 'Confirm & Submit Order'}
                                     </button>
                                     <button
                                         type="button"

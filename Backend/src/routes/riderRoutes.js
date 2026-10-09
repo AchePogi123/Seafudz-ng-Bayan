@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
+import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
@@ -184,6 +185,10 @@ export async function handleRiderStatusUpdate(req, res) {
       };
       inMemoryOrders.set(id, newRec);
       updatedOrder = formatOrderResponse(newRec);
+    }
+
+    if (updatedOrder) {
+      emitOrderUpdate(updatedOrder);
     }
 
     console.log(`[RIDER] Order ${id} -> Status: ${nextStatus}`);

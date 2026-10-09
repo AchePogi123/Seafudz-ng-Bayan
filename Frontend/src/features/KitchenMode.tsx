@@ -238,7 +238,7 @@ export const KitchenMode: React.FC = () => {
 
     const pollTimer = setInterval(() => {
       void fetchKitchenOrders()
-    }, 8000)
+    }, 2000)
 
     return () => {
       unsubscribe()

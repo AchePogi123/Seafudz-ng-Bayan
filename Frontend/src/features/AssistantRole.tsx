@@ -61,8 +61,8 @@ export const AssistantRole: React.FC = () => {
     if (!confirmDelete) return
 
     try {
-      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
-    } catch {}
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => { })
+    } catch { }
 
     try {
       const stored = localStorage.getItem('seafudz_orders')
@@ -72,7 +72,7 @@ export const AssistantRole: React.FC = () => {
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
       notifyOrderSync()
-    } catch {}
+    } catch { }
 
     if (selectedOrderId === orderId) setSelectedOrderId(null)
     void fetchAssistantOrders(true)
@@ -225,7 +225,7 @@ export const AssistantRole: React.FC = () => {
 
     const timer = setInterval(() => {
       void fetchAssistantOrders()
-    }, 8000)
+    }, 2000)
 
     return () => {
       unsubscribe()
@@ -240,7 +240,7 @@ export const AssistantRole: React.FC = () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
       })
-    } catch {}
+    } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -257,7 +257,7 @@ export const AssistantRole: React.FC = () => {
         }
       }
       notifyOrderSync()
-    } catch {}
+    } catch { }
 
     fetchAssistantOrders(true)
     setNotification(`GCash payment authorized for order #${orderId}! Customer can now pay and upload receipt.`)
@@ -269,7 +269,7 @@ export const AssistantRole: React.FC = () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
       })
-    } catch {}
+    } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -286,7 +286,7 @@ export const AssistantRole: React.FC = () => {
         }
       }
       notifyOrderSync()
-    } catch {}
+    } catch { }
 
     fetchAssistantOrders(true)
     setNotification(`Receipt verified & confirmed for order #${orderId}! Sent to Kitchen!`)
@@ -301,7 +301,7 @@ export const AssistantRole: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason }),
       })
-    } catch {}
+    } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -318,7 +318,7 @@ export const AssistantRole: React.FC = () => {
         }
       }
       notifyOrderSync()
-    } catch {}
+    } catch { }
 
     fetchAssistantOrders(true)
     setNotification(`Receipt rejected for order #${orderId}. Customer notified to re-upload.`)
@@ -330,7 +330,7 @@ export const AssistantRole: React.FC = () => {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
       })
-    } catch {}
+    } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -347,7 +347,7 @@ export const AssistantRole: React.FC = () => {
         }
       }
       notifyOrderSync()
-    } catch {}
+    } catch { }
 
     fetchAssistantOrders(true)
     setNotification(`COD product availability confirmed for order #${orderId}! Sent to Kitchen!`)
@@ -431,8 +431,8 @@ export const AssistantRole: React.FC = () => {
                     key={tab.id}
                     onClick={() => setActiveTab(tab.id as any)}
                     className={`px-4 py-2.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id
-                        ? 'bg-[#ff7b00] text-white shadow-xs'
-                        : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
+                      ? 'bg-[#ff7b00] text-white shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
                       }`}
                   >
                     <span>{tab.label}</span>
@@ -489,8 +489,8 @@ export const AssistantRole: React.FC = () => {
                       key={ord.id}
                       onClick={() => setSelectedOrderId(ord.id)}
                       className={`bg-white rounded-3xl p-5 border transition-all cursor-pointer shadow-xs hover:shadow-md ${isSelected
-                          ? 'border-[#ff7b00] ring-2 ring-orange-500/20'
-                          : 'border-neutral-200 hover:border-neutral-300'
+                        ? 'border-[#ff7b00] ring-2 ring-orange-500/20'
+                        : 'border-neutral-200 hover:border-neutral-300'
                         }`}
                     >
                       <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
@@ -501,20 +501,20 @@ export const AssistantRole: React.FC = () => {
                         </div>
                         <span
                           className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'gcash_pending_approval'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                              : s === 'gcash_authorized'
-                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                                : s === 'receipt_submitted'
-                                  ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                                  : s === 'pending' || s === 'unconfirmed'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                    : s === 'confirmed' || s === 'preparing'
-                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                      : s === 'ready'
-                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                        : s === 'cancelled'
-                                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                          : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                            : s === 'gcash_authorized'
+                              ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                              : s === 'receipt_submitted'
+                                ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                : s === 'pending' || s === 'unconfirmed'
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : s === 'confirmed' || s === 'preparing'
+                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                    : s === 'ready'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : s === 'cancelled'
+                                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
                           ● {s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled by Customer' : ord.status}
@@ -530,8 +530,8 @@ export const AssistantRole: React.FC = () => {
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('cod')
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                              : 'bg-blue-100 text-blue-800 border border-blue-200'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : 'bg-blue-100 text-blue-800 border border-blue-200'
                             }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
@@ -698,6 +698,7 @@ export const AssistantRole: React.FC = () => {
 
                     const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD'
                     const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
+                    const isAuthorizedToPay = Boolean(selectedOrder.gcashAuthorized || (selectedOrder as any).gcash_authorized || st === 'GCASH_AUTHORIZED')
 
                     // 1. COD Orders Flow
                     if (isCOD) {
@@ -711,19 +712,7 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    // 2. GCash Order Needing Initial Authorization
-                    if (st === 'GCASH_PENDING_APPROVAL') {
-                      return (
-                        <button
-                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
-                        >
-                          Authorize GCash Payment (Allow Customer to Pay)
-                        </button>
-                      )
-                    }
-
-                    // 3. GCash Order WITH Reference Screenshot Submitted
+                    // 2. GCash Order WITH Reference Screenshot Submitted (Customer sent receipt)
                     if (hasReceipt) {
                       return (
                         <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
@@ -746,22 +735,34 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    // 4. GCash Order WITHOUT Reference Screenshot (Customer hasn't sent it yet)
+                    // 3. GCash Order NOT YET Authorized by Assistant (Customer submitted order -> Assistant authorizes customer to pay now)
+                    if (!isAuthorizedToPay || st === 'GCASH_PENDING_APPROVAL' || st === 'PENDING' || st === 'UNCONFIRMED') {
+                      return (
+                        <button
+                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
+                        >
+                          <span>✅ Authorize Customer to Pay Now</span>
+                        </button>
+                      )
+                    }
+
+                    // 4. GCash Order ALREADY Authorized by Assistant (Waiting for customer to complete payment & send receipt)
                     return (
                       <div className="space-y-3">
-                        <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 text-center space-y-1">
-                          <p className="font-extrabold text-xs text-amber-900 flex items-center justify-center gap-1.5">
-                            <span>⏳</span> Awaiting GCash Reference Screenshot
+                        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 text-center space-y-1">
+                          <p className="font-extrabold text-xs text-blue-900 flex items-center justify-center gap-1.5">
+                            <span>✅</span> Customer Authorized to Pay
                           </p>
-                          <p className="text-[11px] text-amber-700 leading-normal">
-                            The customer has not sent/uploaded their GCash transaction reference screenshot yet. Order cannot be confirmed until system detects receipt.
+                          <p className="text-[11px] text-blue-700 leading-normal">
+                            Customer has been authorized to pay. Waiting for customer to transfer funds and upload their GCash reference screenshot.
                           </p>
                         </div>
                         <button
-                          disabled
-                          className="w-full bg-slate-200 text-slate-400 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-not-allowed border border-slate-300 opacity-80"
+                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
+                          className="w-full bg-blue-500 hover:bg-blue-600 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs active:scale-98"
                         >
-                          <span>🔒 Cannot Confirm (Awaiting Reference Screenshot)</span>
+                          <span>🔄 Re-Authorize Customer to Pay</span>
                         </button>
                       </div>
                     )

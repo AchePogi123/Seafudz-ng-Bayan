@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
+import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
@@ -418,7 +419,7 @@ export async function handleAssistantStatusUpdate(req, res) {
         `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
         [nextStatus, id]
       );
-      
+
       // If order confirmed, create a kitchen queue entry
       if (nextStatus === 'CONFIRMED') {
         await query(
@@ -427,7 +428,7 @@ export async function handleAssistantStatusUpdate(req, res) {
           [id]
         );
       }
-      
+
       if (rows.length > 0 && !updatedOrder) {
         updatedOrder = formatOrderResponse(rows[0]);
       }
@@ -444,6 +445,10 @@ export async function handleAssistantStatusUpdate(req, res) {
       };
       inMemoryOrders.set(id, newRec);
       updatedOrder = formatOrderResponse(newRec);
+    }
+
+    if (updatedOrder) {
+      emitOrderUpdate(updatedOrder);
     }
 
     console.log(`[ASSISTANT] Order ${id} verified -> Status: ${nextStatus}`);

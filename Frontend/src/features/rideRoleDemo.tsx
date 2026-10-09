@@ -214,7 +214,7 @@ export const RideRoleDemo: React.FC = () => {
 
     const interval = setInterval(() => {
       void fetchDeliveries()
-    }, 8000)
+    }, 2000)
 
     return () => {
       unsubscribe()

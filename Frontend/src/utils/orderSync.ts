@@ -1,7 +1,10 @@
+import { API_BASE_URL } from './api'
+
 const SYNC_KEY = 'seafudz_order_sync_timestamp'
 
 let channel: BroadcastChannel | null = null
 let lastNotifyTime = 0
+let sseSource: EventSource | null = null
 
 try {
   if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -12,13 +15,13 @@ try {
 }
 
 /**
- * Triggers instant real-time sync event across all browser tabs and components.
+ * Triggers instant real-time sync event across all browser tabs, windows, and components.
  */
 export const notifyOrderSync = () => {
   if (typeof window === 'undefined') return
 
   const now = Date.now()
-  if (now - lastNotifyTime < 100) return
+  if (now - lastNotifyTime < 50) return
   lastNotifyTime = now
 
   // 1. Dispatch local window custom event (instant 0ms execution for local tab)
@@ -40,14 +43,56 @@ export const notifyOrderSync = () => {
 }
 
 /**
+ * Connects to Express Server-Sent Events (SSE) stream for 0ms real-time server push
+ */
+const initSseConnection = () => {
+  if (typeof window === 'undefined' || sseSource) return
+
+  try {
+    const sseUrl = `${API_BASE_URL}/events/orders`
+    sseSource = new EventSource(sseUrl)
+
+    sseSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data && (data.type === 'ORDER_UPDATE' || data.id || data.status)) {
+          notifyOrderSync()
+        }
+      } catch {
+        notifyOrderSync()
+      }
+    }
+
+    sseSource.onerror = () => {
+      if (sseSource) {
+        sseSource.close()
+        sseSource = null
+      }
+      // Retry SSE connection after 3 seconds
+      setTimeout(initSseConnection, 3000)
+    }
+  } catch {
+    // SSE initialization fallback
+  }
+}
+
+// Auto-initialize SSE on client load
+if (typeof window !== 'undefined') {
+  initSseConnection()
+}
+
+/**
  * Subscribes to real-time order sync events across tabs with zero-delay local response.
  */
 export const subscribeOrderSync = (callback: () => void): (() => void) => {
   if (typeof window === 'undefined') return () => {}
 
+  // Ensure SSE is active
+  initSseConnection()
+
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-  const triggerCallback = (delay = 50) => {
+  const triggerCallback = (delay = 0) => {
     if (delay === 0) {
       if (debounceTimer) clearTimeout(debounceTimer)
       callback()
@@ -63,7 +108,7 @@ export const subscribeOrderSync = (callback: () => void): (() => void) => {
 
   const handleStorageEvent = (e: StorageEvent) => {
     if (e.key === SYNC_KEY || e.key === 'seafudz_order_sync_timestamp' || e.key === 'seafudz_order_created') {
-      triggerCallback(50) // 50ms ultra-fast cross-tab response
+      triggerCallback(0) // Instant 0ms cross-tab response
     }
   }
 
@@ -74,7 +119,7 @@ export const subscribeOrderSync = (callback: () => void): (() => void) => {
   if (channel) {
     messageHandler = (e: MessageEvent) => {
       if (e.data && e.data.type === 'ORDER_SYNC') {
-        triggerCallback(50)
+        triggerCallback(0)
       }
     }
     channel.addEventListener('message', messageHandler)

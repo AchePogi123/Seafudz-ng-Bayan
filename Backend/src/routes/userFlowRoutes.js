@@ -7,7 +7,33 @@ import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
 import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
 import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
 
+import { realtimeEmitter } from '../utils/realtimeEvents.js';
+
 const router = Router();
+
+// Real-time Server-Sent Events (SSE) Stream for 0ms order updates
+router.get('/events/orders', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (res.flushHeaders) res.flushHeaders();
+
+  const onUpdate = (data) => {
+    try {
+      res.write(`data: ${JSON.stringify(data || { type: 'ORDER_UPDATE', timestamp: Date.now() })}\n\n`);
+    } catch {}
+  };
+
+  realtimeEmitter.on('order_update', onUpdate);
+
+  try {
+    res.write(`data: ${JSON.stringify({ type: 'CONNECTED', timestamp: Date.now() })}\n\n`);
+  } catch {}
+
+  req.on('close', () => {
+    realtimeEmitter.removeListener('order_update', onUpdate);
+  });
+});
 
 // Online customer endpoints
 router.post('/user-flow/orders', optionalAuth, handleCreateCustomerFlowOrder);

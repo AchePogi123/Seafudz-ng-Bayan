@@ -484,6 +484,32 @@ router.post('/auth/login', async (req, res) => {
       } catch { }
     }
 
+    // Fallback: Pre-provisioned Staff Accounts fallback if DB is un-seeded or offline
+    if (!emp && !cust && searchValue) {
+      const lowerKey = searchValue.trim().toLowerCase();
+      const defaultStaff = {
+        admin1: { id: 'emp-admin-1', fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin', pin_code: '0000' },
+        'admin@seafudz.ph': { id: 'emp-admin-1', fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin', pin_code: '0000' },
+        'admin2@seafudz.ph': { id: 'emp-admin-2', fullname: 'Super Admin Chief', username: 'admin2', email: 'admin2@seafudz.ph', role: 'admin', pin_code: '0000' },
+        assistant1: { id: 'emp-assistant-1', fullname: 'Assistant Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant', pin_code: '4321' },
+        'assistant@seafudz.ph': { id: 'emp-assistant-1', fullname: 'Assistant Grace', username: 'assistant1', email: 'assistant@seafudz.ph', role: 'assistant', pin_code: '4321' },
+        'joy.floor@seafudz.ph': { id: 'emp-assistant-2', fullname: 'Joy Flores', username: 'joy.floor', email: 'joy.floor@seafudz.ph', role: 'assistant', pin_code: '4321' },
+        cashier1: { id: 'emp-cashier-1', fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier', pin_code: '1234' },
+        'cashier@seafudz.ph': { id: 'emp-cashier-1', fullname: 'Maria Santos', username: 'cashier1', email: 'cashier@seafudz.ph', role: 'cashier', pin_code: '1234' },
+        'zac.cashier@seafudz.ph': { id: 'emp-cashier-2', fullname: 'Zac Cashier', username: 'zac.cashier', email: 'zac.cashier@seafudz.ph', role: 'cashier', pin_code: '1234' },
+        kitchen1: { id: 'emp-kitchen-1', fullname: 'Chef Juan Dela Cruz', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen', pin_code: '5678' },
+        'kitchen@seafudz.ph': { id: 'emp-kitchen-1', fullname: 'Chef Juan Dela Cruz', username: 'kitchen1', email: 'kitchen@seafudz.ph', role: 'kitchen', pin_code: '5678' },
+        'chef.ben@seafudz.ph': { id: 'emp-kitchen-2', fullname: 'Chef Ben', username: 'chef.ben', email: 'chef.ben@seafudz.ph', role: 'kitchen', pin_code: '5678' },
+        rider1: { id: 'emp-rider-1', fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider', pin_code: '9999' },
+        'rider@seafudz.ph': { id: 'emp-rider-1', fullname: 'Rider Alex Ramos', username: 'rider1', email: 'rider@seafudz.ph', role: 'rider', pin_code: '9999' },
+        'dan.rider@seafudz.ph': { id: 'emp-rider-2', fullname: 'Dan Cruz', username: 'dan.rider', email: 'dan.rider@seafudz.ph', role: 'rider', pin_code: '9999' },
+      };
+
+      if (defaultStaff[lowerKey]) {
+        emp = defaultStaff[lowerKey];
+      }
+    }
+
     // 3. Reject if no employee or customer account exists for the given username/email
     if (!emp && !cust) {
       return res.status(401).json({

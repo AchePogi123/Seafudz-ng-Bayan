@@ -205,7 +205,7 @@ export const POS: React.FC = () => {
     const interval = setInterval(() => {
       fetchPosOrders()
       void fetchOnlineReceipts()
-    }, 8000)
+    }, 2000)
     return () => {
       clearTimeout(timer)
       unsubscribe()

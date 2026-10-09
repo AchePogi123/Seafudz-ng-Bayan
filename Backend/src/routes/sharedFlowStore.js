@@ -59,7 +59,7 @@ export function formatOrderResponse(row) {
     subtotal: parseFloat(row.subtotal || 0),
     vat: parseFloat(row.vat || row.tax || 0),
     deliveryFee: parseFloat(row.delivery_fee || row.deliveryFee || 0),
-    total: calcTotal,
+    total: parseFloat(row.total || 0),
     status: normStatus,
     createdAt: row.created_at || row.createdAt || new Date().toISOString(),
     updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),

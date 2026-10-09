@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
+import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
@@ -551,15 +552,23 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
-    // Authoritative Server-side Calculations
-    const calcSubtotal = rawItems.reduce((acc, i) => acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0);
-    const calcVat = Math.round(calcSubtotal * 0.12 * 100) / 100;
-    const calcFee = (req.body.orderType === 'ONLINE' || req.body.type === 'Delivery' || deliveryAddress || address) ? 50 : 0;
-    const calcTotal = Math.round((calcSubtotal + calcVat + calcFee) * 100) / 100;
+    // Authoritative Server-side Calculations with fallback to client totals
+    const calcSubtotal = req.body.subtotal !== undefined && Number(req.body.subtotal) > 0
+      ? Number(req.body.subtotal)
+      : rawItems.reduce((acc, i) => acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0);
+    const calcVat = req.body.vat !== undefined && Number(req.body.vat) > 0
+      ? Number(req.body.vat)
+      : Math.round(calcSubtotal * 0.12 * 100) / 100;
+    const calcFee = req.body.deliveryFee !== undefined
+      ? Number(req.body.deliveryFee)
+      : ((req.body.orderType === 'ONLINE' || req.body.type === 'Delivery' || deliveryAddress || address) ? 50 : 0);
+    const calcTotal = req.body.total !== undefined && Number(req.body.total) > 0
+      ? Number(req.body.total)
+      : Math.round((calcSubtotal + calcVat + calcFee) * 100) / 100;
 
-    const cleanCustomer = (req.user && req.user.fullname) ? req.user.fullname : (customerName || 'Online Customer');
-    const cleanPhone = (req.user && req.user.phone) ? req.user.phone : (phone || '0917-000-0000');
-    const cleanAddress = (req.user && req.user.delivery_address) ? req.user.delivery_address : (deliveryAddress || address || 'Metro Manila Address');
+    const cleanCustomer = customerName || (req.user && req.user.fullname) || 'Online Customer';
+    const cleanPhone = phone || (req.user && req.user.phone) || '0917-000-0000';
+    const cleanAddress = deliveryAddress || address || (req.user && req.user.delivery_address) || 'Metro Manila Address';
     const customerId = (req.user && req.user.id) ? req.user.id : null;
 
     const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -620,6 +629,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     }
 
     const formatted = formatOrderResponse(orderRecord);
+    emitOrderUpdate(formatted);
     console.log(`[ORDER] Customer order created ${orderId} -> Status: PENDING | Total: PHP ${calcTotal}`);
 
     return res.status(201).json({
@@ -841,7 +851,7 @@ router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
       await query(
         `UPDATE orders SET receipt_status = 'PRINTED', updated_at = NOW() WHERE id = $1`,
         [id]
-      ).catch(() => {});
+      ).catch(() => { });
 
       const { rows } = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
       if (rows.length > 0 && !updatedOrder) {

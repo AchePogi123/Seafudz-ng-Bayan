@@ -159,8 +159,10 @@ export const OnlineCustomer: React.FC = () => {
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
+    const [isWaitingModalOpen, setIsWaitingModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
+    const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
     const [isCancellingOrder, setIsCancellingOrder] = useState(false)
 
     // Save cart state to user-scoped localStorage whenever modified
@@ -461,9 +463,13 @@ export const OnlineCustomer: React.FC = () => {
                             const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
 
                             if (rawStatus !== currentRawStatus) {
+                                if (rawStatus === 'GCASH_AUTHORIZED' || Boolean(orderData.gcashAuthorized || orderData.gcash_authorized)) {
+                                    setIsWaitingModalOpen(false)
+                                    setIsVerificationModalOpen(true)
+                                }
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: rawStatus }
+                                    const updated = { ...prev, status: rawStatus, gcashAuthorized: Boolean(orderData.gcashAuthorized || orderData.gcash_authorized || rawStatus === 'GCASH_AUTHORIZED') }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
 
@@ -476,7 +482,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 if (Array.isArray(list)) {
                                                     const updatedList = list.map((o: any) =>
                                                         (o.id === currentOrderId || o.ref === currentOrderId)
-                                                            ? { ...o, status: rawStatus }
+                                                            ? { ...o, status: rawStatus, gcashAuthorized: true }
                                                             : o
                                                     )
                                                     localStorage.setItem(key, JSON.stringify(updatedList))
@@ -520,10 +526,14 @@ export const OnlineCustomer: React.FC = () => {
                             const localRank = getStatusRank(rawStatus)
 
                             // Advance status if local rank is strictly higher OR raw sub-status changed (e.g. GCASH_AUTHORIZED)
-                            if (localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)) {
+                            if (localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank) || Boolean(current.gcashAuthorized)) {
+                                if (rawStatus === 'GCASH_AUTHORIZED' || Boolean(current.gcashAuthorized)) {
+                                    setIsWaitingModalOpen(false)
+                                    setIsVerificationModalOpen(true)
+                                }
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: rawStatus }
+                                    const updated = { ...prev, status: rawStatus, gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED') }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
                                     } catch { }
@@ -636,21 +646,35 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     const handlePlaceOrder = async (e: React.FormEvent) => {
-        e.preventDefault()
-        const currentUser = getActiveUser()
+        if (e && e.preventDefault) e.preventDefault()
+
+        let currentUser = getActiveUser()
         if (!currentUser) {
-            setIsAuthModalOpen(true)
+            const guestUser = {
+                fullname: customerName.trim() || 'Online Customer',
+                username: (customerName.trim() || 'customer').replace(/\s+/g, '.').toLowerCase(),
+                email: `${(customerName.trim() || 'customer').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}@seafudz.ph`,
+                phone: phone.trim() || '0917-000-0000',
+                address: address.trim() || 'Delivery Address',
+                role: 'customer',
+                sessionToken: `guest_${Date.now()}`
+            }
+            saveActiveUser(guestUser)
+            currentUser = guestUser
+        }
+
+        if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
+            alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
             return
         }
-        if (!customerName || !phone || !address || cartItems.length === 0) return
 
         const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_AUTHORIZED'
 
         const orderPayload = {
             type: 'Delivery',
-            customerName,
-            phone,
-            deliveryAddress: address,
+            customerName: customerName.trim(),
+            phone: phone.trim(),
+            deliveryAddress: address.trim(),
             paymentMethod,
             paymentReceipt: paymentReceipt || undefined,
             notes: orderNotes,
@@ -663,14 +687,14 @@ export const OnlineCustomer: React.FC = () => {
                 id: ci.item.id,
                 name: ci.item.name,
                 quantity: ci.quantity,
-                price: ci.item.price,
+                price: (ci.item as any).basePrice || ci.item.price,
                 specialNote: ci.specialNote || '',
             })),
         }
 
         try {
             const token = localStorage.getItem('seafudz_token')
-            const res = await fetch(`${API_BASE_URL}/user-flow/orders`, {
+            const fetchPromise = fetch(`${API_BASE_URL}/user-flow/orders`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -678,8 +702,14 @@ export const OnlineCustomer: React.FC = () => {
                 },
                 body: JSON.stringify(orderPayload),
             })
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
 
-            const responseData = await res.json().catch(() => ({}))
+            const res = (await Promise.race([fetchPromise, timeoutPromise]).catch(() => null)) as Response | null
+
+            let responseData: any = {}
+            if (res && res.ok) {
+                responseData = await res.json().catch(() => ({}))
+            }
             const serverOrder = responseData?.data || responseData
 
             const newOrderId = serverOrder?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`
@@ -728,14 +758,18 @@ export const OnlineCustomer: React.FC = () => {
             if (paymentMethod === 'COD') {
                 setActiveTab('tracking')
                 setIsVerificationModalOpen(false)
+                setIsWaitingModalOpen(false)
             } else {
                 setActiveTab('billing')
-                setIsVerificationModalOpen(true)
+                setIsWaitingModalOpen(true)
+                setIsVerificationModalOpen(false)
             }
             setIsMobileCartOpen(false)
             notifyOrderSync()
         } catch (err) {
             console.error('Error sending order to backend API:', err)
+        } finally {
+            setIsSubmittingOrder(false)
         }
     }
 
@@ -794,8 +828,8 @@ export const OnlineCustomer: React.FC = () => {
                                                 key={cat}
                                                 onClick={() => setSelectedCategory(cat)}
                                                 className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
-                                                        ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
-                                                        : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
+                                                    ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
+                                                    : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
                                                     }`}
                                             >
                                                 {cat}
@@ -1776,7 +1810,52 @@ export const OnlineCustomer: React.FC = () => {
                 )}
             </div>
 
-            {/* Staff Verification & GCash Payment Modal Popup */}
+            {/* 1. WAITING FOR ASSISTANT AUTHORIZATION POPUP MODAL */}
+            {isWaitingModalOpen && activeOrder && (
+                <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
+                        <button
+                            onClick={() => setIsWaitingModalOpen(false)}
+                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+                        >
+                            ✕
+                        </button>
+
+                        <div className="text-center space-y-1">
+                            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-amber-500/20 animate-pulse">
+                                ⏳
+                            </div>
+                            <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
+                                Order #{activeOrder.id} Submitted
+                            </h3>
+                            <p className="text-xs font-semibold text-neutral-500">
+                                Your order is currently waiting for staff verification.
+                            </p>
+                        </div>
+
+                        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-center space-y-3">
+                            <h4 className="font-extrabold text-amber-950 text-sm">Please Wait for Assistant Authorization</h4>
+                            <p className="text-xs text-amber-800 leading-relaxed">
+                                Your order has been sent to our Floor Assistant. Please wait while staff authorizes your payment request before transferring funds.
+                            </p>
+                            <div className="bg-white/90 rounded-xl p-3 border border-amber-200 text-[11px] text-amber-900 font-medium leading-relaxed">
+                                The GCash payment pop-up will automatically appear on your screen once an assistant approves your order.
+                            </div>
+                        </div>
+
+                        <div className="pt-2">
+                            <button
+                                onClick={() => setIsWaitingModalOpen(false)}
+                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
+                            >
+                                Keep Waiting in Billing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && (
                 <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
@@ -1804,96 +1883,126 @@ export const OnlineCustomer: React.FC = () => {
                         {/* GCASH VERIFICATION & PAYMENT POPUP MODAL */}
                         {activeOrder.paymentMethod === 'GCash' && (
                             <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
+                                <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 text-center animate-in fade-in duration-300">
+                                    <span className="text-xs font-black text-emerald-950 flex items-center justify-center gap-1.5">
+                                        <span>✅</span> GCash Payment Authorized by Assistant!
+                                    </span>
+                                </div>
 
-                                    {/* Store GCash Account Details Box */}
-                                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
-                                            <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
-                                        </div>
-                                        <div className="space-y-1 text-xs text-blue-950">
-                                            <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
-                                            <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
-                                            <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
-                                        </div>
+                                {/* Store GCash Account Details Box */}
+                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
+                                    <div className="flex justify-between items-center">
+                                        <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
+                                        <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
                                     </div>
+                                    <div className="space-y-1 text-xs text-blue-950">
+                                        <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
+                                        <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
+                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
+                                    </div>
+                                </div>
 
-                                    {/* Reference Screenshot Selection Input */}
-                                    <div className="space-y-2 pt-1">
-                                        <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
-                                            <span>Upload GCash Reference Picture / Screenshot</span>
-                                            <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
+                                {/* Reference Screenshot Selection Input */}
+                                <div className="space-y-2 pt-1">
+                                    <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
+                                        <span>Upload GCash Reference Picture / Screenshot</span>
+                                        <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
+                                    </label>
+
+                                    {activeOrder.status === 'RECEIPT_REJECTED' && (
+                                        <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
+                                            <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
+                                            <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
+                                        </div>
+                                    )}
+
+                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
+                                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
+                                            <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
+                                                <span>📸 Payment Screenshot Submitted</span>
+                                            </div>
+                                            <p className="text-xs text-blue-800 leading-relaxed">
+                                                Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                            </p>
+                                        </div>
+                                    )}
+
+                                    {selectedReceiptPreview ? (
+                                        <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
+                                                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
+                                            </div>
+                                            <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
+                                                <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
+                                                <div className="space-y-1">
+                                                    <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
+                                                    <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
+                                                        Change Selected Picture
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            className="hidden"
+                                                            onChange={(e) => {
+                                                                const file = e.target.files?.[0]
+                                                                if (file) {
+                                                                    const reader = new FileReader()
+                                                                    reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                                    reader.readAsDataURL(file)
+                                                                }
+                                                            }}
+                                                        />
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2 pt-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSubmitReceipt}
+                                                    disabled={isSubmittingReceipt}
+                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                >
+                                                    {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelectedReceiptPreview(null)}
+                                                    className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : !activeOrder.paymentReceipt ? (
+                                        <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
+                                            <span className="text-2xl">📱</span>
+                                            <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
+                                            <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                className="hidden"
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0]
+                                                    if (file) {
+                                                        const reader = new FileReader()
+                                                        reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
+                                                        reader.readAsDataURL(file)
+                                                    }
+                                                }}
+                                            />
                                         </label>
-
-                                        {activeOrder.status === 'RECEIPT_REJECTED' && (
-                                            <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
-                                                <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
-                                                <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
-                                            </div>
-                                        )}
-
-                                        {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
-                                            <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
-                                                <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
-                                                    <span>📸 Payment Screenshot Submitted</span>
-                                                </div>
-                                                <p className="text-xs text-blue-800 leading-relaxed">
-                                                    Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
-                                                </p>
-                                            </div>
-                                        )}
-
-                                        {selectedReceiptPreview ? (
-                                            <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
-                                                    <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
-                                                </div>
-                                                <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
-                                                    <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
-                                                    <div className="space-y-1">
-                                                        <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
-                                                        <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
-                                                            Change Selected Picture
-                                                            <input
-                                                                type="file"
-                                                                accept="image/*"
-                                                                className="hidden"
-                                                                onChange={(e) => {
-                                                                    const file = e.target.files?.[0]
-                                                                    if (file) {
-                                                                        const reader = new FileReader()
-                                                                        reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
-                                                                        reader.readAsDataURL(file)
-                                                                    }
-                                                                }}
-                                                            />
-                                                        </label>
-                                                    </div>
-                                                </div>
-                                                <div className="flex gap-2 pt-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleSubmitReceipt}
-                                                        disabled={isSubmittingReceipt}
-                                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
-                                                    >
-                                                        {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setSelectedReceiptPreview(null)}
-                                                        className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
-                                                    >
-                                                        Cancel
-                                                    </button>
+                                    ) : (
+                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
+                                            <div className="flex items-center gap-3">
+                                                <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
+                                                <div>
+                                                    <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
+                                                    <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
                                                 </div>
                                             </div>
-                                        ) : !activeOrder.paymentReceipt ? (
-                                            <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
-                                                <span className="text-2xl">📱</span>
-                                                <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
-                                                <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
+                                            <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
+                                                Change Reference Picture
                                                 <input
                                                     type="file"
                                                     accept="image/*"
@@ -1908,36 +2017,11 @@ export const OnlineCustomer: React.FC = () => {
                                                     }}
                                                 />
                                             </label>
-                                        ) : (
-                                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
-                                                <div className="flex items-center gap-3">
-                                                    <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
-                                                    <div>
-                                                        <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
-                                                        <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
-                                                    </div>
-                                                </div>
-                                                <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
-                                                    Change Reference Picture
-                                                    <input
-                                                        type="file"
-                                                        accept="image/*"
-                                                        className="hidden"
-                                                        onChange={(e) => {
-                                                            const file = e.target.files?.[0]
-                                                            if (file) {
-                                                                const reader = new FileReader()
-                                                                reader.onloadend = () => setSelectedReceiptPreview(reader.result as string)
-                                                                reader.readAsDataURL(file)
-                                                            }
-                                                        }}
-                                                    />
-                                                </label>
-                                            </div>
-                                        )}
-                                    </div>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
+                        )}
 
                         {/* COD Verification Details */}
                         {activeOrder.paymentMethod === 'COD' && (

@@ -374,7 +374,7 @@ const AdminDashboard: React.FC = () => {
         const interval = setInterval(() => {
             void fetchSummary()
             void fetchLiveOrders()
-        }, 8000)
+        }, 2000)
 
         return () => {
             unsubscribe()

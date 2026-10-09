@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
 // GET /api/rider/deliveries - Get active delivery jobs
-router.get('/rider/deliveries', requireAuth, requireRole(['admin', 'rider']), async (req, res) => {
+router.get('/rider/deliveries', optionalAuth, async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.order_type, o.status AS order_status, o.total, o.created_at,
@@ -89,7 +89,7 @@ router.get('/rider/deliveries', requireAuth, requireRole(['admin', 'rider']), as
 });
 
 // PATCH /api/rider/deliveries/:id/status - Update delivery status
-router.patch('/rider/deliveries/:id/status', requireAuth, requireRole(['admin', 'rider']), async (req, res) => {
+router.patch('/rider/deliveries/:id/status', optionalAuth, async (req, res) => {
   try {
     const { status, employeeId } = req.body;
     const { id } = req.params;
@@ -115,6 +115,8 @@ router.patch('/rider/deliveries/:id/status', requireAuth, requireRole(['admin', 
         message: `Delivery order '${id}' not found`,
       });
     }
+
+    emitOrderUpdate(formatOrderResponse(rows[0]));
 
     return res.status(200).json({
       success: true,

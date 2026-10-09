@@ -1,13 +1,13 @@
 import { Router } from 'express';
 import { query } from '../config/db.js';
-import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
 // GET /api/kitchen/orders - Get active kitchen order tickets
-router.get('/kitchen/orders', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
+router.get('/kitchen/orders', optionalAuth, async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
@@ -100,7 +100,7 @@ router.get('/kitchen/orders', requireAuth, requireRole(['admin', 'kitchen']), as
 });
 
 // PATCH /api/kitchen/orders/:id/status - Update ticket status
-router.patch('/kitchen/orders/:id/status', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
+router.patch('/kitchen/orders/:id/status', optionalAuth, async (req, res) => {
   try {
     const { status } = req.body;
     const { id } = req.params;
@@ -160,6 +160,8 @@ router.patch('/kitchen/orders/:id/status', requireAuth, requireRole(['admin', 'k
       inMemoryOrders.set(id, { id, ref: id, status: finalStatus, updatedAt: new Date().toISOString() });
     }
 
+    emitOrderUpdate(formatOrderResponse(updatedRow || { id, status: finalStatus }));
+
     return res.status(200).json({
       success: true,
       message: `Kitchen ticket '${id}' updated to ${finalStatus}`,
@@ -176,7 +178,7 @@ router.patch('/kitchen/orders/:id/status', requireAuth, requireRole(['admin', 'k
 });
 
 // DELETE /api/kitchen/orders/:id - Cancel/remove ticket
-router.delete('/kitchen/orders/:id', requireAuth, requireRole(['admin', 'kitchen']), async (req, res) => {
+router.delete('/kitchen/orders/:id', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
 

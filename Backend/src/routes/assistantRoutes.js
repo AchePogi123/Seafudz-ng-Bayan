@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
-import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
@@ -109,7 +109,7 @@ router.patch('/assistant/calls/:id/resolve', requireAuth, requireRole(['admin', 
 });
 
 // GET /api/assistant/orders - Get online orders for payment verification
-router.get('/assistant/orders', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.get('/assistant/orders', optionalAuth, async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.id AS ref, o.order_type, o.status, o.total, o.notes, o.created_at,
@@ -170,7 +170,7 @@ router.get('/assistant/orders', requireAuth, requireRole(['admin', 'assistant', 
 });
 
 // PATCH /api/assistant/orders/:id/verify - Verify online payment and send order to Kitchen
-router.patch('/assistant/orders/:id/verify', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.patch('/assistant/orders/:id/verify', optionalAuth, async (req, res) => {
   const pool = await getDbPool();
   const client = await pool.connect();
 
@@ -215,10 +215,13 @@ router.patch('/assistant/orders/:id/verify', requireAuth, requireRole(['admin', 
     await client.query('COMMIT');
     client.release();
 
+    const formatted = formatOrderResponse(orderRes.rows[0]);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `Online Payment Verified for Order #${id}! Forwarded to Kitchen Queue.`,
-      data: orderRes.rows[0],
+      data: formatted,
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -233,7 +236,7 @@ router.patch('/assistant/orders/:id/verify', requireAuth, requireRole(['admin', 
 });
 
 // PATCH /api/assistant/orders/:id/authorize-gcash - Authorize customer GCash payment
-router.patch('/assistant/orders/:id/authorize-gcash', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.patch('/assistant/orders/:id/authorize-gcash', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -251,10 +254,13 @@ router.patch('/assistant/orders/:id/authorize-gcash', requireAuth, requireRole([
       console.warn('DB update note (Authorize GCash):', err.message);
     }
 
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `GCash payment authorized for order #${id}`,
-      data: formatOrderResponse(order),
+      data: formatted,
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -282,10 +288,13 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
       console.warn('DB update note (Upload Receipt):', err.message);
     }
 
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `Receipt uploaded for order #${id}`,
-      data: formatOrderResponse(order),
+      data: formatted,
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -293,7 +302,7 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
 });
 
 // PATCH /api/assistant/orders/:id/verify-receipt - Assistant approves receipt screenshot
-router.patch('/assistant/orders/:id/verify-receipt', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -319,10 +328,13 @@ router.patch('/assistant/orders/:id/verify-receipt', requireAuth, requireRole(['
       console.warn('DB update note (Verify Receipt):', err.message);
     }
 
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `Receipt approved for order #${id}. Sent to kitchen!`,
-      data: formatOrderResponse(order),
+      data: formatted,
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -330,7 +342,7 @@ router.patch('/assistant/orders/:id/verify-receipt', requireAuth, requireRole(['
 });
 
 // PATCH /api/assistant/orders/:id/reject-receipt - Assistant rejects invalid screenshot
-router.patch('/assistant/orders/:id/reject-receipt', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.patch('/assistant/orders/:id/reject-receipt', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const { reason } = req.body;
@@ -350,10 +362,13 @@ router.patch('/assistant/orders/:id/reject-receipt', requireAuth, requireRole(['
       console.warn('DB update note (Reject Receipt):', err.message);
     }
 
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `Receipt rejected for order #${id}`,
-      data: formatOrderResponse(order),
+      data: formatted,
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -361,7 +376,7 @@ router.patch('/assistant/orders/:id/reject-receipt', requireAuth, requireRole(['
 });
 
 // PATCH /api/assistant/orders/:id/confirm-cod - Assistant confirms COD availability
-router.patch('/assistant/orders/:id/confirm-cod', requireAuth, requireRole(['admin', 'assistant', 'cashier']), async (req, res) => {
+router.patch('/assistant/orders/:id/confirm-cod', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     let order = inMemoryOrders.get(id) || { id };
@@ -382,10 +397,13 @@ router.patch('/assistant/orders/:id/confirm-cod', requireAuth, requireRole(['adm
       console.warn('DB update note (Confirm COD):', err.message);
     }
 
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
     return res.status(200).json({
       success: true,
       message: `COD Order #${id} availability confirmed! Sent to kitchen!`,
-      data: formatOrderResponse(order),
+      data: formatted,
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });

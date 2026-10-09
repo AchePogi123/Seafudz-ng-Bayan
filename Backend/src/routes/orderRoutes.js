@@ -574,7 +574,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_AUTHORIZED';
+    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';
 
     const orderRecord = {
       id: orderId,
@@ -589,8 +589,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       paymentMethod: initialPaymentMethod,
       payment_receipt: req.body.paymentReceipt || undefined,
       paymentReceipt: req.body.paymentReceipt || undefined,
-      gcash_authorized: true,
-      gcashAuthorized: true,
+      gcash_authorized: false,
+      gcashAuthorized: false,
       status: initialStatus,
       receipt_status: 'NONE',
       receiptStatus: 'NONE',

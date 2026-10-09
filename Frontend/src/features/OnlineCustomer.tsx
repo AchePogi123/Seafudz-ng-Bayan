@@ -30,6 +30,8 @@ interface OnlineOrderState {
     deliveryFee: number
     total: number
     status: 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | string
+    gcashAuthorized?: boolean
+    gcash_authorized?: boolean
     createdAt: string
 }
 
@@ -668,7 +670,7 @@ export const OnlineCustomer: React.FC = () => {
             return
         }
 
-        const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_AUTHORIZED'
+        const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
 
         const orderPayload = {
             type: 'Delivery',
@@ -683,6 +685,8 @@ export const OnlineCustomer: React.FC = () => {
             deliveryFee,
             total,
             status: initialStatus,
+            gcashAuthorized: false,
+            gcash_authorized: false,
             items: cartItems.map((ci) => ({
                 id: ci.item.id,
                 name: ci.item.name,
@@ -729,7 +733,8 @@ export const OnlineCustomer: React.FC = () => {
                 vat: serverOrder?.vat ?? vat,
                 deliveryFee: serverOrder?.deliveryFee ?? deliveryFee,
                 total: serverOrder?.total ?? total,
-                status: (serverOrder?.status || 'PENDING').toUpperCase(),
+                status: (serverOrder?.status || initialStatus).toUpperCase(),
+                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized),
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }
 

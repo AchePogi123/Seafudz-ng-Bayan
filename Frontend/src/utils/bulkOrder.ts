@@ -11,6 +11,6 @@ export interface OrderItemLike {
  * - Siomai items (Pork, Beef, Chicken, Sharksfin, Japanese): >= 30
  * - All other menu items (Alacarte, Meals, Add-ons, Drinks, Desserts): >= 10
  */
-export function checkIfBulkOrder(items?: any): boolean {
+export function checkIfBulkOrder(_items?: any): boolean {
   return false
 }

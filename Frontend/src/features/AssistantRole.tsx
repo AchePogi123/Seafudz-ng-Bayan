@@ -146,6 +146,7 @@ export const AssistantRole: React.FC = () => {
                 paymentReference: o.paymentReference || o.paymentRef,
                 paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
                 status: (o.status || 'PENDING').toLowerCase(),
+                gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                 items: o.items || [],
                 total: o.total || 0,
                 createdAt: o.createdAt || 'Just now',
@@ -197,6 +198,7 @@ export const AssistantRole: React.FC = () => {
                   paymentReference: o.paymentReference || o.paymentRef,
                   paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
                   status: rawStatus,
+                  gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                   items,
                   total: Number(o.total || 0),
                   createdAt: o.dateTime || 'Just now',
@@ -237,17 +239,25 @@ export const AssistantRole: React.FC = () => {
 
 
   const handleAuthorizeGCash = async (orderId: string) => {
+    setOrders((prev) =>
+      prev.map((o) => (o.id === orderId || o.ref === orderId ? { ...o, status: 'gcash_authorized', gcashAuthorized: true } : o))
+    )
+
     try {
+      const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
       await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/authorize-gcash`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
       })
     } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
       const updatedGlobal = globalOrders.map((o: any) =>
-        o.id === orderId || o.ref === orderId ? { ...o, status: 'GCASH_AUTHORIZED' } : o
+        o.id === orderId || o.ref === orderId ? { ...o, status: 'GCASH_AUTHORIZED', gcashAuthorized: true, gcash_authorized: true } : o
       )
       localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
 
@@ -255,13 +265,13 @@ export const AssistantRole: React.FC = () => {
       if (activeOrderStr) {
         const activeObj = JSON.parse(activeOrderStr)
         if (activeObj.id === orderId || activeObj.ref === orderId) {
-          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'GCASH_AUTHORIZED' }))
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'GCASH_AUTHORIZED', gcashAuthorized: true, gcash_authorized: true }))
         }
       }
       notifyOrderSync()
     } catch { }
 
-    fetchAssistantOrders(true)
+    void fetchAssistantOrders(true)
     setNotification(`GCash payment authorized for order #${orderId}! Customer can now pay and upload receipt.`)
   }
 
@@ -762,9 +772,9 @@ export const AssistantRole: React.FC = () => {
                         </div>
                         <button
                           onClick={() => handleAuthorizeGCash(selectedOrder.id)}
-                          className="w-full bg-blue-500 hover:bg-blue-600 text-white font-extrabold py-3 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-xs active:scale-98"
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
                         >
-                          <span>🔄 Re-Authorize Customer to Pay</span>
+                          <span>✅ Authorize Customer to Pay Now</span>
                         </button>
                       </div>
                     )

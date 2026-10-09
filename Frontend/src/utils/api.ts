@@ -6,14 +6,10 @@ const getResolvedApiBaseUrl = (): string => {
     import.meta.env.VITE_RAILWAY_API_URL ||
     import.meta.env.VITE_GCP_API_URL;
 
-  if (typeof window !== 'undefined') {
-    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (!isLocalhost && (!envUrl || envUrl.includes('localhost'))) {
-      return 'https://seafudz-ng-bayan-production.up.railway.app/api';
-    }
-  }
+  if (envUrl) return envUrl;
 
-  return envUrl || 'http://localhost:5000/api';
+  // Seamless fallback: use Railway production API for both local dev and production
+  return 'https://seafudz-ng-bayan-production.up.railway.app/api';
 };
 
 export const API_BASE_URL = getResolvedApiBaseUrl();

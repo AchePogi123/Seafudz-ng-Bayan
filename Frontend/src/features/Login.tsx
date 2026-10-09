@@ -178,10 +178,11 @@ const Login = () => {
           method: 'POST',
           headers,
           body: JSON.stringify({
+            loginInput: loginInput.trim(),
             email: isEmail ? loginInput.trim() : undefined,
             username: !isEmail ? loginInput.trim() : undefined,
             password: loginPassword,
-            pinCode: !isEmail ? loginPassword : undefined,
+            pinCode: loginPassword,
             supabaseUserId: supabaseUser?.id,
           }),
         });
@@ -190,7 +191,7 @@ const Login = () => {
           profileData = await res.json();
         } else {
           const errData = await res.json().catch(() => null);
-          if (errData?.message) {
+          if (errData?.message && !supabaseUser) {
             supabaseAuthErr = errData.message;
           }
         }
@@ -213,7 +214,6 @@ const Login = () => {
       }
 
       if (!profileData?.success && !supabaseUser) {
-
         if (supabaseAuthErr) {
           throw new Error(supabaseAuthErr);
         }

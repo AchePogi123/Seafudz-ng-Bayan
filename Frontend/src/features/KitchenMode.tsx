@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
-import { checkIfBulkOrder } from '../utils/bulkOrder'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
@@ -22,7 +21,6 @@ export interface KitchenOrder {
   customer?: string
   notes?: string
   total?: number
-  isBulk?: boolean
   createdAt?: string
   paymentMethod?: string
   startTime?: number | null
@@ -105,7 +103,6 @@ export const KitchenMode: React.FC = () => {
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
           const calcTotal = parseFloat(o.total || 0)
-          const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.cartItems || o.items))
 
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
@@ -115,7 +112,6 @@ export const KitchenMode: React.FC = () => {
             status: mappedStatus,
             customer: customerName,
             total: calcTotal,
-            isBulk: isBulkOrder,
             items: (o.cartItems || o.items || []).map((ci: any) => ({
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
@@ -186,7 +182,6 @@ export const KitchenMode: React.FC = () => {
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
                 const calcTotal = parseFloat(o.total || 0)
-                const isBulkOrder = Boolean(o.is_bulk || o.isBulk || checkIfBulkOrder(o.items))
 
                 return {
                   id: o.id,
@@ -196,7 +191,6 @@ export const KitchenMode: React.FC = () => {
                   status: norm,
                   customer: customerName,
                   total: calcTotal,
-                  isBulk: isBulkOrder,
                   items: (o.items || []).map((item: any) => ({
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
@@ -477,11 +471,6 @@ export const KitchenMode: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
-                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
-                                BULK ORDER
-                              </span>
-                            )}
                           </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
@@ -557,11 +546,6 @@ export const KitchenMode: React.FC = () => {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {(order.isBulk || checkIfBulkOrder(order.items)) && (
-                              <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider shadow-2xs">
-                                BULK ORDER
-                              </span>
-                            )}
                           </div>
                           {order.customer && (
                             <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { NavbarAssistant } from '../components/NavbarAssistant'
 import { API_BASE_URL } from '../utils/api'
-import { checkIfBulkOrder } from '../utils/bulkOrder'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
@@ -536,11 +535,6 @@ export const AssistantRole: React.FC = () => {
                             }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
-                          {(checkIfBulkOrder(ord.items) || (ord as any).isBulk) && (
-                            <span className={`text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${s === 'gcash_pending_approval' ? 'bg-amber-600' : 'bg-amber-500'}`}>
-                              {s === 'gcash_pending_approval' ? 'BULK ORDER - REQUESTING FOR PAYMENT' : 'BULK ORDER'}
-                            </span>
-                          )}
                           {ord.paymentReceipt && (
                             <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200" title="Receipt photo attached">Receipt</span>
                           )}
@@ -679,17 +673,6 @@ export const AssistantRole: React.FC = () => {
                   </div>
                 </div>
 
-                {/* BULK ORDER NOTICE IN DETAIL PANEL */}
-                {(checkIfBulkOrder(selectedOrder.items) || (selectedOrder as any).isBulk) && (
-                  <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3 text-amber-900 flex items-center justify-between">
-                    <div>
-                      <p className="font-extrabold text-xs uppercase">⚠️ Bulk Order</p>
-                      <p className="text-[10px] text-amber-700">Requires staff verification</p>
-                    </div>
-                    <span className="bg-amber-500 text-white font-black text-[10px] px-2 py-0.5 rounded-full uppercase">Bulk</span>
-                  </div>
-                )}
-
                 {/* Pipeline Action Controls */}
                 <div className="pt-2 space-y-3">
                   {(() => {
@@ -728,7 +711,7 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    // 2. GCash Bulk Order Needing Initial Authorization
+                    // 2. GCash Order Needing Initial Authorization
                     if (st === 'GCASH_PENDING_APPROVAL') {
                       return (
                         <button

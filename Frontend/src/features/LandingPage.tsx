@@ -79,7 +79,7 @@ const FAQ_LIST = [
   },
   {
     q: 'Do you offer catering services for events and parties?',
-    a: 'Yes, we provide bulk bilao orders and on-site seafood boil stations for celebrations, birthdays, and corporate events. Contact our hotline at (02) 8888-SEAFOOD for custom arrangements.'
+    a: 'Yes, we provide bilao orders and on-site seafood boil stations for celebrations, birthdays, and corporate events. Contact our hotline at (02) 8888-SEAFOOD for custom arrangements.'
   }
 ];
 

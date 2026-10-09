@@ -7,7 +7,6 @@ import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
-import { checkIfBulkOrder } from '../utils/bulkOrder'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 interface CartItem {
@@ -159,7 +158,6 @@ export const OnlineCustomer: React.FC = () => {
     const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
-    const [isBulkWarningModalOpen, setIsBulkWarningModalOpen] = useState(false)
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
@@ -341,15 +339,10 @@ export const OnlineCustomer: React.FC = () => {
                 notifyOrderSync()
             } catch { }
 
-            const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
-
             setActiveOrder((prev) => prev ? { ...prev, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' } : null)
             setSelectedReceiptPreview(null)
-
-            if (!isBulk) {
-                setIsVerificationModalOpen(false)
-                setActiveTab('tracking')
-            }
+            setIsVerificationModalOpen(false)
+            setActiveTab('tracking')
         } catch (err) {
             console.error('Error submitting payment receipt:', err)
         } finally {
@@ -414,11 +407,10 @@ export const OnlineCustomer: React.FC = () => {
     useEffect(() => {
         if (!activeOrder?.status) return
         const s = (activeOrder.status || '').toUpperCase()
-        const isBulk = checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || Boolean((activeOrder as any).isBulk)
         const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
-        const isNonBulkCOD = (activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD') && !isBulk
+        const isCOD = activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD'
 
-        if (isConfirmedOrLater || (!isBulk && s === 'RECEIPT_SUBMITTED') || isNonBulkCOD) {
+        if (isConfirmedOrLater || s === 'RECEIPT_SUBMITTED' || isCOD) {
             setIsVerificationModalOpen(false)
             setActiveTab('tracking')
         }
@@ -432,9 +424,6 @@ export const OnlineCustomer: React.FC = () => {
         }
         syncUserProfileFromDB(currentUser)
         if (cartItems.length > 0) {
-            if (checkIfBulkOrder(cartItems)) {
-                setIsBulkWarningModalOpen(true)
-            }
             setActiveTab('billing')
             setIsMobileCartOpen(false)
         }
@@ -655,12 +644,7 @@ export const OnlineCustomer: React.FC = () => {
         }
         if (!customerName || !phone || !address || cartItems.length === 0) return
 
-        const isBulk = checkIfBulkOrder(cartItems)
-        const initialStatus = paymentMethod === 'COD'
-            ? 'PENDING_COD'
-            : isBulk
-                ? 'GCASH_PENDING_APPROVAL'
-                : 'GCASH_AUTHORIZED'
+        const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_AUTHORIZED'
 
         const orderPayload = {
             type: 'Delivery',
@@ -741,7 +725,7 @@ export const OnlineCustomer: React.FC = () => {
             } catch { }
             setCartItems([])
             setOrderNotes('')
-            if (paymentMethod === 'COD' && !isBulk) {
+            if (paymentMethod === 'COD') {
                 setActiveTab('tracking')
                 setIsVerificationModalOpen(false)
             } else {
@@ -1052,9 +1036,6 @@ export const OnlineCustomer: React.FC = () => {
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className="font-extrabold text-sm text-blue-950 uppercase tracking-wide">Active Order #{activeOrder.id} ({activeOrder.paymentMethod})</span>
-                                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (
-                                            <span className="bg-amber-500 text-white font-black text-[9px] px-2 py-0.5 rounded-full uppercase">Bulk Order</span>
-                                        )}
                                     </div>
                                     <p className="text-xs text-blue-800 mt-1">Status: <strong className="font-extrabold text-blue-950">{activeOrder.status}</strong> — Waiting for staff verification</p>
                                 </div>
@@ -1155,9 +1136,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
                                             </div>
                                             <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
-                                                {checkIfBulkOrder(cartItems)
-                                                    ? 'Your GCash payment requires verification from staff before payment authorization and order confirmation.'
-                                                    : 'Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.'}
+                                                Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.
                                             </p>
                                         </button>
 
@@ -1186,7 +1165,7 @@ export const OnlineCustomer: React.FC = () => {
                                         type="submit"
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        {checkIfBulkOrder(cartItems) ? 'Request Order' : 'Confirm & Submit Order'}
+                                        Confirm & Submit Order
                                     </button>
                                     <button
                                         type="button"
@@ -1322,20 +1301,6 @@ export const OnlineCustomer: React.FC = () => {
                                 >
                                     Start New Order
                                 </button>
-                            </div>
-                        )}
-
-                        {/* BULK ORDER BADGE IF TOTAL > 10K */}
-                        {activeOrder.status !== 'CANCELLED' && (activeOrder.total > 10000 || (activeOrder as any).isBulk) && (
-                            <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-center justify-between gap-3 text-amber-900">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xl">⚠️</span>
-                                    <div>
-                                        <p className="font-extrabold text-sm uppercase tracking-wide">Bulk Order (Exceeds ₱10,000)</p>
-                                        <p className="text-xs text-amber-700">This order is classified as a Bulk Order and requires staff verification before payment or order confirmation.</p>
-                                    </div>
-                                </div>
-                                <span className="bg-amber-500 text-white font-black text-xs px-3 py-1 rounded-full uppercase shadow-xs">Bulk Order</span>
                             </div>
                         )}
 
@@ -1811,27 +1776,6 @@ export const OnlineCustomer: React.FC = () => {
                 )}
             </div>
 
-            {/* 10k Bulk Order Warning Modal */}
-            {isBulkWarningModalOpen && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-amber-200 text-center space-y-4 animate-in zoom-in-95 duration-200">
-                        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-md shadow-amber-500/20">
-                            ⚠️
-                        </div>
-                        <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight">Bulk Order Notice</h3>
-                        <p className="text-sm font-semibold text-neutral-600 leading-relaxed bg-amber-50 p-4 rounded-2xl border border-amber-200/80">
-                            "Your order contains item quantities classified as a Bulk Order and requires staff verification before payment or order confirmation."
-                        </p>
-                        <button
-                            onClick={() => setIsBulkWarningModalOpen(false)}
-                            className="w-full bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-3.5 rounded-2xl shadow-lg shadow-amber-500/20 active:scale-98 transition-all duration-200 text-sm cursor-pointer"
-                        >
-                            I Understand & Proceed
-                        </button>
-                    </div>
-                </div>
-            )}
-
             {/* Staff Verification & GCash Payment Modal Popup */}
             {isVerificationModalOpen && activeOrder && (
                 <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
@@ -1857,57 +1801,9 @@ export const OnlineCustomer: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* 1st POPUP MODAL FOR BULK ORDERS: WAITING FOR ASSISTANT VERIFICATION & PERMISSION */}
-                        {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) &&
-                            (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING') && (
-                                <div className="space-y-5 text-center py-2 animate-in zoom-in-95 duration-200">
-                                    <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-lg shadow-amber-500/20 animate-pulse">
-                                        ⏳
-                                    </div>
-                                    <div className="space-y-1">
-                                        <h3 className="font-extrabold text-neutral-900 text-2xl tracking-tight">
-                                            Order #{activeOrder.id} Requested
-                                        </h3>
-                                        <p className="text-sm font-extrabold text-amber-600 uppercase tracking-wider bg-amber-50 py-1.5 px-4 rounded-xl inline-block border border-amber-200">
-                                            Waiting for assistant to verify
-                                        </p>
-                                    </div>
-
-                                    <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4.5 text-left space-y-2 shadow-xs">
-                                        <div className="flex items-center gap-2 text-amber-950 font-extrabold text-xs uppercase tracking-wide">
-                                            <span>⚠️ Bulk Order Verification Required</span>
-                                        </div>
-                                        <p className="text-xs text-amber-800 leading-relaxed">
-                                            Your order is classified as a Bulk Order. It has been sent to the store assistant for verification. Please wait while an assistant reviews item availability and grants permission to pay via GCash.
-                                        </p>
-                                    </div>
-
-                                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-700 flex items-center justify-between">
-                                        <span className="font-semibold text-slate-500">Requested Order Total:</span>
-                                        <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong>
-                                    </div>
-
-                                    <p className="text-[11px] text-neutral-400 font-medium pt-1">
-                                        This screen will automatically update once an assistant clicks "Allow Customer to Pay".
-                                    </p>
-                                </div>
-                            )}
-
-                        {/* 2nd POPUP MODAL FOR BULK ORDERS & GCASH VERIFICATION (AUTHORIZED OR REGULAR ORDER) */}
-                        {activeOrder.paymentMethod === 'GCash' &&
-                            !((checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && (activeOrder.status === 'GCASH_PENDING_APPROVAL' || activeOrder.status === 'PENDING')) && (
-                                <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
-                                    {/* Header badge if bulk order authorized */}
-                                    {(checkIfBulkOrder(activeOrder.items || (activeOrder as any).cartItems) || (activeOrder as any).isBulk) && activeOrder.status === 'GCASH_AUTHORIZED' && (
-                                        <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3.5 text-center space-y-1 shadow-xs">
-                                            <div className="flex items-center justify-center gap-2 font-black text-emerald-900 text-sm">
-                                                <span>✅ Permission Granted by Staff!</span>
-                                            </div>
-                                            <p className="text-xs text-emerald-700">
-                                                Staff has authorized your bulk order. Please transfer <strong>₱{activeOrder.total.toLocaleString()}</strong> to GCash below and submit your screenshot.
-                                            </p>
-                                        </div>
-                                    )}
+                        {/* GCASH VERIFICATION & PAYMENT POPUP MODAL */}
+                        {activeOrder.paymentMethod === 'GCash' && (
+                            <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
 
                                     {/* Store GCash Account Details Box */}
                                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">

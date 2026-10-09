@@ -1,5 +1,3 @@
-import { checkIfBulkOrder } from '../utils/bulkOrder.js';
-
 // Central In-Memory Store Fallback for backend order flow
 export const inMemoryOrders = new Map();
 
@@ -29,8 +27,7 @@ export function normalizeFlowStatus(rawStatus) {
 export function formatOrderResponse(row) {
   const normStatus = normalizeFlowStatus(row.status);
   const items = Array.isArray(row.items) ? row.items : [];
-  const calcTotal = parseFloat(row.total || 0);
-  const isBulk = Boolean(row.is_bulk || row.isBulk || checkIfBulkOrder(items));
+  const isBulk = false;
   const isReceiptPrinted = Boolean(row.is_receipt_printed || row.isReceiptPrinted || row.receipt_printed || row.receiptStatus === 'PRINTED' || row.receipt_status === 'PRINTED');
   const receiptStatus = isReceiptPrinted ? 'PRINTED' : (row.receipt_status || row.receiptStatus || 'UNPRINTED');
 
@@ -49,8 +46,8 @@ export function formatOrderResponse(row) {
     isReceiptPrinted: isReceiptPrinted,
     is_receipt_printed: isReceiptPrinted,
     rejectionReason: row.rejection_reason || row.rejectionReason || '',
-    isBulk: isBulk,
-    is_bulk: isBulk,
+    isBulk: false,
+    is_bulk: false,
     notes: row.notes || '',
     items: items.map(item => ({
       id: item.id || item.product_id || item.menu_item_id,

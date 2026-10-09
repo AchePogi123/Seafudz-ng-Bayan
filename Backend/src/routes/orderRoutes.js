@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
-import { checkIfBulkOrder } from '../utils/bulkOrder.js';
 
 const router = Router();
 
@@ -565,13 +564,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const isBulk = checkIfBulkOrder(items);
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD'
-      ? 'PENDING_COD'
-      : isBulk
-        ? 'GCASH_PENDING_APPROVAL'
-        : 'GCASH_AUTHORIZED';
+    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_AUTHORIZED';
 
     const orderRecord = {
       id: orderId,
@@ -586,13 +580,13 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       paymentMethod: initialPaymentMethod,
       payment_receipt: req.body.paymentReceipt || undefined,
       paymentReceipt: req.body.paymentReceipt || undefined,
-      gcash_authorized: !isBulk,
-      gcashAuthorized: !isBulk,
+      gcash_authorized: true,
+      gcashAuthorized: true,
       status: initialStatus,
       receipt_status: 'NONE',
       receiptStatus: 'NONE',
-      is_bulk: isBulk,
-      isBulk: isBulk,
+      is_bulk: false,
+      isBulk: false,
       notes: notes || '',
       subtotal: calcSubtotal,
       vat: calcVat,

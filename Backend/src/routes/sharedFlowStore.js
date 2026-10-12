@@ -41,6 +41,7 @@ export function formatOrderResponse(row) {
     deliveryAddress: row.delivery_address || row.address || 'Delivery Address',
     paymentMethod: row.payment_method || row.paymentMethod || 'GCash',
     paymentReceipt: row.payment_receipt || row.paymentReceipt || undefined,
+    paymentReference: row.reference_number || row.payment_reference || null,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     gcash_authorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     receiptStatus: receiptStatus,

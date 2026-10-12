@@ -174,12 +174,13 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
              o.id AS "transactionId", 
              o.created_at AS "date", 
              o.order_type AS "type", 
-             COALESCE(p.payment_method, 'CASH') AS "paymentMethod", 
+             COALESCE(p.payment_method, 'CASH') AS "paymentMethod",
+             p.reference_number AS "referenceNumber", 
              o.total AS "totalAmount",
              o.status AS "status"
       FROM orders o
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, payment_method
+        SELECT DISTINCT ON (order_id) order_id, payment_method, reference_number
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p ON o.id = p.order_id

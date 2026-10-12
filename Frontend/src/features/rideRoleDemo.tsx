@@ -245,7 +245,7 @@ export const RideRoleDemo: React.FC = () => {
   }
 
   // Rider updates status to Out for Delivery or Delivered/Completed
-  const handleUpdateStatus = async (orderId: string, newStatus: 'Out for Delivery' | 'Completed') => {
+  const handleUpdateStatus = async (orderId: string, newStatus: 'Out for Delivery' | 'Completed', amountReceived?: number) => {
     const apiStatus = newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
 
     // Update in LocalStorage
@@ -268,12 +268,18 @@ export const RideRoleDemo: React.FC = () => {
       notifyOrderSync()
     } catch {}
 
+    // Prepare payload for backend
+    const payload: any = { status: apiStatus }
+    if (amountReceived !== undefined) {
+      payload.amountReceived = amountReceived
+    }
+
     // Update in backend API
     try {
       await fetch(`${API_BASE_URL}/user-flow/orders/${orderId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: apiStatus }),
+        body: JSON.stringify(payload),
       })
     } catch {}
 

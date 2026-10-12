@@ -15,6 +15,9 @@ export interface LiveTransaction {
   total: number
   type: string
   paymentMethod?: string
+  paymentReference?: string
+  codAmountReceived?: number | null
+  changeReturned?: number | null
   status?: string
 }
 
@@ -137,6 +140,8 @@ const SalesReportCashier: React.FC = () => {
       total: Number(dbO.total || 0),
       type: normalizedType,
       paymentMethod: dbO.payment_method || 'Cash',
+      codAmountReceived: dbO.cod_amount_received != null ? Number(dbO.cod_amount_received) : null,
+      changeReturned: dbO.change_returned != null ? Number(dbO.change_returned) : null,
       status: dbO.status || 'Completed',
     }
   }, [])
@@ -744,7 +749,9 @@ const SalesReportCashier: React.FC = () => {
                     <th className="py-3 px-4">Ordered Items</th>
                     <th className="py-3 px-4">Date & Time</th>
                     <th className="py-3 px-4">Payment</th>
-                    <th className="py-3 px-4 text-right">Total Amount</th>
+
+                    <th className="py-3 px-4 text-center">COD Amount Received</th>
+                    <th className="py-3 px-4 text-center">Change Returned</th>
                     <th className="py-3 px-4 text-center">Status</th>
                     <th className="py-3 px-4 text-center print:hidden">Action</th>
                   </tr>
@@ -752,7 +759,7 @@ const SalesReportCashier: React.FC = () => {
                 <tbody className="divide-y divide-slate-100 text-xs font-normal text-slate-700">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-12 text-slate-400">
+                      <td colSpan={9} className="text-center py-12 text-slate-400">
                         <div className="inline-flex items-center gap-2 text-orange-600 font-medium">
                           <svg className="animate-spin h-4 w-4 text-orange-600" fill="none" viewBox="0 0 24 24">
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -764,7 +771,7 @@ const SalesReportCashier: React.FC = () => {
                     </tr>
                   ) : transactions.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-12 text-slate-400">
+                      <td colSpan={9} className="text-center py-12 text-slate-400">
                         <p className="font-semibold text-slate-600">No transactions found</p>
                         <p className="text-xs text-slate-400 mt-0.5">
                           Transactions matching the selected period and filters will be displayed here.
@@ -835,13 +842,20 @@ const SalesReportCashier: React.FC = () => {
                             {tx.paymentMethod || 'Cash'}
                           </span>
                         </td>
+
                         <td className="py-3 px-4 text-right font-semibold text-slate-900">
-                          ₱{Number(tx.total || 0).toLocaleString()}
+                            ₱{Number(tx.total || 0).toLocaleString()}
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                            {tx.status || 'Completed'}
-                          </span>
+                            {tx.codAmountReceived != null ? `₱${Number(tx.codAmountReceived).toLocaleString()}` : 'N/A'}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                            {tx.changeReturned != null ? `₱${Number(tx.changeReturned).toLocaleString()}` : 'N/A'}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                                {tx.status || 'Completed'}
+                            </span>
                         </td>
                         <td className="py-3 px-4 text-center print:hidden">
                           <button

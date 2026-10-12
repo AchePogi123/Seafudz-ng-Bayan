@@ -288,15 +288,28 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     const validPaymentMethods = ['CASH', 'GCASH', 'CARD', 'ONLINE'];
     const finalPaymentMethod = validPaymentMethods.includes(normalizedPaymentMethod) ? normalizedPaymentMethod : 'CASH';
 
+    // Validation: require reference number for GCash or Hybrid payments
+    if ((finalPaymentMethod === 'GCASH' || finalPaymentMethod === 'HYBRID') && (!req.body.reference_number || req.body.reference_number.trim() === '')) {
+      client.release();
+      return res.status(400).json({ success: false, message: 'Reference number is required for GCash or Hybrid payments' });
+    }
+
+    const cashAmt = finalPaymentMethod === 'CASH' ? totalAmount : 0;
+    const gcashAmt = finalPaymentMethod === 'GCASH' ? totalAmount : 0;
+    const refNum = (finalPaymentMethod === 'GCASH' || finalPaymentMethod === 'HYBRID') ? (req.body.reference_number || null) : null;
+
     const paymentSql = `
-      INSERT INTO payments (order_id, payment_method, amount, status, paid_at)
-      VALUES ($1, $2, $3, $4, NOW())
+      INSERT INTO payments (order_id, payment_method, amount, status, paid_at, cash_amount, gcash_amount, reference_number)
+      VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7)
     `;
     await client.query(paymentSql, [
       createdOrder.id,
       finalPaymentMethod,
       totalAmount,
       'PAID',
+      cashAmt,
+      gcashAmt,
+      refNum,
     ]);
 
     // Create kitchen order ticket for POS and on-site orders

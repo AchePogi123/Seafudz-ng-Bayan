@@ -29,7 +29,11 @@ interface OnlineOrderState {
     vat: number
     deliveryFee: number
     total: number
-    status: 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | string
+    status: 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'OUT_OF_STOCK' | 'CANCELLED' | string
+    outOfStockItems?: any[]
+    customerResolution?: 'REPLACE' | 'REFUND' | null
+    customerResolutionStatus?: string
+    customerReplacements?: any[]
     gcashAuthorized?: boolean
     gcash_authorized?: boolean
     createdAt: string
@@ -54,6 +58,23 @@ const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
     return `seafudz_orders_${id}`
 }
 
+const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
+    if (!order) return []
+    if (Array.isArray(order.outOfStockItems) && order.outOfStockItems.length > 0) return order.outOfStockItems
+
+    return (order.items || []).map((entry: any, index) => {
+        const item = entry.item || entry
+        return {
+            ...entry,
+            id: entry.id ?? item.id ?? index,
+            name: entry.name || entry.product_name_snapshot || item.name || 'Seafood Dish',
+            price: entry.price ?? entry.unit_price ?? item.price ?? 0,
+            quantity: entry.quantity || 1,
+            item_status: entry.item_status || entry.itemStatus,
+        }
+    }).filter((item: any) => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+}
+
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
@@ -63,7 +84,7 @@ export function normalizeStatus(rawStatus?: string): string {
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
     if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY'
     if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED'
-    if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper
+    if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK') return upper
     return upper
 }
 
@@ -77,6 +98,7 @@ export function getStatusRank(rawStatus?: string): number {
         case 'PENDING_COD': return 0
         case 'RECEIPT_REJECTED': return 1
         case 'CONFIRMED': return 3
+        case 'OUT_OF_STOCK': return 3.5
         case 'PREPARING': return 4
         case 'READY': return 5
         case 'OUT_FOR_DELIVERY': return 6
@@ -134,6 +156,11 @@ export const OnlineCustomer: React.FC = () => {
     // Menu state using client items
     const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
+    const outOfStockItems = useMemo(() => getOrderOutOfStockItems(activeOrder), [activeOrder])
+    const availableReplacementItems = useMemo(
+        () => menuItems.filter((item) => isAvailable(item.id)),
+        [menuItems, isAvailable]
+    )
 
     // Menu filter states
     const [searchQuery, setSearchQuery] = useState('')
@@ -166,6 +193,9 @@ export const OnlineCustomer: React.FC = () => {
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
     const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
     const [isCancellingOrder, setIsCancellingOrder] = useState(false)
+    const [isChoosingOosReplacement, setIsChoosingOosReplacement] = useState(false)
+    const [replacementSelections, setReplacementSelections] = useState<Record<string, string>>({})
+    const [isSubmittingOosChoice, setIsSubmittingOosChoice] = useState(false)
 
     // Save cart state to user-scoped localStorage whenever modified
     useEffect(() => {
@@ -461,21 +491,54 @@ export const OnlineCustomer: React.FC = () => {
                         const orderData = data.data || data
                         if (orderData && orderData.status) {
                             backendSuccess = true
+                            const previousOrder = activeOrderRef.current
                             const rawStatus = String(orderData.status).toUpperCase()
-                            const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
+                            const gcashAuthorized = Boolean(orderData.gcashAuthorized || orderData.gcash_authorized || rawStatus === 'GCASH_AUTHORIZED')
+                            const customerResolution = Object.prototype.hasOwnProperty.call(orderData, 'customerResolution')
+                                ? orderData.customerResolution
+                                : orderData.customer_resolution ?? previousOrder?.customerResolution ?? null
+                            const customerResolutionStatus = orderData.customerResolutionStatus || orderData.customer_resolution_status || previousOrder?.customerResolutionStatus || 'NONE'
+                            const customerReplacements = Array.isArray(orderData.customerReplacements)
+                                ? orderData.customerReplacements
+                                : Array.isArray(orderData.customer_replacements)
+                                    ? orderData.customer_replacements
+                                    : previousOrder?.customerReplacements || []
+                            const latestOutOfStockItems = Array.isArray(orderData.outOfStockItems)
+                                ? orderData.outOfStockItems
+                                : previousOrder?.outOfStockItems || []
+                            const orderChanged = rawStatus !== String(previousOrder?.status || '').toUpperCase()
+                                || gcashAuthorized !== Boolean(previousOrder?.gcashAuthorized || previousOrder?.gcash_authorized)
+                                || customerResolution !== (previousOrder?.customerResolution || null)
+                                || customerResolutionStatus !== (previousOrder?.customerResolutionStatus || 'NONE')
+                                || JSON.stringify(customerReplacements) !== JSON.stringify(previousOrder?.customerReplacements || [])
+                                || JSON.stringify(latestOutOfStockItems) !== JSON.stringify(previousOrder?.outOfStockItems || [])
+                                || Number(orderData.total ?? previousOrder?.total) !== Number(previousOrder?.total)
 
-                            if (rawStatus !== currentRawStatus) {
-                                if (rawStatus === 'GCASH_AUTHORIZED' || Boolean(orderData.gcashAuthorized || orderData.gcash_authorized)) {
-                                    setIsWaitingModalOpen(false)
-                                    setIsVerificationModalOpen(true)
-                                }
+                            if (rawStatus === 'GCASH_AUTHORIZED' || gcashAuthorized) {
+                                setIsWaitingModalOpen(false)
+                                setIsVerificationModalOpen(true)
+                            }
+
+                            if (orderChanged) {
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: rawStatus, gcashAuthorized: Boolean(orderData.gcashAuthorized || orderData.gcash_authorized || rawStatus === 'GCASH_AUTHORIZED') }
+                                    const updated = {
+                                        ...prev,
+                                        status: rawStatus,
+                                        gcashAuthorized,
+                                        outOfStockItems: latestOutOfStockItems,
+                                        customerResolution,
+                                        customerResolutionStatus,
+                                        customerReplacements,
+                                        subtotal: Number(orderData.subtotal ?? prev.subtotal),
+                                        vat: Number(orderData.vat ?? prev.vat),
+                                        deliveryFee: Number(orderData.deliveryFee ?? prev.deliveryFee),
+                                        total: Number(orderData.total ?? prev.total),
+                                    }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
+                                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
 
-                                        // Keep user order list and global seafudz_orders synchronized
                                         const updateListInStorage = (key: string) => {
                                             const raw = localStorage.getItem(key)
                                             if (!raw) return
@@ -483,9 +546,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 const list = JSON.parse(raw)
                                                 if (Array.isArray(list)) {
                                                     const updatedList = list.map((o: any) =>
-                                                        (o.id === currentOrderId || o.ref === currentOrderId)
-                                                            ? { ...o, status: rawStatus, gcashAuthorized: true }
-                                                            : o
+                                                        (o.id === currentOrderId || o.ref === currentOrderId) ? { ...o, ...updated } : o
                                                     )
                                                     localStorage.setItem(key, JSON.stringify(updatedList))
                                                 }
@@ -790,6 +851,87 @@ export const OnlineCustomer: React.FC = () => {
         setOrderNotes('')
         setCartItems([])
         setActiveTab('menu')
+    }
+
+    const handleSubmitOutOfStockChoice = async (resolution: 'REPLACE' | 'REFUND') => {
+        if (!activeOrder || isSubmittingOosChoice) return
+        if (resolution === 'REFUND' && !window.confirm(`Request a full refund for Order #${activeOrder.id}?`)) return
+
+        const replacements: Array<{ oldItemId: string | number; newProductId: string; newName: string; newPrice: number }> = []
+        if (resolution === 'REPLACE') {
+            outOfStockItems.forEach((item: any, index) => {
+                const oldItemId = item.id ?? index
+                const replacement = availableReplacementItems.find((menuItem) => menuItem.id === replacementSelections[String(oldItemId)])
+                if (replacement) {
+                    replacements.push({
+                        oldItemId,
+                        newProductId: replacement.id,
+                        newName: replacement.name,
+                        newPrice: getEffectivePrice(replacement.id, replacement.price),
+                    })
+                }
+            })
+
+            if (outOfStockItems.length === 0 || replacements.length !== outOfStockItems.length) {
+                alert('Choose an available replacement for every out-of-stock item.')
+                return
+            }
+        }
+
+        setIsSubmittingOosChoice(true)
+        try {
+            const token = localStorage.getItem('seafudz_token') || localStorage.getItem('token')
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}/out-of-stock-choice`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ resolution, replacements }),
+            })
+            const result = await res.json().catch(() => ({}))
+            if (!res.ok) throw new Error(result.message || 'Unable to submit your choice.')
+
+            const responseOrder = result.data || {}
+            const updatedOrder = {
+                ...activeOrder,
+                status: responseOrder.status || activeOrder.status,
+                outOfStockItems: responseOrder.outOfStockItems ?? outOfStockItems,
+                customerResolution: responseOrder.customerResolution || resolution,
+                customerResolutionStatus: responseOrder.customerResolutionStatus || 'PENDING_ASSISTANT',
+                customerReplacements: responseOrder.customerReplacements || replacements,
+            }
+            const currentUser = getActiveUser()
+            setActiveOrder(updatedOrder)
+            setIsChoosingOosReplacement(false)
+            setReplacementSelections({})
+
+            try {
+                localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updatedOrder))
+                for (const key of [getOrdersKey(currentUser), 'seafudz_orders']) {
+                    const stored = localStorage.getItem(key)
+                    if (!stored) continue
+                    const orders = JSON.parse(stored)
+                    if (Array.isArray(orders)) {
+                        localStorage.setItem(key, JSON.stringify(orders.map((order: any) =>
+                            order.id === activeOrder.id || order.ref === activeOrder.id ? { ...order, ...updatedOrder } : order
+                        )))
+                    }
+                }
+                const globalActive = localStorage.getItem('seafudz_active_online_order')
+                if (globalActive) {
+                    const parsed = JSON.parse(globalActive)
+                    if (parsed.id === activeOrder.id || parsed.ref === activeOrder.id) {
+                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updatedOrder))
+                    }
+                }
+            } catch { }
+            notifyOrderSync()
+        } catch (error) {
+            alert(error instanceof Error ? error.message : 'Unable to submit your choice. Please try again.')
+        } finally {
+            setIsSubmittingOosChoice(false)
+        }
     }
 
     return (
@@ -1289,7 +1431,7 @@ export const OnlineCustomer: React.FC = () => {
                             {(() => {
                                 const rawSt = (activeOrder.status || '').toUpperCase()
                                 const isCancelled = rawSt === 'CANCELLED'
-                                const isPreparingOrLater = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
+                                const isPreparingOrLater = ['OUT_OF_STOCK', 'PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
 
                                 if (isCancelled) {
                                     return (
@@ -1315,9 +1457,11 @@ export const OnlineCustomer: React.FC = () => {
                                 return (
                                     <div className="text-right">
                                         <span className="bg-neutral-100 text-neutral-500 font-bold text-xs px-3 py-1.5 rounded-xl border border-neutral-200 inline-block">
-                                            🍳 Kitchen Processing
+                                            {normalizeStatus(rawSt) === 'OUT_OF_STOCK' ? '⚠️ Out-of-Stock Decision Needed' : '🍳 Kitchen Processing'}
                                         </span>
-                                        <p className="text-[10px] text-neutral-400 mt-1">Cannot cancel once cooking starts</p>
+                                        <p className="text-[10px] text-neutral-400 mt-1">
+                                            {normalizeStatus(rawSt) === 'OUT_OF_STOCK' ? 'Choose a replacement or request a refund below.' : 'Cannot cancel once cooking starts'}
+                                        </p>
                                     </div>
                                 )
                             })()}
@@ -1516,6 +1660,140 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
                         )}
 
+                        {/* Out of Stock Notice Banner */}
+                        {normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' && (
+                            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 sm:p-6 text-amber-950 shadow-md space-y-4 animate-in fade-in">
+                                <div className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">⚠️</span>
+                                        <h4 className="text-base sm:text-lg font-black text-amber-900 tracking-tight">Item Unavailable in Kitchen</h4>
+                                    </div>
+                                    <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
+                                        Choose a replacement for each unavailable item, or request a full refund for this transaction.
+                                    </p>
+                                </div>
+
+                                {(activeOrder.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase() === 'PENDING_ASSISTANT' ? (
+                                    <div className="bg-amber-100/90 px-4 py-3 rounded-xl border border-amber-300 text-xs font-bold text-amber-900">
+                                        {activeOrder.customerResolution === 'REFUND'
+                                            ? 'Full refund requested. The assistant has been notified and will process your request.'
+                                            : 'Your replacement selection has been sent to the assistant for confirmation.'}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        <div className="flex flex-col sm:flex-row gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsChoosingOosReplacement(true)}
+                                                disabled={isSubmittingOosChoice}
+                                                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs px-4 py-3 rounded-xl transition-colors disabled:opacity-50"
+                                            >
+                                                Choose replacement
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => handleSubmitOutOfStockChoice('REFUND')}
+                                                disabled={isSubmittingOosChoice}
+                                                className="flex-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs px-4 py-3 rounded-xl transition-colors disabled:opacity-50"
+                                            >
+                                                Request full refund
+                                            </button>
+                                        </div>
+
+                                        {isChoosingOosReplacement && (
+                                            <div className="bg-white border border-amber-200 rounded-xl p-4 space-y-3">
+                                                <div>
+                                                    <h5 className="text-sm font-extrabold text-neutral-900">Choose replacement dishes</h5>
+                                                    <p className="text-[11px] text-neutral-600 mt-1">Replacement items will keep the original item's price.</p>
+                                                </div>
+                                                {outOfStockItems.map((item: any, index: number) => {
+                                                    const itemKey = String(item.id ?? index)
+                                                    return (
+                                                        <label key={itemKey} className="block space-y-1.5">
+                                                            <span className="text-xs font-bold text-neutral-700">
+                                                                Replace {item.name || item.product_name_snapshot} (x{item.quantity || 1})
+                                                            </span>
+                                                            <select
+                                                                value={replacementSelections[itemKey] || ''}
+                                                                onChange={(event) => setReplacementSelections((previous) => ({ ...previous, [itemKey]: event.target.value }))}
+                                                                disabled={isSubmittingOosChoice}
+                                                                className="w-full bg-neutral-50 border border-neutral-300 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-orange-500"
+                                                            >
+                                                                <option value="">Select an available menu item</option>
+                                                                {availableReplacementItems.map((menuItem) => (
+                                                                    <option key={menuItem.id} value={menuItem.id}>
+                                                                        {menuItem.name} — ₱{getEffectivePrice(menuItem.id, menuItem.price).toLocaleString()}
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        </label>
+                                                    )
+                                                })}
+                                                {availableReplacementItems.length === 0 && (
+                                                    <p className="text-xs text-rose-700">There are no available menu items to choose as replacements.</p>
+                                                )}
+                                                <div className="flex gap-2 pt-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsChoosingOosReplacement(false)}
+                                                        disabled={isSubmittingOosChoice}
+                                                        className="px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-lg text-xs disabled:opacity-50"
+                                                    >
+                                                        Back
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSubmitOutOfStockChoice('REPLACE')}
+                                                        disabled={isSubmittingOosChoice || availableReplacementItems.length === 0}
+                                                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-lg text-xs disabled:opacity-50"
+                                                    >
+                                                        {isSubmittingOosChoice ? 'Submitting...' : 'Confirm replacement choices'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {activeOrder.customerResolution === 'REPLACE'
+                            && activeOrder.customerResolutionStatus === 'COMPLETED'
+                            && normalizeStatus(activeOrder.status) === 'CONFIRMED' && (
+                                <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-5 text-emerald-950 space-y-2">
+                                    <h4 className="font-extrabold text-sm text-emerald-900">Replacement confirmed</h4>
+                                    <p className="text-xs text-emerald-800">Your selected replacements were confirmed and the order has returned to the kitchen.</p>
+                                    <div className="space-y-1 text-xs font-semibold">
+                                        {(activeOrder.customerReplacements || []).map((replacement: any, index: number) => (
+                                            <p key={`${replacement.oldItemId}-${index}`}>
+                                                {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
+                                            </p>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                        {/* Order Cancelled / Refunded Banner */}
+                        {normalizeStatus(activeOrder.status) === 'CANCELLED' && (
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 sm:p-6 text-rose-950 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in">
+                                <div className="space-y-1">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">❌</span>
+                                        <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">Order Cancelled & Refunded</h4>
+                                    </div>
+                                    <p className="text-xs sm:text-sm text-rose-800 leading-relaxed font-medium">
+                                        This order was cancelled due to stock unavailability. A 100% refund of your payment has been processed.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={handleStartNewOrder}
+                                    className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95"
+                                >
+                                    Make Another Transaction
+                                </button>
+                            </div>
+                        )}
+
                         {/* Order Complete Banner Prompt */}
                         {['COMPLETED', 'DELIVERED', 'SERVED'].includes(normalizeStatus(activeOrder.status)) && (
                             <div className="bg-gradient-to-r from-orange-500 via-amber-500 to-orange-600 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4 border border-orange-400/30 animate-fade-in">
@@ -1546,7 +1824,9 @@ export const OnlineCustomer: React.FC = () => {
                                                 ? '0%'
                                                 : normalizeStatus(activeOrder.status) === 'CONFIRMED'
                                                     ? '20%'
-                                                    : normalizeStatus(activeOrder.status) === 'PREPARING'
+                                                    : normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK'
+                                                        ? '30%'
+                                                        : normalizeStatus(activeOrder.status) === 'PREPARING'
                                                         ? '40%'
                                                         : normalizeStatus(activeOrder.status) === 'READY'
                                                             ? '60%'

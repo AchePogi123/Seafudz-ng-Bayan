@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { query } from '../config/db.js';
+import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
@@ -39,6 +39,8 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
         'IN_PROCESS', 'COOKING', 'PREPARING', 'READY', 'PREPARED', 'COMPLETED'
       ) OR (
         UPPER(COALESCE(ko.status, o.status)) = 'PENDING' AND LOWER(COALESCE(o.order_type, '')) NOT LIKE '%delivery%'
+      ) OR (
+        UPPER(o.status) = 'CONFIRMED' AND UPPER(COALESCE(ko.status, 'PENDING')) = 'PENDING'
       )
       GROUP BY o.id, ko.status, t.name
       ORDER BY o.created_at ASC
@@ -208,6 +210,120 @@ router.delete('/kitchen/orders/:id', optionalAuth, async (req, res) => {
       error: error.message,
     });
   }
+});
+
+
+// PATCH /api/kitchen/orders/:id/flag-out-of-stock - Kitchen flags items as unavailable
+router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, res) => {
+  const { id } = req.params;
+  const { itemIds } = req.body; // Array of order_item IDs that are out of stock
+
+  if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'Please provide an array of item IDs (itemIds) that are out of stock.',
+    });
+  }
+
+  let flaggedItems = [];
+
+  // 1. Try DB update if available
+  try {
+    const pool = await getDbPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const flagResult = await client.query(
+        `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
+         WHERE order_id = $1 AND id = ANY($2::bigint[])
+         RETURNING id, product_id, product_name_snapshot, unit_price, quantity`,
+        [id, itemIds]
+      );
+      await client.query(
+        `UPDATE orders
+         SET status = 'OUT_OF_STOCK', customer_resolution = NULL,
+             customer_resolution_status = 'AWAITING_CUSTOMER', customer_replacements = '[]'::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+      await client.query(
+        `INSERT INTO kitchen_orders (order_id, status, updated_at)
+         VALUES ($1, 'OUT_OF_STOCK', NOW())
+         ON CONFLICT (order_id) DO UPDATE SET status = 'OUT_OF_STOCK', updated_at = NOW()`,
+        [id]
+      );
+      await client.query('COMMIT');
+
+      if (flagResult.rows && flagResult.rows.length > 0) {
+        flaggedItems = flagResult.rows.map(r => ({
+          id: r.id,
+          productId: r.product_id,
+          name: r.product_name_snapshot,
+          price: parseFloat(r.unit_price),
+          quantity: r.quantity,
+        }));
+      }
+    } catch (dbErr) {
+      try { await client.query('ROLLBACK'); } catch {}
+      console.warn('DB note (flag-out-of-stock):', dbErr.message);
+    } finally {
+      client.release();
+    }
+  } catch (poolErr) {
+    console.warn('DB pool note (flag-out-of-stock):', poolErr.message);
+  }
+
+  // 2. Always update inMemoryOrders
+  let order = inMemoryOrders.get(id) || { id, items: [] };
+  order.status = 'OUT_OF_STOCK';
+  order.customerResolution = null;
+  order.customer_resolution = null;
+  order.customerResolutionStatus = 'AWAITING_CUSTOMER';
+  order.customer_resolution_status = 'AWAITING_CUSTOMER';
+  order.customerReplacements = [];
+  order.customer_replacements = [];
+  order.updated_at = new Date().toISOString();
+
+  if (Array.isArray(order.items)) {
+    const memoryFlaggedItems = order.items.filter((item, idx) => {
+      const match = itemIds.includes(item.id) || itemIds.includes(String(item.id)) || itemIds.includes(idx) || itemIds.includes(String(idx));
+      if (match) item.item_status = 'OUT_OF_STOCK';
+      return match;
+    });
+    if (flaggedItems.length === 0) {
+      flaggedItems = memoryFlaggedItems.map(i => ({
+        id: i.id,
+        name: i.name,
+        price: i.price,
+        quantity: i.quantity,
+      }));
+    }
+  }
+
+  order.outOfStockItems = flaggedItems;
+  inMemoryOrders.set(id, order);
+
+  // 3. Emit real-time SSE update
+  const updatedOrder = formatOrderResponse(order);
+  emitOrderUpdate({
+    ...updatedOrder,
+    type: 'OUT_OF_STOCK_FLAGGED',
+    outOfStockItems: flaggedItems,
+  });
+
+  const flaggedItemNames = flaggedItems.map(i => i.name);
+  console.log(`[KITCHEN] Order ${id} flagged OUT_OF_STOCK — Items: ${flaggedItemNames.join(', ')}`);
+
+  return res.status(200).json({
+    success: true,
+    message: `Order #${id} flagged as out of stock. Assistant and customer have been notified.`,
+    data: {
+      orderId: id,
+      flaggedItems,
+      orderStatus: 'OUT_OF_STOCK',
+    },
+  });
 });
 
 /**

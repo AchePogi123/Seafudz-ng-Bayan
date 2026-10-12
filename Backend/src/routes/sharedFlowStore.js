@@ -16,7 +16,7 @@ export function normalizeFlowStatus(rawStatus) {
   if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY';
   if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY';
   if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED';
-  if (upper === 'FLAGGED' || upper === 'CANCELLED') return upper;
+  if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK') return upper;
   
   return 'PENDING';
 }
@@ -30,6 +30,31 @@ export function formatOrderResponse(row) {
   const isBulk = false;
   const isReceiptPrinted = Boolean(row.is_receipt_printed || row.isReceiptPrinted || row.receipt_printed || row.receiptStatus === 'PRINTED' || row.receipt_status === 'PRINTED');
   const receiptStatus = isReceiptPrinted ? 'PRINTED' : (row.receipt_status || row.receiptStatus || 'UNPRINTED');
+  const customerResolution = row.customer_resolution || row.customerResolution || null;
+  const rawResolutionStatus = row.customer_resolution_status || row.customerResolutionStatus;
+  const customerResolutionStatus = rawResolutionStatus && rawResolutionStatus !== 'NONE'
+    ? rawResolutionStatus
+    : normStatus === 'OUT_OF_STOCK'
+      ? customerResolution ? 'PENDING_ASSISTANT' : 'AWAITING_CUSTOMER'
+      : 'NONE';
+  const rawReplacements = row.customer_replacements ?? row.customerReplacements;
+  let customerReplacements = Array.isArray(rawReplacements) ? rawReplacements : [];
+  if (typeof rawReplacements === 'string') {
+    try { customerReplacements = JSON.parse(rawReplacements); } catch { customerReplacements = []; }
+  }
+  if (!Array.isArray(customerReplacements)) customerReplacements = [];
+  const formattedItems = items.map(item => ({
+    id: item.id || item.product_id || item.menu_item_id,
+    productId: item.product_id || item.productId || item.menu_item_id,
+    name: item.name || item.product_name_snapshot || 'Seafood Dish',
+    quantity: item.quantity || 1,
+    price: item.price || item.unit_price || 0,
+    item_status: item.item_status || item.itemStatus || 'ACTIVE',
+    specialNote: item.specialNote || item.notes || '',
+  }));
+  const outOfStockItems = Array.isArray(row.outOfStockItems) ? row.outOfStockItems
+    : Array.isArray(row.out_of_stock_items) ? row.out_of_stock_items
+    : formattedItems.filter(item => String(item.item_status).toUpperCase() === 'OUT_OF_STOCK');
 
   return {
     id: row.id,
@@ -50,18 +75,16 @@ export function formatOrderResponse(row) {
     isBulk: false,
     is_bulk: false,
     notes: row.notes || '',
-    items: items.map(item => ({
-      id: item.id || item.product_id || item.menu_item_id,
-      name: item.name || item.product_name_snapshot || 'Seafood Dish',
-      quantity: item.quantity || 1,
-      price: item.price || item.unit_price || 0,
-      specialNote: item.specialNote || item.notes || '',
-    })),
+    items: formattedItems,
     subtotal: parseFloat(row.subtotal || 0),
     vat: parseFloat(row.vat || row.tax || 0),
     deliveryFee: parseFloat(row.delivery_fee || row.deliveryFee || 0),
     total: parseFloat(row.total || 0),
     status: normStatus,
+    outOfStockItems,
+    customerResolution,
+    customerResolutionStatus,
+    customerReplacements,
     createdAt: row.created_at || row.createdAt || new Date().toISOString(),
     updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
   };

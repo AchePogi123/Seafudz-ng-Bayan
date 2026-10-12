@@ -7,8 +7,11 @@ import { AdminEditTransactionModal } from '../components/AdminEditTransactionMod
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 interface OrderItem {
+  id?: number
   name: string
   quantity: number
+  price?: number
+  itemStatus?: string
 }
 
 export interface KitchenOrder {
@@ -35,6 +38,11 @@ export const KitchenMode: React.FC = () => {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
+
+  // Out-of-Stock flagging states
+  const [outOfStockModalOrderId, setOutOfStockModalOrderId] = useState<string | null>(null)
+  const [selectedOosItemIds, setSelectedOosItemIds] = useState<number[]>([])
+  const [isSubmittingOos, setIsSubmittingOos] = useState(false)
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
@@ -79,7 +87,7 @@ export const KitchenMode: React.FC = () => {
             'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
             'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
           ]
-          if (rawStatus === 'CANCELLED' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
+          if (rawStatus === 'CANCELLED' || rawStatus === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
             return false
           }
 
@@ -157,7 +165,7 @@ export const KitchenMode: React.FC = () => {
                   'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
                   'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
                 ]
-                if (raw === 'CANCELLED' || (isDelivery && unconfirmedStatuses.includes(raw))) {
+                if (raw === 'CANCELLED' || raw === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(raw))) {
                   return false
                 }
                 return true
@@ -192,8 +200,11 @@ export const KitchenMode: React.FC = () => {
                   customer: customerName,
                   total: calcTotal,
                   items: (o.items || []).map((item: any) => ({
+                    id: item.id,
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
+                    price: parseFloat(item.unit_price || item.price || 0),
+                    itemStatus: item.item_status || item.itemStatus || 'ACTIVE',
                   })),
                   notes: o.notes || '',
                   createdAt: o.created_at || new Date().toISOString(),
@@ -377,6 +388,55 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
+  // Out-of-stock flagging handler
+  const handleFlagOutOfStock = async () => {
+    if (!outOfStockModalOrderId || selectedOosItemIds.length === 0) return
+    setIsSubmittingOos(true)
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/kitchen/orders/${outOfStockModalOrderId}/flag-out-of-stock`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemIds: selectedOosItemIds }),
+      })
+
+      if (res.ok) {
+        // Update local state immediately
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === outOfStockModalOrderId
+              ? { ...o, status: 'Out of Stock' }
+              : o
+          )
+        )
+
+        // Update localStorage
+        try {
+          const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+          const updated = existing.map((o: any) =>
+            (o.id === outOfStockModalOrderId || o.ref === outOfStockModalOrderId)
+              ? { ...o, status: 'OUT_OF_STOCK' }
+              : o
+          )
+          localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+          notifyOrderSync()
+        } catch {}
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(err.message || 'Failed to flag items as out of stock.')
+      }
+    } catch (err) {
+      console.error('Error flagging out of stock:', err)
+      alert('Network error. Please try again.')
+    } finally {
+      setIsSubmittingOos(false)
+      setOutOfStockModalOrderId(null)
+      setSelectedOosItemIds([])
+    }
+  }
+
+  const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
+
   const queueOrders = useMemo(
     () =>
       orders.filter((o) => {
@@ -506,12 +566,21 @@ export const KitchenMode: React.FC = () => {
                       )}
                     </div>
 
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'Preparing')}
-                      className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                    >
-                      Start Cooking
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => updateOrderStatus(order.id, 'Preparing')}
+                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
+                      >
+                        Start Cooking
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
+                        className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
+                        title="Flag items as out of stock"
+                      >
+                        ⚠️ OOS
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -584,12 +653,21 @@ export const KitchenMode: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      onClick={() => updateOrderStatus(order.id, 'Ready')}
-                      className="w-full bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                    >
-                      Mark as Done
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => updateOrderStatus(order.id, 'Ready')}
+                        className="flex-1 bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
+                      >
+                        Mark as Done
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
+                        className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
+                        title="Flag items as out of stock"
+                      >
+                        ⚠️ OOS
+                      </button>
+                    </div>
                   </div>
                 ))
               )}
@@ -730,6 +808,91 @@ export const KitchenMode: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* OUT OF STOCK MODAL */}
+      {outOfStockModalOrderId && outOfStockOrder && (
+        <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-red-200">
+            <div className="p-5 bg-red-600 text-white flex justify-between items-center">
+              <div>
+                <h3 className="text-base font-bold">⚠️ Flag Out of Stock</h3>
+                <p className="text-xs text-red-100 mt-0.5">Order #{outOfStockOrder.queue}</p>
+              </div>
+              <button
+                onClick={() => { setOutOfStockModalOrderId(null); setSelectedOosItemIds([]); }}
+                className="text-white font-bold w-8 h-8 rounded-full hover:bg-red-700 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-neutral-600 font-medium">
+                Select which items are currently unavailable. The order will be paused and the assistant will be notified to coordinate with the customer.
+              </p>
+
+              <div className="space-y-2">
+                {outOfStockOrder.items.map((item, idx) => {
+                  const itemId = item.id || idx + 1
+                  const isSelected = selectedOosItemIds.includes(itemId)
+                  return (
+                    <label
+                      key={idx}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-red-50 border-red-300 ring-1 ring-red-200'
+                          : 'bg-[#faf9f6] border-neutral-200 hover:border-neutral-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => {
+                          setSelectedOosItemIds((prev) =>
+                            isSelected
+                              ? prev.filter((id) => id !== itemId)
+                              : [...prev, itemId]
+                          )
+                        }}
+                        className="w-4 h-4 rounded accent-red-600"
+                      />
+                      <div className="flex-1">
+                        <div className="text-xs font-bold text-neutral-900">{item.name}</div>
+                        {item.price ? (
+                          <div className="text-[11px] text-neutral-500">₱{item.price?.toFixed(2)} × {item.quantity}</div>
+                        ) : null}
+                      </div>
+                      <span className="bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded text-[11px] font-bold">
+                        x{item.quantity}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => { setOutOfStockModalOrderId(null); setSelectedOosItemIds([]); }}
+                  className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleFlagOutOfStock}
+                  disabled={selectedOosItemIds.length === 0 || isSubmittingOos}
+                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                    selectedOosItemIds.length === 0 || isSubmittingOos
+                      ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                      : 'bg-red-600 hover:bg-red-700 text-white'
+                  }`}
+                >
+                  {isSubmittingOos ? 'Flagging...' : `Flag ${selectedOosItemIds.length} Item${selectedOosItemIds.length !== 1 ? 's' : ''} as Out of Stock`}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -7,9 +7,11 @@ import { AdminEditTransactionModal } from '../components/AdminEditTransactionMod
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 export interface OrderItem {
+  id?: number | string
   name: string
   quantity: number
   price: number
+  item_status?: string
 }
 
 export interface OnlineOrder {
@@ -23,8 +25,12 @@ export interface OnlineOrder {
   paymentReceipt?: string
   gcashAuthorized?: boolean
   gcash_authorized?: boolean
-  status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | string
+  status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | 'out_of_stock' | string
   items: OrderItem[]
+  outOfStockItems?: any[]
+  customerResolution?: 'REFUND' | 'REPLACE' | null
+  customerResolutionStatus?: string
+  customerReplacements?: any[]
   total: number
   createdAt: string
   correctionNote?: string
@@ -57,6 +63,10 @@ export const AssistantRole: React.FC = () => {
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingAssistantOrder, setEditingAssistantOrder] = useState<any | null>(null)
+
+  // Out-of-Stock Resolution Modal states
+  const [isResolveModalOpen, setIsResolveModalOpen] = useState(false)
+  const [isSubmittingResolution, setIsSubmittingResolution] = useState(false)
 
   const handleDeleteAssistantOrder = async (orderId: string) => {
     const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete order #${orderId}? This will remove it from the PostgreSQL database.`)
@@ -147,7 +157,17 @@ export const AssistantRole: React.FC = () => {
                 paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
                 status: (o.status || 'PENDING').toLowerCase(),
                 gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
-                items: o.items || [],
+                items: (o.items || []).map((it: any) => ({
+                  id: it.id,
+                  name: it.name || it.product_name_snapshot,
+                  quantity: it.quantity || 1,
+                  price: it.price || it.unit_price || 0,
+                  item_status: it.item_status || it.itemStatus,
+                })),
+                outOfStockItems: o.outOfStockItems || o.out_of_stock_items || [],
+                customerResolution: o.customerResolution || o.customer_resolution || null,
+                customerResolutionStatus: o.customerResolutionStatus || o.customer_resolution_status || 'NONE',
+                customerReplacements: o.customerReplacements || o.customer_replacements || [],
                 total: o.total || 0,
                 createdAt: o.createdAt || 'Just now',
                 correctionNote: o.notes,
@@ -200,6 +220,10 @@ export const AssistantRole: React.FC = () => {
                   status: rawStatus,
                   gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                   items,
+                  outOfStockItems: o.outOfStockItems || o.out_of_stock_items || [],
+                customerResolution: o.customerResolution || o.customer_resolution || null,
+                customerResolutionStatus: o.customerResolutionStatus || o.customer_resolution_status || 'NONE',
+                customerReplacements: o.customerReplacements || o.customer_replacements || [],
                   total: Number(o.total || 0),
                   createdAt: o.dateTime || 'Just now',
                   correctionNote: o.notes,
@@ -365,16 +389,77 @@ export const AssistantRole: React.FC = () => {
     setNotification(`COD product availability confirmed for order #${orderId}! Sent to Kitchen!`)
   }
 
+  const handleResolveOutOfStock = async () => {
+    if (!selectedOrder) return
+
+    const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()
+    if (!['REFUND', 'REPLACE'].includes(customerChoice)
+      || String(selectedOrder.customerResolutionStatus || '').toUpperCase() !== 'PENDING_ASSISTANT') {
+      alert('The customer has not submitted a resolution for this order yet.')
+      return
+    }
+
+    const resolution = customerChoice === 'REFUND' ? 'FULL_REFUND' : 'REPLACE'
+    setIsSubmittingResolution(true)
+
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/resolve-out-of-stock`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ resolution }),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.message || 'Failed to process the customer choice.')
+
+      const nextStatus = resolution === 'FULL_REFUND' ? 'cancelled' : 'confirmed'
+      setOrders((prev) => prev.map((order) => order.id === selectedOrder.id
+        ? {
+          ...order,
+          status: nextStatus,
+          outOfStockItems: [],
+          customerResolutionStatus: 'COMPLETED',
+        }
+        : order
+      ))
+
+      try {
+        const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+        const updatedGlobal = globalOrders.map((order: any) =>
+          order.id === selectedOrder.id || order.ref === selectedOrder.id
+            ? { ...order, status: nextStatus.toUpperCase(), outOfStockItems: [], customerResolutionStatus: 'COMPLETED' }
+            : order
+        )
+        localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+        notifyOrderSync()
+      } catch { }
+
+      setIsResolveModalOpen(false)
+      void fetchAssistantOrders(true)
+      setNotification(resolution === 'FULL_REFUND'
+        ? `Customer's refund request for order #${selectedOrder.id} was processed.`
+        : `Customer's replacement choice for order #${selectedOrder.id} was confirmed and sent to the kitchen.`)
+    } catch (error) {
+      console.error('Error resolving out of stock:', error)
+      alert(error instanceof Error ? error.message : 'Network error while resolving out of stock.')
+    } finally {
+      setIsSubmittingResolution(false)
+    }
+  }
+
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
       const s = (order.status || '').toLowerCase()
-      const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled'].includes(s)
+      const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
 
       const matchesTab =
         activeTab === 'pending'
           ? !isConfirmedOrLater
           : activeTab === 'kitchen'
-            ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing'
+            ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock'
             : activeTab === 'dispatch'
               ? s === 'ready' || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'
               : true
@@ -426,6 +511,31 @@ export const AssistantRole: React.FC = () => {
               <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-3 rounded-2xl flex items-center justify-between text-sm font-bold shadow-xs animate-in fade-in">
                 <span>{notification}</span>
                 <button onClick={() => setNotification(null)} className="text-orange-500 font-extrabold cursor-pointer">×</button>
+              </div>
+            )}
+
+            {orders.some((o) => (o.status || '').toLowerCase() === 'out_of_stock') && (
+              <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 px-4 py-3 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-xs animate-pulse">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-xl">🚨</span>
+                  <span>
+                    <strong>Out-of-Stock Alert:</strong> {orders.filter((o) => (o.status || '').toLowerCase() === 'out_of_stock').length} order(s) flagged. {orders.filter((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT').length} customer choice(s) ready for review.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const oosOrder = orders.find((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT')
+                      || orders.find((o) => (o.status || '').toLowerCase() === 'out_of_stock')
+                    if (oosOrder) {
+                      setActiveTab('kitchen')
+                      setSelectedOrderId(oosOrder.id)
+                    }
+                  }}
+                  className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-xs whitespace-nowrap active:scale-95"
+                >
+                  {orders.some((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT') ? 'Review customer choice' : 'Inspect order'}
+                </button>
               </div>
             )}
 
@@ -512,24 +622,30 @@ export const AssistantRole: React.FC = () => {
                           <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'gcash_pending_approval'
-                            ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                            : s === 'gcash_authorized'
-                              ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                              : s === 'receipt_submitted'
-                                ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                                : s === 'pending' || s === 'unconfirmed'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : s === 'confirmed' || s === 'preparing'
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                    : s === 'ready'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : s === 'cancelled'
-                                        ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                        : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'out_of_stock'
+                            ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
+                            : s === 'gcash_pending_approval'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                              : s === 'gcash_authorized'
+                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                : s === 'receipt_submitted'
+                                  ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                  : s === 'pending' || s === 'unconfirmed'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : s === 'confirmed' || s === 'preparing'
+                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                      : s === 'ready'
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                        : s === 'cancelled'
+                                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                          : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
-                          ● {s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled by Customer' : ord.status}
+                          ● {s === 'out_of_stock'
+                            ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
+                              ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
+                              : 'Awaiting Customer Choice'
+                            : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled / Refunded' : ord.status}
                         </span>
                       </div>
 
@@ -693,7 +809,76 @@ export const AssistantRole: React.FC = () => {
                     if (st === 'CANCELLED') {
                       return (
                         <div className="w-full bg-rose-50 text-rose-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-rose-300 shadow-xs">
-                          ❌ Order Cancelled by Customer
+                          ❌ Order Cancelled & Refunded
+                        </div>
+                      )
+                    }
+
+                    if (st === 'OUT_OF_STOCK') {
+                      const oosItems = (selectedOrder.outOfStockItems && selectedOrder.outOfStockItems.length > 0)
+                        ? selectedOrder.outOfStockItems
+                        : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+                      const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()
+                      const choiceStatus = String(selectedOrder.customerResolutionStatus || '').toUpperCase()
+                      const canProcessChoice = choiceStatus === 'PENDING_ASSISTANT' && ['REFUND', 'REPLACE'].includes(customerChoice)
+                      const customerReplacements = selectedOrder.customerReplacements || []
+
+                      return (
+                        <div className="space-y-3 bg-rose-50 p-4 rounded-2xl border-2 border-rose-300 animate-in fade-in">
+                          <div className="flex items-start gap-2">
+                            <span className="text-xl">⚠️</span>
+                            <div>
+                              <h4 className="font-black text-xs text-rose-900 uppercase tracking-wide">Kitchen Out of Stock Alert</h4>
+                              <p className="text-[11px] text-rose-700 leading-snug mt-0.5">
+                                {canProcessChoice
+                                  ? `Customer selected ${customerChoice === 'REFUND' ? 'a full refund' : 'the replacement items below'}.`
+                                  : 'Waiting for the customer to choose replacements or request a full refund.'}
+                              </p>
+                            </div>
+                          </div>
+
+                          {oosItems.length > 0 && (
+                            <div className="bg-white/90 rounded-xl p-3 border border-rose-200 text-xs space-y-1">
+                              <p className="font-extrabold text-[10px] text-rose-800 uppercase tracking-wider">Unavailable Items:</p>
+                              {oosItems.map((item: any, idx: number) => (
+                                <div key={idx} className="flex justify-between items-center text-rose-900 font-bold text-[11px]">
+                                  <span>{item.name || item.product_name_snapshot} (x{item.quantity || 1})</span>
+                                  <span>₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {canProcessChoice && customerChoice === 'REFUND' && (
+                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs text-rose-900">
+                              Customer requested a full refund of ₱{selectedOrder.total.toLocaleString()}.
+                            </div>
+                          )}
+
+                          {canProcessChoice && customerChoice === 'REPLACE' && customerReplacements.length > 0 && (
+                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs space-y-1">
+                              <p className="font-extrabold text-[10px] text-neutral-700 uppercase tracking-wider">Customer's Replacement Choices:</p>
+                              {customerReplacements.map((replacement: any, index: number) => (
+                                <p key={`${replacement.oldItemId}-${index}`} className="text-neutral-800">
+                                  {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          {canProcessChoice ? (
+                            <button
+                              type="button"
+                              onClick={() => setIsResolveModalOpen(true)}
+                              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3.5 rounded-2xl text-xs shadow-md shadow-rose-500/20 cursor-pointer transition-all active:scale-98"
+                            >
+                              {customerChoice === 'REFUND' ? 'Review and process customer refund' : 'Review customer replacement'}
+                            </button>
+                          ) : (
+                            <div className="w-full bg-white/70 text-rose-800 font-bold py-3 rounded-xl text-xs text-center border border-rose-200">
+                              No customer choice to process yet.
+                            </div>
+                          )}
                         </div>
                       )
                     }
@@ -854,6 +1039,120 @@ export const AssistantRole: React.FC = () => {
           </div>
         </div>
       )}
+
+
+      {/* OUT-OF-STOCK RESOLUTION MODAL */}
+      {isResolveModalOpen && selectedOrder && (() => {
+        const oosItems = (selectedOrder.outOfStockItems && selectedOrder.outOfStockItems.length > 0)
+          ? selectedOrder.outOfStockItems
+          : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+
+        const oosTotal = oosItems.reduce((acc: number, it: any) => acc + (it.price || it.unit_price || 0) * (it.quantity || 1), 0)
+        const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()
+        const canProcessChoice = String(selectedOrder.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
+          && ['REFUND', 'REPLACE'].includes(customerChoice)
+        const customerReplacements = selectedOrder.customerReplacements || []
+
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+            onClick={() => setIsResolveModalOpen(false)}
+          >
+            <div
+              className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl relative space-y-5 animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                    Kitchen Out-of-Stock Resolution
+                  </span>
+                  <h3 className="text-base font-extrabold text-neutral-900 mt-1">
+                    Order #{selectedOrder.ref}
+                  </h3>
+                  <p className="text-xs text-neutral-500">Customer: {selectedOrder.customer} ({selectedOrder.phone})</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsResolveModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Unavailable Items Overview */}
+              <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-3.5 space-y-1.5">
+                <p className="text-[11px] font-black text-rose-900 uppercase tracking-wide">
+                  Flagged Unavailable Item(s):
+                </p>
+                <div className="divide-y divide-rose-100 text-xs">
+                  {oosItems.map((item: any, idx: number) => (
+                    <div key={idx} className="py-1 flex justify-between items-center text-rose-950 font-semibold">
+                      <span>{item.name || item.product_name_snapshot} × {item.quantity || 1}</span>
+                      <span className="font-bold">₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="pt-1.5 border-t border-rose-200 flex justify-between text-xs font-black text-rose-900">
+                  <span>Total Value of Unavailable Items:</span>
+                  <span>₱{oosTotal.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {/* Customer Choice Summary */}
+              <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200 space-y-2 text-xs">
+                <h4 className="font-bold text-neutral-800">Customer's selected resolution:</h4>
+                {!canProcessChoice ? (
+                  <p className="text-neutral-600">The customer has not submitted a choice yet. No resolution can be processed.</p>
+                ) : customerChoice === 'REFUND' ? (
+                  <div className="space-y-1 text-rose-800">
+                    <p>The customer requested a full refund of <strong>₱{selectedOrder.total.toLocaleString()}</strong>.</p>
+                    <p>Processing this request will cancel the order and stop kitchen preparation.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1 text-neutral-700">
+                    <p>The customer selected these replacements at the original item prices:</p>
+                    {customerReplacements.map((replacement: any, index: number) => (
+                      <p key={`${replacement.oldItemId}-${index}`} className="font-semibold">
+                        {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsResolveModalOpen(false)}
+                  disabled={isSubmittingResolution}
+                  className="px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResolveOutOfStock}
+                  disabled={isSubmittingResolution || !canProcessChoice}
+                  className={`flex-1 py-3 text-white font-black rounded-xl text-xs cursor-pointer transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 disabled:opacity-50 ${
+                    customerChoice === 'REFUND'
+                      ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
+                      : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
+                  }`}
+                >
+                  {isSubmittingResolution
+                    ? 'Processing...'
+                    : customerChoice === 'REFUND'
+                      ? `Process full refund ₱${selectedOrder.total.toLocaleString()}`
+                      : 'Confirm replacement and resume kitchen'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ADMIN CRUD MODALS */}
       <AdminCreateTransactionModal

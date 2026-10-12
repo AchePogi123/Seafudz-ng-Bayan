@@ -410,6 +410,206 @@ router.patch('/assistant/orders/:id/confirm-cod', optionalAuth, async (req, res)
   }
 });
 
+
+// PATCH /api/assistant/orders/:id/resolve-out-of-stock - Resolve out-of-stock issue
+router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (req, res) => {
+  const { id } = req.params;
+  const { resolution } = req.body;
+
+  if (!['REPLACE', 'FULL_REFUND'].includes(resolution)) {
+    return res.status(400).json({ success: false, message: 'Invalid customer resolution.' });
+  }
+
+  const expectedChoice = resolution === 'FULL_REFUND' ? 'REFUND' : 'REPLACE';
+  let order = inMemoryOrders.get(id);
+  let dbOrder = null;
+  let databaseError = null;
+  let customerReplacements = [];
+  let dbItems = [];
+  let refundAmount = 0;
+
+  try {
+    const pool = await getDbPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, status, subtotal, tax, delivery_fee, total,
+                customer_resolution, customer_resolution_status, customer_replacements
+         FROM orders WHERE id = $1 FOR UPDATE`,
+        [id]
+      );
+      dbOrder = rows[0] || null;
+
+      if (dbOrder) {
+        const dbChoice = String(dbOrder.customer_resolution || '').toUpperCase();
+        const dbChoiceStatus = String(dbOrder.customer_resolution_status || '').toUpperCase();
+        if (normalizeFlowStatus(dbOrder.status) !== 'OUT_OF_STOCK' || dbChoice !== expectedChoice || dbChoiceStatus !== 'PENDING_ASSISTANT') {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ success: false, message: 'The customer has not submitted this resolution, or it was already handled.' });
+        }
+
+        const formattedDbOrder = formatOrderResponse(dbOrder);
+        customerReplacements = formattedDbOrder.customerReplacements;
+        refundAmount = Number(dbOrder.total) || 0;
+        const itemResult = await client.query(
+          `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity, item_status
+           FROM order_items WHERE order_id = $1 ORDER BY id`,
+          [id]
+        );
+        dbItems = itemResult.rows;
+
+        if (resolution === 'FULL_REFUND') {
+          await client.query(
+            `UPDATE orders SET status = 'CANCELLED', customer_resolution_status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+            [id]
+          );
+          await client.query(`UPDATE payments SET status = 'REFUNDED', refunded_amount = amount WHERE order_id = $1`, [id]);
+          await client.query(`UPDATE kitchen_orders SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW() WHERE order_id = $1`, [id]);
+          await client.query(`UPDATE order_items SET item_status = 'REFUNDED' WHERE order_id = $1`, [id]);
+        } else {
+          if (!Array.isArray(customerReplacements) || customerReplacements.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ success: false, message: 'The customer replacement selection is missing.' });
+          }
+
+          for (const replacement of customerReplacements) {
+            await client.query(
+              `UPDATE order_items
+               SET product_id = (SELECT id FROM products WHERE id = $2 AND is_available = TRUE),
+                   product_name_snapshot = $3, item_status = 'REPLACED'
+               WHERE order_id = $1 AND id::text = $4 AND item_status = 'OUT_OF_STOCK'`,
+              [id, replacement.newProductId, replacement.newName, String(replacement.oldItemId)]
+            );
+          }
+          await client.query(
+            `UPDATE orders SET status = 'CONFIRMED', customer_resolution_status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+            [id]
+          );
+          await client.query(
+            `INSERT INTO kitchen_orders (order_id, status, updated_at) VALUES ($1, 'PENDING', NOW())
+             ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+            [id]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (dbErr) {
+      try { await client.query('ROLLBACK'); } catch {}
+      databaseError = dbErr;
+      console.warn('DB note (resolve-out-of-stock):', dbErr.message);
+    } finally {
+      client.release();
+    }
+  } catch (poolErr) {
+    databaseError = poolErr;
+    console.warn('DB pool note (resolve-out-of-stock):', poolErr.message);
+  }
+
+  if (!order && !dbOrder) {
+    return res.status(databaseError ? 503 : 404).json({
+      success: false,
+      message: databaseError ? 'Unable to load this order right now.' : 'Order not found.',
+    });
+  }
+
+  const customerChoice = String(dbOrder?.customer_resolution || order?.customerResolution || '').toUpperCase();
+  const customerChoiceStatus = String(dbOrder?.customer_resolution_status || order?.customerResolutionStatus || '').toUpperCase();
+  if (normalizeFlowStatus(dbOrder?.status || order?.status) !== 'OUT_OF_STOCK' || customerChoice !== expectedChoice || customerChoiceStatus !== 'PENDING_ASSISTANT') {
+    return res.status(409).json({ success: false, message: 'The customer has not submitted this resolution, or it was already handled.' });
+  }
+
+  if (databaseError && !order) {
+    return res.status(503).json({ success: false, message: 'Unable to process the customer resolution right now.' });
+  }
+
+  if (!customerReplacements.length) {
+    customerReplacements = order?.customerReplacements || [];
+  }
+  if (resolution === 'REPLACE' && customerReplacements.length === 0) {
+    return res.status(409).json({ success: false, message: 'The customer replacement selection is missing.' });
+  }
+
+  if (!order) {
+    order = {
+      ...(dbOrder || {}),
+      id,
+      items: dbItems.map(item => ({
+        id: item.id,
+        product_id: item.product_id,
+        name: item.name,
+        price: Number(item.price) || 0,
+        quantity: Number(item.quantity) || 1,
+        item_status: item.item_status,
+      })),
+      total: Number(dbOrder?.total) || 0,
+      subtotal: Number(dbOrder?.subtotal) || 0,
+      vat: Number(dbOrder?.tax) || 0,
+      deliveryFee: Number(dbOrder?.delivery_fee) || 0,
+    };
+  }
+
+  if (resolution === 'FULL_REFUND') {
+    order.status = 'CANCELLED';
+    order.customerResolution = 'REFUND';
+    order.customer_resolution = 'REFUND';
+    order.customerResolutionStatus = 'COMPLETED';
+    order.customer_resolution_status = 'COMPLETED';
+    order.customerReplacements = [];
+    order.customer_replacements = [];
+    order.outOfStockItems = [];
+    (order.items || []).forEach(item => { item.item_status = 'REFUNDED'; });
+    refundAmount = Number(order.total ?? dbOrder?.total ?? refundAmount) || 0;
+  } else {
+    customerReplacements.forEach(replacement => {
+      const item = (order.items || []).find(i => String(i.id) === String(replacement.oldItemId))
+        || (order.items || []).find(i => i.name === replacement.oldItemName);
+      if (item) {
+        item.name = replacement.newName;
+        item.product_id = replacement.newProductId;
+        item.item_status = 'REPLACED';
+      }
+    });
+    order.status = 'CONFIRMED';
+    order.customerResolution = 'REPLACE';
+    order.customer_resolution = 'REPLACE';
+    order.customerResolutionStatus = 'COMPLETED';
+    order.customer_resolution_status = 'COMPLETED';
+    order.customerReplacements = customerReplacements;
+    order.customer_replacements = customerReplacements;
+    order.outOfStockItems = [];
+  }
+
+  order.updated_at = new Date().toISOString();
+  inMemoryOrders.set(id, order);
+
+  const formatted = formatOrderResponse({
+    ...(dbOrder || {}),
+    ...order,
+    id,
+    customer_resolution: expectedChoice,
+    customer_resolution_status: 'COMPLETED',
+    customer_replacements: customerReplacements,
+  });
+  emitOrderUpdate({
+    ...formatted,
+    type: 'OUT_OF_STOCK_RESOLVED',
+    resolution,
+    refundAmount,
+  });
+
+  console.log(`[ASSISTANT] Order ${id} resolved with ${resolution}.`);
+
+  return res.status(200).json({
+    success: true,
+    message: resolution === 'FULL_REFUND'
+      ? `Order #${id} was marked as fully refunded.`
+      : `Customer's replacement choice was confirmed for order #${id}. Sent back to kitchen.`,
+    data: { orderId: id, resolution, refundAmount, orderStatus: order.status },
+  });
+});
+
 /**
  * Handles status updates triggered by the Assistant role
  * Transitions: PENDING -> CONFIRMED or PENDING -> FLAGGED

@@ -121,7 +121,18 @@ CREATE TABLE orders (
             'PENDING',
             'IN_PROCESS',
             'COMPLETED',
-            'CANCELLED'
+            'CANCELLED',
+            'CONFIRMED',
+            'PREPARING',
+            'READY',
+            'OUT_FOR_DELIVERY',
+            'GCASH_PENDING_APPROVAL',
+            'GCASH_AUTHORIZED',
+            'RECEIPT_SUBMITTED',
+            'RECEIPT_REJECTED',
+            'PENDING_COD',
+            'FLAGGED',
+            'OUT_OF_STOCK'
         )),
     subtotal NUMERIC(10,2) NOT NULL DEFAULT 0
         CHECK (subtotal >= 0),
@@ -132,6 +143,12 @@ CREATE TABLE orders (
     total NUMERIC(10,2) NOT NULL DEFAULT 0
         CHECK (total >= 0),
     notes TEXT,
+    customer_resolution VARCHAR(20)
+        CHECK (customer_resolution IS NULL OR customer_resolution IN ('REPLACE', 'REFUND')),
+    customer_resolution_status VARCHAR(30) NOT NULL DEFAULT 'NONE'
+        CHECK (customer_resolution_status IN ('NONE', 'AWAITING_CUSTOMER', 'PENDING_ASSISTANT', 'COMPLETED')),
+    customer_replacements JSONB NOT NULL DEFAULT '[]'::jsonb
+        CHECK (jsonb_typeof(customer_replacements) = 'array'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -156,6 +173,8 @@ CREATE TABLE order_items (
         CHECK (quantity > 0),
     subtotal NUMERIC(10,2) NOT NULL
         CHECK (subtotal >= 0),
+    item_status VARCHAR(50) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (item_status IN ('ACTIVE', 'OUT_OF_STOCK', 'REPLACED', 'REFUNDED')),
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -184,8 +203,10 @@ CREATE TABLE payments (
             'PENDING',
             'PAID',
             'FAILED',
-            'REFUNDED'
+            'REFUNDED',
+            'PARTIALLY_REFUNDED'
         )),
+    refunded_amount NUMERIC(10,2) DEFAULT 0,
     reference_number VARCHAR(255),
     paid_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -236,7 +257,8 @@ CREATE TABLE kitchen_orders (
             'PENDING',
             'IN_PROCESS',
             'COMPLETED',
-            'CANCELLED'
+            'CANCELLED',
+            'OUT_OF_STOCK'
         )),
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,

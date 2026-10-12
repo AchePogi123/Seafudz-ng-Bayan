@@ -575,6 +575,19 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
     const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';
+    const normalizedItems = rawItems.map(item => {
+      const quantity = Number(item.quantity) || 1;
+      const price = Number(item.price ?? item.unit_price ?? 0);
+      return {
+        id: item.id || item.product_id || item.productId || 'item-1',
+        product_id: item.product_id || item.productId || item.id || null,
+        name: item.name || item.product_name_snapshot || 'Seafood Dish',
+        quantity,
+        price,
+        subtotal: Math.round(price * quantity * 100) / 100,
+        specialNote: item.specialNote || item.notes || '',
+      };
+    });
 
     const orderRecord = {
       id: orderId,
@@ -597,6 +610,12 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       is_bulk: false,
       isBulk: false,
       notes: notes || '',
+      customer_resolution: null,
+      customerResolution: null,
+      customer_resolution_status: 'NONE',
+      customerResolutionStatus: 'NONE',
+      customer_replacements: [],
+      customerReplacements: [],
       subtotal: calcSubtotal,
       vat: calcVat,
       delivery_fee: calcFee,
@@ -604,13 +623,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       status: initialStatus,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      items: rawItems.map(i => ({
-        id: i.id || i.product_id || 'item-1',
-        name: i.name || i.product_name_snapshot || 'Seafood Dish',
-        quantity: i.quantity || 1,
-        price: i.price || i.unit_price || 0,
-        specialNote: i.specialNote || i.notes || '',
-      })),
+      items: normalizedItems,
     };
 
     // Store in Central Backend Memory
@@ -618,12 +631,65 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
     // Persist in PostgreSQL DB
     try {
-      await query(
-        `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
-         VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW())
-         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`,
-        [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null, initialStatus]
-      );
+      const pool = await getDbPool();
+      const client = await pool.connect();
+      let persistedItems = [];
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
+           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW())
+           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`,
+          [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null, initialStatus]
+        );
+
+        const existingItems = await client.query(
+          `SELECT id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes
+           FROM order_items WHERE order_id = $1 ORDER BY id`,
+          [orderId]
+        );
+        if (existingItems.rows.length > 0) {
+          persistedItems = existingItems.rows;
+        } else {
+          for (const item of normalizedItems) {
+            const { rows } = await client.query(
+              `INSERT INTO order_items (order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, notes)
+               VALUES ($1, (SELECT id FROM products WHERE id = $2), $3, $4, $5, $6, $7)
+               RETURNING id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes`,
+              [orderId, item.product_id, item.name, item.price, item.quantity, item.subtotal, item.specialNote || null]
+            );
+            persistedItems.push(rows[0]);
+          }
+        }
+
+        const existingPayments = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [orderId]);
+        if (existingPayments.rows.length === 0) {
+          await client.query(
+            `INSERT INTO payments (order_id, payment_method, amount, status)
+             VALUES ($1, $2, $3, 'PENDING')`,
+            [orderId, initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH', calcTotal]
+          );
+        }
+
+        await client.query('COMMIT');
+      } catch (dbErr) {
+        try { await client.query('ROLLBACK'); } catch {}
+        throw dbErr;
+      } finally {
+        client.release();
+      }
+
+      if (persistedItems.length > 0) {
+        orderRecord.items = persistedItems.map(item => ({
+          id: item.id,
+          product_id: item.product_id,
+          name: item.product_name_snapshot,
+          quantity: Number(item.quantity) || 1,
+          price: Number(item.unit_price) || 0,
+          item_status: item.item_status || 'ACTIVE',
+          specialNote: item.notes || '',
+        }));
+      }
     } catch (dbErr) {
       console.warn('DB query note (using central memory store):', dbErr.message);
     }
@@ -665,15 +731,19 @@ export async function handleGetCustomerFlowOrder(req, res) {
     // DB search
     try {
       const { rows } = await query(`
-        SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes, o.created_at, o.updated_at,
+        SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+               o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
+               o.created_at, o.updated_at,
                c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
                COALESCE(
                  json_agg(
                    json_build_object(
                      'id', oi.id,
+                     'product_id', oi.product_id,
                      'name', oi.product_name_snapshot,
                      'quantity', oi.quantity,
-                     'price', oi.unit_price
+                     'price', oi.unit_price,
+                     'item_status', oi.item_status
                    )
                  ) FILTER (WHERE oi.id IS NOT NULL), '[]'
                ) AS items

@@ -23,6 +23,8 @@ interface OnlineOrderState {
     paymentMethod: string
     paymentReference?: string
     paymentReceipt?: string // Base64 or image data URL
+    refundReceipt?: string
+    refundReference?: string
     notes?: string
     items: CartItem[]
     subtotal: number
@@ -56,6 +58,18 @@ const getOrdersKey = (user: ReturnType<typeof getActiveUser>) => {
     if (!user) return 'seafudz_orders_guest'
     const id = user.id || user.username || user.fullname || 'guest'
     return `seafudz_orders_${id}`
+}
+
+const getVerificationDismissalKey = (orderId: string | number) => `seafudz_gc_verification_dismissed_${String(orderId).trim()}`
+
+const isVerificationModalDismissed = (orderId?: string | number) => {
+    if (!orderId) return false
+    try {
+        const clean = String(orderId).trim()
+        return localStorage.getItem(getVerificationDismissalKey(clean)) === 'true'
+    } catch {
+        return false
+    }
 }
 
 const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
@@ -153,6 +167,25 @@ export const OnlineCustomer: React.FC = () => {
         activeOrderRef.current = activeOrder
     }, [activeOrder])
 
+    const dismissVerificationModal = () => {
+        const ids = [
+            activeOrder?.id,
+            (activeOrder as any)?.ref,
+            activeOrderRef.current?.id,
+            (activeOrderRef.current as any)?.ref
+        ].filter(Boolean)
+
+        ids.forEach((id) => {
+            try {
+                localStorage.setItem(getVerificationDismissalKey(String(id)), 'true')
+            } catch (err) {
+                console.warn('Could not save authorization popup dismissal:', err)
+            }
+        })
+        setIsVerificationModalOpen(false)
+        setIsWaitingModalOpen(false)
+    }
+
     // Menu state using client items
     const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
@@ -190,8 +223,11 @@ export const OnlineCustomer: React.FC = () => {
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
     const [isWaitingModalOpen, setIsWaitingModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
+    const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null)
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
     const [isSubmittingOrder, setIsSubmittingOrder] = useState(false)
+    const isSubmittingOrderRef = useRef(false)
+    const pendingOrderSubmissionRef = useRef<{ fingerprint: string; id: string } | null>(null)
     const [isCancellingOrder, setIsCancellingOrder] = useState(false)
     const [isChoosingOosReplacement, setIsChoosingOosReplacement] = useState(false)
     const [replacementSelections, setReplacementSelections] = useState<Record<string, string>>({})
@@ -385,7 +421,7 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     const handleCancelOrder = async () => {
-        if (!activeOrder) return
+        if (!activeOrder || normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' || outOfStockItems.length > 0) return
         const confirmCancel = window.confirm(`Are you sure you want to cancel Order #${activeOrder.id}?`)
         if (!confirmCancel) return
 
@@ -441,11 +477,12 @@ export const OnlineCustomer: React.FC = () => {
     useEffect(() => {
         if (!activeOrder?.status) return
         const s = (activeOrder.status || '').toUpperCase()
-        const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
+        const norm = normalizeStatus(s)
+        const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(norm)
         const isCOD = activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD'
 
         if (isConfirmedOrLater || s === 'RECEIPT_SUBMITTED' || isCOD) {
-            setIsVerificationModalOpen(false)
+            dismissVerificationModal()
             setActiveTab('tracking')
         }
     }, [activeOrder?.status, activeOrder?.paymentMethod])
@@ -510,13 +547,22 @@ export const OnlineCustomer: React.FC = () => {
                                 || gcashAuthorized !== Boolean(previousOrder?.gcashAuthorized || previousOrder?.gcash_authorized)
                                 || customerResolution !== (previousOrder?.customerResolution || null)
                                 || customerResolutionStatus !== (previousOrder?.customerResolutionStatus || 'NONE')
+                                || Boolean(orderData.refundReceipt && orderData.refundReceipt !== previousOrder?.refundReceipt)
                                 || JSON.stringify(customerReplacements) !== JSON.stringify(previousOrder?.customerReplacements || [])
                                 || JSON.stringify(latestOutOfStockItems) !== JSON.stringify(previousOrder?.outOfStockItems || [])
                                 || Number(orderData.total ?? previousOrder?.total) !== Number(previousOrder?.total)
 
-                            if (rawStatus === 'GCASH_AUTHORIZED' || gcashAuthorized) {
+                            const normStatus = normalizeStatus(rawStatus)
+                            const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
+
+                            if (rawStatus === 'GCASH_AUTHORIZED' && !isConfirmedOrLater) {
                                 setIsWaitingModalOpen(false)
-                                setIsVerificationModalOpen(true)
+                                if (!isVerificationModalDismissed(currentOrderId) && !isVerificationModalDismissed((orderData as any)?.ref)) {
+                                    setIsVerificationModalOpen(true)
+                                }
+                            } else if (isConfirmedOrLater) {
+                                setIsWaitingModalOpen(false)
+                                setIsVerificationModalOpen(false)
                             }
 
                             if (orderChanged) {
@@ -530,6 +576,8 @@ export const OnlineCustomer: React.FC = () => {
                                         customerResolution,
                                         customerResolutionStatus,
                                         customerReplacements,
+                                        ...(orderData.refundReceipt ? { refundReceipt: orderData.refundReceipt } : {}),
+                                        ...(orderData.refundReference ? { refundReference: orderData.refundReference } : {}),
                                         subtotal: Number(orderData.subtotal ?? prev.subtotal),
                                         vat: Number(orderData.vat ?? prev.vat),
                                         deliveryFee: Number(orderData.deliveryFee ?? prev.deliveryFee),
@@ -579,24 +627,57 @@ export const OnlineCustomer: React.FC = () => {
                             }
                         }
 
-                        const allLists = [...parseList(storedUser), ...parseList(storedGlobal)]
-                        const current = allLists.find((o: any) => o.id === currentOrderId || o.ref === currentOrderId)
+                        // Merge orders prioritizing storedGlobal (latest staff/assistant changes) over storedUser
+                        const globalList = parseList(storedGlobal)
+                        const userList = parseList(storedUser)
+                        const orderMap = new Map<string, any>()
+                        userList.forEach((o: any) => {
+                            if (o && (o.id || o.ref)) orderMap.set(String(o.id || o.ref), o)
+                        })
+                        globalList.forEach((o: any) => {
+                            if (o && (o.id || o.ref)) {
+                                const key = String(o.id || o.ref)
+                                const existing = orderMap.get(key) || {}
+                                orderMap.set(key, { ...existing, ...o })
+                            }
+                        })
+                        const allLists = Array.from(orderMap.values())
+                        const current = allLists.find((o: any) => String(o.id) === String(currentOrderId) || String(o.ref) === String(currentOrderId))
 
                         if (current && current.status) {
                             const rawStatus = String(current.status).toUpperCase()
                             const currentRawStatus = String(activeOrderRef.current?.status || '').toUpperCase()
                             const currentRank = getStatusRank(activeOrderRef.current?.status)
                             const localRank = getStatusRank(rawStatus)
+                            const normStatus = normalizeStatus(rawStatus)
+                            const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
 
-                            // Advance status if local rank is strictly higher OR raw sub-status changed (e.g. GCASH_AUTHORIZED)
-                            if (localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank) || Boolean(current.gcashAuthorized)) {
-                                if (rawStatus === 'GCASH_AUTHORIZED' || Boolean(current.gcashAuthorized)) {
+                            // Advance status only if local rank is strictly higher OR raw sub-status legitimately advanced without rank decrease
+                            const shouldAdvance = localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)
+
+                            if (shouldAdvance) {
+                                if (rawStatus === 'GCASH_AUTHORIZED' && !isConfirmedOrLater) {
                                     setIsWaitingModalOpen(false)
-                                    setIsVerificationModalOpen(true)
+                                    if (!isVerificationModalDismissed(currentOrderId) && !isVerificationModalDismissed(current.ref)) {
+                                        setIsVerificationModalOpen(true)
+                                    }
+                                } else if (isConfirmedOrLater) {
+                                    setIsWaitingModalOpen(false)
+                                    setIsVerificationModalOpen(false)
                                 }
+
                                 setActiveOrder((prev) => {
                                     if (!prev) return null
-                                    const updated = { ...prev, status: rawStatus, gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED') }
+                                    const updated = {
+                                        ...prev,
+                                        status: rawStatus,
+                                        gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED'),
+                                        ...(current.paymentReceipt ? { paymentReceipt: current.paymentReceipt } : {}),
+                                        ...(current.refundReceipt ? { refundReceipt: current.refundReceipt } : {}),
+                                        ...(current.refundReference ? { refundReference: current.refundReference } : {}),
+                                        ...(current.customerResolution ? { customerResolution: current.customerResolution } : {}),
+                                        ...(current.customerResolutionStatus ? { customerResolutionStatus: current.customerResolutionStatus } : {}),
+                                    }
                                     try {
                                         localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
                                     } catch { }
@@ -710,6 +791,7 @@ export const OnlineCustomer: React.FC = () => {
 
     const handlePlaceOrder = async (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
+        if (isSubmittingOrderRef.current) return
 
         let currentUser = getActiveUser()
         if (!currentUser) {
@@ -731,53 +813,61 @@ export const OnlineCustomer: React.FC = () => {
             return
         }
 
-        const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
-
-        const orderPayload = {
-            type: 'Delivery',
-            customerName: customerName.trim(),
-            phone: phone.trim(),
-            deliveryAddress: address.trim(),
-            paymentMethod,
-            paymentReceipt: paymentReceipt || undefined,
-            notes: orderNotes,
-            subtotal,
-            vat,
-            deliveryFee,
-            total,
-            status: initialStatus,
-            gcashAuthorized: false,
-            gcash_authorized: false,
-            items: cartItems.map((ci) => ({
-                id: ci.item.id,
-                name: ci.item.name,
-                quantity: ci.quantity,
-                price: (ci.item as any).basePrice || ci.item.price,
-                specialNote: ci.specialNote || '',
-            })),
-        }
+        isSubmittingOrderRef.current = true
+        setIsSubmittingOrder(true)
 
         try {
+            const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
+            const orderPayload = {
+                type: 'Delivery',
+                customerName: customerName.trim(),
+                phone: phone.trim(),
+                deliveryAddress: address.trim(),
+                paymentMethod,
+                paymentReceipt: paymentReceipt || undefined,
+                notes: orderNotes,
+                subtotal,
+                vat,
+                deliveryFee,
+                total,
+                status: initialStatus,
+                gcashAuthorized: false,
+                gcash_authorized: false,
+                items: cartItems.map((ci) => ({
+                    id: ci.item.id,
+                    name: ci.item.name,
+                    quantity: ci.quantity,
+                    price: (ci.item as any).basePrice || ci.item.price,
+                    specialNote: ci.specialNote || '',
+                })),
+            }
+            const fingerprint = JSON.stringify(orderPayload)
+            let pendingSubmission = pendingOrderSubmissionRef.current
+            if (!pendingSubmission || pendingSubmission.fingerprint !== fingerprint) {
+                pendingSubmission = { fingerprint, id: `SFB-${crypto.randomUUID()}` }
+                pendingOrderSubmissionRef.current = pendingSubmission
+            }
+
             const token = localStorage.getItem('seafudz_token')
-            const fetchPromise = fetch(`${API_BASE_URL}/user-flow/orders`, {
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-                body: JSON.stringify(orderPayload),
+                body: JSON.stringify({ ...orderPayload, id: pendingSubmission.id }),
             })
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2500))
-
-            const res = (await Promise.race([fetchPromise, timeoutPromise]).catch(() => null)) as Response | null
-
-            let responseData: any = {}
-            if (res && res.ok) {
-                responseData = await res.json().catch(() => ({}))
+            const responseData: any = await res.json().catch(() => ({}))
+            if (!res.ok || responseData.success === false) {
+                throw new Error(responseData.message || 'The order could not be submitted.')
             }
-            const serverOrder = responseData?.data || responseData
 
-            const newOrderId = serverOrder?.id || `SFB-${Math.floor(1000 + Math.random() * 9000)}`
+            const serverOrder = responseData?.data || responseData
+            if (!serverOrder?.id) {
+                throw new Error('The server did not confirm the order. Please try again.')
+            }
+
+            const newOrderId = serverOrder.id
             const newOrder: OnlineOrderState & { type: string; customer: string; deliveryAddress: string } = {
                 id: newOrderId,
                 type: 'Delivery',
@@ -799,6 +889,7 @@ export const OnlineCustomer: React.FC = () => {
                 createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
             }
 
+            pendingOrderSubmissionRef.current = null
             setActiveOrder(newOrder)
             try {
                 const userOrderKey = getActiveOrderKey(currentUser)
@@ -834,7 +925,9 @@ export const OnlineCustomer: React.FC = () => {
             notifyOrderSync()
         } catch (err) {
             console.error('Error sending order to backend API:', err)
+            alert(err instanceof Error ? `Order not submitted: ${err.message}` : 'Order could not be submitted. Please try again.')
         } finally {
+            isSubmittingOrderRef.current = false
             setIsSubmittingOrder(false)
         }
     }
@@ -1218,15 +1311,38 @@ export const OnlineCustomer: React.FC = () => {
                                     <div className="flex items-center gap-2">
                                         <span className="font-extrabold text-sm text-blue-950 uppercase tracking-wide">Active Order #{activeOrder.id} ({activeOrder.paymentMethod})</span>
                                     </div>
-                                    <p className="text-xs text-blue-800 mt-1">Status: <strong className="font-extrabold text-blue-950">{activeOrder.status}</strong> — Waiting for staff verification</p>
+                                    <p className="text-xs text-blue-800 mt-1">
+                                        Status: <strong className="font-extrabold text-blue-950">{activeOrder.status}</strong>
+                                        {['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(activeOrder.status))
+                                            ? ' — Confirmed & cooking in kitchen'
+                                            : ' — Waiting for staff verification'}
+                                    </p>
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setIsVerificationModalOpen(true)}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
-                                >
-                                    <span>📱 Open Payment & Verification Popup</span>
-                                </button>
+                                {['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(activeOrder.status)) ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('tracking')}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
+                                    >
+                                        <span>📍 View Kitchen Tracking</span>
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (activeOrder.id) {
+                                                try {
+                                                    localStorage.removeItem(getVerificationDismissalKey(activeOrder.id))
+                                                    if ((activeOrder as any).ref) localStorage.removeItem(getVerificationDismissalKey((activeOrder as any).ref))
+                                                } catch { }
+                                            }
+                                            setIsVerificationModalOpen(true)
+                                        }}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
+                                    >
+                                        <span>📱 Open Payment & Verification Popup</span>
+                                    </button>
+                                )}
                             </div>
                         )}
 
@@ -1430,8 +1546,9 @@ export const OnlineCustomer: React.FC = () => {
                             {/* CANCEL ORDER BUTTON (Eligible only when still in queue in kitchen, before PREPARING) */}
                             {(() => {
                                 const rawSt = (activeOrder.status || '').toUpperCase()
-                                const isCancelled = rawSt === 'CANCELLED'
-                                const isPreparingOrLater = ['OUT_OF_STOCK', 'PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
+                                const isCancelled = normalizeStatus(rawSt) === 'CANCELLED'
+                                const isOutOfStock = normalizeStatus(rawSt) === 'OUT_OF_STOCK' || outOfStockItems.length > 0
+                                const isPreparingOrLater = isOutOfStock || ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
 
                                 if (isCancelled) {
                                     return (
@@ -1457,36 +1574,15 @@ export const OnlineCustomer: React.FC = () => {
                                 return (
                                     <div className="text-right">
                                         <span className="bg-neutral-100 text-neutral-500 font-bold text-xs px-3 py-1.5 rounded-xl border border-neutral-200 inline-block">
-                                            {normalizeStatus(rawSt) === 'OUT_OF_STOCK' ? '⚠️ Out-of-Stock Decision Needed' : '🍳 Kitchen Processing'}
+                                            {isOutOfStock ? '⚠️ Out-of-Stock Decision Needed' : '🍳 Kitchen Processing'}
                                         </span>
                                         <p className="text-[10px] text-neutral-400 mt-1">
-                                            {normalizeStatus(rawSt) === 'OUT_OF_STOCK' ? 'Choose a replacement or request a refund below.' : 'Cannot cancel once cooking starts'}
+                                            {isOutOfStock ? 'Choose a replacement or request a refund below.' : 'Cannot cancel once cooking starts'}
                                         </p>
                                     </div>
                                 )
                             })()}
                         </div>
-
-                        {/* CANCELLED ORDER BANNER */}
-                        {activeOrder.status === 'CANCELLED' && (
-                            <div className="bg-rose-50 border border-rose-300 rounded-2xl p-5 text-rose-900 space-y-3 shadow-xs animate-fade-in">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-2xl">❌</span>
-                                    <div>
-                                        <h4 className="font-extrabold text-base text-rose-900">Order Cancelled</h4>
-                                        <p className="text-xs text-rose-700 leading-relaxed">
-                                            This order was cancelled. No further kitchen preparation or payment will be processed.
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={handleStartNewOrder}
-                                    className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
-                                >
-                                    Start New Order
-                                </button>
-                            </div>
-                        )}
 
                         {/* GCash Verification Banners & Screenshot Upload */}
                         {activeOrder.status !== 'CANCELLED' && activeOrder.paymentMethod === 'GCash' && (
@@ -1773,24 +1869,64 @@ export const OnlineCustomer: React.FC = () => {
                                 </div>
                             )}
 
-                        {/* Order Cancelled / Refunded Banner */}
+                        {/* Order Cancelled / Refunded Banner (Consolidated - Displayed Only Once) */}
                         {normalizeStatus(activeOrder.status) === 'CANCELLED' && (
-                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 sm:p-6 text-rose-950 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4 animate-in fade-in">
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-xl">❌</span>
-                                        <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">Order Cancelled & Refunded</h4>
+                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 sm:p-6 text-rose-950 shadow-md space-y-4 animate-in fade-in">
+                                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xl">❌</span>
+                                            <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">
+                                                {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
+                                                    ? 'Order Cancelled & Refunded'
+                                                    : 'Order Cancelled'}
+                                            </h4>
+                                        </div>
+                                        <p className="text-xs sm:text-sm text-rose-800 leading-relaxed font-medium">
+                                            {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
+                                                ? 'This order was cancelled due to stock unavailability. A 100% refund of your payment has been processed.'
+                                                : 'This order was cancelled. No further kitchen preparation or payment will be processed.'}
+                                        </p>
                                     </div>
-                                    <p className="text-xs sm:text-sm text-rose-800 leading-relaxed font-medium">
-                                        This order was cancelled due to stock unavailability. A 100% refund of your payment has been processed.
-                                    </p>
+                                    <button
+                                        onClick={handleStartNewOrder}
+                                        className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95"
+                                    >
+                                        {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
+                                            ? 'Make Another Transaction'
+                                            : 'Start New Order'}
+                                    </button>
                                 </div>
-                                <button
-                                    onClick={handleStartNewOrder}
-                                    className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95"
-                                >
-                                    Make Another Transaction
-                                </button>
+
+                                {/* Refund Transaction Screenshot Proof (Showing Refund Ref #) */}
+                                {activeOrder.refundReceipt && (
+                                    <div className="bg-white/95 rounded-xl border border-rose-200 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                                        <div className="flex items-center gap-3 min-w-0">
+                                            <img
+                                                src={activeOrder.refundReceipt}
+                                                alt="Refund Transaction Proof"
+                                                onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                className="w-14 h-14 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                                            />
+                                            <div className="min-w-0">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-xs font-black text-neutral-900">Refund Transaction Proof</span>
+                                                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Proof Sent</span>
+                                                </div>
+                                                <p className="text-[11px] text-neutral-600 leading-snug mt-0.5">
+                                                    Attached screenshot showing the refund transaction reference number.
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                            className="px-3 py-1.5 text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1 shrink-0"
+                                        >
+                                            <span>🔍</span> View Full Proof
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -1923,6 +2059,36 @@ export const OnlineCustomer: React.FC = () => {
                                                 alt="Receipt"
                                                 className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
                                             />
+                                        </div>
+                                    )}
+
+                                    {/* Refund Transaction Screenshot Proof */}
+                                    {activeOrder.refundReceipt && (
+                                        <div className="pt-2 border-t border-rose-200">
+                                            <span className="font-black text-rose-800 uppercase text-[10px] block mb-1 tracking-wider">
+                                                Refund Transaction Proof:
+                                            </span>
+                                            <div className="bg-white p-2.5 rounded-xl border border-rose-200 flex items-center justify-between gap-3 shadow-2xs">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <img
+                                                        src={activeOrder.refundReceipt}
+                                                        alt="Refund Transaction Screenshot"
+                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                        className="w-12 h-12 object-cover rounded-lg border border-rose-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                                                    />
+                                                    <div className="min-w-0">
+                                                        <p className="text-xs font-bold text-neutral-800 truncate">Refund Reference Screenshot</p>
+                                                        <p className="text-[10px] text-neutral-500">Shows refund transaction ref #</p>
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                    className="px-2.5 py-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors shrink-0"
+                                                >
+                                                    View
+                                                </button>
+                                            </div>
                                         </div>
                                     )}
                                     <p className="pt-1">
@@ -2097,7 +2263,7 @@ export const OnlineCustomer: React.FC = () => {
             </div>
 
             {/* 1. WAITING FOR ASSISTANT AUTHORIZATION POPUP MODAL */}
-            {isWaitingModalOpen && activeOrder && (
+            {isWaitingModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
                 <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
                         <button
@@ -2142,12 +2308,12 @@ export const OnlineCustomer: React.FC = () => {
             )}
 
             {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
-            {isVerificationModalOpen && activeOrder && (
+            {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (
                 <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
                         {/* Close button */}
                         <button
-                            onClick={() => setIsVerificationModalOpen(false)}
+                            onClick={dismissVerificationModal}
                             className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
                         >
                             ✕
@@ -2326,7 +2492,7 @@ export const OnlineCustomer: React.FC = () => {
                                 <p className="text-xs text-emerald-100">Your order is now being prepared in the kitchen.</p>
                                 <button
                                     onClick={() => {
-                                        setIsVerificationModalOpen(false)
+                                        dismissVerificationModal()
                                         setActiveTab('tracking')
                                     }}
                                     className="bg-white text-emerald-900 font-extrabold text-xs px-4 py-2 rounded-xl mt-2 cursor-pointer shadow-xs hover:bg-emerald-50 transition-all"
@@ -2338,7 +2504,7 @@ export const OnlineCustomer: React.FC = () => {
 
                         <div className="pt-2 flex gap-3">
                             <button
-                                onClick={() => setIsVerificationModalOpen(false)}
+                                onClick={dismissVerificationModal}
                                 className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
                             >
                                 Keep Waiting in Billing
@@ -2373,6 +2539,48 @@ export const OnlineCustomer: React.FC = () => {
                                 className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 px-6 rounded-2xl transition-all text-xs cursor-pointer"
                             >
                                 Keep Browsing Menu
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Refund Transaction Proof Fullscreen Modal */}
+            {previewScreenshotUrl && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in"
+                    onClick={() => setPreviewScreenshotUrl(null)}
+                >
+                    <div
+                        className="relative max-w-xl w-full bg-white rounded-2xl p-4 space-y-3 shadow-2xl overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
+                            <div>
+                                <h4 className="text-sm font-black text-neutral-800">Refund Transaction Proof</h4>
+                                <p className="text-[11px] text-neutral-500">Screenshot showing refund transaction reference number</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setPreviewScreenshotUrl(null)}
+                                className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer text-lg font-bold leading-none"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="max-h-[75vh] overflow-auto flex items-center justify-center bg-neutral-900 rounded-xl p-2">
+                            <img
+                                src={previewScreenshotUrl}
+                                alt="Refund Transaction Proof Full Screenshot"
+                                className="max-h-[70vh] w-auto object-contain rounded-lg shadow-md"
+                            />
+                        </div>
+                        <div className="text-center pt-1">
+                            <button
+                                type="button"
+                                onClick={() => setPreviewScreenshotUrl(null)}
+                                className="px-5 py-2 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                            >
+                                Close
                             </button>
                         </div>
                     </div>

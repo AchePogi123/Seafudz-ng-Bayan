@@ -571,7 +571,16 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     const cleanAddress = deliveryAddress || address || (req.user && req.user.delivery_address) || 'Metro Manila Address';
     const customerId = (req.user && req.user.id) ? req.user.id : null;
 
-    const orderId = req.body.id || req.body.ref || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
+    const requestedOrderId = req.body.id || req.body.ref;
+    const orderId = requestedOrderId || `SFB-${Math.floor(1000 + Math.random() * 9000)}`;
+    const existingOrder = requestedOrderId ? inMemoryOrders.get(String(requestedOrderId)) : null;
+    if (existingOrder) {
+      return res.status(200).json({
+        success: true,
+        message: `Order ${orderId} already exists`,
+        data: formatOrderResponse(existingOrder),
+      });
+    }
 
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
     const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';

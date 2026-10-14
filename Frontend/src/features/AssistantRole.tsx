@@ -23,6 +23,8 @@ export interface OnlineOrder {
   paymentMethod: string
   paymentReference?: string
   paymentReceipt?: string
+  refundReceipt?: string
+  refundReference?: string
   gcashAuthorized?: boolean
   gcash_authorized?: boolean
   status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | 'out_of_stock' | string
@@ -46,6 +48,11 @@ export interface Rider {
   phone: string
 }
 
+
+const normalizeStatusStr = (st?: string): string => {
+  if (!st) return 'pending'
+  return st.toLowerCase().trim().replace(/[\s-]+/g, '_')
+}
 
 export const AssistantRole: React.FC = () => {
   const currentUser = getActiveUser()
@@ -98,7 +105,92 @@ export const AssistantRole: React.FC = () => {
     }
   }, [notification])
 
-  const selectedOrder = orders.find((o) => o.id === selectedOrderId)
+  const [isUploadingRefundProof, setIsUploadingRefundProof] = useState(false)
+  const [refundProofUploadError, setRefundProofUploadError] = useState<string | null>(null)
+  const refundProofFileInputRef = useRef<HTMLInputElement | null>(null)
+  const lastSelectedOrderRef = useRef<OnlineOrder | null>(null)
+
+  const selectedOrder = useMemo(() => {
+    if (!selectedOrderId) return null
+    const found = orders.find((o) => o.id === selectedOrderId || o.ref === selectedOrderId)
+    if (found) {
+      lastSelectedOrderRef.current = found
+      return found
+    }
+    if (lastSelectedOrderRef.current && (lastSelectedOrderRef.current.id === selectedOrderId || lastSelectedOrderRef.current.ref === selectedOrderId)) {
+      return lastSelectedOrderRef.current
+    }
+    return null
+  }, [orders, selectedOrderId])
+
+  const handleRefundProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !selectedOrder) return
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file.')
+      return
+    }
+
+    setIsUploadingRefundProof(true)
+    setRefundProofUploadError(null)
+
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const base64Data = reader.result as string
+      try {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === selectedOrder.id || o.ref === selectedOrder.id
+              ? { ...o, refundReceipt: base64Data }
+              : o
+          )
+        )
+        if (lastSelectedOrderRef.current && (lastSelectedOrderRef.current.id === selectedOrder.id || lastSelectedOrderRef.current.ref === selectedOrder.id)) {
+          lastSelectedOrderRef.current = { ...lastSelectedOrderRef.current, refundReceipt: base64Data }
+        }
+
+        try {
+          const stored = localStorage.getItem('seafudz_orders')
+          if (stored) {
+            const list = JSON.parse(stored)
+            if (Array.isArray(list)) {
+              const updated = list.map((o: any) =>
+                o.id === selectedOrder.id || o.ref === selectedOrder.id
+                  ? { ...o, refundReceipt: base64Data }
+                  : o
+              )
+              localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+            }
+          }
+        } catch { }
+
+        const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (token) headers['Authorization'] = `Bearer ${token}`
+
+        await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/attach-proof`, {
+          method: 'PATCH',
+          headers,
+          body: JSON.stringify({ refundReceipt: base64Data }),
+        }).catch(() => { })
+
+        notifyOrderSync()
+        setNotification(`Refund transaction screenshot attached for order #${selectedOrder.ref || selectedOrder.id}!`)
+      } catch (err) {
+        console.error('Error attaching refund proof screenshot:', err)
+        setRefundProofUploadError('Failed to upload refund screenshot. Please try again.')
+      } finally {
+        setIsUploadingRefundProof(false)
+        if (refundProofFileInputRef.current) refundProofFileInputRef.current.value = ''
+      }
+    }
+    reader.onerror = () => {
+      setIsUploadingRefundProof(false)
+      setRefundProofUploadError('Failed to read image file.')
+    }
+    reader.readAsDataURL(file)
+  }
 
   const validatePhone = (phoneStr: string): { isValid: boolean; cleaned: string } => {
     const cleaned = phoneStr.replace(/[^0-9+]/g, '')
@@ -155,7 +247,9 @@ export const AssistantRole: React.FC = () => {
                 paymentMethod: o.paymentMethod || 'GCash',
                 paymentReference: o.paymentReference || o.paymentRef,
                 paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
-                status: (o.status || 'PENDING').toLowerCase(),
+                refundReceipt: o.refundReceipt || o.refund_receipt,
+                refundReference: o.refundReference || o.refund_reference,
+                status: normalizeStatusStr(o.status),
                 gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                 items: (o.items || []).map((it: any) => ({
                   id: it.id,
@@ -192,7 +286,7 @@ export const AssistantRole: React.FC = () => {
 
               const id = o.id || o.ref
               if (!combinedMap.has(id)) {
-                const rawStatus = (o.status || 'PENDING').toLowerCase()
+                const rawStatus = normalizeStatusStr(o.status)
                 const items: OrderItem[] = Array.isArray(o.cartItems)
                   ? o.cartItems.map((ci: any) => ({
                     name: ci.item?.name || ci.name || 'Seafood Dish',
@@ -217,6 +311,8 @@ export const AssistantRole: React.FC = () => {
                   paymentMethod: o.paymentMethod || 'GCash',
                   paymentReference: o.paymentReference || o.paymentRef,
                   paymentReceipt: o.paymentReceipt || o.receiptImage || o.receipt,
+                  refundReceipt: o.refundReceipt || o.refund_receipt,
+                  refundReference: o.refundReference || o.refund_reference,
                   status: rawStatus,
                   gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                   items,
@@ -229,6 +325,27 @@ export const AssistantRole: React.FC = () => {
                   correctionNote: o.notes,
                   riderId: o.riderId,
                   assignedRiderName: o.assignedRiderName,
+                })
+              } else {
+                const existing = combinedMap.get(id)!
+                const localRes = o.customerResolution || o.customer_resolution
+                const localResStatus = o.customerResolutionStatus || o.customer_resolution_status
+                const localReceipt = o.paymentReceipt || o.receiptImage || o.receipt
+                const localRef = o.paymentReference || o.paymentRef
+
+                combinedMap.set(id, {
+                  ...existing,
+                  customerResolution: existing.customerResolution || localRes || null,
+                  customerResolutionStatus: (existing.customerResolutionStatus && existing.customerResolutionStatus !== 'NONE')
+                    ? existing.customerResolutionStatus
+                    : (localResStatus || 'NONE'),
+                  customerReplacements: (existing.customerReplacements && existing.customerReplacements.length > 0)
+                    ? existing.customerReplacements
+                    : (o.customerReplacements || o.customer_replacements || []),
+                  paymentReceipt: existing.paymentReceipt || localReceipt || undefined,
+                  paymentReference: existing.paymentReference || localRef || undefined,
+                  refundReceipt: existing.refundReceipt || o.refundReceipt || o.refund_receipt || undefined,
+                  refundReference: existing.refundReference || o.refundReference || o.refund_reference || undefined,
                 })
               }
             })
@@ -410,7 +527,10 @@ export const AssistantRole: React.FC = () => {
       const res = await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/resolve-out-of-stock`, {
         method: 'PATCH',
         headers,
-        body: JSON.stringify({ resolution }),
+        body: JSON.stringify({
+          resolution,
+          refundReceipt: selectedOrder.refundReceipt,
+        }),
       })
       const result = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(result.message || 'Failed to process the customer choice.')
@@ -422,6 +542,7 @@ export const AssistantRole: React.FC = () => {
           status: nextStatus,
           outOfStockItems: [],
           customerResolutionStatus: 'COMPLETED',
+          refundReceipt: selectedOrder.refundReceipt,
         }
         : order
       ))
@@ -430,7 +551,13 @@ export const AssistantRole: React.FC = () => {
         const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
         const updatedGlobal = globalOrders.map((order: any) =>
           order.id === selectedOrder.id || order.ref === selectedOrder.id
-            ? { ...order, status: nextStatus.toUpperCase(), outOfStockItems: [], customerResolutionStatus: 'COMPLETED' }
+            ? {
+                ...order,
+                status: nextStatus.toUpperCase(),
+                outOfStockItems: [],
+                customerResolutionStatus: 'COMPLETED',
+                refundReceipt: selectedOrder.refundReceipt,
+              }
             : order
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
@@ -452,7 +579,7 @@ export const AssistantRole: React.FC = () => {
 
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
-      const s = (order.status || '').toLowerCase()
+      const s = normalizeStatusStr(order.status)
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
 
       const matchesTab =
@@ -478,12 +605,7 @@ export const AssistantRole: React.FC = () => {
     })
   }, [orders, activeTab, searchQuery])
 
-  // Clear selected order if it's no longer present in filtered list
-  useEffect(() => {
-    if (selectedOrderId && !filteredOrders.some((o) => o.id === selectedOrderId)) {
-      setSelectedOrderId(null)
-    }
-  }, [filteredOrders, selectedOrderId])
+  // Retain selected order across filter/tab switches to avoid disappearing modal/sections
 
   // Reset pagination when filter or search changes
   useEffect(() => {
@@ -514,19 +636,19 @@ export const AssistantRole: React.FC = () => {
               </div>
             )}
 
-            {orders.some((o) => (o.status || '').toLowerCase() === 'out_of_stock') && (
+            {orders.some((o) => normalizeStatusStr(o.status) === 'out_of_stock') && (
               <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 px-4 py-3 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-xs animate-pulse">
                 <div className="flex items-center gap-2.5">
                   <span className="text-xl">🚨</span>
                   <span>
-                    <strong>Out-of-Stock Alert:</strong> {orders.filter((o) => (o.status || '').toLowerCase() === 'out_of_stock').length} order(s) flagged. {orders.filter((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT').length} customer choice(s) ready for review.
+                    <strong>Out-of-Stock Alert:</strong> {orders.filter((o) => normalizeStatusStr(o.status) === 'out_of_stock').length} order(s) flagged. {orders.filter((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT').length} customer choice(s) ready for review.
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    const oosOrder = orders.find((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT')
-                      || orders.find((o) => (o.status || '').toLowerCase() === 'out_of_stock')
+                    const oosOrder = orders.find((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT')
+                      || orders.find((o) => normalizeStatusStr(o.status) === 'out_of_stock')
                     if (oosOrder) {
                       setActiveTab('kitchen')
                       setSelectedOrderId(oosOrder.id)
@@ -534,7 +656,7 @@ export const AssistantRole: React.FC = () => {
                   }}
                   className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-xs whitespace-nowrap active:scale-95"
                 >
-                  {orders.some((o) => (o.status || '').toLowerCase() === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT') ? 'Review customer choice' : 'Inspect order'}
+                  {orders.some((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT') ? 'Review customer choice' : 'Inspect order'}
                 </button>
               </div>
             )}
@@ -604,7 +726,7 @@ export const AssistantRole: React.FC = () => {
               ) : (
                 paginatedOrders.map((ord) => {
                   const isSelected = selectedOrderId === ord.id
-                  const s = (ord.status || '').toLowerCase()
+                  const s = normalizeStatusStr(ord.status)
 
                   return (
                     <div
@@ -776,40 +898,76 @@ export const AssistantRole: React.FC = () => {
                   )}
                 </div>
 
-                {/* Minimal Checklist */}
-                <div className="pb-2 space-y-2 text-[11px]">
-                  <p className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Verification Checklist</p>
-                  <div className="space-y-1">
-                    <p className={customerNameValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                      <span>{customerNameValid ? '✓' : '✗'}</span>
-                      <span>{customerNameValid ? 'Customer name verified' : 'Missing customer name'}</span>
-                    </p>
-                    <p className={phoneValidation.isValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                      <span>{phoneValidation.isValid ? '✓' : '✗'}</span>
-                      <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
-                    </p>
-                    <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
-                      <span>{addressValidation.isComplete ? '✓' : '!'}</span>
-                      <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
-                    </p>
-                    {(!selectedOrder.paymentMethod?.toLowerCase().includes('cod') && selectedOrder.status?.toUpperCase() !== 'PENDING_COD') && (
-                      <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                        <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
-                        <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
+                {/* Minimal Checklist (Hidden during Out-of-Stock Refund to keep UI minimal and clean) */}
+                {normalizeStatusStr(selectedOrder.status).toUpperCase() !== 'OUT_OF_STOCK' && (
+                  <div className="pb-2 space-y-2 text-[11px]">
+                    <p className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Verification Checklist</p>
+                    <div className="space-y-1">
+                      <p className={customerNameValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                        <span>{customerNameValid ? '✓' : '✗'}</span>
+                        <span>{customerNameValid ? 'Customer name verified' : 'Missing customer name'}</span>
                       </p>
-                    )}
+                      <p className={phoneValidation.isValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                        <span>{phoneValidation.isValid ? '✓' : '✗'}</span>
+                        <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
+                      </p>
+                      <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
+                        <span>{addressValidation.isComplete ? '✓' : '!'}</span>
+                        <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
+                      </p>
+                      {(!selectedOrder.paymentMethod?.toLowerCase().includes('cod') && selectedOrder.status?.toUpperCase() !== 'PENDING_COD') && (
+                        <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                          <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
+                          <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Pipeline Action Controls */}
                 <div className="pt-2 space-y-3">
                   {(() => {
-                    const st = (selectedOrder.status || '').toUpperCase()
+                    const st = normalizeStatusStr(selectedOrder.status).toUpperCase()
 
                     if (st === 'CANCELLED') {
                       return (
-                        <div className="w-full bg-rose-50 text-rose-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-rose-300 shadow-xs">
-                          ❌ Order Cancelled & Refunded
+                        <div className="space-y-3">
+                          <div className="w-full bg-rose-50 text-rose-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-rose-300 shadow-xs">
+                            ❌ Order Cancelled & Refunded
+                          </div>
+                          {selectedOrder.refundReceipt ? (
+                            <div className="bg-white p-2.5 rounded-xl border border-rose-200 flex items-center justify-between gap-2 shadow-2xs">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <img
+                                  src={selectedOrder.refundReceipt}
+                                  alt="Refund Proof"
+                                  onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                  className="w-10 h-10 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-80 transition-opacity"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-neutral-800 truncate">Refund Proof Attached</p>
+                                  <p className="text-[10px] text-neutral-500">Ref # proof screenshot</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                className="px-2.5 py-1 text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg cursor-pointer transition-colors"
+                              >
+                                View
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => refundProofFileInputRef.current?.click()}
+                              disabled={isUploadingRefundProof}
+                              className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                            >
+                              <span>📷</span> {isUploadingRefundProof ? 'Uploading...' : 'Attach Refund Screenshot'}
+                            </button>
+                          )}
                         </div>
                       )
                     }
@@ -822,18 +980,29 @@ export const AssistantRole: React.FC = () => {
                       const choiceStatus = String(selectedOrder.customerResolutionStatus || '').toUpperCase()
                       const canProcessChoice = choiceStatus === 'PENDING_ASSISTANT' && ['REFUND', 'REPLACE'].includes(customerChoice)
                       const customerReplacements = selectedOrder.customerReplacements || []
+                      const isRefund = customerChoice === 'REFUND'
 
                       return (
-                        <div className="space-y-3 bg-rose-50 p-4 rounded-2xl border-2 border-rose-300 animate-in fade-in">
+                        <div className="space-y-3 bg-rose-50/90 p-4 rounded-2xl border-2 border-rose-300 shadow-xs">
                           <div className="flex items-start gap-2">
                             <span className="text-xl">⚠️</span>
                             <div>
-                              <h4 className="font-black text-xs text-rose-900 uppercase tracking-wide">Kitchen Out of Stock Alert</h4>
+                              <h4 className="font-black text-xs text-rose-900 uppercase tracking-wide">
+                                {isRefund ? 'Customer Refund Request' : 'Kitchen Out of Stock Alert'}
+                              </h4>
                               <p className="text-[11px] text-rose-700 leading-snug mt-0.5">
                                 {canProcessChoice
-                                  ? `Customer selected ${customerChoice === 'REFUND' ? 'a full refund' : 'the replacement items below'}.`
+                                  ? `Customer selected ${isRefund ? 'a full refund' : 'replacement dishes'}.`
                                   : 'Waiting for the customer to choose replacements or request a full refund.'}
                               </p>
+                            </div>
+                          </div>
+
+                          {/* Customer Phone Display */}
+                          <div className="bg-white/95 rounded-xl p-2.5 border border-rose-200 flex items-center justify-between text-xs">
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-bold text-neutral-500 uppercase block tracking-wider">Customer Phone / GCash</span>
+                              <span className="font-mono font-bold text-neutral-900 truncate block mt-0.5">📱 {selectedOrder.phone}</span>
                             </div>
                           </div>
 
@@ -849,9 +1018,23 @@ export const AssistantRole: React.FC = () => {
                             </div>
                           )}
 
-                          {canProcessChoice && customerChoice === 'REFUND' && (
-                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs text-rose-900">
-                              Customer requested a full refund of ₱{selectedOrder.total.toLocaleString()}.
+                          {canProcessChoice && isRefund && (
+                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs text-rose-900 space-y-2">
+                              <div className="flex justify-between items-center">
+                                <span className="font-bold text-neutral-700">Refund Amount:</span>
+                                <span className="font-black text-rose-700 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
+                              </div>
+                              {selectedOrder.refundReceipt ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                  className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                                >
+                                  <span>📷</span> View Attached Refund Proof Screenshot
+                                </button>
+                              ) : (
+                                <p className="text-[10px] text-neutral-400">Refund transaction screenshot can be attached in review modal</p>
+                              )}
                             </div>
                           )}
 
@@ -872,7 +1055,7 @@ export const AssistantRole: React.FC = () => {
                               onClick={() => setIsResolveModalOpen(true)}
                               className="w-full bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3.5 rounded-2xl text-xs shadow-md shadow-rose-500/20 cursor-pointer transition-all active:scale-98"
                             >
-                              {customerChoice === 'REFUND' ? 'Review and process customer refund' : 'Review customer replacement'}
+                              {isRefund ? 'Review and process customer refund' : 'Review customer replacement'}
                             </button>
                           ) : (
                             <div className="w-full bg-white/70 text-rose-800 font-bold py-3 rounded-xl text-xs text-center border border-rose-200">
@@ -1047,8 +1230,9 @@ export const AssistantRole: React.FC = () => {
           ? selectedOrder.outOfStockItems
           : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
 
-        const oosTotal = oosItems.reduce((acc: number, it: any) => acc + (it.price || it.unit_price || 0) * (it.quantity || 1), 0)
+
         const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()
+        const isRefund = customerChoice === 'REFUND'
         const canProcessChoice = String(selectedOrder.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
           && ['REFUND', 'REPLACE'].includes(customerChoice)
         const customerReplacements = selectedOrder.customerReplacements || []
@@ -1059,76 +1243,161 @@ export const AssistantRole: React.FC = () => {
             onClick={() => setIsResolveModalOpen(false)}
           >
             <div
-              className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl relative space-y-5 animate-in zoom-in-95 duration-200"
+              className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl relative space-y-4 animate-in zoom-in-95 duration-200"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+              {/* Clean Modal Header */}
+              <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
                 <div>
-                  <span className="text-[10px] font-black uppercase tracking-wider text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
-                    Kitchen Out-of-Stock Resolution
+                  <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                    isRefund
+                      ? 'text-rose-700 bg-rose-50 border-rose-200'
+                      : 'text-blue-700 bg-blue-50 border-blue-200'
+                  }`}>
+                    {isRefund ? 'Customer Refund Request' : 'Kitchen Out-of-Stock Resolution'}
                   </span>
                   <h3 className="text-base font-extrabold text-neutral-900 mt-1">
                     Order #{selectedOrder.ref}
                   </h3>
-                  <p className="text-xs text-neutral-500">Customer: {selectedOrder.customer} ({selectedOrder.phone})</p>
+                  <p className="text-xs text-neutral-500">Customer: <span className="font-semibold text-neutral-800">{selectedOrder.customer}</span></p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsResolveModalOpen(false)}
-                  className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer"
+                  className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
                 >
                   ✕
                 </button>
               </div>
 
-              {/* Unavailable Items Overview */}
-              <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-3.5 space-y-1.5">
-                <p className="text-[11px] font-black text-rose-900 uppercase tracking-wide">
-                  Flagged Unavailable Item(s):
-                </p>
-                <div className="divide-y divide-rose-100 text-xs">
-                  {oosItems.map((item: any, idx: number) => (
-                    <div key={idx} className="py-1 flex justify-between items-center text-rose-950 font-semibold">
-                      <span>{item.name || item.product_name_snapshot} × {item.quantity || 1}</span>
-                      <span className="font-bold">₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+              {isRefund ? (
+                /* MINIMAL REFUND INTERFACE (Clean, Focused, Essential Information Only) */
+                <div className="space-y-3.5">
+                  {/* 1. Refund Amount & Out-of-Stock Summary */}
+                  <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-4 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-black uppercase tracking-wider text-rose-800">
+                        Refund Amount ({selectedOrder.paymentMethod || 'GCash'})
+                      </span>
+                      <div className="text-2xl font-black text-rose-700 tracking-tight mt-0.5">
+                        ₱{selectedOrder.total.toLocaleString()}
+                      </div>
+                      <p className="text-[11px] text-rose-900/80 font-medium mt-1">
+                        Unavailable: <span className="font-bold">{oosItems.map((i: any) => `${i.name || i.product_name_snapshot} (x${i.quantity || 1})`).join(', ') || 'Item out of stock'}</span>
+                      </p>
                     </div>
-                  ))}
-                </div>
-                <div className="pt-1.5 border-t border-rose-200 flex justify-between text-xs font-black text-rose-900">
-                  <span>Total Value of Unavailable Items:</span>
-                  <span>₱{oosTotal.toLocaleString()}</span>
-                </div>
-              </div>
-
-              {/* Customer Choice Summary */}
-              <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200 space-y-2 text-xs">
-                <h4 className="font-bold text-neutral-800">Customer's selected resolution:</h4>
-                {!canProcessChoice ? (
-                  <p className="text-neutral-600">The customer has not submitted a choice yet. No resolution can be processed.</p>
-                ) : customerChoice === 'REFUND' ? (
-                  <div className="space-y-1 text-rose-800">
-                    <p>The customer requested a full refund of <strong>₱{selectedOrder.total.toLocaleString()}</strong>.</p>
-                    <p>Processing this request will cancel the order and stop kitchen preparation.</p>
+                    <span className="text-2xl p-2 bg-rose-100 rounded-2xl">💸</span>
                   </div>
-                ) : (
-                  <div className="space-y-1 text-neutral-700">
-                    <p>The customer selected these replacements at the original item prices:</p>
+
+                  {/* 2. Customer Phone Number (Without Call and Copy buttons) */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+                      Customer Phone / GCash Number
+                    </span>
+                    <p className="text-sm font-black text-slate-900 mt-0.5 flex items-center gap-1.5 font-mono truncate">
+                      <span>📱</span> {selectedOrder.phone || '0917-000-0000'}
+                    </p>
+                  </div>
+
+                  {/* 3. Refund Transaction Screenshot Proof (Showing Refund Ref #) */}
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-neutral-500 block">
+                          Refund Transaction Proof
+                        </span>
+                        <span className="text-xs text-neutral-600 font-medium block">
+                          Screenshot showing refund transaction reference number
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => refundProofFileInputRef.current?.click()}
+                        disabled={isUploadingRefundProof}
+                        className="px-2.5 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg cursor-pointer transition-colors"
+                      >
+                        {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? '📷 Replace Proof' : '📷 Attach Screenshot'}
+                      </button>
+                    </div>
+
+                    {/* Screenshot Preview / Upload Area */}
+                    {selectedOrder.refundReceipt ? (
+                      <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-neutral-200">
+                        <img
+                          src={selectedOrder.refundReceipt}
+                          alt="Refund Transaction Proof"
+                          onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                          className="w-14 h-14 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-neutral-800 truncate">Refund Transaction Screenshot</p>
+                          <p className="text-[10px] text-neutral-500">Proof of sent refund showing transaction reference number</p>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                            className="mt-1 text-[11px] font-extrabold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
+                          >
+                            <span>🔍</span> Click to view full screenshot
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        onClick={() => refundProofFileInputRef.current?.click()}
+                        className="border-2 border-dashed border-rose-200 hover:border-rose-400 bg-white/60 hover:bg-rose-50/50 rounded-xl p-3.5 text-center cursor-pointer transition-colors"
+                      >
+                        <p className="text-xs font-bold text-neutral-700">No refund transaction screenshot attached yet</p>
+                        <p className="text-[10px] text-neutral-400 mt-0.5">Click to attach screenshot showing refund transaction reference number</p>
+                      </div>
+                    )}
+
+                    <input
+                      ref={refundProofFileInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleRefundProofUpload}
+                      className="hidden"
+                    />
+                    {refundProofUploadError && (
+                      <p className="text-[11px] font-semibold text-rose-600">{refundProofUploadError}</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* REPLACEMENT INTERFACE (Preserved for REPLACE choice) */
+                <div className="space-y-3">
+                  <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-3.5 space-y-1.5">
+                    <p className="text-[11px] font-black text-rose-900 uppercase tracking-wide">
+                      Flagged Unavailable Item(s):
+                    </p>
+                    <div className="divide-y divide-rose-100 text-xs">
+                      {oosItems.map((item: any, idx: number) => (
+                        <div key={idx} className="py-1 flex justify-between items-center text-rose-950 font-semibold">
+                          <span>{item.name || item.product_name_snapshot} × {item.quantity || 1}</span>
+                          <span className="font-bold">₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200 space-y-2 text-xs">
+                    <h4 className="font-bold text-neutral-800">Customer's Replacement Choices:</h4>
                     {customerReplacements.map((replacement: any, index: number) => (
-                      <p key={`${replacement.oldItemId}-${index}`} className="font-semibold">
+                      <p key={`${replacement.oldItemId}-${index}`} className="font-semibold text-neutral-700">
                         {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
                       </p>
                     ))}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-2 pt-2 border-t border-neutral-100">
                 <button
                   type="button"
                   onClick={() => setIsResolveModalOpen(false)}
                   disabled={isSubmittingResolution}
-                  className="px-4 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                  className="px-5 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
                 >
                   Cancel
                 </button>
@@ -1137,14 +1406,14 @@ export const AssistantRole: React.FC = () => {
                   onClick={handleResolveOutOfStock}
                   disabled={isSubmittingResolution || !canProcessChoice}
                   className={`flex-1 py-3 text-white font-black rounded-xl text-xs cursor-pointer transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 disabled:opacity-50 ${
-                    customerChoice === 'REFUND'
+                    isRefund
                       ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
                       : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
                   }`}
                 >
                   {isSubmittingResolution
                     ? 'Processing...'
-                    : customerChoice === 'REFUND'
+                    : isRefund
                       ? `Process full refund ₱${selectedOrder.total.toLocaleString()}`
                       : 'Confirm replacement and resume kitchen'}
                 </button>

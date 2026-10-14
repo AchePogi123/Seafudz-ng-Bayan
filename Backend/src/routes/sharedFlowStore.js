@@ -16,7 +16,7 @@ export function normalizeFlowStatus(rawStatus) {
   if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY';
   if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY';
   if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED';
-  if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK') return upper;
+  if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK' || upper === 'OUT OF STOCK') return upper === 'OUT OF STOCK' ? 'OUT_OF_STOCK' : upper;
   
   return 'PENDING';
 }
@@ -66,6 +66,8 @@ export function formatOrderResponse(row) {
     deliveryAddress: row.delivery_address || row.address || 'Delivery Address',
     paymentMethod: row.payment_method || row.paymentMethod || 'GCash',
     paymentReceipt: row.payment_receipt || row.paymentReceipt || undefined,
+    refundReceipt: row.refund_receipt || row.refundReceipt || undefined,
+    refundReference: row.refund_reference || row.refundReference || undefined,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     gcash_authorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     receiptStatus: receiptStatus,

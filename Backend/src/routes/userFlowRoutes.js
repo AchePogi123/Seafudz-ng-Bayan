@@ -105,6 +105,8 @@ router.get('/user-flow/orders', async (req, res) => {
           customerReplacements: dbOrder.customerResolution
             ? dbOrder.customerReplacements
             : existing.customerReplacements || [],
+          refundReceipt: existing.refundReceipt || dbOrder.refundReceipt || undefined,
+          refundReference: existing.refundReference || dbOrder.refundReference || undefined,
         });
       }
     });

@@ -301,6 +301,45 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
   }
 });
 
+// PATCH /api/assistant/orders/:id/attach-proof - Upload or update proof screenshot / reference number
+router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentReceipt, paymentReference, refundReceipt, refundReference } = req.body;
+    let order = inMemoryOrders.get(id) || { id };
+
+    if (paymentReceipt !== undefined) order.paymentReceipt = paymentReceipt;
+    if (paymentReference !== undefined) order.paymentReference = paymentReference;
+    if (refundReceipt !== undefined) order.refundReceipt = refundReceipt;
+    if (refundReference !== undefined) order.refundReference = refundReference;
+    order.updated_at = new Date().toISOString();
+
+    inMemoryOrders.set(id, order);
+
+    try {
+      if (paymentReference) {
+        await query(
+          `UPDATE payments SET reference_number = $2 WHERE order_id = $1`,
+          [id, paymentReference]
+        );
+      }
+    } catch (err) {
+      console.warn('DB payments update note (attach-proof):', err.message);
+    }
+
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
+    return res.status(200).json({
+      success: true,
+      message: `Payment proof updated for order #${id}`,
+      data: formatted,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // PATCH /api/assistant/orders/:id/verify-receipt - Assistant approves receipt screenshot
 router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, res) => {
   try {
@@ -414,7 +453,7 @@ router.patch('/assistant/orders/:id/confirm-cod', optionalAuth, async (req, res)
 // PATCH /api/assistant/orders/:id/resolve-out-of-stock - Resolve out-of-stock issue
 router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (req, res) => {
   const { id } = req.params;
-  const { resolution } = req.body;
+  const { resolution, refundReceipt, refundReference } = req.body;
 
   if (!['REPLACE', 'FULL_REFUND'].includes(resolution)) {
     return res.status(400).json({ success: false, message: 'Invalid customer resolution.' });
@@ -559,6 +598,8 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
     order.customerReplacements = [];
     order.customer_replacements = [];
     order.outOfStockItems = [];
+    if (refundReceipt !== undefined) order.refundReceipt = refundReceipt;
+    if (refundReference !== undefined) order.refundReference = refundReference;
     (order.items || []).forEach(item => { item.item_status = 'REFUNDED'; });
     refundAmount = Number(order.total ?? dbOrder?.total ?? refundAmount) || 0;
   } else {

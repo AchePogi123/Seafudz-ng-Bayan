@@ -7,7 +7,7 @@ import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
 import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
 import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
 
-import { realtimeEmitter } from '../utils/realtimeEvents.js';
+import { realtimeEmitter, emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
@@ -596,47 +596,121 @@ router.post('/user-flow/orders/:id/additional-payment-receipt', optionalAuth, as
   }
 });
 
+async function executeOrderCancellation(id) {
+  let orderInMemory = inMemoryOrders.get(id);
+  if (!orderInMemory) {
+    for (const [k, v] of inMemoryOrders.entries()) {
+      if (k === id || v.id === id || v.ref === id) {
+        orderInMemory = v;
+        break;
+      }
+    }
+  }
+
+  let dbOrder = null;
+  try {
+    const { rows } = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
+    if (rows.length > 0) {
+      dbOrder = rows[0];
+    }
+  } catch (e) {
+    console.warn('Orders DB lookup note:', e.message);
+  }
+
+  const currentStatus = orderInMemory?.status || dbOrder?.status || null;
+  const normCurrent = normalizeFlowStatus(currentStatus);
+
+  if (normCurrent === 'CANCELLED') {
+    const activeOrderObj = orderInMemory || (dbOrder ? formatOrderResponse(dbOrder) : { id, status: 'CANCELLED' });
+    return { success: true, message: `Order ${id} is already cancelled.`, order: activeOrderObj };
+  }
+
+  const nonCancellableStatuses = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+  if (nonCancellableStatuses.includes(normCurrent)) {
+    return {
+      success: false,
+      status: 400,
+      message: 'Order is already being prepared in the kitchen and cannot be cancelled.',
+    };
+  }
+
+  // Update in-memory orders
+  if (orderInMemory) {
+    orderInMemory.status = 'CANCELLED';
+    orderInMemory.updated_at = new Date().toISOString();
+    inMemoryOrders.set(orderInMemory.id || id, orderInMemory);
+  } else if (dbOrder) {
+    const formatted = formatOrderResponse(dbOrder);
+    formatted.status = 'CANCELLED';
+    formatted.updated_at = new Date().toISOString();
+    inMemoryOrders.set(id, formatted);
+    orderInMemory = formatted;
+  }
+
+  // Update PostgreSQL orders table
+  try {
+    await query(
+      `UPDATE orders
+       SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [id]
+    );
+  } catch (dbErr) {
+    console.warn('Update orders cancelled_at fallback:', dbErr.message);
+    try {
+      await query(
+        `UPDATE orders
+         SET status = 'CANCELLED', updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+    } catch (e2) {
+      console.error('Fatal error updating orders to CANCELLED:', e2.message);
+    }
+  }
+
+  // Keep kitchen_orders table in sync
+  try {
+    await query(
+      `UPDATE kitchen_orders
+       SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+       WHERE order_id = $1`,
+      [id]
+    );
+  } catch (e) {
+    console.warn('Sync kitchen_orders cancel note:', e.message);
+  }
+
+  // Keep order_items table in sync
+  try {
+    await query(
+      `UPDATE order_items
+       SET item_status = 'CANCELLED'
+       WHERE order_id = $1 AND item_status != 'CANCELLED'`,
+      [id]
+    );
+  } catch (e) {}
+
+  const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCELLED' } : { id, status: 'CANCELLED' });
+  const formattedResponse = formatOrderResponse(activeOrderObj);
+
+  emitOrderUpdate(formattedResponse);
+
+  return {
+    success: true,
+    message: `Order ${id} has been cancelled successfully.`,
+    order: formattedResponse,
+  };
+}
+
 router.patch('/user-flow/orders/:id/cancel', async (req, res) => {
   try {
     const { id } = req.params;
-
-    let currentStatus = null;
-    let orderInMemory = inMemoryOrders.get(id);
-    if (orderInMemory) {
-      currentStatus = orderInMemory.status;
-    } else {
-      try {
-        const { rows } = await query(`SELECT status FROM orders WHERE id = $1`, [id]);
-        if (rows.length > 0) {
-          currentStatus = rows[0].status;
-        }
-      } catch (e) {}
+    const result = await executeOrderCancellation(id);
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
     }
-
-    const normCurrent = normalizeFlowStatus(currentStatus);
-    const nonCancellableStatuses = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'OUT_OF_STOCK'];
-
-    if (nonCancellableStatuses.includes(normCurrent)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order is already being prepared in the kitchen and cannot be cancelled.',
-      });
-    }
-
-    if (orderInMemory) {
-      orderInMemory.status = 'CANCELLED';
-      orderInMemory.updated_at = new Date().toISOString();
-      inMemoryOrders.set(id, orderInMemory);
-    }
-
-    try {
-      await query(`UPDATE orders SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW() WHERE id = $1`, [id]);
-    } catch (e) {}
-
-    return res.status(200).json({
-      success: true,
-      message: `Order ${id} has been cancelled successfully.`,
-    });
+    return res.status(200).json(result);
   } catch (error) {
     console.error('Error cancelling order:', error);
     return res.status(500).json({
@@ -657,38 +731,11 @@ router.patch('/user-flow/orders/:id/status', optionalAuth, async (req, res) => {
 
   if (targetNorm === 'CANCELLED') {
     const { id } = req.params;
-    let currentStatus = null;
-    let orderInMemory = inMemoryOrders.get(id);
-    if (orderInMemory) currentStatus = orderInMemory.status;
-    else {
-      try {
-        const { rows } = await query(`SELECT status FROM orders WHERE id = $1`, [id]);
-        if (rows.length > 0) currentStatus = rows[0].status;
-      } catch (e) {}
+    const result = await executeOrderCancellation(id);
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
     }
-
-    const normCurrent = normalizeFlowStatus(currentStatus);
-    const nonCancellableStatuses = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'OUT_OF_STOCK'];
-    if (nonCancellableStatuses.includes(normCurrent)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Order is already being prepared in the kitchen and cannot be cancelled.',
-      });
-    }
-
-    if (orderInMemory) {
-      orderInMemory.status = 'CANCELLED';
-      orderInMemory.updated_at = new Date().toISOString();
-      inMemoryOrders.set(id, orderInMemory);
-    }
-    try {
-      await query(`UPDATE orders SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW() WHERE id = $1`, [id]);
-    } catch (e) {}
-
-    return res.status(200).json({
-      success: true,
-      message: `Order ${id} cancelled successfully`,
-    });
+    return res.status(200).json(result);
   }
 
   // Delegate based on role responsible for the status transition:

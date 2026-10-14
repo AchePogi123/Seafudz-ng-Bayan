@@ -449,7 +449,7 @@ export const OnlineCustomer: React.FC = () => {
 
         setIsCancellingOrder(true)
         try {
-            const token = localStorage.getItem('seafudz_token')
+            const token = localStorage.getItem('seafudz_token') || localStorage.getItem('token') || localStorage.getItem('sfb_crypto_session_token')
             const res = await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}/cancel`, {
                 method: 'PATCH',
                 headers: {
@@ -460,13 +460,16 @@ export const OnlineCustomer: React.FC = () => {
             })
 
             const resData = await res.json().catch(() => ({}))
-            if (!res.ok && resData.message) {
-                alert(resData.message)
+            if (!res.ok) {
+                alert(resData.message || 'Failed to cancel order.')
                 setIsCancellingOrder(false)
                 return
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error sending cancel request:', err)
+            alert(err?.message || 'Error sending cancel request')
+            setIsCancellingOrder(false)
+            return
         }
 
         const updatedOrder = { ...activeOrder, status: 'CANCELLED' }
@@ -2252,69 +2255,71 @@ export const OnlineCustomer: React.FC = () => {
                         )}
 
                         {/* Progress Bar */}
-                        <div className="py-6">
-                            <div className="relative flex items-center justify-between w-full">
-                                <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-neutral-100 z-0 rounded-full" />
-                                <div
-                                    className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
-                                    style={{
-                                        width:
-                                            normalizeStatus(activeOrder.status) === 'PENDING'
-                                                ? '0%'
-                                                : normalizeStatus(activeOrder.status) === 'CONFIRMED'
-                                                    ? '20%'
-                                                    : normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK'
-                                                        ? '30%'
-                                                        : normalizeStatus(activeOrder.status) === 'PREPARING'
-                                                        ? '40%'
-                                                        : normalizeStatus(activeOrder.status) === 'READY'
-                                                            ? '60%'
-                                                            : normalizeStatus(activeOrder.status) === 'OUT_FOR_DELIVERY'
-                                                                ? '80%'
-                                                                : '100%',
-                                    }}
-                                />
+                        {normalizeStatus(activeOrder.status) !== 'CANCELLED' && (
+                            <div className="py-6">
+                                <div className="relative flex items-center justify-between w-full">
+                                    <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-neutral-100 z-0 rounded-full" />
+                                    <div
+                                        className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
+                                        style={{
+                                            width:
+                                                normalizeStatus(activeOrder.status) === 'PENDING'
+                                                    ? '0%'
+                                                    : normalizeStatus(activeOrder.status) === 'CONFIRMED'
+                                                        ? '20%'
+                                                        : normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK'
+                                                            ? '30%'
+                                                            : normalizeStatus(activeOrder.status) === 'PREPARING'
+                                                            ? '40%'
+                                                            : normalizeStatus(activeOrder.status) === 'READY'
+                                                                ? '60%'
+                                                                : normalizeStatus(activeOrder.status) === 'OUT_FOR_DELIVERY'
+                                                                    ? '80%'
+                                                                    : '100%',
+                                        }}
+                                    />
 
-                                {[
-                                    { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification' },
-                                    { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue' },
-                                    { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen' },
-                                    { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider' },
-                                    { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route' },
-                                    { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed' },
-                                ].map((step) => {
-                                    const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
-                                    const currUpper = normalizeStatus(activeOrder.status)
-                                    const isCurrent = currUpper === step.key
-                                    const isCompleted =
-                                        statusOrder.indexOf(currUpper) >= statusOrder.indexOf(step.key)
+                                    {[
+                                        { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification' },
+                                        { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue' },
+                                        { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen' },
+                                        { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider' },
+                                        { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route' },
+                                        { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed' },
+                                    ].map((step) => {
+                                        const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
+                                        const currUpper = normalizeStatus(activeOrder.status)
+                                        const isCurrent = currUpper === step.key
+                                        const isCompleted =
+                                            statusOrder.indexOf(currUpper) >= statusOrder.indexOf(step.key)
 
-                                    return (
-                                        <div key={step.key} className="flex flex-col items-center z-10 relative">
-                                            <div
-                                                className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xs sm:text-sm font-extrabold border-2 shadow-xs transition-all duration-300 ${isCurrent
-                                                    ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
-                                                    : isCompleted
-                                                        ? 'bg-orange-500 border-orange-500 text-white'
-                                                        : 'bg-white border-neutral-200 text-neutral-400'
-                                                    }`}
-                                            >
-                                                ●
+                                        return (
+                                            <div key={step.key} className="flex flex-col items-center z-10 relative">
+                                                <div
+                                                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xs sm:text-sm font-extrabold border-2 shadow-xs transition-all duration-300 ${isCurrent
+                                                        ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
+                                                        : isCompleted
+                                                            ? 'bg-orange-500 border-orange-500 text-white'
+                                                            : 'bg-white border-neutral-200 text-neutral-400'
+                                                        }`}
+                                                >
+                                                    ●
+                                                </div>
+                                                <p
+                                                    className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
+                                                        }`}
+                                                >
+                                                    {step.label}
+                                                </p>
+                                                <p className="text-[9px] sm:text-[10px] text-neutral-400 font-medium hidden md:block text-center max-w-[100px]">
+                                                    {step.desc}
+                                                </p>
                                             </div>
-                                            <p
-                                                className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
-                                                    }`}
-                                            >
-                                                {step.label}
-                                            </p>
-                                            <p className="text-[9px] sm:text-[10px] text-neutral-400 font-medium hidden md:block text-center max-w-[100px]">
-                                                {step.desc}
-                                            </p>
-                                        </div>
-                                    )
-                                })}
+                                        )
+                                    })}
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">

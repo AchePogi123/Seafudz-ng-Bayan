@@ -100,11 +100,17 @@ router.get('/user-flow/orders', async (req, res) => {
         mergedMap.set(row.id, dbOrder);
       } else {
         const existing = mergedMap.get(row.id);
+        const mergedPayments = dbOrder.payments?.length ? dbOrder.payments : (existing.payments || []);
+        const mergedRefunds = dbOrder.refunds?.length ? dbOrder.refunds : (existing.refunds || []);
+        const mergedTotal = existing.total !== undefined ? existing.total : dbOrder.total;
+        const mergedMethod = dbOrder.paymentMethod || existing.paymentMethod || 'GCash';
+        const mergedLedger = calculateFinancialLedger(mergedPayments, mergedRefunds, mergedTotal, mergedMethod);
+
         mergedMap.set(row.id, {
           ...dbOrder,
           ...existing,
-          payments: dbOrder.payments?.length ? dbOrder.payments : (existing.payments || []),
-          refunds: dbOrder.refunds?.length ? dbOrder.refunds : (existing.refunds || []),
+          payments: mergedPayments,
+          refunds: mergedRefunds,
           status: normalizeFlowStatus(existing.status || row.status),
           outOfStockItems: dbOrder.outOfStockItems.length > 0 ? dbOrder.outOfStockItems : existing.outOfStockItems || [],
           customerResolution: dbOrder.customerResolution || existing.customerResolution || null,
@@ -116,14 +122,14 @@ router.get('/user-flow/orders', async (req, res) => {
             : existing.customerReplacements || [],
           refundReceipt: existing.refundReceipt || dbOrder.refundReceipt || undefined,
           refundReference: existing.refundReference || dbOrder.refundReference || undefined,
-          financialStatus: existing.financialStatus || dbOrder.financialStatus,
-          netConfirmedPaid: existing.netConfirmedPaid !== undefined ? existing.netConfirmedPaid : dbOrder.netConfirmedPaid,
-          grossConfirmedPaid: existing.grossConfirmedPaid !== undefined ? existing.grossConfirmedPaid : dbOrder.grossConfirmedPaid,
-          completedRefundAmount: existing.completedRefundAmount !== undefined ? existing.completedRefundAmount : dbOrder.completedRefundAmount,
-          pendingRefundAmount: existing.pendingRefundAmount !== undefined ? existing.pendingRefundAmount : dbOrder.pendingRefundAmount,
-          additionalRequired: existing.additionalRequired !== undefined ? existing.additionalRequired : dbOrder.additionalRequired,
-          excessAmount: existing.excessAmount !== undefined ? existing.excessAmount : dbOrder.excessAmount,
-          total: existing.total !== undefined ? existing.total : dbOrder.total,
+          financialStatus: mergedLedger.financialStatus,
+          netConfirmedPaid: mergedLedger.netConfirmedPaid,
+          grossConfirmedPaid: mergedLedger.grossConfirmedPaid,
+          completedRefundAmount: mergedLedger.completedRefunds,
+          pendingRefundAmount: mergedLedger.pendingRefundAmount,
+          additionalRequired: mergedLedger.additionalRequired,
+          excessAmount: mergedLedger.excessAmount,
+          total: mergedTotal,
         });
       }
     });

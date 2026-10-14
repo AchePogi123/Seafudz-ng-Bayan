@@ -59,6 +59,15 @@ export interface Rider {
 }
 
 
+export const getOrderConfirmedPaid = (order?: any): number => {
+  if (!order) return 0
+  const paymentsList = Array.isArray(order.payments) ? order.payments : []
+  const paymentsConfirmedSum = paymentsList
+    .filter((p: any) => ['PAID', 'PARTIALLY_REFUNDED'].includes(String(p.status || '').toUpperCase()) || (String(p.status || '').toUpperCase() === 'REFUNDED' && (p.paid_at || p.reference_number)))
+    .reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0)
+  return Number(order.grossConfirmedPaid || order.netConfirmedPaid || paymentsConfirmedSum || 0)
+}
+
 const normalizeStatusStr = (st?: string): string => {
   if (!st) return 'pending'
   return st.toLowerCase().trim().replace(/[\s-]+/g, '_')
@@ -273,7 +282,7 @@ export const AssistantRole: React.FC = () => {
                 customerResolutionStatus: o.customerResolutionStatus || o.customer_resolution_status || 'NONE',
                 customerReplacements: o.customerReplacements || o.customer_replacements || [],
                 financialStatus: o.financialStatus,
-                grossConfirmedPaid: o.grossConfirmedPaid,
+                grossConfirmedPaid: getOrderConfirmedPaid(o),
                 completedRefundAmount: o.completedRefundAmount,
                 netConfirmedPaid: o.netConfirmedPaid,
                 excessAmount: o.excessAmount,
@@ -564,7 +573,7 @@ export const AssistantRole: React.FC = () => {
     }
 
     const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
-    const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+    const originalPaid = getOrderConfirmedPaid(selectedOrder)
     const updatedTotal = Number(selectedOrder.total || 0)
     const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
       ? Number(selectedOrder.excessAmount)
@@ -1153,7 +1162,7 @@ export const AssistantRole: React.FC = () => {
 
                           {canProcessChoice && customerChoice === 'REPLACE' && (() => {
                             const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
-                            const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+                            const originalPaid = getOrderConfirmedPaid(selectedOrder)
                             const updatedTotal = Number(selectedOrder.total || 0)
                             const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
                               ? Number(selectedOrder.excessAmount)
@@ -1383,7 +1392,7 @@ export const AssistantRole: React.FC = () => {
         const customerReplacements = selectedOrder.customerReplacements || []
 
         const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
-        const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+        const originalPaid = getOrderConfirmedPaid(selectedOrder)
         const updatedTotal = Number(selectedOrder.total || 0)
         const cashbackDifference = !isRefund && !isCOD && Number(selectedOrder.excessAmount || 0) > 0
           ? Number(selectedOrder.excessAmount)
@@ -1554,7 +1563,7 @@ export const AssistantRole: React.FC = () => {
 
                     {(() => {
                       const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
-                      const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+                      const originalPaid = getOrderConfirmedPaid(selectedOrder)
                       const updatedTotal = Number(selectedOrder.total || 0)
                       const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
                         ? Number(selectedOrder.excessAmount)

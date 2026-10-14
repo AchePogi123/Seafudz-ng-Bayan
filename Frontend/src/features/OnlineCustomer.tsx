@@ -38,6 +38,16 @@ interface OnlineOrderState {
     customerReplacements?: any[]
     gcashAuthorized?: boolean
     gcash_authorized?: boolean
+    financialStatus?: string
+    grossConfirmedPaid?: number
+    completedRefundAmount?: number
+    netConfirmedPaid?: number
+    excessAmount?: number
+    additionalRequired?: number
+    pendingRefundAmount?: number
+    payments?: any[]
+    refunds?: any[]
+    additionalPaymentReceipt?: string
     createdAt: string
 }
 
@@ -190,10 +200,7 @@ export const OnlineCustomer: React.FC = () => {
     const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
     const outOfStockItems = useMemo(() => getOrderOutOfStockItems(activeOrder), [activeOrder])
-    const availableReplacementItems = useMemo(
-        () => menuItems.filter((item) => isAvailable(item.id)),
-        [menuItems, isAvailable]
-    )
+// availableReplacementItems replaced by menu replacement mode
 
     // Menu filter states
     const [searchQuery, setSearchQuery] = useState('')
@@ -229,9 +236,24 @@ export const OnlineCustomer: React.FC = () => {
     const isSubmittingOrderRef = useRef(false)
     const pendingOrderSubmissionRef = useRef<{ fingerprint: string; id: string } | null>(null)
     const [isCancellingOrder, setIsCancellingOrder] = useState(false)
-    const [isChoosingOosReplacement, setIsChoosingOosReplacement] = useState(false)
-    const [replacementSelections, setReplacementSelections] = useState<Record<string, string>>({})
+    // oos replacement inline select removed
+    const [replacementSelections, setReplacementSelections] = useState<Record<string, any>>({})
+    const [replacementTargetItem, setReplacementTargetItem] = useState<any | null>(null)
+    const [additionalReceiptFile, setAdditionalReceiptFile] = useState<string | null>(null)
+    const [additionalRefNumber, setAdditionalRefNumber] = useState<string>('')
     const [isSubmittingOosChoice, setIsSubmittingOosChoice] = useState(false)
+
+    const handleAdditionalReceiptChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        const reader = new FileReader()
+        reader.onload = () => {
+            if (typeof reader.result === 'string') {
+                setAdditionalReceiptFile(reader.result)
+            }
+        }
+        reader.readAsDataURL(file)
+    }
 
     // Save cart state to user-scoped localStorage whenever modified
     useEffect(() => {
@@ -952,21 +974,21 @@ export const OnlineCustomer: React.FC = () => {
 
         const replacements: Array<{ oldItemId: string | number; newProductId: string; newName: string; newPrice: number }> = []
         if (resolution === 'REPLACE') {
-            outOfStockItems.forEach((item: any, index) => {
+            outOfStockItems.forEach((item: any, index: number) => {
                 const oldItemId = item.id ?? index
-                const replacement = availableReplacementItems.find((menuItem) => menuItem.id === replacementSelections[String(oldItemId)])
-                if (replacement) {
+                const sel = replacementSelections[String(oldItemId)]
+                if (sel) {
                     replacements.push({
                         oldItemId,
-                        newProductId: replacement.id,
-                        newName: replacement.name,
-                        newPrice: getEffectivePrice(replacement.id, replacement.price),
+                        newProductId: sel.productId || sel.id,
+                        newName: sel.name,
+                        newPrice: Number(sel.price || 0),
                     })
                 }
             })
 
             if (outOfStockItems.length === 0 || replacements.length !== outOfStockItems.length) {
-                alert('Choose an available replacement for every out-of-stock item.')
+                alert('Choose an available replacement for every out-of-stock item from the menu.')
                 return
             }
         }
@@ -985,19 +1007,49 @@ export const OnlineCustomer: React.FC = () => {
             const result = await res.json().catch(() => ({}))
             if (!res.ok) throw new Error(result.message || 'Unable to submit your choice.')
 
+            if (resolution === 'REPLACE' && additionalReceiptFile) {
+                try {
+                    await fetch(`${API_BASE_URL}/user-flow/orders/${activeOrder.id}/additional-payment-receipt`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                        body: JSON.stringify({
+                            paymentReceipt: additionalReceiptFile,
+                            referenceNumber: additionalRefNumber || undefined,
+                        }),
+                    })
+                } catch (receiptErr) {
+                    console.warn('Could not upload additional payment receipt:', receiptErr)
+                }
+            }
+
             const responseOrder = result.data || {}
             const updatedOrder = {
                 ...activeOrder,
                 status: responseOrder.status || activeOrder.status,
+                total: responseOrder.total ?? activeOrder.total,
+                subtotal: responseOrder.subtotal ?? activeOrder.subtotal,
+                vat: responseOrder.vat ?? activeOrder.vat,
+                financialStatus: responseOrder.financialStatus,
+                netConfirmedPaid: responseOrder.netConfirmedPaid,
+                grossConfirmedPaid: responseOrder.grossConfirmedPaid,
+                excessAmount: responseOrder.excessAmount,
+                additionalRequired: responseOrder.additionalRequired,
+                pendingRefundAmount: responseOrder.pendingRefundAmount,
                 outOfStockItems: responseOrder.outOfStockItems ?? outOfStockItems,
                 customerResolution: responseOrder.customerResolution || resolution,
                 customerResolutionStatus: responseOrder.customerResolutionStatus || 'PENDING_ASSISTANT',
                 customerReplacements: responseOrder.customerReplacements || replacements,
+                additionalPaymentReceipt: additionalReceiptFile || activeOrder.additionalPaymentReceipt,
             }
             const currentUser = getActiveUser()
             setActiveOrder(updatedOrder)
-            setIsChoosingOosReplacement(false)
+            
             setReplacementSelections({})
+            setReplacementTargetItem(null)
+            setAdditionalReceiptFile(null)
 
             try {
                 localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updatedOrder))
@@ -1013,15 +1065,20 @@ export const OnlineCustomer: React.FC = () => {
                 }
                 const globalActive = localStorage.getItem('seafudz_active_online_order')
                 if (globalActive) {
-                    const parsed = JSON.parse(globalActive)
-                    if (parsed.id === activeOrder.id || parsed.ref === activeOrder.id) {
-                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updatedOrder))
-                    }
+                    try {
+                        const parsed = JSON.parse(globalActive)
+                        if (parsed.id === activeOrder.id || parsed.ref === activeOrder.id) {
+                            localStorage.setItem('seafudz_active_online_order', JSON.stringify(updatedOrder))
+                        }
+                    } catch {}
                 }
-            } catch { }
+            } catch (err) {
+                console.warn('Could not update active order in localStorage:', err)
+            }
             notifyOrderSync()
         } catch (error) {
-            alert(error instanceof Error ? error.message : 'Unable to submit your choice. Please try again.')
+            console.error('Error submitting out-of-stock choice:', error)
+            alert(error instanceof Error ? error.message : 'Unable to submit your choice right now.')
         } finally {
             setIsSubmittingOosChoice(false)
         }
@@ -1038,6 +1095,35 @@ export const OnlineCustomer: React.FC = () => {
                     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
                         {/* Main Menu Area (Left 3 Columns) */}
                         <main className="lg:col-span-3 flex flex-col gap-6">
+                            {/* Sticky Replacement Banner */}
+                            {replacementTargetItem && (
+                                <div className="sticky top-4 z-40 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-amber-300/40 animate-in slide-in-from-top-4">
+                                    <div className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="bg-white/20 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full backdrop-blur-xs">
+                                                Replacement Mode
+                                            </span>
+                                            <span className="text-xs text-amber-100 font-medium">Click "Select as Replacement" on any available dish</span>
+                                        </div>
+                                        <h4 className="text-base sm:text-lg font-black tracking-tight">
+                                            Replacing: <span className="underline decoration-amber-300 font-extrabold">{replacementTargetItem.name || replacementTargetItem.product_name_snapshot}</span>
+                                            <span className="text-amber-200 font-bold text-sm ml-2">
+                                                (₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString()})
+                                            </span>
+                                        </h4>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setReplacementTargetItem(null)
+                                            setActiveTab('tracking')
+                                        }}
+                                        className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap self-stretch sm:self-auto text-center active:scale-95"
+                                    >
+                                        ✕ Cancel & Return to Order
+                                    </button>
+                                </div>
+                            )}
                             {/* Category Toolbar Row with Integrated Search Bar */}
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-neutral-100 shadow-2xs">
                                 {/* Left: Browse Menu Button + Category Pills */}
@@ -1162,12 +1248,37 @@ export const OnlineCustomer: React.FC = () => {
                                                     </span>
 
                                                     {available ? (
-                                                        <button
-                                                            onClick={() => handleAddToCart(item)}
-                                                            className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
-                                                        >
-                                                            <span>+</span> Add
-                                                        </button>
+                                                        replacementTargetItem ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const itemKey = String(replacementTargetItem.id ?? 0)
+                                                                    const effectivePrice = getEffectivePrice(item.id, item.price)
+                                                                    setReplacementSelections((prev) => ({
+                                                                        ...prev,
+                                                                        [itemKey]: {
+                                                                            productId: item.id,
+                                                                            name: item.name,
+                                                                            price: effectivePrice,
+                                                                            image: item.image,
+                                                                            category: item.category,
+                                                                        },
+                                                                    }))
+                                                                    setReplacementTargetItem(null)
+                                                                    setActiveTab('tracking')
+                                                                }}
+                                                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
+                                                            >
+                                                                <span>✓</span> Select as Replacement
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => handleAddToCart(item)}
+                                                                className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
+                                                            >
+                                                                <span>+</span> Add
+                                                            </button>
+                                                        )
                                                     ) : (
                                                         <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
                                                             Sold Out
@@ -1765,91 +1876,283 @@ export const OnlineCustomer: React.FC = () => {
                                         <h4 className="text-base sm:text-lg font-black text-amber-900 tracking-tight">Item Unavailable in Kitchen</h4>
                                     </div>
                                     <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
-                                        Choose a replacement for each unavailable item, or request a full refund for this transaction.
+                                        The kitchen flagged the following item(s) as out of stock. Choose an available replacement from our menu, or request a full refund.
                                     </p>
                                 </div>
 
                                 {(activeOrder.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase() === 'PENDING_ASSISTANT' ? (
-                                    <div className="bg-amber-100/90 px-4 py-3 rounded-xl border border-amber-300 text-xs font-bold text-amber-900">
-                                        {activeOrder.customerResolution === 'REFUND'
-                                            ? 'Full refund requested. The assistant has been notified and will process your request.'
-                                            : 'Your replacement selection has been sent to the assistant for confirmation.'}
-                                    </div>
-                                ) : (
-                                    <div className="space-y-3">
-                                        <div className="flex flex-col sm:flex-row gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setIsChoosingOosReplacement(true)}
-                                                disabled={isSubmittingOosChoice}
-                                                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs px-4 py-3 rounded-xl transition-colors disabled:opacity-50"
-                                            >
-                                                Choose replacement
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleSubmitOutOfStockChoice('REFUND')}
-                                                disabled={isSubmittingOosChoice}
-                                                className="flex-1 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs px-4 py-3 rounded-xl transition-colors disabled:opacity-50"
-                                            >
-                                                Request full refund
-                                            </button>
-                                        </div>
-
-                                        {isChoosingOosReplacement && (
-                                            <div className="bg-white border border-amber-200 rounded-xl p-4 space-y-3">
-                                                <div>
-                                                    <h5 className="text-sm font-extrabold text-neutral-900">Choose replacement dishes</h5>
-                                                    <p className="text-[11px] text-neutral-600 mt-1">Replacement items will keep the original item's price.</p>
-                                                </div>
-                                                {outOfStockItems.map((item: any, index: number) => {
-                                                    const itemKey = String(item.id ?? index)
-                                                    return (
-                                                        <label key={itemKey} className="block space-y-1.5">
-                                                            <span className="text-xs font-bold text-neutral-700">
-                                                                Replace {item.name || item.product_name_snapshot} (x{item.quantity || 1})
-                                                            </span>
-                                                            <select
-                                                                value={replacementSelections[itemKey] || ''}
-                                                                onChange={(event) => setReplacementSelections((previous) => ({ ...previous, [itemKey]: event.target.value }))}
-                                                                disabled={isSubmittingOosChoice}
-                                                                className="w-full bg-neutral-50 border border-neutral-300 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-orange-500"
-                                                            >
-                                                                <option value="">Select an available menu item</option>
-                                                                {availableReplacementItems.map((menuItem) => (
-                                                                    <option key={menuItem.id} value={menuItem.id}>
-                                                                        {menuItem.name} — ₱{getEffectivePrice(menuItem.id, menuItem.price).toLocaleString()}
-                                                                    </option>
-                                                                ))}
-                                                            </select>
-                                                        </label>
-                                                    )
-                                                })}
-                                                {availableReplacementItems.length === 0 && (
-                                                    <p className="text-xs text-rose-700">There are no available menu items to choose as replacements.</p>
-                                                )}
-                                                <div className="flex gap-2 pt-1">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setIsChoosingOosReplacement(false)}
-                                                        disabled={isSubmittingOosChoice}
-                                                        className="px-4 py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-lg text-xs disabled:opacity-50"
-                                                    >
-                                                        Back
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleSubmitOutOfStockChoice('REPLACE')}
-                                                        disabled={isSubmittingOosChoice || availableReplacementItems.length === 0}
-                                                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-extrabold rounded-lg text-xs disabled:opacity-50"
-                                                    >
-                                                        {isSubmittingOosChoice ? 'Submitting...' : 'Confirm replacement choices'}
-                                                    </button>
-                                                </div>
+                                    <div className="bg-amber-100/90 p-4 rounded-xl border border-amber-300 text-xs text-amber-900 space-y-2">
+                                        <p className="font-extrabold text-sm">
+                                            {activeOrder.customerResolution === 'REFUND'
+                                                ? 'Full refund requested.'
+                                                : 'Replacement choices submitted.'}
+                                        </p>
+                                        <p className="text-xs text-amber-800 font-medium">
+                                            {activeOrder.customerResolution === 'REFUND'
+                                                ? 'Our restaurant assistant is verifying and processing the refund to your account.'
+                                                : 'Our restaurant assistant is reviewing your replacements and preparing them for the kitchen.'}
+                                        </p>
+                                        {Array.isArray(activeOrder.customerReplacements) && activeOrder.customerReplacements.length > 0 && (
+                                            <div className="bg-white/80 p-3 rounded-lg border border-amber-200 text-xs space-y-1">
+                                                <span className="font-bold text-neutral-800 block">Submitted Replacements:</span>
+                                                {activeOrder.customerReplacements.map((r: any, idx: number) => (
+                                                    <div key={idx} className="flex justify-between text-neutral-700">
+                                                        <span>{r.oldItemName} → <span className="font-bold">{r.newName}</span> (x{r.quantity || 1})</span>
+                                                        <span className="font-bold">₱{(Number(r.newPrice || 0) * Number(r.quantity || 1)).toLocaleString()}</span>
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
+                                        {activeOrder.excessAmount ? (
+                                            <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg text-emerald-900 text-xs flex justify-between items-center">
+                                                <span className="font-bold">💰 Excess Refund Due:</span>
+                                                <span className="font-black">₱{Number(activeOrder.excessAmount).toLocaleString()}</span>
+                                            </div>
+                                        ) : null}
+                                        {activeOrder.additionalRequired ? (
+                                            <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-900 text-xs flex justify-between items-center">
+                                                <span className="font-bold">⚠️ Additional Required:</span>
+                                                <span className="font-black">₱{Number(activeOrder.additionalRequired).toLocaleString()}</span>
+                                            </div>
+                                        ) : null}
                                     </div>
-                                )}
+                                ) : (() => {
+                                    const activeItems = (activeOrder.items || []).filter((i: any) =>
+                                        !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase())
+                                    )
+                                    const activeSubtotal = activeItems.reduce((acc: number, i: any) =>
+                                        acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0
+                                    )
+                                    const replacementsSubtotal = outOfStockItems.reduce((acc: number, item: any, idx: number) => {
+                                        const sel = replacementSelections[String(item.id ?? idx)]
+                                        return acc + ((sel?.price || 0) * (item.quantity || 1))
+                                    }, 0)
+                                    const projectedSubtotal = Math.round((activeSubtotal + replacementsSubtotal) * 100) / 100
+                                    const projectedVat = Math.round(projectedSubtotal * 0.12 * 100) / 100
+                                    const deliveryFee = Number(activeOrder.deliveryFee || 0)
+                                    const projectedTotal = Math.round((projectedSubtotal + projectedVat + deliveryFee) * 100) / 100
+
+                                    const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
+                                        || String(activeOrder.status).toUpperCase() === 'PENDING_COD'
+
+                                    const confirmedPaid = activeOrder.netConfirmedPaid !== undefined
+                                        ? Number(activeOrder.netConfirmedPaid)
+                                        : (!isCOD ? Number(activeOrder.total) : 0)
+
+                                    const balanceDiff = Math.round((projectedTotal - confirmedPaid) * 100) / 100
+                                    const excessAmount = balanceDiff < 0 ? Math.abs(balanceDiff) : 0
+                                    const additionalRequired = balanceDiff > 0 ? balanceDiff : 0
+
+                                    const allReplacementsSelected = outOfStockItems.length > 0 && outOfStockItems.every((item: any, idx: number) =>
+                                        Boolean(replacementSelections[String(item.id ?? idx)])
+                                    )
+
+                                    return (
+                                        <div className="space-y-4">
+                                            {/* Unavailable Items and Selections */}
+                                            <div className="space-y-2.5">
+                                                {outOfStockItems.map((item: any, index: number) => {
+                                                    const itemKey = String(item.id ?? index)
+                                                    const selected = replacementSelections[itemKey]
+                                                    const originalUnitPrice = Number(item.price || item.unit_price || 0)
+                                                    const qty = Number(item.quantity) || 1
+
+                                                    return (
+                                                        <div key={itemKey} className="bg-white border border-amber-200 rounded-xl p-3.5 space-y-2 shadow-2xs">
+                                                            <div className="flex items-center justify-between">
+                                                                <div>
+                                                                    <span className="text-xs font-bold text-neutral-800">
+                                                                        {item.name || item.product_name_snapshot} × {qty}
+                                                                    </span>
+                                                                    <p className="text-[11px] text-neutral-500">
+                                                                        Original Subtotal: ₱{(originalUnitPrice * qty).toLocaleString()}
+                                                                    </p>
+                                                                </div>
+                                                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
+                                                                    Out of Stock
+                                                                </span>
+                                                            </div>
+
+                                                            {selected ? (
+                                                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                                                    <div>
+                                                                        <div className="flex items-center gap-1.5">
+                                                                            <span className="text-emerald-600 font-black text-sm">✓</span>
+                                                                            <span className="text-xs font-extrabold text-emerald-950">
+                                                                                Replacement: {selected.name} × {qty}
+                                                                            </span>
+                                                                        </div>
+                                                                        <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
+                                                                            ₱{(selected.price * qty).toLocaleString()}
+                                                                            {selected.price !== originalUnitPrice && (
+                                                                                <span className="ml-1.5 font-bold">
+                                                                                    ({selected.price > originalUnitPrice
+                                                                                        ? `+₱${((selected.price - originalUnitPrice) * qty).toLocaleString()} difference`
+                                                                                        : `-₱${((originalUnitPrice - selected.price) * qty).toLocaleString()} savings`})
+                                                                                </span>
+                                                                            )}
+                                                                        </p>
+                                                                    </div>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setReplacementTargetItem(item)
+                                                                            setActiveTab('menu')
+                                                                        }}
+                                                                        className="text-xs font-bold text-orange-600 hover:text-orange-700 bg-white hover:bg-orange-50 border border-orange-200 px-3 py-1.5 rounded-lg cursor-pointer transition-colors self-start sm:self-auto"
+                                                                    >
+                                                                        Change Dish
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="pt-1">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            setReplacementTargetItem(item)
+                                                                            setActiveTab('menu')
+                                                                        }}
+                                                                        className="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-98"
+                                                                    >
+                                                                        <span>🔍</span> Choose Replacement from Menu
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+
+                                            {/* Live Financial Breakdown Card (Shown when replacements selected) */}
+                                            {allReplacementsSelected && (
+                                                <div className="bg-white border-2 border-orange-300 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-sm">
+                                                    <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
+                                                        <h5 className="text-xs font-black uppercase tracking-wider text-neutral-800">
+                                                            Order Recalculation Breakdown
+                                                        </h5>
+                                                        <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200">
+                                                            {isCOD ? 'Cash on Delivery (COD)' : 'GCash Online Payment'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="space-y-1.5 text-xs">
+                                                        <div className="flex justify-between text-neutral-600">
+                                                            <span>Original Order Total:</span>
+                                                            <span className="font-semibold text-neutral-800">₱{activeOrder.total.toLocaleString()}</span>
+                                                        </div>
+                                                        <div className="flex justify-between text-neutral-600">
+                                                            <span>Recalculated Order Total:</span>
+                                                            <span className="font-black text-neutral-900 text-sm">₱{projectedTotal.toLocaleString()}</span>
+                                                        </div>
+                                                        {!isCOD && (
+                                                            <div className="flex justify-between text-neutral-600">
+                                                                <span>Amount Already Paid (GCash):</span>
+                                                                <span className="font-semibold text-emerald-700">₱{confirmedPaid.toLocaleString()}</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Financial Scenario Handling */}
+                                                    {isCOD ? (
+                                                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 space-y-1">
+                                                            <p className="font-black text-sm">💵 Cash on Delivery Balance: ₱{projectedTotal.toLocaleString()}</p>
+                                                            <p className="text-[11px] text-slate-600">
+                                                                No advance online payment or refund required. Your delivery rider will collect the updated amount of ₱{projectedTotal.toLocaleString()} in cash upon delivery.
+                                                            </p>
+                                                        </div>
+                                                    ) : excessAmount > 0 ? (
+                                                        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1.5">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-black text-emerald-900 text-xs sm:text-sm">💰 Excess Refund Due:</span>
+                                                                <span className="font-black text-lg text-emerald-700">₱{excessAmount.toLocaleString()}</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
+                                                                Your replacement selection is ₱{excessAmount.toLocaleString()} lower than your original payment. Our assistant will transfer this excess back to your GCash with official screenshot proof upon confirming your replacements.
+                                                            </p>
+                                                        </div>
+                                                    ) : additionalRequired > 0 ? (
+                                                        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-xs text-amber-950 space-y-3">
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-black text-amber-900 text-xs sm:text-sm">⚠️ Additional Payment Required:</span>
+                                                                <span className="font-black text-lg text-amber-700">₱{additionalRequired.toLocaleString()}</span>
+                                                            </div>
+                                                            <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
+                                                                Your replacement dishes total ₱{additionalRequired.toLocaleString()} more than the amount originally paid. Please send ₱{additionalRequired.toLocaleString()} to our official GCash account and upload proof below.
+                                                            </p>
+                                                            <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs font-mono space-y-0.5">
+                                                                <p className="font-black text-neutral-800">GCash Account: 0917-123-4567</p>
+                                                                <p className="text-neutral-500 text-[10px]">Merchant Name: Seafudz ng Bayan</p>
+                                                            </div>
+                                                            <div className="space-y-1.5 bg-white p-3 rounded-xl border border-neutral-200">
+                                                                <label className="block text-[11px] font-bold text-neutral-700">
+                                                                    Attach Additional Payment Screenshot:
+                                                                </label>
+                                                                <input
+                                                                    type="file"
+                                                                    accept="image/*"
+                                                                    onChange={handleAdditionalReceiptChange}
+                                                                    className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-[11px] file:font-bold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100 cursor-pointer"
+                                                                />
+                                                                <input
+                                                                    type="text"
+                                                                    placeholder="Optional GCash Reference # (e.g. 1002 984 1234)"
+                                                                    value={additionalRefNumber}
+                                                                    onChange={(e) => setAdditionalRefNumber(e.target.value)}
+                                                                    className="w-full text-xs px-3 py-2 border border-neutral-200 rounded-lg outline-none focus:border-orange-500 bg-neutral-50"
+                                                                />
+                                                                {additionalReceiptFile && (
+                                                                    <p className="text-[10px] text-emerald-700 font-bold mt-1">✓ Proof screenshot attached</p>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 text-xs text-neutral-700">
+                                                            <p className="font-bold">✓ Equal exchange (₱0 Difference). No extra payment or refund needed.</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Submit / Action Buttons */}
+                                                    <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSubmitOutOfStockChoice('REFUND')}
+                                                            disabled={isSubmittingOosChoice}
+                                                            className="px-4 py-3 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                                        >
+                                                            Request Full Refund Instead
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleSubmitOutOfStockChoice('REPLACE')}
+                                                            disabled={isSubmittingOosChoice || (!isCOD && additionalRequired > 0 && !additionalReceiptFile)}
+                                                            className="flex-1 py-3 bg-orange-600 hover:bg-orange-700 text-white font-black text-xs rounded-xl transition-all shadow-md active:scale-98 disabled:opacity-50 cursor-pointer"
+                                                        >
+                                                            {isSubmittingOosChoice ? 'Submitting...' : 'Confirm Replacement Choices'}
+                                                        </button>
+                                                    </div>
+                                                    {!isCOD && additionalRequired > 0 && !additionalReceiptFile && (
+                                                        <p className="text-[11px] text-rose-600 text-center font-bold">
+                                                            * Please attach proof of the additional ₱{additionalRequired.toLocaleString()} payment above.
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            {!allReplacementsSelected && (
+                                                <div className="pt-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSubmitOutOfStockChoice('REFUND')}
+                                                        disabled={isSubmittingOosChoice}
+                                                        className="w-full py-2.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                                    >
+                                                        Request Full Refund for Order
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })()}
                             </div>
                         )}
 

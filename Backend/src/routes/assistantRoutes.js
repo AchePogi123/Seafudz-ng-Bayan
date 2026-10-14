@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
-import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
+import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse, calculateFinancialLedger } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
@@ -314,6 +314,26 @@ router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res
     if (refundReference !== undefined) order.refundReference = refundReference;
     order.updated_at = new Date().toISOString();
 
+    if (refundReceipt !== undefined || refundReference !== undefined) {
+      if (!Array.isArray(order.refunds)) order.refunds = [];
+      const pendingRefund = order.refunds.find(r => r.status === 'PENDING') || order.refunds[order.refunds.length - 1];
+      if (pendingRefund) {
+        if (refundReceipt !== undefined) pendingRefund.refund_receipt = refundReceipt;
+        if (refundReference !== undefined) pendingRefund.reference_number = refundReference;
+      } else if (Number(order.excessAmount || 0) > 0) {
+        order.refunds.push({
+          id: `ref-${Date.now()}`,
+          order_id: id,
+          amount: Number(order.excessAmount),
+          status: 'PENDING',
+          reason: 'OUT_OF_STOCK_REPLACEMENT_EXCESS',
+          refund_receipt: refundReceipt,
+          reference_number: refundReference,
+          created_at: new Date().toISOString(),
+        });
+      }
+    }
+
     inMemoryOrders.set(id, order);
 
     try {
@@ -323,8 +343,27 @@ router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res
           [id, paymentReference]
         );
       }
+      if (refundReceipt !== undefined || refundReference !== undefined) {
+        const upd = await query(
+          `UPDATE refunds
+           SET refund_receipt = COALESCE($2, refund_receipt),
+               reference_number = COALESCE($3, reference_number)
+           WHERE order_id = $1 AND status IN ('PENDING', 'COMPLETED')
+           RETURNING id`,
+          [id, refundReceipt || null, refundReference || null]
+        );
+        if (upd.rows.length === 0 && Number(order.excessAmount || 0) > 0) {
+          await query(
+            `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number)
+             VALUES ($1, $2, 'PENDING', 'OUT_OF_STOCK_REPLACEMENT_EXCESS', $3, $4)
+             ON CONFLICT (order_id) WHERE status = 'PENDING'
+             DO UPDATE SET refund_receipt = EXCLUDED.refund_receipt, reference_number = EXCLUDED.reference_number`,
+            [id, Number(order.excessAmount), refundReceipt || null, refundReference || null]
+          );
+        }
+      }
     } catch (err) {
-      console.warn('DB payments update note (attach-proof):', err.message);
+      console.warn('DB payments/refunds update note (attach-proof):', err.message);
     }
 
     const formatted = formatOrderResponse(order);
@@ -350,11 +389,30 @@ router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, r
     order.receiptStatus = 'APPROVED';
     order.updated_at = new Date().toISOString();
 
+    if (!order.payments || !Array.isArray(order.payments) || order.payments.length === 0) {
+      order.payments = [{
+        amount: order.total || 0,
+        status: 'PAID',
+        payment_method: order.paymentMethod || 'GCASH',
+        paid_at: new Date().toISOString(),
+      }];
+    } else {
+      order.payments.forEach(p => {
+        p.status = 'PAID';
+        p.paid_at = new Date().toISOString();
+      });
+    }
+
+    if (req.body?.paymentReference) {
+      order.paymentReference = req.body.paymentReference;
+    }
+
     inMemoryOrders.set(id, order);
 
     try {
       await query(
-        `INSERT INTO orders (id, status, created_at) VALUES ($1, 'CONFIRMED', NOW())
+        `INSERT INTO orders (id, order_type, status, created_at)
+         VALUES ($1, 'ONLINE', 'CONFIRMED', NOW())
          ON CONFLICT (id) DO UPDATE SET status = 'CONFIRMED', updated_at = NOW()`,
         [id]
       );
@@ -363,6 +421,22 @@ router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, r
          ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
         [id]
       );
+      const paymentRef = req.body?.paymentReference || order.paymentReference || null;
+      await query(
+        `UPDATE payments
+         SET status = 'PAID', paid_at = NOW(),
+             reference_number = COALESCE($2, reference_number)
+         WHERE order_id = $1`,
+        [id, paymentRef]
+      );
+      const payCheck = await query(`SELECT id FROM payments WHERE order_id = $1`, [id]);
+      if (payCheck.rows.length === 0) {
+        await query(
+          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, paid_at)
+           VALUES ($1, 'GCASH', (SELECT total FROM orders WHERE id = $1), 'PAID', $2, NOW())`,
+          [id, paymentRef]
+        );
+      }
     } catch (err) {
       console.warn('DB update note (Verify Receipt):', err.message);
     }
@@ -464,8 +538,13 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
   let dbOrder = null;
   let databaseError = null;
   let customerReplacements = [];
-  let dbItems = [];
   let refundAmount = 0;
+  let updatedSubtotal = 0;
+  let updatedVat = 0;
+  let updatedDeliveryFee = 0;
+  let updatedTotal = 0;
+  let finalPayments = [];
+  let finalRefunds = [];
 
   try {
     const pool = await getDbPool();
@@ -490,47 +569,169 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
 
         const formattedDbOrder = formatOrderResponse(dbOrder);
         customerReplacements = formattedDbOrder.customerReplacements;
-        refundAmount = Number(dbOrder.total) || 0;
-        const itemResult = await client.query(
-          `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity, item_status
-           FROM order_items WHERE order_id = $1 ORDER BY id`,
-          [id]
-        );
-        dbItems = itemResult.rows;
 
         if (resolution === 'FULL_REFUND') {
+          const payRes = await client.query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+          const refRes = await client.query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+          const ledger = calculateFinancialLedger(payRes.rows, refRes.rows, dbOrder.total, 'GCASH');
+          refundAmount = ledger.netConfirmedPaid > 0 ? ledger.netConfirmedPaid : Number(dbOrder.total) || 0;
+
           await client.query(
-            `UPDATE orders SET status = 'CANCELLED', customer_resolution_status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+            `UPDATE orders
+             SET status = 'CANCELLED', customer_resolution_status = 'COMPLETED', updated_at = NOW()
+             WHERE id = $1`,
             [id]
           );
-          await client.query(`UPDATE payments SET status = 'REFUNDED', refunded_amount = amount WHERE order_id = $1`, [id]);
-          await client.query(`UPDATE kitchen_orders SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW() WHERE order_id = $1`, [id]);
+
+          const updRef = await client.query(
+            `UPDATE refunds
+             SET status = 'COMPLETED', refund_receipt = COALESCE($2, refund_receipt),
+                 reference_number = COALESCE($3, reference_number), completed_at = NOW()
+             WHERE order_id = $1 AND status = 'PENDING'
+             RETURNING id`,
+            [id, refundReceipt || null, refundReference || null]
+          );
+
+          if (updRef.rows.length === 0 && refundAmount > 0) {
+            await client.query(
+              `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number, completed_at)
+               VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_FULL_REFUND', $3, $4, NOW())`,
+              [id, refundAmount, refundReceipt || null, refundReference || null]
+            );
+          }
+
+          await client.query(
+            `UPDATE payments
+             SET status = 'REFUNDED', refunded_amount = amount
+             WHERE order_id = $1`,
+            [id]
+          );
+
+          await client.query(
+            `UPDATE kitchen_orders
+             SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
+             WHERE order_id = $1`,
+            [id]
+          );
+
           await client.query(`UPDATE order_items SET item_status = 'REFUNDED' WHERE order_id = $1`, [id]);
         } else {
+          // resolution === 'REPLACE'
           if (!Array.isArray(customerReplacements) || customerReplacements.length === 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({ success: false, message: 'The customer replacement selection is missing.' });
           }
 
           for (const replacement of customerReplacements) {
+            const oldItemId = replacement.oldItemId;
             await client.query(
               `UPDATE order_items
-               SET product_id = (SELECT id FROM products WHERE id = $2 AND is_available = TRUE),
-                   product_name_snapshot = $3, item_status = 'REPLACED'
-               WHERE order_id = $1 AND id::text = $4 AND item_status = 'OUT_OF_STOCK'`,
-              [id, replacement.newProductId, replacement.newName, String(replacement.oldItemId)]
+               SET item_status = 'REPLACED'
+               WHERE order_id = $1 AND id::text = $2 AND item_status = 'OUT_OF_STOCK'`,
+              [id, String(oldItemId)]
+            );
+
+            const prodRes = await client.query(
+              `SELECT id, name, price, is_available FROM products
+               WHERE id = $1 OR LOWER(id) = LOWER($1) OR LOWER(name) = LOWER($2)
+               ORDER BY (id = $1) DESC, (LOWER(id) = LOWER($1)) DESC, (LOWER(name) = LOWER($2)) DESC
+               LIMIT 1`,
+              [replacement.newProductId, replacement.newName || '']
+            );
+            const verifiedId = prodRes.rows[0]?.id || replacement.newProductId;
+            const verifiedName = prodRes.rows[0]?.name || replacement.newName;
+            const verifiedPrice = prodRes.rows[0]?.price ? parseFloat(prodRes.rows[0].price) : Number(replacement.newPrice || 0);
+            const qty = Number(replacement.quantity) || 1;
+            const subtotal = Math.round(verifiedPrice * qty * 100) / 100;
+
+            await client.query(
+              `INSERT INTO order_items (order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, item_status, replacement_for_item_id)
+               VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)`,
+              [id, verifiedId, verifiedName, verifiedPrice, qty, subtotal, Number.isInteger(Number(oldItemId)) ? Number(oldItemId) : null]
             );
           }
-          await client.query(
-            `UPDATE orders SET status = 'CONFIRMED', customer_resolution_status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+
+          const sumRes = await client.query(
+            `SELECT COALESCE(SUM(unit_price * quantity), 0) AS active_subtotal
+             FROM order_items
+             WHERE order_id = $1 AND item_status = 'ACTIVE'`,
             [id]
           );
+          updatedSubtotal = Math.round(parseFloat(sumRes.rows[0]?.active_subtotal || 0) * 100) / 100;
+          updatedVat = Math.round(updatedSubtotal * 0.12 * 100) / 100;
+          updatedDeliveryFee = Math.round(parseFloat(dbOrder.delivery_fee || 0) * 100) / 100;
+          updatedTotal = Math.round((updatedSubtotal + updatedVat + updatedDeliveryFee) * 100) / 100;
+
+          const refUpd = await client.query(
+            `UPDATE refunds
+             SET status = 'COMPLETED',
+                 refund_receipt = COALESCE($2, refund_receipt),
+                 reference_number = COALESCE($3, reference_number),
+                 payment_id = COALESCE(payment_id, (SELECT id FROM payments WHERE order_id = $1 AND COALESCE(payment_type, 'INITIAL') = 'INITIAL' LIMIT 1)),
+                 completed_at = NOW()
+             WHERE order_id = $1 AND status = 'PENDING'
+             RETURNING id, amount, refund_receipt`,
+            [id, refundReceipt || null, refundReference || null]
+          );
+
+          if (refUpd.rows.length > 0) {
+            const completedExcess = refUpd.rows.reduce((sum, r) => sum + parseFloat(r.amount || 0), 0);
+            refundAmount = completedExcess;
+            await client.query(
+              `UPDATE payments
+               SET refunded_amount = COALESCE(refunded_amount, 0) + $2,
+                   status = CASE WHEN (COALESCE(refunded_amount, 0) + $2) >= amount THEN 'REFUNDED' ELSE 'PARTIALLY_REFUNDED' END
+               WHERE order_id = $1 AND COALESCE(payment_type, 'INITIAL') = 'INITIAL'`,
+              [id, completedExcess]
+            );
+          } else {
+            const payRes = await client.query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+            const existingRefs = await client.query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+            const calcLedger = calculateFinancialLedger(payRes.rows, existingRefs.rows, updatedTotal, 'GCASH');
+            if (calcLedger.excessAmount > 0) {
+              const completedExcess = calcLedger.excessAmount;
+              refundAmount = completedExcess;
+              const payId = payRes.rows.find(p => ['INITIAL', null, undefined].includes(p.payment_type))?.id || payRes.rows[0]?.id || null;
+              await client.query(
+                `INSERT INTO refunds (order_id, payment_id, amount, status, reason, refund_receipt, reference_number, completed_at)
+                 VALUES ($1, $2, $3, 'COMPLETED', 'OUT_OF_STOCK_REPLACEMENT_EXCESS', $4, $5, NOW())`,
+                [id, payId, completedExcess, refundReceipt || null, refundReference || null]
+              );
+              await client.query(
+                `UPDATE payments
+                 SET refunded_amount = COALESCE(refunded_amount, 0) + $2,
+                     status = CASE WHEN (COALESCE(refunded_amount, 0) + $2) >= amount THEN 'REFUNDED' ELSE 'PARTIALLY_REFUNDED' END
+                 WHERE order_id = $1 AND COALESCE(payment_type, 'INITIAL') = 'INITIAL'`,
+                [id, completedExcess]
+              );
+            }
+          }
+
           await client.query(
-            `INSERT INTO kitchen_orders (order_id, status, updated_at) VALUES ($1, 'PENDING', NOW())
-             ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+            `UPDATE orders
+             SET subtotal = $2, tax = $3, total = $4, status = 'CONFIRMED',
+                 customer_resolution_status = 'COMPLETED', updated_at = NOW()
+             WHERE id = $1`,
+            [id, updatedSubtotal, updatedVat, updatedTotal]
+          );
+
+          await client.query(
+            `INSERT INTO kitchen_orders (order_id, status, updated_at)
+             VALUES ($1, 'PENDING', NOW())
+             ON CONFLICT (order_id) DO UPDATE
+             SET status = CASE
+               WHEN kitchen_orders.status = 'OUT_OF_STOCK' THEN 'PENDING'
+               ELSE kitchen_orders.status
+             END,
+             updated_at = NOW()`,
             [id]
           );
         }
+
+        const finalP = await client.query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+        const finalR = await client.query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+        finalPayments = finalP.rows;
+        finalRefunds = finalR.rows;
       }
 
       await client.query('COMMIT');
@@ -553,86 +754,104 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
     });
   }
 
-  const customerChoice = String(dbOrder?.customer_resolution || order?.customerResolution || '').toUpperCase();
-  const customerChoiceStatus = String(dbOrder?.customer_resolution_status || order?.customerResolutionStatus || '').toUpperCase();
-  if (normalizeFlowStatus(dbOrder?.status || order?.status) !== 'OUT_OF_STOCK' || customerChoice !== expectedChoice || customerChoiceStatus !== 'PENDING_ASSISTANT') {
-    return res.status(409).json({ success: false, message: 'The customer has not submitted this resolution, or it was already handled.' });
-  }
-
   if (databaseError && !order) {
     return res.status(503).json({ success: false, message: 'Unable to process the customer resolution right now.' });
   }
 
-  if (!customerReplacements.length) {
-    customerReplacements = order?.customerReplacements || [];
-  }
-  if (resolution === 'REPLACE' && customerReplacements.length === 0) {
-    return res.status(409).json({ success: false, message: 'The customer replacement selection is missing.' });
-  }
-
-  if (!order) {
-    order = {
-      ...(dbOrder || {}),
-      id,
-      items: dbItems.map(item => ({
-        id: item.id,
-        product_id: item.product_id,
-        name: item.name,
-        price: Number(item.price) || 0,
-        quantity: Number(item.quantity) || 1,
-        item_status: item.item_status,
-      })),
-      total: Number(dbOrder?.total) || 0,
-      subtotal: Number(dbOrder?.subtotal) || 0,
-      vat: Number(dbOrder?.tax) || 0,
-      deliveryFee: Number(dbOrder?.delivery_fee) || 0,
-    };
-  }
-
-  if (resolution === 'FULL_REFUND') {
-    order.status = 'CANCELLED';
-    order.customerResolution = 'REFUND';
-    order.customer_resolution = 'REFUND';
-    order.customerResolutionStatus = 'COMPLETED';
-    order.customer_resolution_status = 'COMPLETED';
-    order.customerReplacements = [];
-    order.customer_replacements = [];
-    order.outOfStockItems = [];
-    if (refundReceipt !== undefined) order.refundReceipt = refundReceipt;
-    if (refundReference !== undefined) order.refundReference = refundReference;
-    (order.items || []).forEach(item => { item.item_status = 'REFUNDED'; });
-    refundAmount = Number(order.total ?? dbOrder?.total ?? refundAmount) || 0;
-  } else {
-    customerReplacements.forEach(replacement => {
-      const item = (order.items || []).find(i => String(i.id) === String(replacement.oldItemId))
-        || (order.items || []).find(i => i.name === replacement.oldItemName);
-      if (item) {
-        item.name = replacement.newName;
-        item.product_id = replacement.newProductId;
-        item.item_status = 'REPLACED';
+  if (order) {
+    if (resolution === 'FULL_REFUND') {
+      order.status = 'CANCELLED';
+      order.customerResolution = 'REFUND';
+      order.customer_resolution = 'REFUND';
+      order.customerResolutionStatus = 'COMPLETED';
+      order.customer_resolution_status = 'COMPLETED';
+      order.customerReplacements = [];
+      order.customer_replacements = [];
+      order.outOfStockItems = [];
+      if (refundReceipt !== undefined) order.refundReceipt = refundReceipt;
+      if (refundReference !== undefined) order.refundReference = refundReference;
+      (order.items || []).forEach(item => { item.item_status = 'REFUNDED'; });
+    } else {
+      const currentItems = Array.isArray(order.items) ? [...order.items] : [];
+      customerReplacements.forEach(replacement => {
+        const item = currentItems.find(i => String(i.id) === String(replacement.oldItemId))
+          || currentItems.find(i => i.name === replacement.oldItemName);
+        if (item) {
+          item.item_status = 'REPLACED';
+        }
+        currentItems.push({
+          id: `rep-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+          product_id: replacement.newProductId,
+          name: replacement.newName,
+          price: Number(replacement.newPrice || 0),
+          quantity: Number(replacement.quantity || 1),
+          item_status: 'ACTIVE',
+          replacementForItemId: replacement.oldItemId,
+        });
+      });
+      order.items = currentItems;
+      order.status = 'CONFIRMED';
+      order.customerResolution = 'REPLACE';
+      order.customer_resolution = 'REPLACE';
+      order.customerResolutionStatus = 'COMPLETED';
+      order.customer_resolution_status = 'COMPLETED';
+      order.customerReplacements = customerReplacements;
+      order.customer_replacements = customerReplacements;
+      order.outOfStockItems = [];
+      if (updatedTotal > 0) {
+        order.subtotal = updatedSubtotal;
+        order.vat = updatedVat;
+        order.deliveryFee = updatedDeliveryFee;
+        order.total = updatedTotal;
       }
-    });
-    order.status = 'CONFIRMED';
-    order.customerResolution = 'REPLACE';
-    order.customer_resolution = 'REPLACE';
-    order.customerResolutionStatus = 'COMPLETED';
-    order.customer_resolution_status = 'COMPLETED';
-    order.customerReplacements = customerReplacements;
-    order.customer_replacements = customerReplacements;
-    order.outOfStockItems = [];
+      if (refundReceipt !== undefined) order.refundReceipt = refundReceipt;
+      if (refundReference !== undefined) order.refundReference = refundReference;
+      if (!Array.isArray(order.refunds)) order.refunds = [];
+      const pendingRefund = order.refunds.find(r => r.status === 'PENDING');
+      if (pendingRefund) {
+        pendingRefund.status = 'COMPLETED';
+        if (refundReceipt) pendingRefund.refund_receipt = refundReceipt;
+        if (refundReference) pendingRefund.reference_number = refundReference;
+        pendingRefund.completed_at = new Date().toISOString();
+      } else if (refundAmount > 0 || Number(order.excessAmount || 0) > 0) {
+        const excessVal = refundAmount > 0 ? refundAmount : Number(order.excessAmount);
+        order.refunds.push({
+          id: `ref-${Date.now()}`,
+          order_id: id,
+          amount: excessVal,
+          status: 'COMPLETED',
+          reason: 'OUT_OF_STOCK_REPLACEMENT_EXCESS',
+          refund_receipt: refundReceipt || order.refundReceipt,
+          reference_number: refundReference || order.refundReference,
+          completed_at: new Date().toISOString(),
+        });
+      }
+      if (finalRefunds && finalRefunds.length > 0) {
+        order.refunds = finalRefunds;
+        const refReceipt = finalRefunds.find(r => r.refund_receipt)?.refund_receipt;
+        if (refReceipt) order.refundReceipt = refReceipt;
+      }
+      if (finalPayments && finalPayments.length > 0) {
+        order.payments = finalPayments;
+      }
+    }
+    order.updated_at = new Date().toISOString();
+    inMemoryOrders.set(id, order);
   }
-
-  order.updated_at = new Date().toISOString();
-  inMemoryOrders.set(id, order);
 
   const formatted = formatOrderResponse({
     ...(dbOrder || {}),
     ...order,
     id,
+    status: resolution === 'FULL_REFUND' ? 'CANCELLED' : 'CONFIRMED',
     customer_resolution: expectedChoice,
     customer_resolution_status: 'COMPLETED',
     customer_replacements: customerReplacements,
+    payments: finalPayments.length ? finalPayments : order?.payments || [],
+    refunds: finalRefunds.length ? finalRefunds : order?.refunds || [],
+    total: updatedTotal > 0 ? updatedTotal : (order?.total || dbOrder?.total),
   });
+
   emitOrderUpdate({
     ...formatted,
     type: 'OUT_OF_STOCK_RESOLVED',
@@ -647,14 +866,62 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
     message: resolution === 'FULL_REFUND'
       ? `Order #${id} was marked as fully refunded.`
       : `Customer's replacement choice was confirmed for order #${id}. Sent back to kitchen.`,
-    data: { orderId: id, resolution, refundAmount, orderStatus: order.status },
+    data: { orderId: id, resolution, refundAmount, orderStatus: formatted.status },
   });
 });
 
-/**
- * Handles status updates triggered by the Assistant role
- * Transitions: PENDING -> CONFIRMED or PENDING -> FLAGGED
- */
+// PATCH /api/assistant/orders/:id/verify-additional-payment - Verify additional GCash payment
+router.patch('/assistant/orders/:id/verify-additional-payment', optionalAuth, async (req, res) => {
+  const { id } = req.params;
+  const { assistantId, referenceNumber } = req.body;
+
+  try {
+    const { rows } = await query(
+      `UPDATE payments
+       SET status = 'PAID', paid_at = NOW(),
+           reference_number = COALESCE($2, reference_number)
+       WHERE order_id = $1 AND payment_type = 'ADDITIONAL' AND status = 'PENDING'
+       RETURNING *`,
+      [id, referenceNumber || null]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No pending additional payment found for this order.',
+      });
+    }
+
+    const orderRes = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
+    const payRes = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+    const refRes = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+
+    const formatted = formatOrderResponse({
+      ...(orderRes.rows[0] || {}),
+      payments: payRes.rows,
+      refunds: refRes.rows,
+    });
+
+    emitOrderUpdate({
+      ...formatted,
+      type: 'ADDITIONAL_PAYMENT_VERIFIED',
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Additional payment of ₱${parseFloat(rows[0].amount).toLocaleString()} verified for order #${id}.`,
+      data: formatted,
+    });
+  } catch (error) {
+    console.error('Error verifying additional payment:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to verify additional payment',
+      error: error.message,
+    });
+  }
+});
+
 export async function handleAssistantStatusUpdate(req, res) {
   try {
     const { id } = req.params;

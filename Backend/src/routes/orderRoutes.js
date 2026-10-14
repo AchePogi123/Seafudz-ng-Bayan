@@ -729,15 +729,7 @@ export async function handleGetCustomerFlowOrder(req, res) {
   try {
     const { id } = req.params;
 
-    if (inMemoryOrders.has(id)) {
-      const order = formatOrderResponse(inMemoryOrders.get(id));
-      return res.status(200).json({
-        success: true,
-        data: order,
-      });
-    }
-
-    // DB search
+    let dbOrder = null;
     try {
       const { rows } = await query(`
         SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
@@ -746,16 +738,23 @@ export async function handleGetCustomerFlowOrder(req, res) {
                c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
                COALESCE(
                  json_agg(
-                   json_build_object(
+                   DISTINCT jsonb_build_object(
                      'id', oi.id,
                      'product_id', oi.product_id,
                      'name', oi.product_name_snapshot,
                      'quantity', oi.quantity,
                      'price', oi.unit_price,
-                     'item_status', oi.item_status
+                     'item_status', oi.item_status,
+                     'replacement_for_item_id', oi.replacement_for_item_id
                    )
                  ) FILTER (WHERE oi.id IS NOT NULL), '[]'
-               ) AS items
+               ) AS items,
+               COALESCE(
+                 (SELECT json_agg(json_build_object('id', p.id, 'amount', p.amount, 'status', p.status, 'payment_method', p.payment_method, 'payment_type', p.payment_type, 'paid_at', p.paid_at, 'reference_number', p.reference_number, 'payment_receipt', p.payment_receipt, 'created_at', p.created_at)) FROM payments p WHERE p.order_id = o.id), '[]'
+               ) AS payments,
+               COALESCE(
+                 (SELECT json_agg(json_build_object('id', r.id, 'amount', r.amount, 'status', r.status, 'reason', r.reason, 'reference_number', r.reference_number, 'refund_receipt', r.refund_receipt, 'created_at', r.created_at, 'completed_at', r.completed_at)) FROM refunds r WHERE r.order_id = o.id), '[]'
+               ) AS refunds
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
@@ -764,14 +763,33 @@ export async function handleGetCustomerFlowOrder(req, res) {
       `, [id]);
 
       if (rows.length > 0) {
-        const order = formatOrderResponse(rows[0]);
-        return res.status(200).json({
-          success: true,
-          data: order,
-        });
+        dbOrder = rows[0];
       }
-    } catch {
-      /* ignore */
+    } catch (dbErr) {
+      console.warn('DB read error in handleGetCustomerFlowOrder:', dbErr.message);
+    }
+
+    const memOrder = inMemoryOrders.get(id);
+
+    if (dbOrder) {
+      const merged = {
+        ...dbOrder,
+        ...(memOrder || {}),
+        items: (dbOrder.items && dbOrder.items.length > 0) ? dbOrder.items : (memOrder?.items || []),
+        payments: dbOrder.payments || memOrder?.payments || [],
+        refunds: dbOrder.refunds || memOrder?.refunds || [],
+      };
+      return res.status(200).json({
+        success: true,
+        data: formatOrderResponse(merged),
+      });
+    }
+
+    if (memOrder) {
+      return res.status(200).json({
+        success: true,
+        data: formatOrderResponse(memOrder),
+      });
     }
 
     return res.status(404).json({
@@ -789,9 +807,7 @@ export async function handleGetCustomerFlowOrder(req, res) {
 
 /**
  * GET /api/cashier/online-receipts
- * Cashier view for confirmed online orders needing restaurant receipts.
- */
-router.get('/cashier/online-receipts', async (req, res) => {
+, async (req, res) => {
   try {
     const { receiptStatus, search } = req.query;
 

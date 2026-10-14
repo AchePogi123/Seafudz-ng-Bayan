@@ -33,6 +33,16 @@ export interface OnlineOrder {
   customerResolution?: 'REFUND' | 'REPLACE' | null
   customerResolutionStatus?: string
   customerReplacements?: any[]
+  financialStatus?: string
+  grossConfirmedPaid?: number
+  completedRefundAmount?: number
+  netConfirmedPaid?: number
+  excessAmount?: number
+  additionalRequired?: number
+  pendingRefundAmount?: number
+  payments?: any[]
+  refunds?: any[]
+  additionalPaymentReceipt?: string
   total: number
   createdAt: string
   correctionNote?: string
@@ -262,6 +272,16 @@ export const AssistantRole: React.FC = () => {
                 customerResolution: o.customerResolution || o.customer_resolution || null,
                 customerResolutionStatus: o.customerResolutionStatus || o.customer_resolution_status || 'NONE',
                 customerReplacements: o.customerReplacements || o.customer_replacements || [],
+                financialStatus: o.financialStatus,
+                grossConfirmedPaid: o.grossConfirmedPaid,
+                completedRefundAmount: o.completedRefundAmount,
+                netConfirmedPaid: o.netConfirmedPaid,
+                excessAmount: o.excessAmount,
+                additionalRequired: o.additionalRequired,
+                pendingRefundAmount: o.pendingRefundAmount,
+                payments: o.payments || [],
+                refunds: o.refunds || [],
+                additionalPaymentReceipt: o.additionalPaymentReceipt,
                 total: o.total || 0,
                 createdAt: o.createdAt || 'Just now',
                 correctionNote: o.notes,
@@ -506,6 +526,33 @@ export const AssistantRole: React.FC = () => {
     setNotification(`COD product availability confirmed for order #${orderId}! Sent to Kitchen!`)
   }
 
+  const [isVerifyingAdditionalPayment, setIsVerifyingAdditionalPayment] = useState(false)
+
+  const handleVerifyAdditionalPayment = async () => {
+    if (!selectedOrder) return
+    setIsVerifyingAdditionalPayment(true)
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/verify-additional-payment`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({}),
+      })
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.message || 'Failed to verify additional payment.')
+
+      setNotification(`Additional payment verified for order #${selectedOrder.id}.`)
+      void fetchAssistantOrders(true)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error verifying additional payment.')
+    } finally {
+      setIsVerifyingAdditionalPayment(false)
+    }
+  }
+
   const handleResolveOutOfStock = async () => {
     if (!selectedOrder) return
 
@@ -513,6 +560,18 @@ export const AssistantRole: React.FC = () => {
     if (!['REFUND', 'REPLACE'].includes(customerChoice)
       || String(selectedOrder.customerResolutionStatus || '').toUpperCase() !== 'PENDING_ASSISTANT') {
       alert('The customer has not submitted a resolution for this order yet.')
+      return
+    }
+
+    const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
+    const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+    const updatedTotal = Number(selectedOrder.total || 0)
+    const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
+      ? Number(selectedOrder.excessAmount)
+      : (!isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
+
+    if (customerChoice === 'REPLACE' && cashbackDifference > 0 && !selectedOrder.refundReceipt) {
+      alert('Please attach the Cashback Reference Photo before confirming replacement.')
       return
     }
 
@@ -535,17 +594,37 @@ export const AssistantRole: React.FC = () => {
       const result = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(result.message || 'Failed to process the customer choice.')
 
+      const resultOrder = result.data || {}
       const nextStatus = resolution === 'FULL_REFUND' ? 'cancelled' : 'confirmed'
+      const updatedTotalAfter = resultOrder.total !== undefined ? resultOrder.total : selectedOrder.total
+      const refundPhoto = selectedOrder.refundReceipt || resultOrder.refundReceipt
+
       setOrders((prev) => prev.map((order) => order.id === selectedOrder.id
         ? {
           ...order,
           status: nextStatus,
           outOfStockItems: [],
           customerResolutionStatus: 'COMPLETED',
-          refundReceipt: selectedOrder.refundReceipt,
+          refundReceipt: refundPhoto,
+          total: updatedTotalAfter,
+          completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : order.completedRefundAmount),
+          excessAmount: 0,
         }
         : order
       ))
+
+      if (lastSelectedOrderRef.current && (lastSelectedOrderRef.current.id === selectedOrder.id || lastSelectedOrderRef.current.ref === selectedOrder.id)) {
+        lastSelectedOrderRef.current = {
+          ...lastSelectedOrderRef.current,
+          status: nextStatus,
+          outOfStockItems: [],
+          customerResolutionStatus: 'COMPLETED',
+          refundReceipt: refundPhoto,
+          total: updatedTotalAfter,
+          completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : selectedOrder.completedRefundAmount),
+          excessAmount: 0,
+        }
+      }
 
       try {
         const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -556,7 +635,10 @@ export const AssistantRole: React.FC = () => {
                 status: nextStatus.toUpperCase(),
                 outOfStockItems: [],
                 customerResolutionStatus: 'COMPLETED',
-                refundReceipt: selectedOrder.refundReceipt,
+                refundReceipt: refundPhoto,
+                total: updatedTotalAfter,
+                completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : order.completedRefundAmount),
+                excessAmount: 0,
               }
             : order
         )
@@ -896,6 +978,37 @@ export const AssistantRole: React.FC = () => {
                       </button>
                     </div>
                   )}
+
+                  {/* Cashback / Refund Reference Photo (Viewable whenever reopening the order) */}
+                  {selectedOrder.refundReceipt && (
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img
+                          src={selectedOrder.refundReceipt}
+                          alt="Cashback / Refund Proof Preview"
+                          onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                          className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-neutral-800 truncate">
+                            {selectedOrder.customerResolution === 'REPLACE' ? 'Cashback Reference Photo' : 'Refund Reference Photo'}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {selectedOrder.completedRefundAmount
+                              ? `₱${Number(selectedOrder.completedRefundAmount).toLocaleString()} refunded`
+                              : 'Attached proof screenshot'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                        className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                      >
+                        View
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Minimal Checklist (Hidden during Out-of-Stock Refund to keep UI minimal and clean) */}
@@ -1038,16 +1151,48 @@ export const AssistantRole: React.FC = () => {
                             </div>
                           )}
 
-                          {canProcessChoice && customerChoice === 'REPLACE' && customerReplacements.length > 0 && (
-                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs space-y-1">
-                              <p className="font-extrabold text-[10px] text-neutral-700 uppercase tracking-wider">Customer's Replacement Choices:</p>
-                              {customerReplacements.map((replacement: any, index: number) => (
-                                <p key={`${replacement.oldItemId}-${index}`} className="text-neutral-800">
-                                  {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
-                                </p>
-                              ))}
-                            </div>
-                          )}
+                          {canProcessChoice && customerChoice === 'REPLACE' && (() => {
+                            const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
+                            const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+                            const updatedTotal = Number(selectedOrder.total || 0)
+                            const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
+                              ? Number(selectedOrder.excessAmount)
+                              : (!isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
+
+                            return (
+                              <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs space-y-2">
+                                {customerReplacements.length > 0 && (
+                                  <div className="space-y-1">
+                                    <p className="font-extrabold text-[10px] text-neutral-700 uppercase tracking-wider">Customer's Replacement Choices:</p>
+                                    {customerReplacements.map((replacement: any, index: number) => (
+                                      <p key={`${replacement.oldItemId}-${index}`} className="text-neutral-800">
+                                        {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                                {cashbackDifference > 0 && (
+                                  <div className="pt-2 border-t border-rose-100 space-y-1">
+                                    <div className="flex justify-between items-center">
+                                      <span className="font-bold text-neutral-700">Cashback Difference:</span>
+                                      <span className="font-black text-emerald-700 text-sm">₱{cashbackDifference.toLocaleString()}</span>
+                                    </div>
+                                    {selectedOrder.refundReceipt ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                        className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                                      >
+                                        <span>📷</span> View Attached Cashback Reference Photo
+                                      </button>
+                                    ) : (
+                                      <p className="text-[10px] text-rose-600 font-semibold">* Cashback reference photo required in resolution</p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
 
                           {canProcessChoice ? (
                             <button
@@ -1237,6 +1382,17 @@ export const AssistantRole: React.FC = () => {
           && ['REFUND', 'REPLACE'].includes(customerChoice)
         const customerReplacements = selectedOrder.customerReplacements || []
 
+        const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
+        const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+        const updatedTotal = Number(selectedOrder.total || 0)
+        const cashbackDifference = !isRefund && !isCOD && Number(selectedOrder.excessAmount || 0) > 0
+          ? Number(selectedOrder.excessAmount)
+          : (!isRefund && !isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
+
+        const isMissingCashbackPhoto = !isRefund && cashbackDifference > 0 && !selectedOrder.refundReceipt
+        const isMissingRefundPhoto = isRefund && !selectedOrder.refundReceipt
+        const isResolutionDisabled = isSubmittingResolution || !canProcessChoice || isMissingCashbackPhoto || isMissingRefundPhoto
+
         return (
           <div
             className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
@@ -1351,21 +1507,14 @@ export const AssistantRole: React.FC = () => {
                       </div>
                     )}
 
-                    <input
-                      ref={refundProofFileInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleRefundProofUpload}
-                      className="hidden"
-                    />
                     {refundProofUploadError && (
                       <p className="text-[11px] font-semibold text-rose-600">{refundProofUploadError}</p>
                     )}
                   </div>
                 </div>
               ) : (
-                /* REPLACEMENT INTERFACE (Preserved for REPLACE choice) */
-                <div className="space-y-3">
+                /* REPLACEMENT INTERFACE WITH FINANCIAL BREAKDOWN */
+                <div className="space-y-3.5">
                   <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-3.5 space-y-1.5">
                     <p className="text-[11px] font-black text-rose-900 uppercase tracking-wide">
                       Flagged Unavailable Item(s):
@@ -1380,48 +1529,225 @@ export const AssistantRole: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200 space-y-2 text-xs">
-                    <h4 className="font-bold text-neutral-800">Customer's Replacement Choices:</h4>
-                    {customerReplacements.map((replacement: any, index: number) => (
-                      <p key={`${replacement.oldItemId}-${index}`} className="font-semibold text-neutral-700">
-                        {replacement.oldItemName} → {replacement.newName} (x{replacement.quantity || 1})
-                      </p>
-                    ))}
+                  <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-3.5 space-y-2 text-xs">
+                    <p className="text-[11px] font-black text-emerald-900 uppercase tracking-wide">
+                      Customer's Selected Replacements:
+                    </p>
+                    <div className="divide-y divide-emerald-100">
+                      {customerReplacements.map((replacement: any, index: number) => (
+                        <div key={`${replacement.oldItemId}-${index}`} className="py-1 flex justify-between items-center text-emerald-950 font-semibold">
+                          <span>{replacement.oldItemName} → <span className="font-bold text-emerald-900">{replacement.newName}</span> × {replacement.quantity || 1}</span>
+                          <span className="font-bold">₱{((Number(replacement.newPrice || 0)) * (replacement.quantity || 1)).toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Financial Accounting Section */}
+                  <div className="bg-neutral-50 rounded-2xl p-3.5 border border-neutral-200 space-y-2.5 text-xs">
+                    <div className="flex justify-between items-center pb-2 border-b border-neutral-200">
+                      <span className="font-black text-neutral-700 text-[11px] uppercase tracking-wider">Financial Accounting</span>
+                      <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-neutral-200">
+                        {selectedOrder.paymentMethod || 'GCash'}
+                      </span>
+                    </div>
+
+                    {(() => {
+                      const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || selectedOrder.status?.toUpperCase() === 'PENDING_COD'
+                      const originalPaid = Number(selectedOrder.grossConfirmedPaid || selectedOrder.netConfirmedPaid || 0)
+                      const updatedTotal = Number(selectedOrder.total || 0)
+                      const cashbackDifference = !isCOD && Number(selectedOrder.excessAmount || 0) > 0
+                        ? Number(selectedOrder.excessAmount)
+                        : (!isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
+
+                      return (
+                        <>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-neutral-600">
+                              <span>Original Amount Paid:</span>
+                              <span className="font-bold text-emerald-700">₱{originalPaid.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-neutral-600">
+                              <span>Updated Order Total:</span>
+                              <span className="font-bold text-neutral-900">₱{updatedTotal.toLocaleString()}</span>
+                            </div>
+                            {cashbackDifference > 0 && (
+                              <div className="flex justify-between text-emerald-900 font-extrabold pt-1.5 border-t border-neutral-200">
+                                <span>💰 Cashback Difference Due:</span>
+                                <span className="font-black text-sm text-emerald-700">₱{cashbackDifference.toLocaleString()}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Cashback Reference Photo Upload (Required when Cashback is Due) */}
+                          {cashbackDifference > 0 && (
+                            <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-3.5 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-emerald-900 block">
+                                    Cashback Reference Photo
+                                  </span>
+                                  <span className="text-xs text-emerald-950 font-medium block">
+                                    Screenshot showing cashback of ₱{cashbackDifference.toLocaleString()} sent to customer ({selectedOrder.phone})
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => refundProofFileInputRef.current?.click()}
+                                  disabled={isUploadingRefundProof}
+                                  className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg cursor-pointer transition-colors"
+                                >
+                                  {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? '📷 Replace Photo' : '📷 Attach Photo'}
+                                </button>
+                              </div>
+
+                              {/* Cashback Screenshot Preview / Upload Area */}
+                              {selectedOrder.refundReceipt ? (
+                                <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-emerald-200 shadow-2xs">
+                                  <img
+                                    src={selectedOrder.refundReceipt}
+                                    alt="Cashback Reference Photo Proof"
+                                    onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                    className="w-14 h-14 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-bold text-neutral-800 truncate">Cashback Reference Screenshot</p>
+                                    <p className="text-[10px] text-neutral-500">Proof of sent cashback showing transaction reference number</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                                      className="mt-1 text-[11px] font-extrabold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
+                                    >
+                                      <span>🔍</span> Click to preview full screenshot
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div
+                                  onClick={() => refundProofFileInputRef.current?.click()}
+                                  className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-white/70 hover:bg-emerald-50/60 rounded-xl p-3.5 text-center cursor-pointer transition-colors"
+                                >
+                                  <p className="text-xs font-bold text-emerald-900">No cashback reference photo attached yet</p>
+                                  <p className="text-[10px] text-emerald-700 mt-0.5">Click to attach screenshot showing cashback transaction reference number</p>
+                                </div>
+                              )}
+
+                              {refundProofUploadError && (
+                                <p className="text-[11px] font-semibold text-rose-600">{refundProofUploadError}</p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )
+                    })()}
+
+                    {/* Additional Payment Required Case */}
+                    {Number(selectedOrder.additionalRequired || 0) > 0 && (
+                      <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="font-black text-amber-900">⚠️ Additional Payment Required:</span>
+                          <span className="font-black text-sm text-amber-700">₱{Number(selectedOrder.additionalRequired).toLocaleString()}</span>
+                        </div>
+
+                        {selectedOrder.additionalPaymentReceipt ? (
+                          <div className="bg-white p-2 rounded-lg border border-amber-200 space-y-2">
+                            <div className="flex items-center gap-2.5">
+                              <img
+                                src={selectedOrder.additionalPaymentReceipt}
+                                alt="Customer Additional Payment Proof"
+                                onClick={() => setPreviewReceiptUrl(selectedOrder.additionalPaymentReceipt || null)}
+                                className="w-12 h-12 object-cover rounded cursor-pointer border"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-bold text-neutral-800">Customer Proof Uploaded</p>
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewReceiptUrl(selectedOrder.additionalPaymentReceipt || null)}
+                                  className="text-[10px] text-blue-600 font-bold underline cursor-pointer"
+                                >
+                                  View Screenshot
+                                </button>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleVerifyAdditionalPayment}
+                              disabled={isVerifyingAdditionalPayment}
+                              className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] rounded-lg transition-colors cursor-pointer"
+                            >
+                              {isVerifyingAdditionalPayment ? 'Verifying...' : '✓ Approve Additional Payment'}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-amber-800 font-medium">
+                            Awaiting customer upload of additional ₱{Number(selectedOrder.additionalRequired).toLocaleString()} payment screenshot.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* COD Order Note */}
+                    {String(selectedOrder.paymentMethod || '').toUpperCase().includes('COD') && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] text-slate-800">
+                        <span className="font-black">💵 Cash on Delivery:</span> Rider will collect updated total of ₱{selectedOrder.total.toLocaleString()} upon delivery.
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="flex gap-2 pt-2 border-t border-neutral-100">
-                <button
-                  type="button"
-                  onClick={() => setIsResolveModalOpen(false)}
-                  disabled={isSubmittingResolution}
-                  className="px-5 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleResolveOutOfStock}
-                  disabled={isSubmittingResolution || !canProcessChoice}
-                  className={`flex-1 py-3 text-white font-black rounded-xl text-xs cursor-pointer transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 disabled:opacity-50 ${
-                    isRefund
-                      ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
-                      : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
-                  }`}
-                >
-                  {isSubmittingResolution
-                    ? 'Processing...'
-                    : isRefund
-                      ? `Process full refund ₱${selectedOrder.total.toLocaleString()}`
-                      : 'Confirm replacement and resume kitchen'}
-                </button>
+              <div className="space-y-2 pt-2 border-t border-neutral-100">
+                {isMissingCashbackPhoto && (
+                  <p className="text-[11px] font-bold text-rose-600 text-center animate-pulse">
+                    * Please attach the Cashback Reference Photo before confirming replacement.
+                  </p>
+                )}
+                {isMissingRefundPhoto && (
+                  <p className="text-[11px] font-bold text-rose-600 text-center animate-pulse">
+                    * Please attach the Refund Transaction Proof before processing the refund.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsResolveModalOpen(false)}
+                    disabled={isSubmittingResolution}
+                    className="px-5 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResolveOutOfStock}
+                    disabled={isResolutionDisabled}
+                    className={`flex-1 py-3 text-white font-black rounded-xl text-xs cursor-pointer transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isRefund
+                        ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-500/20'
+                        : 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/20'
+                    }`}
+                  >
+                    {isSubmittingResolution
+                      ? 'Processing...'
+                      : isRefund
+                        ? `Process full refund ₱${selectedOrder.total.toLocaleString()}`
+                        : 'Confirm replacement and resume kitchen'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )
       })()}
+
+      {/* Hidden file input for refund / cashback reference photo uploads */}
+      <input
+        ref={refundProofFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleRefundProofUpload}
+        className="hidden"
+      />
 
       {/* ADMIN CRUD MODALS */}
       <AdminCreateTransactionModal

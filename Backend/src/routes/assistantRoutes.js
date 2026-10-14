@@ -562,7 +562,13 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
       if (dbOrder) {
         const dbChoice = String(dbOrder.customer_resolution || '').toUpperCase();
         const dbChoiceStatus = String(dbOrder.customer_resolution_status || '').toUpperCase();
-        if (normalizeFlowStatus(dbOrder.status) !== 'OUT_OF_STOCK' || dbChoice !== expectedChoice || dbChoiceStatus !== 'PENDING_ASSISTANT') {
+        const memChoice = String(order?.customerResolution || '').toUpperCase();
+        const memChoiceStatus = String(order?.customerResolutionStatus || '').toUpperCase();
+        const effectiveChoice = dbChoice || memChoice;
+        const effectiveChoiceStatus = (dbChoiceStatus && dbChoiceStatus !== 'NONE') ? dbChoiceStatus : memChoiceStatus;
+        const isOOS = normalizeFlowStatus(dbOrder.status) === 'OUT_OF_STOCK' || normalizeFlowStatus(order?.status) === 'OUT_OF_STOCK';
+
+        if (!isOOS || effectiveChoice !== expectedChoice || effectiveChoiceStatus !== 'PENDING_ASSISTANT') {
           await client.query('ROLLBACK');
           return res.status(409).json({ success: false, message: 'The customer has not submitted this resolution, or it was already handled.' });
         }
@@ -627,7 +633,7 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             await client.query(
               `UPDATE order_items
                SET item_status = 'REPLACED'
-               WHERE order_id = $1 AND id::text = $2 AND item_status = 'OUT_OF_STOCK'`,
+               WHERE order_id = $1 AND (id::text = $2 OR product_id = $2 OR product_name_snapshot = $2) AND item_status = 'OUT_OF_STOCK'`,
               [id, String(oldItemId)]
             );
 

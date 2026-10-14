@@ -233,11 +233,16 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      const itemIdsAsText = itemIds.map(String);
       const flagResult = await client.query(
         `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
-         WHERE order_id = $1 AND id = ANY($2::bigint[])
+         WHERE order_id = $1 AND (
+           id::text = ANY($2::text[])
+           OR product_id = ANY($2::text[])
+           OR LOWER(product_name_snapshot) = ANY(SELECT LOWER(x) FROM unnest($2::text[]) AS x)
+         )
          RETURNING id, product_id, product_name_snapshot, unit_price, quantity`,
-        [id, itemIds]
+        [id, itemIdsAsText]
       );
       await client.query(
         `UPDATE orders

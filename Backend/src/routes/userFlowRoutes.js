@@ -210,8 +210,27 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
     });
   }
 
-  if (normalizeFlowStatus(dbOrder?.status || order?.status) !== 'OUT_OF_STOCK') {
+  const isOutOfStock = normalizeFlowStatus(order?.status) === 'OUT_OF_STOCK'
+    || normalizeFlowStatus(dbOrder?.status) === 'OUT_OF_STOCK';
+
+  if (!isOutOfStock) {
     return res.status(409).json({ success: false, message: 'This order is not awaiting an out-of-stock decision.' });
+  }
+
+  // Ensure DB order status is aligned to OUT_OF_STOCK if it lagged behind in-memory status
+  if (dbOrder && normalizeFlowStatus(dbOrder.status) !== 'OUT_OF_STOCK') {
+    try {
+      await query(
+        `UPDATE orders
+         SET status = 'OUT_OF_STOCK', customer_resolution = NULL,
+             customer_resolution_status = 'AWAITING_CUSTOMER', updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+      dbOrder.status = 'OUT_OF_STOCK';
+    } catch (syncErr) {
+      console.warn('Sync orders table to OUT_OF_STOCK note:', syncErr.message);
+    }
   }
 
   const currentResolutionStatus = String(dbOrder?.customer_resolution_status || order?.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase();
@@ -219,11 +238,15 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
     return res.status(409).json({ success: false, message: 'This out-of-stock issue has already been resolved.' });
   }
 
-  const flaggedItems = dbOutOfStockItems.length > 0
+  let flaggedItems = dbOutOfStockItems.length > 0
     ? dbOutOfStockItems
     : order?.outOfStockItems?.length
       ? order.outOfStockItems
       : (order?.items || []).filter(item => String(item.item_status || item.itemStatus || '').toUpperCase() === 'OUT_OF_STOCK');
+
+  if (flaggedItems.length === 0 && Array.isArray(order?.items) && order.items.length > 0) {
+    flaggedItems = order.items;
+  }
 
   if (flaggedItems.length === 0) {
     return res.status(409).json({ success: false, message: 'No unavailable items were found for this order.' });
@@ -248,7 +271,10 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
 
     for (const [index, item] of flaggedItems.entries()) {
       const oldItemId = item.id ?? index;
-      const replacement = replacementByItemId.get(String(oldItemId));
+      const replacement = replacementByItemId.get(String(oldItemId))
+        || replacementByItemId.get(String(index))
+        || replacementByItemId.get(String(item.product_id || item.productId))
+        || submittedReplacements[index];
       const newProductId = String(replacement?.newProductId || '').trim();
 
       if (!replacement || !newProductId) {

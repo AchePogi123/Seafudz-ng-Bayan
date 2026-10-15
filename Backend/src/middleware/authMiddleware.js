@@ -84,6 +84,7 @@ export async function requireAuth(req, res, next) {
           email: userEmail,
           role: role || 'customer',
           type: role === 'customer' ? 'customer' : 'employee',
+          is_active: true,
         };
         return next();
       } catch (parseErr) {
@@ -99,8 +100,8 @@ export async function requireAuth(req, res, next) {
 
         // Check employees table first
         const empRes = await query(
-          'SELECT id, supabase_user_id, fullname, username, email, role, pin_code, shift_status, is_active FROM employees WHERE supabase_user_id = $1',
-          [supabaseUserId]
+          `SELECT id, supabase_user_id, fullname, username, email, role, is_active FROM employees WHERE supabase_user_id = $1 OR ($2 <> '' AND LOWER(email) = LOWER($2))`,
+          [supabaseUserId, (data.user.email || '').trim().toLowerCase()]
         );
 
         if (empRes.rows.length > 0) {

@@ -29,6 +29,19 @@ export async function getAuthHeaders(
     ...extraHeaders,
   };
 
+  // 1. Check stored employee / admin session token first
+  if (typeof window !== 'undefined') {
+    const storedToken =
+      sessionStorage.getItem('sfb_crypto_session_token') ||
+      localStorage.getItem('sfb_crypto_session_token') ||
+      localStorage.getItem('seafudz_token');
+    if (storedToken) {
+      headers['Authorization'] = `Bearer ${storedToken}`;
+      return headers;
+    }
+  }
+
+  // 2. Fallback to Supabase Auth session token
   try {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
@@ -38,17 +51,6 @@ export async function getAuthHeaders(
     }
   } catch (err) {
     console.warn('Failed to retrieve Supabase auth token:', err);
-  }
-
-  // Fallback to stored cryptographic session token
-  if (typeof window !== 'undefined') {
-    const storedToken =
-      sessionStorage.getItem('sfb_crypto_session_token') ||
-      localStorage.getItem('sfb_crypto_session_token') ||
-      localStorage.getItem('seafudz_token');
-    if (storedToken) {
-      headers['Authorization'] = `Bearer ${storedToken}`;
-    }
   }
 
   return headers;

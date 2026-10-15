@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
-import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
+import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
+import { ProductImage } from '../components/ProductImage'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { subscribeOrderSync } from '../utils/orderSync'
+import { setCachedProductImage, useProductImages } from '../utils/useProductImages'
 
 export interface LiveOrderRecord {
     id: string
@@ -109,6 +111,7 @@ const generateSmoothSparkline = (values: number[], width = 56, height = 28, padd
 const AdminDashboard: React.FC = () => {
     const navigate = useNavigate()
     const { getEffectivePrice, updatePrice, resetPrice } = useMenuPrices()
+    const { menuItems, refresh: refreshProductImages } = useProductImages()
 
     // Global Time Filter State
     const [timeRange, setTimeRange] = useState<TimeRangeOption>('ALL')
@@ -132,9 +135,18 @@ const AdminDashboard: React.FC = () => {
     const [isPriceEditOpen, setIsPriceEditOpen] = useState(false)
     const [newPriceInput, setNewPriceInput] = useState<number | string>('')
     const [priceUpdateSuccess, setPriceUpdateSuccess] = useState(false)
+    const [imageFile, setImageFile] = useState<File | null>(null)
+    const [imagePreview, setImagePreview] = useState<string | null>(null)
+    const [imageFeedback, setImageFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+    const [isSavingImage, setIsSavingImage] = useState(false)
+    const imagePreviewRef = useRef<string | null>(null)
 
     const isFetchingRef = useRef(false)
     const lastFetchRef = useRef(0)
+
+    useEffect(() => () => {
+        if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current)
+    }, [])
 
     // Summary Data state from PostgreSQL aggregation
     const [summaryData, setSummaryData] = useState<{
@@ -427,7 +439,7 @@ const AdminDashboard: React.FC = () => {
 
     // Filter products for the Product List panel
     const filteredProducts = useMemo(() => {
-        return CLIENT_MENU_ITEMS.filter((item) => {
+        return menuItems.filter((item) => {
             const matchesSearch =
                 item.name.toLowerCase().includes(searchProductQuery.toLowerCase()) ||
                 item.category.toLowerCase().includes(searchProductQuery.toLowerCase())
@@ -435,7 +447,7 @@ const AdminDashboard: React.FC = () => {
                 selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
             return matchesSearch && matchesCategory
         })
-    }, [searchProductQuery, selectedCategory])
+    }, [menuItems, searchProductQuery, selectedCategory])
 
     const isOnlineOrder = (typeStr: string) => {
         const t = (typeStr || '').toLowerCase()
@@ -782,7 +794,21 @@ const AdminDashboard: React.FC = () => {
         ]
     }, [summaryData.breakdown, dateFilteredOrders])
 
+    const clearProductImageSelection = () => {
+        if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current)
+        imagePreviewRef.current = null
+        setImagePreview(null)
+        setImageFile(null)
+        setImageFeedback(null)
+    }
+
+    const handleCloseProductModal = () => {
+        clearProductImageSelection()
+        setIsPriceEditOpen(false)
+    }
+
     const handleSelectProduct = (item: MenuItem) => {
+        clearProductImageSelection()
         setSelectedProduct(item)
         setNewPriceInput(getEffectivePrice(item.id, item.price))
         setIsPriceEditOpen(true)
@@ -801,7 +827,7 @@ const AdminDashboard: React.FC = () => {
         setPriceUpdateSuccess(true)
         setTimeout(() => {
             setPriceUpdateSuccess(false)
-            setIsPriceEditOpen(false)
+            handleCloseProductModal()
         }, 800)
     }
 
@@ -812,8 +838,99 @@ const AdminDashboard: React.FC = () => {
         setPriceUpdateSuccess(true)
         setTimeout(() => {
             setPriceUpdateSuccess(false)
-            setIsPriceEditOpen(false)
+            handleCloseProductModal()
         }, 800)
+    }
+
+    const handleImageSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] || null
+        event.target.value = ''
+        setImageFeedback(null)
+        clearProductImageSelection()
+        if (!file) return
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+            setImageFeedback({ type: 'error', message: 'Choose a JPEG, PNG, or WebP image.' })
+            return
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            setImageFeedback({ type: 'error', message: 'Image must be 5 MB or smaller.' })
+            return
+        }
+        const objectUrl = URL.createObjectURL(file)
+        imagePreviewRef.current = objectUrl
+        setImagePreview(objectUrl)
+        setImageFile(file)
+    }
+
+    const handleSaveProductImage = async () => {
+        if (!selectedProduct || !imageFile || isSavingImage) return
+        setIsSavingImage(true)
+        setImageFeedback(null)
+        try {
+            const headers = await getAuthHeaders({}, { jsonContentType: false })
+            const body = new FormData()
+            body.append('image', imageFile)
+            const response = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(selectedProduct.id)}/image`, {
+                method: 'POST',
+                headers,
+                body,
+            })
+            const payload = await response.json()
+            if (!response.ok || !payload?.data?.image) {
+                throw new Error(payload?.message || 'Could not upload product photo.')
+            }
+            setCachedProductImage(selectedProduct.id, payload.data.image)
+            setSelectedProduct((current) => current ? { ...current, image: payload.data.image } : current)
+            clearProductImageSelection()
+            await refreshProductImages()
+            setImageFeedback({
+                type: 'success',
+                message: payload.oldImageCleanupPending
+                    ? 'Photo updated. The previous storage file needs cleanup.'
+                    : 'Product photo updated.',
+            })
+        } catch (error) {
+            setImageFeedback({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Could not upload product photo.',
+            })
+        } finally {
+            setIsSavingImage(false)
+        }
+    }
+
+    const handleRestoreProductImage = async () => {
+        if (!selectedProduct || isSavingImage) return
+        setIsSavingImage(true)
+        setImageFeedback(null)
+        try {
+            const headers = await getAuthHeaders()
+            const response = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(selectedProduct.id)}/image`, {
+                method: 'DELETE',
+                headers,
+            })
+            const payload = await response.json()
+            if (!response.ok) throw new Error(payload?.message || 'Could not restore the bundled photo.')
+            setCachedProductImage(selectedProduct.id, null)
+            setSelectedProduct((current) => current
+                ? { ...current, image: current.bundledImage || current.image }
+                : current)
+            clearProductImageSelection()
+            await refreshProductImages()
+            setImageFeedback({
+                type: 'success',
+                message: payload.cleanupPending
+                    ? 'Bundled photo restored. The old storage file needs cleanup.'
+                    : 'Bundled photo restored.',
+            })
+        } catch (error) {
+            setImageFeedback({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Could not restore the bundled photo.',
+            })
+        } finally {
+            setIsSavingImage(false)
+        }
     }
 
     return (
@@ -1372,14 +1489,11 @@ const AdminDashboard: React.FC = () => {
                                             >
                                                 <div className="flex items-center gap-3 overflow-hidden">
                                                     <div className="w-11 h-11 rounded-xl bg-orange-50 overflow-hidden shrink-0 border border-orange-100 flex items-center justify-center shadow-2xs">
-                                                        <img
+                                                        <ProductImage
                                                             src={item.image}
+                                                            fallbackSrc={item.bundledImage}
                                                             alt={item.name}
                                                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
-                                                            onError={(e) => {
-                                                                ; (e.target as HTMLImageElement).src =
-                                                                    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='40' height='40' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23fff7ed'/><text y='65' x='20' font-size='30' fill='%23ea580c'>SF</text></svg>"
-                                                            }}
                                                         />
                                                     </div>
                                                     <div className="truncate">
@@ -1540,17 +1654,18 @@ const AdminDashboard: React.FC = () => {
             {isPriceEditOpen && selectedProduct && (
                 <div
                     className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
-                    onClick={() => setIsPriceEditOpen(false)}
+                    onClick={handleCloseProductModal}
                 >
                     <div
-                        className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-md p-6 space-y-5 animate-in zoom-in-95 duration-200"
+                        className="bg-white rounded-3xl border border-slate-100 shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 space-y-5 animate-in zoom-in-95 duration-200"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex justify-between items-start border-b border-slate-100 pb-3">
                             <div className="flex items-center gap-3">
                                 <div className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-200 overflow-hidden flex items-center justify-center">
-                                    <img
+                                    <ProductImage
                                         src={selectedProduct.image}
+                                        fallbackSrc={selectedProduct.bundledImage}
                                         alt={selectedProduct.name}
                                         className="w-full h-full object-cover"
                                     />
@@ -1566,7 +1681,7 @@ const AdminDashboard: React.FC = () => {
                                 </div>
                             </div>
                             <button
-                                onClick={() => setIsPriceEditOpen(false)}
+                                onClick={handleCloseProductModal}
                                 className="text-slate-400 hover:text-slate-700 text-xl font-bold p-1 cursor-pointer"
                             >
                                 &times;
@@ -1577,6 +1692,65 @@ const AdminDashboard: React.FC = () => {
                             <p className="font-bold text-slate-700 mb-1">Item Description:</p>
                             {selectedProduct.description || 'Signature seafood specialty cooked with special house seasonings.'}
                         </div>
+
+                        <section className="space-y-3 rounded-2xl border border-orange-100 bg-orange-50/50 p-3">
+                            <div className="flex items-center gap-3">
+                                <div className="h-16 w-20 shrink-0 overflow-hidden rounded-xl bg-white border border-orange-100">
+                                    <ProductImage
+                                        src={imagePreview || selectedProduct.image}
+                                        fallbackSrc={selectedProduct.bundledImage}
+                                        alt={`${selectedProduct.name} preview`}
+                                        className="h-full w-full object-cover"
+                                    />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-bold text-slate-800">Product photo</p>
+                                    <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                                        JPEG, PNG, or WebP. Maximum 5 MB.
+                                    </p>
+                                </div>
+                            </div>
+                            <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                onChange={handleImageSelection}
+                                className="block w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-2 file:text-xs file:font-bold file:text-orange-700 hover:file:bg-orange-100"
+                                disabled={isSavingImage}
+                            />
+                            {imageFile && (
+                                <p className="truncate text-[11px] text-slate-500">{imageFile.name}</p>
+                            )}
+                            {imageFeedback && (
+                                <p
+                                    role="status"
+                                    className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                                        imageFeedback.type === 'success'
+                                            ? 'bg-emerald-50 text-emerald-700'
+                                            : 'bg-rose-50 text-rose-700'
+                                    }`}
+                                >
+                                    {imageFeedback.message}
+                                </p>
+                            )}
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => void handleSaveProductImage()}
+                                    disabled={!imageFile || isSavingImage}
+                                    className="flex-1 rounded-xl bg-orange-600 px-3 py-2 text-xs font-bold text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    {isSavingImage ? 'Saving photo…' : 'Upload photo'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void handleRestoreProductImage()}
+                                    disabled={isSavingImage || selectedProduct.image === selectedProduct.bundledImage}
+                                    className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    Restore default
+                                </button>
+                            </div>
+                        </section>
 
                         {priceUpdateSuccess && (
                             <div className="bg-emerald-50 text-emerald-700 p-3 rounded-2xl border border-emerald-200 text-xs font-bold text-center animate-in fade-in">
@@ -1618,7 +1792,7 @@ const AdminDashboard: React.FC = () => {
                             <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                                 <button
                                     type="button"
-                                    onClick={() => setIsPriceEditOpen(false)}
+                                    onClick={handleCloseProductModal}
                                     className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold text-xs hover:bg-slate-200 cursor-pointer"
                                 >
                                     Cancel

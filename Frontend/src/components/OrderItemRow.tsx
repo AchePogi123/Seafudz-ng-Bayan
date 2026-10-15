@@ -1,5 +1,6 @@
 import React from 'react'
 import type { MenuItem } from './MenuCard'
+import { ProductImage } from './ProductImage'
 
 export interface CartItem {
   item: MenuItem
@@ -26,13 +27,11 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
       {/* Item info (Image + Name + Unit Price) */}
       <div className="flex items-center gap-2.5 flex-1 min-w-0">
         <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-100 flex-shrink-0 border border-neutral-200/60 flex items-center justify-center">
-          <img
+          <ProductImage
             src={item.image}
+            fallbackSrc={item.bundledImage}
             alt={item.name}
             className="w-full h-full object-cover"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f3f4f6'/><text y='65' x='35' font-size='45' font-weight='bold' fill='%23ea580c'>S</text></svg>";
-            }}
           />
         </div>
         <div className="min-w-0 flex-1">

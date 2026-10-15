@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
-import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
+import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
+import { ProductImage } from '../components/ProductImage'
 import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { useProductImages } from '../utils/useProductImages'
 
 interface CartItem {
     item: MenuItem
@@ -197,7 +199,7 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     // Menu state using client items
-    const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
+    const { menuItems } = useProductImages()
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
     const outOfStockItems = useMemo(() => getOrderOutOfStockItems(activeOrder), [activeOrder])
 // availableReplacementItems replaced by menu replacement mode
@@ -207,7 +209,7 @@ export const OnlineCustomer: React.FC = () => {
     const [selectedCategory, setSelectedCategory] = useState('All Menu')
 
     // Cart state with user-scoped localStorage persistence
-    const [cartItems, setCartItems] = useState<CartItem[]>(() => {
+    const [storedCartItems, setCartItems] = useState<CartItem[]>(() => {
         try {
             const user = getActiveUser()
             const saved = localStorage.getItem(getCartKey(user))
@@ -216,6 +218,15 @@ export const OnlineCustomer: React.FC = () => {
             return []
         }
     })
+    const cartItems = useMemo(() => {
+        const imagesById = new Map(menuItems.map((item) => [item.id, item]))
+        return storedCartItems.map((cartItem) => {
+            const latest = imagesById.get(cartItem.item.id)
+            return latest
+                ? { ...cartItem, item: { ...cartItem.item, image: latest.image, bundledImage: latest.bundledImage } }
+                : cartItem
+        })
+    }, [menuItems, storedCartItems])
     const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
     const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
     const [tempNote, setTempNote] = useState('')
@@ -1202,17 +1213,14 @@ export const OnlineCustomer: React.FC = () => {
                                                 }`}
                                         >
                                             <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
-                                                <img
+                                                <ProductImage
                                                     src={item.image}
+                                                    fallbackSrc={item.bundledImage}
                                                     alt={item.name}
                                                     className={`w-full h-full object-cover transition-transform duration-300 ${!available
                                                         ? 'grayscale-75 opacity-60 contrast-125'
                                                         : 'group-hover:scale-105'
                                                         }`}
-                                                    onError={(e) => {
-                                                        ; (e.target as HTMLImageElement).src =
-                                                            'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="%23fef3c7"/><text y="65" x="35" font-size="45" font-weight="bold" fill="%23ea580c">S</text></svg>'
-                                                    }}
                                                 />
                                                 <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
                                                     {item.category}

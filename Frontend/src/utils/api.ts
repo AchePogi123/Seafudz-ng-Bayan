@@ -20,9 +20,12 @@ export const API_BASE_URL = getResolvedApiBaseUrl();
 /**
  * Returns Authorization headers containing Supabase Bearer JWT token or stored Session token.
  */
-export async function getAuthHeaders(extraHeaders: Record<string, string> = {}): Promise<HeadersInit> {
+export async function getAuthHeaders(
+  extraHeaders: Record<string, string> = {},
+  options: { jsonContentType?: boolean } = {},
+): Promise<HeadersInit> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(options.jsonContentType === false ? {} : { 'Content-Type': 'application/json' }),
     ...extraHeaders,
   };
 

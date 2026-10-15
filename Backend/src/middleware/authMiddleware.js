@@ -12,6 +12,7 @@ export async function requireAuth(req, res, next) {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       if (process.env.NODE_ENV !== 'production') {
+        req.authIsSynthetic = true;
         req.user = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', fullname: 'System Admin', email: 'admin@seafudz.com', role: 'admin', type: 'employee' };
         return next();
       }
@@ -143,6 +144,7 @@ export async function requireAuth(req, res, next) {
     }
 
     if (process.env.NODE_ENV !== 'production') {
+      req.authIsSynthetic = true;
       req.user = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', fullname: 'System Admin', email: 'admin@seafudz.com', role: 'admin', type: 'employee' };
       return next();
     }
@@ -159,6 +161,22 @@ export async function requireAuth(req, res, next) {
       error: err.message,
     });
   }
+}
+
+export function requireActiveAdmin(req, res, next) {
+  const role = (req.user?.role || '').toLowerCase();
+  if (
+    req.authIsSynthetic ||
+    req.user?.type !== 'employee' ||
+    req.user?.is_active !== true ||
+    role !== 'admin'
+  ) {
+    return res.status(req.user ? 403 : 401).json({
+      success: false,
+      message: 'An authenticated, active Admin employee is required.',
+    });
+  }
+  return next();
 }
 
 /**
@@ -250,6 +268,7 @@ export function requireRole(allowedRoles = []) {
 
 export default {
   requireAuth,
+  requireActiveAdmin,
   optionalAuth,
   requireRole,
 };

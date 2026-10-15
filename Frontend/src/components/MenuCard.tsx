@@ -1,4 +1,5 @@
 import React from 'react'
+import { ProductImage } from './ProductImage'
 
 export interface MenuItem {
   id: string
@@ -7,6 +8,7 @@ export interface MenuItem {
   price: number
   category: string
   image: string
+  bundledImage?: string
 }
 
 // Helper to reliably resolve asset image URLs across Vite bundling
@@ -418,17 +420,14 @@ export const MenuCard: React.FC<MenuCardProps> = ({
     >
       {/* Food Image Container */}
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-100 flex-shrink-0">
-        <img
+        <ProductImage
           src={item.image}
+          fallbackSrc={item.bundledImage}
           alt={item.name}
           className={`w-full h-full object-cover transition-transform duration-300 ease-out ${!isAvailable
             ? 'grayscale-[75%] opacity-60 contrast-125'
             : 'group-hover:scale-105'
             }`}
-          onError={(e) => {
-            (e.target as HTMLImageElement).src =
-              "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200' viewBox='0 0 100 100'><rect width='100%' height='100%' fill='%23f5f5f5'/><text y='65' x='35' font-size='45' font-weight='bold' fill='%23ea580c'>S</text></svg>"
-          }}
         />
 
         {/* Category Pill Tag */}
@@ -559,4 +558,3 @@ export const MenuCard: React.FC<MenuCardProps> = ({
     </div>
   )
 }
-

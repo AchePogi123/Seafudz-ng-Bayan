@@ -4,7 +4,7 @@ import { MenuGrid } from '../components/MenuGrid'
 import { OrderSummary } from '../components/OrderSummary'
 import { SuccessModal } from '../components/SuccessModal'
 import { ReceiptModal } from './ReceiptModal'
-import { CLIENT_MENU_ITEMS, CLIENT_CATEGORIES } from '../components/MenuCard'
+import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
 import { API_BASE_URL } from '../utils/api'
@@ -14,18 +14,28 @@ import { NavbarCashier } from '../components/NavbarCashier'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { useProductImages } from '../utils/useProductImages'
 
 export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
   const { getEffectivePrice, updatePrice } = useMenuPrices()
 
-  const [menuItems] = useState<MenuItem[]>(CLIENT_MENU_ITEMS)
+  const { menuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All Menu')
-  const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const [storedCartItems, setCartItems] = useState<CartItem[]>([])
+  const cartItems = useMemo(() => {
+    const imagesById = new Map(menuItems.map((item) => [item.id, item]))
+    return storedCartItems.map((cartItem) => {
+      const latest = imagesById.get(cartItem.item.id)
+      return latest
+        ? { ...cartItem, item: { ...cartItem.item, image: latest.image, bundledImage: latest.bundledImage } }
+        : cartItem
+    })
+  }, [menuItems, storedCartItems])
   const [orderType, setOrderType] = useState('Take Out')
   const [orderNotes, setOrderNotes] = useState('')
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)

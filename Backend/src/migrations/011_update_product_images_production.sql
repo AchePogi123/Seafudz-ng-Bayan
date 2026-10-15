@@ -1,0 +1,44 @@
+-- Migration 011: Update product images to Supabase storage paths
+-- Updates the 41 catalog products with their corresponding uploaded Supabase storage object paths.
+
+UPDATE products SET image = 'products/all-shrimp-alacarte-199/initial.jpg', updated_at = NOW() WHERE id = 'all-shrimp-alacarte-199';
+UPDATE products SET image = 'products/all-shrimp-bowl-699/initial.jpg', updated_at = NOW() WHERE id = 'all-shrimp-bowl-699';
+UPDATE products SET image = 'products/all-shrimp-tray-1099/initial.jpg', updated_at = NOW() WHERE id = 'all-shrimp-tray-1099';
+UPDATE products SET image = 'products/mixed-seafoods-alacarte-99/initial.jpg', updated_at = NOW() WHERE id = 'mixed-seafoods-alacarte-99';
+UPDATE products SET image = 'products/mixed-seafoods-tub-189/initial.jpg', updated_at = NOW() WHERE id = 'mixed-seafoods-tub-189';
+UPDATE products SET image = 'products/mixed-seafoods-bowl-699/initial.jpg', updated_at = NOW() WHERE id = 'mixed-seafoods-bowl-699';
+UPDATE products SET image = 'products/mixed-seafoods-tray-1199/initial.jpg', updated_at = NOW() WHERE id = 'mixed-seafoods-tray-1199';
+UPDATE products SET image = 'products/chicken-pastil-35/initial.jpg', updated_at = NOW() WHERE id = 'chicken-pastil-35';
+UPDATE products SET image = 'products/fried-noodles-35/initial.jpg', updated_at = NOW() WHERE id = 'fried-noodles-35';
+UPDATE products SET image = 'products/chao-fan-35/initial.jpg', updated_at = NOW() WHERE id = 'chao-fan-35';
+UPDATE products SET image = 'products/pork-siomai-5/initial.jpg', updated_at = NOW() WHERE id = 'pork-siomai-5';
+UPDATE products SET image = 'products/beef-siomai-5/initial.jpg', updated_at = NOW() WHERE id = 'beef-siomai-5';
+UPDATE products SET image = 'products/chicken-siomai-5/initial.jpg', updated_at = NOW() WHERE id = 'chicken-siomai-5';
+UPDATE products SET image = 'products/sharksfin-siomai-5/initial.jpg', updated_at = NOW() WHERE id = 'sharksfin-siomai-5';
+UPDATE products SET image = 'products/japanese-siomai-6/initial.jpg', updated_at = NOW() WHERE id = 'japanese-siomai-6';
+UPDATE products SET image = 'products/corn-addon-20/initial.jpg', updated_at = NOW() WHERE id = 'corn-addon-20';
+UPDATE products SET image = 'products/rice-cup-20/initial.jpg', updated_at = NOW() WHERE id = 'rice-cup-20';
+UPDATE products SET image = 'products/shrimp-regular-addon-20/initial.jpg', updated_at = NOW() WHERE id = 'shrimp-regular-addon-20';
+UPDATE products SET image = 'products/shrimp-jumbo-addon-30/initial.jpg', updated_at = NOW() WHERE id = 'shrimp-jumbo-addon-30';
+UPDATE products SET image = 'products/tahong-addon-30/initial.jpg', updated_at = NOW() WHERE id = 'tahong-addon-30';
+UPDATE products SET image = 'products/sausage-addon-50/initial.jpg', updated_at = NOW() WHERE id = 'sausage-addon-50';
+UPDATE products SET image = 'products/special-sauce-addon-30/initial.jpg', updated_at = NOW() WHERE id = 'special-sauce-addon-30';
+UPDATE products SET image = 'products/lemonade-small-40/initial.jpg', updated_at = NOW() WHERE id = 'lemonade-small-40';
+UPDATE products SET image = 'products/lemonade-big-50/initial.jpg', updated_at = NOW() WHERE id = 'lemonade-big-50';
+UPDATE products SET image = 'products/cucumber-lemonade-small-40/initial.jpg', updated_at = NOW() WHERE id = 'cucumber-lemonade-small-40';
+UPDATE products SET image = 'products/cucumber-lemonade-big-50/initial.jpg', updated_at = NOW() WHERE id = 'cucumber-lemonade-big-50';
+UPDATE products SET image = 'products/shake-small-40/initial.jpg', updated_at = NOW() WHERE id = 'shake-small-40';
+UPDATE products SET image = 'products/shake-big-50/initial.jpg', updated_at = NOW() WHERE id = 'shake-big-50';
+UPDATE products SET image = 'products/mango-pudding-50/initial.jpg', updated_at = NOW() WHERE id = 'mango-pudding-50';
+UPDATE products SET image = 'products/banana-con-yelo-50/initial.jpg', updated_at = NOW() WHERE id = 'banana-con-yelo-50';
+UPDATE products SET image = 'products/ice-cream-50/initial.jpg', updated_at = NOW() WHERE id = 'ice-cream-50';
+UPDATE products SET image = 'products/mineral-water-15/initial.jpg', updated_at = NOW() WHERE id = 'mineral-water-15';
+UPDATE products SET image = 'products/black-coffee-30/initial.jpg', updated_at = NOW() WHERE id = 'black-coffee-30';
+UPDATE products SET image = 'products/coke-mismo-25/initial.jpg', updated_at = NOW() WHERE id = 'coke-mismo-25';
+UPDATE products SET image = 'products/coke-1-5l-110/initial.jpg', updated_at = NOW() WHERE id = 'coke-1-5l-110';
+UPDATE products SET image = 'products/sprite-mismo-25/initial.jpg', updated_at = NOW() WHERE id = 'sprite-mismo-25';
+UPDATE products SET image = 'products/sprite-1-5l-100/initial.jpg', updated_at = NOW() WHERE id = 'sprite-1-5l-100';
+UPDATE products SET image = 'products/royal-mismo-25/initial.jpg', updated_at = NOW() WHERE id = 'royal-mismo-25';
+UPDATE products SET image = 'products/royal-1-5l-100/initial.jpg', updated_at = NOW() WHERE id = 'royal-1-5l-100';
+UPDATE products SET image = 'products/icetea-glass-20/initial.jpg', updated_at = NOW() WHERE id = 'icetea-glass-20';
+UPDATE products SET image = 'products/icetea-pitcher-100/initial.jpg', updated_at = NOW() WHERE id = 'icetea-pitcher-100';

@@ -26,12 +26,16 @@ const UserManagement = () => {
 
     // Edit modal states
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+    const [editError, setEditError] = useState('')
     const [editingUser, setEditingUser] = useState<User | null>(null)
     const [editFormData, setEditFormData] = useState({
         firstName: '',
         lastName: '',
         username: '',
         password: '',
+        confirmPassword: '',
+        showPassword: false,
+        showConfirmPassword: false,
     })
 
     // Deactivation confirmation modal state
@@ -141,24 +145,48 @@ const UserManagement = () => {
             lastName,
             username: user.username,
             password: '',
+            confirmPassword: '',
+            showPassword: false,
+            showConfirmPassword: false,
         })
+        setEditError('')
         setIsEditModalOpen(true)
     }
 
     const handleCloseEditModal = () => {
         setIsEditModalOpen(false)
         setEditingUser(null)
+        setEditError('')
     }
 
     // Submit Edit User
     const handleUpdateUser = async (e: React.FormEvent) => {
         e.preventDefault()
         if (!editingUser) return
+        setEditError('')
         const cleanFirst = editFormData.firstName.trim()
         const cleanLast = editFormData.lastName.trim()
         if (!cleanFirst || !cleanLast) {
-            alert('First Name and Last Name are required.')
+            setEditError('First Name and Last Name are required.')
             return
+        }
+
+        const cleanPassword = editFormData.password.trim()
+        const cleanConfirm = editFormData.confirmPassword.trim()
+
+        if (cleanPassword || cleanConfirm) {
+            if (cleanPassword !== cleanConfirm) {
+                setEditError('New password and confirm password do not match.')
+                return
+            }
+            if (cleanPassword.length < 6) {
+                setEditError('New password must be at least 6 characters.')
+                return
+            }
+            if (cleanPassword.length > 128) {
+                setEditError('New password cannot exceed 128 characters.')
+                return
+            }
         }
 
         const fullName = `${cleanFirst} ${cleanLast}`
@@ -170,9 +198,6 @@ const UserManagement = () => {
 
         const identifier = editingUser.db_id || editingUser.username || editingUser.email || editingUser.id
 
-        // Optimistically update local UI state
-        setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? updatedUser : u)))
-
         // Persist edits to PostgreSQL database via API
         try {
             const headers = await getAuthHeaders()
@@ -180,8 +205,8 @@ const UserManagement = () => {
                 name: fullName,
                 username: editFormData.username.trim(),
             }
-            if (editFormData.password.trim()) {
-                payload.password = editFormData.password.trim()
+            if (cleanPassword) {
+                payload.password = cleanPassword
             }
 
             const res = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(identifier)}`, {
@@ -194,30 +219,31 @@ const UserManagement = () => {
                 throw new Error(data.message || 'Failed to update staff user.')
             }
 
-            if (data.data) {
-                const saved = data.data
-                setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? {
-                    ...u,
-                    name: saved.name || updatedUser.name,
-                    username: saved.username || updatedUser.username,
-                    role: saved.role || updatedUser.role,
-                } : u)))
-            }
+            const saved = data.data || updatedUser
+            setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? {
+                ...u,
+                name: saved.name || updatedUser.name,
+                username: saved.username || updatedUser.username,
+                role: saved.role || updatedUser.role,
+                status: saved.status || (cleanPassword ? 'active' : u.status),
+            } : u)))
+
             setActionMessage({
                 type: 'success',
-                text: editFormData.password.trim()
+                text: cleanPassword
                     ? `Staff ${fullName} updated and new password set successfully.`
                     : `Staff ${fullName} updated successfully.`,
             })
+            handleCloseEditModal()
         } catch (err) {
             console.warn('Failed to update user in backend database:', err)
+            const errorMsg = err instanceof Error ? err.message : 'Failed to update user in database.'
+            setEditError(errorMsg)
             setActionMessage({
                 type: 'error',
-                text: err instanceof Error ? err.message : 'Failed to update user in database.',
+                text: errorMsg,
             })
         }
-
-        handleCloseEditModal()
     }
 
     const handleCreateUser = async (e: React.FormEvent) => {
@@ -696,6 +722,11 @@ const UserManagement = () => {
                         </div>
 
                         <form onSubmit={handleUpdateUser} className="p-[2.2rem]">
+                            {editError && (
+                                <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm mb-4">
+                                    {editError}
+                                </div>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.5rem] mb-[2rem]">
                                 <div className="flex flex-col gap-[0.5rem]">
                                     <label className="text-[0.9rem] font-bold text-[#4a5568]">
@@ -725,7 +756,7 @@ const UserManagement = () => {
                                     />
                                 </div>
 
-                                <div className="flex flex-col gap-[0.5rem]">
+                                <div className="flex flex-col gap-[0.5rem] md:col-span-2">
                                     <label className="text-[0.9rem] font-bold text-[#4a5568]">Username</label>
                                     <input
                                         type="text"
@@ -738,13 +769,62 @@ const UserManagement = () => {
 
                                 <div className="flex flex-col gap-[0.5rem]">
                                     <label className="text-[0.9rem] font-bold text-[#4a5568]">New Password (Optional)</label>
-                                    <input
-                                        type="password"
-                                        placeholder="Leave blank to keep current password"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.password}
-                                        onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
-                                    />
+                                    <div className="relative">
+                                        <input
+                                            type={editFormData.showPassword ? 'text' : 'password'}
+                                            placeholder="Leave blank to keep current"
+                                            className="w-full py-[0.85rem] pl-[1rem] pr-[2.75rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
+                                            value={editFormData.password}
+                                            onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditFormData((prev) => ({ ...prev, showPassword: !prev.showPassword }))}
+                                            className="absolute right-[0.75rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
+                                            aria-label="Toggle password visibility"
+                                        >
+                                            {editFormData.showPassword ? (
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                                                </svg>
+                                            ) : (
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                </svg>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="flex flex-col gap-[0.5rem]">
+                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Confirm New Password</label>
+                                    <div className="relative">
+                                        <input
+                                            type={editFormData.showConfirmPassword ? 'text' : 'password'}
+                                            placeholder="Re-enter new password"
+                                            className="w-full py-[0.85rem] pl-[1rem] pr-[2.75rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
+                                            value={editFormData.confirmPassword}
+                                            onChange={(e) => setEditFormData({ ...editFormData, confirmPassword: e.target.value })}
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditFormData((prev) => ({ ...prev, showConfirmPassword: !prev.showConfirmPassword }))}
+                                            className="absolute right-[0.75rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
+                                            aria-label="Toggle confirm password visibility"
+                                        >
+                                            {editFormData.showConfirmPassword ? (
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                                                </svg>
+                                            ) : (
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                                </svg>
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 

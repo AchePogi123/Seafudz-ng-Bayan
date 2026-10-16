@@ -579,11 +579,25 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
         phone = COALESCE(NULLIF($4, ''), phone),
         role = COALESCE($5, role),
         password_hash = COALESCE($6, password_hash),
+        is_active = CASE
+          WHEN $6 IS NOT NULL THEN TRUE
+          ELSE is_active
+        END,
+        activation_status = CASE
+          WHEN $6 IS NOT NULL AND activation_status = 'pending' THEN 'activated'
+          ELSE activation_status
+        END,
+        activated_at = CASE
+          WHEN $6 IS NOT NULL AND activated_at IS NULL THEN NOW()
+          ELSE activated_at
+        END,
         activation_token_hash = CASE
+          WHEN $6 IS NOT NULL THEN NULL
           WHEN activation_status = 'pending' AND LOWER(COALESCE(NULLIF($3, ''), email)) <> LOWER(email) THEN NULL
           ELSE activation_token_hash
         END,
         activation_expires_at = CASE
+          WHEN $6 IS NOT NULL THEN NULL
           WHEN activation_status = 'pending' AND LOWER(COALESCE(NULLIF($3, ''), email)) <> LOWER(email) THEN NULL
           ELSE activation_expires_at
         END,
@@ -611,11 +625,24 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
 
     const emp = rows[0];
 
-    if (newPasswordHash && emp.supabase_user_id) {
-      try {
-        await supabase.auth.admin.updateUserById(emp.supabase_user_id, { password: password.trim() });
-      } catch (sbErr) {
-        console.warn('Supabase auth password sync note:', sbErr.message);
+    if (newPasswordHash) {
+      if (emp.supabase_user_id) {
+        try {
+          await supabase.auth.admin.updateUserById(emp.supabase_user_id, { password: password.trim() });
+        } catch (sbErr) {
+          console.warn('Supabase auth password sync note:', sbErr.message);
+        }
+      } else if (emp.email) {
+        try {
+          const { data: usersData } = await supabase.auth.admin.listUsers();
+          const foundAuthUser = usersData?.users?.find(u => u.email?.toLowerCase() === emp.email.toLowerCase());
+          if (foundAuthUser?.id) {
+            await supabase.auth.admin.updateUserById(foundAuthUser.id, { password: password.trim() });
+            await query('UPDATE employees SET supabase_user_id = $1 WHERE id = $2', [foundAuthUser.id, emp.id]);
+          } 
+        } catch (sbErr) {
+          console.warn('Supabase auth lookup/sync note:', sbErr.message);
+        }
       }
     }
 

@@ -227,6 +227,14 @@ export const OnlineCustomer: React.FC = () => {
                 : cartItem
         })
     }, [menuItems, storedCartItems])
+    const unavailableCartItems = useMemo(
+        () => cartItems.filter((ci) => !isAvailable(ci.item.id)),
+        [cartItems, isAvailable]
+    )
+    const hasUnavailableCartItems = unavailableCartItems.length > 0
+    const handleRemoveUnavailableItems = () => {
+        setCartItems((prev) => prev.filter((ci) => isAvailable(ci.item.id)))
+    }
     const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
     const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
     const [tempNote, setTempNote] = useState('')
@@ -524,6 +532,7 @@ export const OnlineCustomer: React.FC = () => {
     }, [activeOrder?.status, activeOrder?.paymentMethod])
 
     const handleProceedToCheckout = () => {
+        if (hasUnavailableCartItems) return
         const currentUser = getActiveUser()
         if (!currentUser) {
             setIsAuthModalOpen(true)
@@ -827,6 +836,10 @@ export const OnlineCustomer: React.FC = () => {
 
     const handlePlaceOrder = async (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
+        if (hasUnavailableCartItems) {
+            alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before placing your order.')
+            return
+        }
         if (isSubmittingOrderRef.current) return
 
         let currentUser = getActiveUser()
@@ -1323,12 +1336,15 @@ export const OnlineCustomer: React.FC = () => {
                                 ) : (
                                     <div className="space-y-4 py-4 divide-y divide-neutral-50">
                                         {cartItems.map((ci) => (
-                                            <div key={ci.item.id} className="pt-4 first:pt-0">
+                                            <div key={ci.item.id} className={`pt-4 first:pt-0 ${isAvailable(ci.item.id) ? '' : 'rounded-xl border border-rose-300 bg-rose-50 p-3'}`}>
                                                 <div className="flex justify-between items-start gap-2">
                                                     <div>
                                                         <h4 className="font-semibold text-neutral-800 text-sm leading-snug">
                                                             {ci.item.name}
                                                         </h4>
+                                                        {!isAvailable(ci.item.id) && (
+                                                            <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
+                                                        )}
                                                         <p className="text-xs text-orange-600 font-bold mt-0.5">
                                                             ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                         </p>
@@ -1390,6 +1406,15 @@ export const OnlineCustomer: React.FC = () => {
                                 )}
                             </div>
 
+                            {hasUnavailableCartItems && (
+                                <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+                                    <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
+                                    <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
+                                        Remove Unavailable Items
+                                    </button>
+                                </div>
+                            )}
+
                             {cartItems.length > 0 && (
                                 <div className="border-t border-neutral-100 pt-4 space-y-4">
                                     <div className="space-y-1.5 text-xs text-neutral-500">
@@ -1413,7 +1438,8 @@ export const OnlineCustomer: React.FC = () => {
 
                                     <button
                                         onClick={handleProceedToCheckout}
-                                        className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                        disabled={hasUnavailableCartItems}
+                                        className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         Proceed to Checkout
                                     </button>
@@ -1477,6 +1503,14 @@ export const OnlineCustomer: React.FC = () => {
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
                                     Delivery & Billing Details
                                 </h3>
+                                {hasUnavailableCartItems && (
+                                    <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+                                        <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
+                                        <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
+                                            Remove Unavailable Items
+                                        </button>
+                                    </div>
+                                )}
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="flex flex-col gap-1.5">
@@ -1582,8 +1616,8 @@ export const OnlineCustomer: React.FC = () => {
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder}
-                                        className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                        disabled={isSubmittingOrder || hasUnavailableCartItems}
+                                        className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder ? 'Submitting Order...' : 'Confirm & Submit Order'}
                                     </button>
@@ -1605,7 +1639,7 @@ export const OnlineCustomer: React.FC = () => {
 
                                 <div className="divide-y divide-neutral-50 max-h-[300px] overflow-y-auto pr-1">
                                     {cartItems.map((ci) => (
-                                        <div key={ci.item.id} className="py-3 first:pt-0">
+                                        <div key={ci.item.id} className={`py-3 first:pt-0 ${isAvailable(ci.item.id) ? '' : 'rounded-lg bg-rose-50 px-2'}`}>
                                             <div className="flex justify-between text-sm">
                                                 <span className="font-medium text-neutral-700">
                                                     {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
@@ -1614,6 +1648,9 @@ export const OnlineCustomer: React.FC = () => {
                                                     ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                 </span>
                                             </div>
+                                            {!isAvailable(ci.item.id) && (
+                                                <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
+                                            )}
                                             {ci.specialNote && (
                                                 <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
                                             )}
@@ -2487,6 +2524,9 @@ export const OnlineCustomer: React.FC = () => {
                                                     <p className="font-semibold text-neutral-800 text-sm leading-snug">
                                                         {ci.item.name}
                                                     </p>
+                                                    {!isAvailable(ci.item.id) && (
+                                                        <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
+                                                    )}
                                                     <p className="text-xs text-orange-600 font-bold mt-0.5">
                                                         ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                     </p>
@@ -2546,6 +2586,15 @@ export const OnlineCustomer: React.FC = () => {
                                 </div>
                             </div>
 
+                            {hasUnavailableCartItems && (
+                                <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+                                    <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
+                                    <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
+                                        Remove Unavailable Items
+                                    </button>
+                                </div>
+                            )}
+
                             <div className="border-t border-neutral-100 pt-4 space-y-4">
                                 <div className="space-y-1.5">
                                     <div className="flex justify-between text-xs text-neutral-500">
@@ -2568,7 +2617,8 @@ export const OnlineCustomer: React.FC = () => {
 
                                 <button
                                     onClick={handleProceedToCheckout}
-                                    className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                    disabled={hasUnavailableCartItems}
+                                    className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                 >
                                     Proceed to Checkout
                                 </button>

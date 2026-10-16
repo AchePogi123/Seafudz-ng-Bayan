@@ -6,6 +6,39 @@ import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 
+function outOfStockError(name) {
+  return Object.assign(new Error(`Item "${name}" is currently out of stock.`), {
+    statusCode: 409,
+    code: 'ITEM_OUT_OF_STOCK',
+  });
+}
+
+export async function assertItemsAvailable(client, items) {
+  const ids = items
+    .map((item) => item.product_id || item.productId || item.item?.id || item.id)
+    .filter(Boolean)
+    .map(String);
+  const names = items
+    .map((item) => item.name || item.product_name_snapshot || item.item?.name)
+    .filter(Boolean)
+    .map((name) => String(name).toLowerCase());
+  const { rows } = await client.query(
+    `SELECT id::text AS id, name, is_available
+     FROM products
+     WHERE id::text = ANY($1::text[]) OR LOWER(name) = ANY($2::text[])
+     FOR SHARE`,
+    [ids, names]
+  );
+
+  for (const item of items) {
+    const id = String(item.product_id || item.productId || item.item?.id || item.id || '');
+    const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood Dish';
+    const product = rows.find((row) => row.id === id)
+      || rows.find((row) => row.name.toLowerCase() === String(name).toLowerCase());
+    if (!product || !product.is_available) throw outOfStockError(name);
+  }
+}
+
 // GET /api/orders - Get orders with pagination, search, and filtering (Staff only)
 router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant', 'kitchen', 'rider']), async (req, res) => {
   try {
@@ -222,6 +255,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     }
 
     await client.query('BEGIN');
+    await assertItemsAvailable(client, cartItems);
 
     const orderNumber = req.body.id || req.body.ref || `ORD-${Date.now().toString().slice(-6)}`;
     const subtotal = cartItems.reduce((acc, ci) => {
@@ -334,6 +368,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     await client.query('ROLLBACK');
     client.release();
     console.error('Error creating order:', error);
+    if (error.code === 'ITEM_OUT_OF_STOCK') {
+      return res.status(409).json({ success: false, error: error.code, message: error.message });
+    }
     return res.status(500).json({
       success: false,
       message: 'Failed to create order in database',
@@ -635,9 +672,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       items: normalizedItems,
     };
 
-    // Store in Central Backend Memory
-    inMemoryOrders.set(orderId, orderRecord);
-
     // Persist in PostgreSQL DB
     try {
       const pool = await getDbPool();
@@ -645,6 +679,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       let persistedItems = [];
       try {
         await client.query('BEGIN');
+        await assertItemsAvailable(client, normalizedItems);
         await client.query(
           `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
            VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW())
@@ -699,8 +734,17 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           specialNote: item.notes || '',
         }));
       }
+      inMemoryOrders.set(orderId, orderRecord);
     } catch (dbErr) {
-      console.warn('DB query note (using central memory store):', dbErr.message);
+      if (dbErr.code === 'ITEM_OUT_OF_STOCK') {
+        return res.status(409).json({ success: false, error: dbErr.code, message: dbErr.message });
+      }
+      console.error('Could not validate or persist order availability:', dbErr.message);
+      return res.status(503).json({
+        success: false,
+        error: 'INVENTORY_VALIDATION_UNAVAILABLE',
+        message: 'Could not verify item availability. Please try again.',
+      });
     }
 
     const formatted = formatOrderResponse(orderRecord);
@@ -714,8 +758,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     });
   } catch (error) {
     console.error('Error creating order in user flow:', error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
+      ...(error.code ? { error: error.code } : {}),
       message: 'Failed to create order',
       error: error.message,
     });
@@ -989,4 +1034,3 @@ router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
 });
 
 export default router;
-

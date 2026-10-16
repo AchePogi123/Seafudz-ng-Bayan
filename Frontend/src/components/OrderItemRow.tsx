@@ -9,6 +9,7 @@ export interface CartItem {
 
 interface OrderItemRowProps {
   cartItem: CartItem
+  isAvailable?: boolean
   onIncrement: (itemId: string) => void
   onDecrement: (itemId: string) => void
   onRemove: (itemId: string) => void
@@ -16,6 +17,7 @@ interface OrderItemRowProps {
 
 export const OrderItemRow: React.FC<OrderItemRowProps> = ({
   cartItem,
+  isAvailable = true,
   onIncrement,
   onDecrement,
   onRemove,
@@ -23,7 +25,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
   const { item, quantity } = cartItem
 
   return (
-    <div className="flex items-center justify-between gap-2 py-2.5 border-b border-neutral-100 group transition-all">
+    <div className={`flex items-center justify-between gap-2 py-2.5 border-b group transition-all ${isAvailable ? 'border-neutral-100' : 'border-rose-200 bg-rose-50/70 px-2 rounded-lg'}`}>
       {/* Item info (Image + Name + Unit Price) */}
       <div className="flex items-center gap-2.5 flex-1 min-w-0">
         <div className="w-9 h-9 rounded-lg overflow-hidden bg-neutral-100 flex-shrink-0 border border-neutral-200/60 flex items-center justify-center">
@@ -38,6 +40,11 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
           <p className="font-semibold text-neutral-900 text-xs sm:text-sm truncate leading-tight" title={item.name}>
             {item.name}
           </p>
+          {!isAvailable && (
+            <span className="inline-flex mt-1 rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+              ⚠️ Out of Stock
+            </span>
+          )}
           <p className="text-[11px] text-neutral-400 font-medium mt-0.5">
             ₱{item.price.toLocaleString()}
           </p>

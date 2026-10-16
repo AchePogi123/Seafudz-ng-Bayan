@@ -258,7 +258,6 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
          ON CONFLICT (order_id) DO UPDATE SET status = 'OUT_OF_STOCK', updated_at = NOW()`,
         [id]
       );
-      await client.query('COMMIT');
 
       if (flagResult.rows && flagResult.rows.length > 0) {
         flaggedItems = flagResult.rows.map(r => ({
@@ -268,7 +267,19 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
           price: parseFloat(r.unit_price),
           quantity: r.quantity,
         }));
+
+        const prodIds = flaggedItems.map(r => r.productId).filter(Boolean);
+        const prodNames = flaggedItems.map(r => r.name).filter(Boolean);
+        if (prodIds.length > 0 || prodNames.length > 0) {
+          await client.query(
+            `UPDATE products SET is_available = FALSE, updated_at = NOW()
+             WHERE id::text = ANY($1::text[])
+                OR LOWER(name) = ANY(SELECT LOWER(x) FROM unnest($2::text[]) AS x)`,
+            [prodIds, prodNames]
+          );
+        }
       }
+      await client.query('COMMIT');
     } catch (dbErr) {
       try { await client.query('ROLLBACK'); } catch {}
       console.warn('DB note (flag-out-of-stock):', dbErr.message);
@@ -316,6 +327,20 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
     type: 'OUT_OF_STOCK_FLAGGED',
     outOfStockItems: flaggedItems,
   });
+
+  // Automatically broadcast catalog availability change to all clients
+  if (flaggedItems.length > 0) {
+    for (const item of flaggedItems) {
+      if (item.productId) {
+        emitOrderUpdate({
+          type: 'PRODUCT_AVAILABILITY_CHANGED',
+          productId: String(item.productId),
+          isAvailable: false,
+          timestamp: Date.now(),
+        });
+      }
+    }
+  }
 
   const flaggedItemNames = flaggedItems.map(i => i.name);
   console.log(`[KITCHEN] Order ${id} flagged OUT_OF_STOCK — Items: ${flaggedItemNames.join(', ')}`);

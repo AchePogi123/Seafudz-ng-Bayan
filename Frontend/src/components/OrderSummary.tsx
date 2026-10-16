@@ -13,6 +13,8 @@ interface OrderSummaryProps {
   onRemove: (itemId: string) => void
   onConfirmOrder: () => void
   onClose?: () => void
+  isItemAvailable?: (itemId: string) => boolean
+  onRemoveUnavailable?: () => void
 }
 
 export const OrderSummary: React.FC<OrderSummaryProps> = ({
@@ -26,11 +28,14 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
   onRemove,
   onConfirmOrder,
   onClose,
+  isItemAvailable = () => true,
+  onRemoveUnavailable,
 }) => {
   // Calculations
   const rawSubtotal = cartItems.reduce((acc, item) => acc + item.item.price * item.quantity, 0)
   const vatAmount = rawSubtotal * 0.12 // 12% VAT
   const total = rawSubtotal + vatAmount
+  const unavailableCount = cartItems.filter((item) => !isItemAvailable(item.item.id)).length
 
   return (
     <aside className="bg-white rounded-2xl p-5 sm:p-6 text-neutral-900 flex flex-col h-full shadow-2xs border border-neutral-200/80 transition-all">
@@ -100,6 +105,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
               <OrderItemRow
                 key={cartItem.item.id}
                 cartItem={cartItem}
+                isAvailable={isItemAvailable(cartItem.item.id)}
                 onIncrement={onIncrement}
                 onDecrement={onDecrement}
                 onRemove={onRemove}
@@ -108,6 +114,21 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
           )}
         </div>
       </div>
+
+      {unavailableCount > 0 && (
+        <div className="mb-3 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+          <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
+          {onRemoveUnavailable && (
+            <button
+              type="button"
+              onClick={onRemoveUnavailable}
+              className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700"
+            >
+              Remove Unavailable Items
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Always Visible Special Note Input */}
       <div className="mb-3 flex-shrink-0">
@@ -142,7 +163,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
         <button
           onClick={onConfirmOrder}
-          disabled={cartItems.length === 0}
+          disabled={cartItems.length === 0 || unavailableCount > 0}
           className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-2xs active:scale-[0.99] cursor-pointer text-center text-sm"
         >
           Confirm Order

@@ -1,4 +1,5 @@
 import { API_BASE_URL } from './api'
+import { applyProductAvailabilityChange } from './menuAvailability'
 
 const SYNC_KEY = 'seafudz_order_sync_timestamp'
 
@@ -55,6 +56,10 @@ const initSseConnection = () => {
     sseSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        if (data?.type === 'PRODUCT_AVAILABILITY_CHANGED' && data.productId != null) {
+          applyProductAvailabilityChange(String(data.productId), Boolean(data.isAvailable))
+          return
+        }
         if (data && (data.type === 'ORDER_UPDATE' || data.id || data.status)) {
           notifyOrderSync()
         }

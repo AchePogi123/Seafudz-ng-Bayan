@@ -8,8 +8,9 @@ import {
   isManagedProductImagePath,
   PRODUCT_IMAGE_PREFIX,
 } from '../config/productImageStorage.js';
-import { requireActiveAdmin, requireAuth } from '../middleware/authMiddleware.js';
+import { requireActiveAdmin, requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { validateAndNormalizeProductImage } from '../utils/validateProductImage.js';
+import { realtimeEmitter } from '../utils/realtimeEvents.js';
 
 const router = Router();
 const imageUpload = multer({
@@ -136,6 +137,39 @@ router.get('/menu/:id', async (req, res) => {
       message: 'Failed to retrieve menu item',
       error: error.message,
     });
+  }
+});
+
+// PATCH /api/menu/:id/availability - Kitchen and Admin stock control.
+router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), async (req, res) => {
+  const { is_available: isAvailable } = req.body || {};
+  if (typeof isAvailable !== 'boolean') {
+    return res.status(400).json({ success: false, message: 'is_available must be a boolean.' });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE products
+       SET is_available = $1, updated_at = NOW()
+       WHERE id::text = $2
+       RETURNING id, name, is_available`,
+      [isAvailable, req.params.id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    const product = rows[0];
+    realtimeEmitter.emit('order_update', {
+      type: 'PRODUCT_AVAILABILITY_CHANGED',
+      productId: String(product.id),
+      isAvailable: product.is_available,
+      timestamp: Date.now(),
+    });
+    return res.status(200).json({ success: true, data: product });
+  } catch (error) {
+    console.error('Error updating product availability:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update product availability.' });
   }
 });
 

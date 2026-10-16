@@ -11,9 +11,20 @@ interface SuccessModalProps {
     total: number
     cartItems: CartItem[]
   } | null
+  hasUnavailableItems?: boolean
+  isItemAvailable?: (itemId: string) => boolean
+  onRemoveUnavailable?: () => void
 }
 
-export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onConfirm, orderDetails }) => {
+export const SuccessModal: React.FC<SuccessModalProps> = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  orderDetails,
+  hasUnavailableItems = false,
+  isItemAvailable = () => true,
+  onRemoveUnavailable,
+}) => {
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Hybrid'>('Cash')
   const [cashReceived, setCashReceived] = useState<string>('')
   
@@ -63,6 +74,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
   }
 
   const handleConfirm = () => {
+    if (hasUnavailableItems) return
     if (paymentMethod === 'Hybrid') {
       const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString()} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString()})`
       onConfirm(parsedHybridCash.toString(), 0, hybridLabel)
@@ -98,6 +110,20 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
         <p className="text-xs text-neutral-400 font-semibold mt-1 text-center">
           Order #A123 • {orderDetails.type}
         </p>
+        {hasUnavailableItems && (
+          <div className="mt-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-center text-xs font-bold text-rose-800">
+            An item in your cart was just marked Out of Stock by the kitchen. Remove it before payment.
+            {onRemoveUnavailable && (
+              <button
+                type="button"
+                onClick={onRemoveUnavailable}
+                className="mx-auto mt-2 block rounded-lg bg-rose-600 px-3 py-2 text-white hover:bg-rose-700"
+              >
+                Remove Unavailable Items
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Payment Method Selector Tabs */}
         <div className="grid grid-cols-3 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
@@ -294,6 +320,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
             <div key={cartItem.item.id} className="flex justify-between items-center text-xs text-neutral-600 font-medium">
               <span className="truncate max-w-[220px]">
                 {cartItem.item.name} <span className="font-bold text-neutral-400">x{cartItem.quantity}</span>
+                {!isItemAvailable(cartItem.item.id) && (
+                  <span className="ml-1 rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black text-white">Out of Stock</span>
+                )}
               </span>
               <span className="font-bold text-neutral-900">
                 ₱{(cartItem.item.price * cartItem.quantity).toLocaleString()}
@@ -314,10 +343,12 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({ isOpen, onClose, onC
           <button
             onClick={handleConfirm}
             disabled={
+              hasUnavailableItems ||
               (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
               (paymentMethod === 'Hybrid' && !isHybridComplete)
             }
             className={`flex-2 text-white font-bold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md ${
+              hasUnavailableItems ||
               (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
               (paymentMethod === 'Hybrid' && !isHybridComplete)
                 ? 'bg-neutral-300 cursor-not-allowed shadow-none'

@@ -135,6 +135,14 @@ const AdminDashboard: React.FC = () => {
     const [isPriceEditOpen, setIsPriceEditOpen] = useState(false)
     const [newPriceInput, setNewPriceInput] = useState<number | string>('')
     const [priceUpdateSuccess, setPriceUpdateSuccess] = useState(false)
+    const [isAddProductOpen, setIsAddProductOpen] = useState(false)
+    const [newProductName, setNewProductName] = useState('')
+    const [newProductCategory, setNewProductCategory] = useState('Seafoods')
+    const [newProductDescription, setNewProductDescription] = useState('')
+    const [newProductPrice, setNewProductPrice] = useState<number | string>('')
+    const [isSavingProduct, setIsSavingProduct] = useState(false)
+    const [productFormError, setProductFormError] = useState('')
+    const [catalogFeedback, setCatalogFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
     const [imageFile, setImageFile] = useState<File | null>(null)
     const [imagePreview, setImagePreview] = useState<string | null>(null)
     const [imageFeedback, setImageFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
@@ -815,6 +823,72 @@ const AdminDashboard: React.FC = () => {
         setPriceUpdateSuccess(false)
     }
 
+    const handleCreateProduct = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault()
+        const name = newProductName.trim()
+        const price = Number(newProductPrice)
+        if (!name || !Number.isFinite(price) || price < 0) {
+            setProductFormError('Enter a product name and a valid price.')
+            return
+        }
+
+        setIsSavingProduct(true)
+        setProductFormError('')
+        try {
+            const response = await fetch(`${API_BASE_URL}/menu`, {
+                method: 'POST',
+                headers: await getAuthHeaders(),
+                body: JSON.stringify({
+                    name,
+                    category: newProductCategory,
+                    description: newProductDescription.trim(),
+                    price,
+                }),
+            })
+            const payload = await response.json()
+            if (!response.ok) throw new Error(payload?.message || 'Could not add this product.')
+
+            await refreshProductImages()
+            setSearchProductQuery('')
+            setSelectedCategory(newProductCategory)
+            setNewProductName('')
+            setNewProductDescription('')
+            setNewProductPrice('')
+            setIsAddProductOpen(false)
+            setCatalogFeedback({ type: 'success', message: `${name} was added to the menu.` })
+        } catch (error) {
+            setProductFormError(error instanceof Error ? error.message : 'Could not add this product.')
+        } finally {
+            setIsSavingProduct(false)
+        }
+    }
+
+    const handleDeleteProduct = async (item: MenuItem) => {
+        const confirmed = window.confirm(
+            `Remove "${item.name}" from the menu? It will no longer be available for new orders. Past orders will be kept.`
+        )
+        if (!confirmed) return
+
+        setCatalogFeedback(null)
+        try {
+            const response = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(item.id)}`, {
+                method: 'DELETE',
+                headers: await getAuthHeaders(),
+            })
+            const payload = await response.json()
+            if (!response.ok) throw new Error(payload?.message || 'Could not remove this product.')
+
+            resetPrice(item.id)
+            await refreshProductImages()
+            setCatalogFeedback({ type: 'success', message: `${item.name} was removed from the menu.` })
+        } catch (error) {
+            setCatalogFeedback({
+                type: 'error',
+                message: error instanceof Error ? error.message : 'Could not remove this product.',
+            })
+        }
+    }
+
     const handleSavePrice = (e: React.FormEvent) => {
         e.preventDefault()
         if (!selectedProduct) return
@@ -1431,39 +1505,96 @@ const AdminDashboard: React.FC = () => {
                 {/* Bottom Section: Interactive Product Catalog Manager & Real Live Transactions Table */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                     {/* Functional Product Catalog (4 Cols) */}
-                    <div className="lg:col-span-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                                <div>
-                                    <h3 className="font-black text-base text-slate-900 tracking-tight">Product Catalog & Prices</h3>
-                                    <p className="text-[11px] text-slate-400 font-medium">Click any item to view or edit price</p>
+                    <div className="lg:col-span-5 flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-md shadow-slate-900/5 transition-shadow duration-300 hover:shadow-lg hover:shadow-slate-900/10 motion-reduce:transition-none">
+                        <div className="border-b border-orange-100 bg-gradient-to-r from-orange-50 via-white to-white px-5 py-5 sm:px-6">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-orange-500 text-white shadow-md shadow-orange-500/20">
+                                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M5.25 4.5h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25V6.75A2.25 2.25 0 015.25 4.5zM8 12h3m-3 3h8" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-orange-600">Menu management</p>
+                                        <h3 className="mt-0.5 text-lg font-black tracking-tight text-slate-900">Products & pricing</h3>
+                                    </div>
                                 </div>
-                                <span className="text-xs bg-orange-50 text-orange-600 font-bold px-2.5 py-1 rounded-full border border-orange-200/60">
-                                    {filteredProducts.length} Items
-                                </span>
+                                <div className="flex shrink-0 items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setProductFormError('')
+                                            setIsAddProductOpen(true)
+                                        }}
+                                        className="inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-3 py-2 text-[10px] font-extrabold text-white shadow-sm shadow-orange-500/20 transition-all duration-200 hover:-translate-y-0.5 hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 motion-reduce:transition-none"
+                                    >
+                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+                                        </svg>
+                                        Add product
+                                    </button>
+                                    <Link
+                                        to="/pos"
+                                        aria-label="Open POS"
+                                        title="Open POS"
+                                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-orange-200 bg-white text-orange-700 transition-colors hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                                    >
+                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M5.25 4.5h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25V6.75A2.25 2.25 0 015.25 4.5zM8 12h3m-3 3h8" />
+                                        </svg>
+                                    </Link>
+                                </div>
                             </div>
+                        </div>
 
-                            <div className="relative">
-                                <input
-                                    type="text"
-                                    value={searchProductQuery}
-                                    onChange={(e) => setSearchProductQuery(e.target.value)}
-                                    placeholder="Search product or category..."
-                                    className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl pl-10 pr-4 py-2 text-xs font-medium focus:outline-none focus:border-orange-500 focus:bg-white transition-all"
-                                />
-                                <svg className="w-4 h-4 text-slate-400 absolute left-3.5 top-2.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <div className="flex flex-1 min-h-0 flex-col justify-between bg-gradient-to-b from-white to-orange-50/30 p-4 sm:p-5">
+                            {catalogFeedback && (
+                                <p
+                                    role="status"
+                                    className={`mb-3 rounded-xl border px-3 py-2 text-[11px] font-semibold ${
+                                        catalogFeedback.type === 'success'
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                            : 'border-rose-200 bg-rose-50 text-rose-700'
+                                    }`}
+                                >
+                                    {catalogFeedback.message}
+                                </p>
+                            )}
+                            <div>
+                                <label htmlFor="admin-product-search" className="mb-2 block text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-500">
+                                    Find a product
+                                </label>
+                                <div className="relative">
+                                <svg className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
+                                <input
+                                    id="admin-product-search"
+                                    type="search"
+                                    value={searchProductQuery}
+                                    onChange={(e) => setSearchProductQuery(e.target.value)}
+                                    placeholder="Try “shrimp” or “drinks”"
+                                    className="w-full rounded-xl border border-slate-200 bg-white py-3 pl-10 pr-4 text-xs font-medium text-slate-700 shadow-sm shadow-slate-900/[0.02] outline-none transition-all duration-200 placeholder:text-slate-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10 motion-reduce:transition-none"
+                                />
+                                </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar text-[11px]">
-                                {CLIENT_CATEGORIES.slice(0, 5).map((cat) => (
+                            <div className="mt-4 flex items-center justify-between gap-2">
+                                <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-500">Browse category</p>
+                                <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold tabular-nums text-slate-500 ring-1 ring-slate-200">
+                                    {filteredProducts.length} {filteredProducts.length === 1 ? 'item' : 'items'}
+                                </span>
+                            </div>
+                            <div className="mt-2 flex gap-1.5 overflow-x-auto pb-2 text-[11px]">
+                                {CLIENT_CATEGORIES.map((cat) => (
                                     <button
                                         key={cat}
+                                        type="button"
                                         onClick={() => setSelectedCategory(cat)}
-                                        className={`px-2.5 py-1 rounded-lg font-bold shrink-0 transition-all cursor-pointer ${selectedCategory === cat
-                                            ? 'bg-orange-500 text-white'
-                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                        aria-pressed={selectedCategory === cat}
+                                        className={`shrink-0 rounded-full px-3 py-1.5 font-bold transition-all duration-200 motion-reduce:transition-none ${selectedCategory === cat
+                                            ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/20'
+                                            : 'border border-slate-200 bg-white text-slate-600 hover:-translate-y-0.5 hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700'
                                             }`}
                                     >
                                         {cat}
@@ -1471,184 +1602,402 @@ const AdminDashboard: React.FC = () => {
                                 ))}
                             </div>
 
-                            <div className="space-y-1.5 max-h-[385px] overflow-y-auto pr-1 divide-y divide-slate-50 custom-scrollbar">
+                            <div className="mt-2 h-[550px] overflow-y-auto rounded-2xl border border-orange-100/70 bg-white/80 p-2 pr-1 custom-scrollbar">
                                 {filteredProducts.length === 0 ? (
-                                    <div className="text-center py-12 text-slate-400 text-xs font-medium">
-                                        No seafood products found for "{searchProductQuery}"
+                                    <div className="flex min-h-[220px] flex-col items-center justify-center px-5 text-center">
+                                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-orange-400 ring-1 ring-orange-100">
+                                            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.5-4.5m2-5.25a6.75 6.75 0 11-13.5 0 6.75 6.75 0 0113.5 0z" />
+                                            </svg>
+                                        </div>
+                                        <p className="mt-3 text-sm font-bold text-slate-800">No products found</p>
+                                        <p className="mt-1 text-xs text-slate-400">Try another search or choose a different category.</p>
                                     </div>
                                 ) : (
-                                    filteredProducts.map((item) => {
-                                        const currentPrice = getEffectivePrice(item.id, item.price)
-                                        const isCustom = currentPrice !== item.price
+                                    <div className="space-y-1.5">
+                                        {filteredProducts.map((item) => {
+                                            const currentPrice = getEffectivePrice(item.id, item.price)
+                                            const isCustom = currentPrice !== item.price
 
-                                        return (
-                                            <div
-                                                key={item.id}
-                                                onClick={() => handleSelectProduct(item)}
-                                                className="pt-2 pb-1.5 flex items-center justify-between gap-3 group cursor-pointer hover:bg-orange-50/60 p-2 rounded-2xl transition-all"
-                                            >
-                                                <div className="flex items-center gap-3 overflow-hidden">
-                                                    <div className="w-11 h-11 rounded-xl bg-orange-50 overflow-hidden shrink-0 border border-orange-100 flex items-center justify-center shadow-2xs">
-                                                        <ProductImage
-                                                            src={item.image}
-                                                            fallbackSrc={item.bundledImage}
-                                                            alt={item.name}
-                                                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200"
-                                                        />
-                                                    </div>
-                                                    <div className="truncate">
-                                                        <h4 className="text-xs font-bold text-slate-800 truncate group-hover:text-orange-600 transition-colors">
-                                                            {item.name}
-                                                        </h4>
-                                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                                            <span className="text-[10px] text-slate-400 font-semibold">{item.category}</span>
-                                                            {isCustom && (
-                                                                <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded">
-                                                                    Custom
-                                                                </span>
-                                                            )}
+                                            return (
+                                                <div
+                                                    key={item.id}
+                                                    className="group flex w-full items-center gap-2 rounded-xl border border-transparent bg-white p-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-200 hover:bg-orange-50/70 hover:shadow-sm hover:shadow-orange-900/5 motion-reduce:transform-none motion-reduce:transition-none"
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectProduct(item)}
+                                                        aria-label={`Edit ${item.name} price`}
+                                                        className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
+                                                    >
+                                                        <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 ring-1 ring-slate-200/70">
+                                                            <ProductImage
+                                                                src={item.image}
+                                                                fallbackSrc={item.bundledImage}
+                                                                alt={item.name}
+                                                                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-110"
+                                                            />
                                                         </div>
-                                                    </div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <h4 className="truncate text-xs font-extrabold text-slate-800 transition-colors group-hover:text-orange-700">
+                                                                {item.name}
+                                                            </h4>
+                                                            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+                                                                <span className="truncate text-[10px] font-semibold text-slate-400">{item.category}</span>
+                                                                {isCustom && (
+                                                                    <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-amber-800">
+                                                                        Custom
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <div className="shrink-0 text-right">
+                                                            <span className="inline-flex rounded-xl border border-orange-100 bg-orange-50 px-2.5 py-1.5 text-sm font-extrabold tabular-nums text-orange-700">
+                                                                ₱{currentPrice.toLocaleString()}
+                                                            </span>
+                                                            <p className={`mt-1 text-[10px] font-semibold ${isCustom ? 'text-amber-700' : 'text-slate-400'}`}>
+                                                                {isCustom ? `Base ₱${item.price.toLocaleString()}` : 'Edit price'}
+                                                            </p>
+                                                        </div>
+                                                        <svg className="ml-1 h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-orange-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6" />
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSelectProduct(item)}
+                                                        aria-label={`Edit ${item.name} product`}
+                                                        title="Edit product"
+                                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-orange-50 hover:text-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1"
+                                                    >
+                                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 2.651 2.651M5 19l4.2-.84L19.5 7.86a1.875 1.875 0 00-2.65-2.65L6.55 15.51 5 19z" />
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => void handleDeleteProduct(item)}
+                                                        aria-label={`Remove ${item.name} from menu`}
+                                                        title="Remove product"
+                                                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-1"
+                                                    >
+                                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16m-10 4v6m4-6v6M5 7l1 13h12l1-13M9 7V4h6v3" />
+                                                        </svg>
+                                                    </button>
                                                 </div>
-
-                                                <div className="text-right shrink-0 flex flex-col items-end">
-                                                    <span className="font-extrabold text-xs text-orange-600">
-                                                        ₱{currentPrice.toLocaleString()}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400 group-hover:text-orange-500 font-semibold flex items-center gap-0.5">
-                                                        Edit
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        )
-                                    })
+                                            )
+                                        })}
+                                    </div>
                                 )}
                             </div>
-                        </div>
 
-                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-                            <span className="text-slate-400 text-[11px]">Real-time synced with POS</span>
-                            <Link to="/pos" className="text-orange-600 hover:text-orange-700 font-bold text-[11px]">
-                                Open Cashier POS &rarr;
-                            </Link>
+                            <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-orange-100 bg-white px-3.5 py-3 shadow-sm shadow-orange-900/[0.02]">
+                                <span className="flex min-w-0 items-center gap-2">
+                                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="m5 12 4 4L19 6" />
+                                        </svg>
+                                    </span>
+                                    <span className="truncate text-[10px] font-extrabold text-slate-700">Prices sync with POS</span>
+                                </span>
+                                <span className="flex shrink-0 items-center gap-1 text-[10px] font-bold text-orange-700">
+                                    Select an item to edit
+                                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6" />
+                                    </svg>
+                                </span>
+                            </div>
                         </div>
                     </div>
 
                     {/* Bottom: Real Live Transactions Table (8 Cols) */}
-                    <div className="lg:col-span-8 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-4 flex flex-col justify-between">
-                        <div>
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-slate-100">
-                                <div>
-                                    <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                                        Order History Transactions
-                                    </h2>
-                                    <p className="text-xs text-slate-400 font-medium mt-0.5">
-                                        Customer orders placed via Cashier POS and Online Menu
-                                    </p>
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <div className="relative">
-                                        <input
-                                            type="text"
-                                            value={orderSearchQuery}
-                                            onChange={(e) => setOrderSearchQuery(e.target.value)}
-                                            placeholder="Search order ref, customer..."
-                                            className="bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs font-medium text-slate-700 placeholder:text-slate-400 focus:outline-none focus:border-orange-500 transition-all w-48"
-                                        />
+                    <div className="lg:col-span-7 flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-md shadow-slate-900/5">
+                        <div className="border-b border-orange-100 bg-gradient-to-r from-orange-50/80 via-white to-white p-5 sm:p-6">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex items-start gap-3">
+                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm shadow-orange-500/20">
+                                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8m-8 4h8m-8 4h5m-8 6h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                        </svg>
                                     </div>
-
-                                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                                        {(['All', 'POS', 'Delivery'] as const).map((tab) => (
-                                            <button
-                                                key={tab}
-                                                onClick={() => setOrderTableFilter(tab)}
-                                                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${orderTableFilter === tab
-                                                    ? 'bg-orange-500 text-white shadow-2xs'
-                                                    : 'text-slate-600 hover:bg-slate-200'
-                                                    }`}
-                                            >
-                                                {tab === 'All' ? 'All Channels' : tab === 'POS' ? 'POS Store' : 'Online Delivery'}
-                                            </button>
-                                        ))}
+                                    <div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <h2 className="text-lg font-black tracking-tight text-slate-900">Order history</h2>
+                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-1 text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">
+                                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                                                Live
+                                            </span>
+                                        </div>
+                                        <p className="mt-1 text-xs font-medium text-slate-500">
+                                            Recent orders from Cashier POS and Online Menu
+                                        </p>
                                     </div>
-
-                                    <Link
-                                        to="/admin-sales-report"
-                                        className="text-xs font-bold text-orange-600 hover:text-orange-700 flex items-center gap-1.5 ml-2"
-                                    >
-                                        View All Invoices &rarr;
-                                    </Link>
                                 </div>
+                                <Link
+                                    to="/admin-sales-report"
+                                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-white px-3.5 py-2.5 text-[11px] font-extrabold text-orange-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 motion-reduce:transition-none"
+                                >
+                                    All invoices
+                                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M7 17 17 7M7 7h10v10" />
+                                    </svg>
+                                </Link>
                             </div>
 
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="bg-slate-50 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                                            <th className="p-3.5 rounded-l-2xl">Order / Reference #</th>
-                                            <th className="p-3.5">Customer & Order Type</th>
-                                            <th className="p-3.5">Ordered Items</th>
-                                            <th className="p-3.5">Date & Time</th>
-                                            <th className="p-3.5">Payment</th>
-                                            <th className="p-3.5">Total Amount</th>
-                                            <th className="p-3.5 rounded-r-2xl text-center">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-50 text-xs font-medium text-slate-700">
-                                        {filteredOrders.length === 0 ? (
-                                            <tr>
-                                                <td colSpan={7} className="text-center py-12 text-slate-400">
-                                                    <p className="font-bold text-slate-600">No orders recorded yet for this period.</p>
-                                                    <p className="text-xs mt-0.5">Try selecting "All Time" or adjusting your date range filter.</p>
-                                                </td>
-                                            </tr>
-                                        ) : (
-                                            filteredOrders.slice(0, 10).map((tx) => (
-                                                <tr key={tx.id || tx.ref} className="hover:bg-orange-50/30 transition-colors">
-                                                    <td className="p-3.5 font-bold text-slate-900">{tx.ref || tx.id}</td>
-                                                    <td className="p-3.5">
-                                                        <span className="font-bold text-slate-800 block">{tx.customer || 'Walk-In Customer'}</span>
-                                                        <span className="text-[10px] text-slate-400">{tx.type}</span>
-                                                    </td>
-                                                    <td className="p-3.5 max-w-xs truncate text-slate-700" title={tx.items}>
-                                                        {tx.items || 'Seafood Dish'}
-                                                    </td>
-                                                    <td className="p-3.5 text-slate-500 text-[11px]">{tx.dateTime}</td>
-                                                    <td className="p-3.5 font-bold">
-                                                        <span className={`px-2.5 py-1 rounded-full text-[10px] ${(tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                            ? 'bg-blue-50 text-blue-600 border border-blue-200'
-                                                            : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-                                                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                                            }`}>
-                                                            {tx.paymentMethod || 'Cash'}
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-3.5 font-extrabold text-orange-600">
-                                                        ₱{Number(tx.total || 0).toLocaleString()}
-                                                    </td>
-                                                    <td className="p-3.5 text-center">
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-600 border border-emerald-200">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                                                            {tx.status || 'Completed'}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))
-                                        )}
-                                    </tbody>
-                                </table>
+                            <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center">
+                                <div className="relative min-w-0 flex-1">
+                                    <svg className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                    <input
+                                        type="search"
+                                        value={orderSearchQuery}
+                                        onChange={(e) => setOrderSearchQuery(e.target.value)}
+                                        placeholder="Search reference, customer, or item"
+                                        aria-label="Search order history"
+                                        className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-xs font-medium text-slate-700 shadow-sm shadow-slate-900/[0.02] outline-none transition-all duration-200 placeholder:text-slate-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10 motion-reduce:transition-none"
+                                    />
+                                </div>
+
+                                <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm shadow-slate-900/[0.02]">
+                                    {(['All', 'POS', 'Delivery'] as const).map((tab) => (
+                                        <button
+                                            key={tab}
+                                            type="button"
+                                            onClick={() => setOrderTableFilter(tab)}
+                                            aria-pressed={orderTableFilter === tab}
+                                            className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-extrabold transition-all duration-200 motion-reduce:transition-none ${orderTableFilter === tab
+                                                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/20'
+                                                : 'text-slate-500 hover:bg-orange-50 hover:text-orange-700'
+                                                }`}
+                                        >
+                                            {tab === 'All' ? 'All channels' : tab === 'POS' ? 'POS store' : 'Delivery'}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-100 flex justify-between items-center text-xs text-slate-400">
-                            <span>Showing recent transactions</span>
-                            <span className="font-bold text-slate-600">Period Orders: {filteredOrders.length}</span>
+                        <div className="flex-1 px-4 pb-3 pt-4 sm:px-5">
+                            <div className="overflow-hidden rounded-2xl border border-slate-200">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[860px] border-collapse text-left">
+                                        <thead>
+                                            <tr className="border-b border-orange-100 bg-orange-50/70 text-[10px] font-extrabold uppercase tracking-wider text-orange-800">
+                                                <th className="px-4 py-3.5">Reference</th>
+                                                <th className="px-4 py-3.5">Customer / channel</th>
+                                                <th className="px-4 py-3.5">Items</th>
+                                                <th className="px-4 py-3.5">Date & time</th>
+                                                <th className="px-4 py-3.5">Payment</th>
+                                                <th className="px-4 py-3.5 text-right">Total</th>
+                                                <th className="px-4 py-3.5 text-center">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
+                                            {filteredOrders.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={7} className="px-5 py-14 text-center">
+                                                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-orange-400 ring-1 ring-orange-100">
+                                                            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8m-8 4h8m-8 4h5m-8 6h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                                            </svg>
+                                                        </div>
+                                                        <p className="mt-3 font-extrabold text-slate-800">No matching orders</p>
+                                                        <p className="mt-1 text-[11px] text-slate-400">Try changing the search or selecting another channel.</p>
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                filteredOrders.slice(0, 10).map((tx) => (
+                                                    <tr key={tx.id || tx.ref} className="transition-colors duration-150 hover:bg-orange-50/50">
+                                                        <td className="px-4 py-3.5">
+                                                            <span className="inline-flex rounded-lg bg-slate-100 px-2.5 py-1.5 font-mono text-[10px] font-bold text-slate-700">
+                                                                {tx.ref || tx.id}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3.5">
+                                                            <span className="block max-w-[150px] truncate font-bold text-slate-800" title={tx.customer || 'Walk-In Customer'}>
+                                                                {tx.customer || 'Walk-In Customer'}
+                                                            </span>
+                                                            <span className="mt-1 inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-[9px] font-bold text-orange-700">
+                                                                {tx.type}
+                                                            </span>
+                                                        </td>
+                                                        <td className="max-w-[190px] truncate px-4 py-3.5 text-slate-600" title={tx.items}>
+                                                            {tx.items || 'Seafood Dish'}
+                                                        </td>
+                                                        <td className="whitespace-nowrap px-4 py-3.5 text-[10px] text-slate-500">{tx.dateTime}</td>
+                                                        <td className="px-4 py-3.5">
+                                                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-extrabold ${(tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                                ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                                    : 'border-amber-200 bg-amber-50 text-amber-800'
+                                                                }`}>
+                                                                {tx.paymentMethod || 'Cash'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="whitespace-nowrap px-4 py-3.5 text-right font-extrabold tabular-nums text-orange-700">
+                                                            ₱{Number(tx.total || 0).toLocaleString()}
+                                                        </td>
+                                                        <td className="px-4 py-3.5 text-center">
+                                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-extrabold text-emerald-700">
+                                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                                                {tx.status || 'Completed'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3.5 text-[10px]">
+                            <span className="font-medium text-slate-500">
+                                Showing <strong className="font-extrabold text-slate-700">{Math.min(filteredOrders.length, 10)}</strong> of {filteredOrders.length} orders
+                            </span>
+                            <span className="rounded-full border border-orange-100 bg-white px-3 py-1.5 font-extrabold text-orange-700">
+                                Orders in period: {filteredOrders.length}
+                            </span>
                         </div>
                     </div>
                 </div>
             </div>
+
+            {isAddProductOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+                    onClick={() => !isSavingProduct && setIsAddProductOpen(false)}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="add-product-title"
+                        className="w-full max-w-lg space-y-5 rounded-3xl border border-orange-100 bg-white p-6 shadow-2xl"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-orange-100 text-orange-600">
+                                    <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m-7-7h14" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h2 id="add-product-title" className="text-lg font-black text-slate-900">Add a product</h2>
+                                    <p className="mt-0.5 text-xs text-slate-500">Add a new item to the menu and POS.</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsAddProductOpen(false)}
+                                disabled={isSavingProduct}
+                                aria-label="Close add product form"
+                                className="rounded-lg p-1 text-xl font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                            >
+                                &times;
+                            </button>
+                        </div>
+
+                        <form onSubmit={(event) => void handleCreateProduct(event)} className="space-y-4">
+                            <div>
+                                <label htmlFor="new-product-name" className="mb-1.5 block text-xs font-bold text-slate-700">Product name</label>
+                                <input
+                                    id="new-product-name"
+                                    type="text"
+                                    value={newProductName}
+                                    onChange={(event) => setNewProductName(event.target.value)}
+                                    maxLength={255}
+                                    autoFocus
+                                    required
+                                    placeholder="e.g. Garlic Butter Crab"
+                                    className="w-full rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label htmlFor="new-product-category" className="mb-1.5 block text-xs font-bold text-slate-700">Category</label>
+                                    <select
+                                        id="new-product-category"
+                                        value={newProductCategory}
+                                        onChange={(event) => setNewProductCategory(event.target.value)}
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10"
+                                    >
+                                        {CLIENT_CATEGORIES.filter((category) => category !== 'All Menu').map((category) => (
+                                            <option key={category} value={category}>{category}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="new-product-price" className="mb-1.5 block text-xs font-bold text-slate-700">Selling price</label>
+                                    <div className="relative">
+                                        <span className="absolute left-3.5 top-2.5 text-sm font-bold text-orange-600">₱</span>
+                                        <input
+                                            id="new-product-price"
+                                            type="number"
+                                            min="0"
+                                            max="99999999.99"
+                                            step="0.01"
+                                            value={newProductPrice}
+                                            onChange={(event) => setNewProductPrice(event.target.value)}
+                                            required
+                                            placeholder="0.00"
+                                            className="w-full rounded-xl border border-slate-200 py-2.5 pl-8 pr-3.5 text-sm font-bold text-slate-800 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label htmlFor="new-product-description" className="mb-1.5 block text-xs font-bold text-slate-700">
+                                    Description <span className="font-medium text-slate-400">(optional)</span>
+                                </label>
+                                <textarea
+                                    id="new-product-description"
+                                    value={newProductDescription}
+                                    onChange={(event) => setNewProductDescription(event.target.value)}
+                                    maxLength={2000}
+                                    rows={3}
+                                    placeholder="Describe the product for your menu."
+                                    className="w-full resize-y rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10"
+                                />
+                            </div>
+
+                            <p className="rounded-xl bg-orange-50 px-3.5 py-2.5 text-[11px] leading-relaxed text-orange-800">
+                                After adding the product, select it in the catalog to upload a product photo.
+                            </p>
+
+                            {productFormError && (
+                                <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">
+                                    {productFormError}
+                                </p>
+                            )}
+
+                            <div className="flex gap-2 border-t border-slate-100 pt-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsAddProductOpen(false)}
+                                    disabled={isSavingProduct}
+                                    className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isSavingProduct}
+                                    className="flex-1 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-orange-500/20 transition-all hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {isSavingProduct ? 'Adding product…' : 'Add product'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
 
             {/* Interactive Product Details & Live Price Editor Modal */}
             {isPriceEditOpen && selectedProduct && (

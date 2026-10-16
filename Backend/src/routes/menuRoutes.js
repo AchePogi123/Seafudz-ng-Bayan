@@ -47,7 +47,7 @@ router.get('/menu', async (req, res) => {
       SELECT p.*, c.name AS category
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE 1=1
+      WHERE p.is_active = TRUE
     `;
     const params = [];
     let paramIndex = 1;
@@ -107,6 +107,92 @@ router.get('/menu', async (req, res) => {
   }
 });
 
+router.post('/menu', requireAuth, requireActiveAdmin, async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const description = typeof req.body?.description === 'string' ? req.body.description.trim() : '';
+  const category = typeof req.body?.category === 'string' ? req.body.category.trim() : '';
+  const price = Number(req.body?.price);
+
+  if (!name || name.length > 255) {
+    return res.status(400).json({ success: false, message: 'Product name is required and must be 255 characters or fewer.' });
+  }
+  if (!category || category.length > 100) {
+    return res.status(400).json({ success: false, message: 'A valid product category is required.' });
+  }
+  if (!Number.isFinite(price) || price < 0 || price > 99999999.99) {
+    return res.status(400).json({ success: false, message: 'Price must be a valid amount between 0 and 99,999,999.99.' });
+  }
+  if (description.length > 2000) {
+    return res.status(400).json({ success: false, message: 'Product description must be 2,000 characters or fewer.' });
+  }
+
+  const slug = name
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60) || 'product';
+  const id = `custom-${slug}-${randomUUID().slice(0, 8)}`;
+
+  try {
+    const { rows } = await query(
+      `WITH product_category AS (
+         INSERT INTO categories (name)
+         VALUES ($1)
+         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id
+       )
+       INSERT INTO products (id, category_id, name, description, price)
+       SELECT $2, id, $3, $4, $5
+       FROM product_category
+       RETURNING id, name, description, price, image, is_available`,
+      [category, id, name, description || null, price]
+    );
+
+    const product = { ...rows[0], category, image: getProductImageUrl(rows[0].image) };
+    realtimeEmitter.emit('order_update', {
+      type: 'PRODUCT_CATALOG_CHANGED',
+      product,
+      timestamp: Date.now(),
+    });
+    return res.status(201).json({ success: true, data: product });
+  } catch (error) {
+    console.error('Error creating menu item:', error);
+    return res.status(500).json({ success: false, message: 'Failed to create product.' });
+  }
+});
+
+router.delete('/menu/:id', requireAuth, requireActiveAdmin, async (req, res) => {
+  const productId = req.params.id;
+  if (!/^[a-z0-9-]{1,100}$/i.test(productId)) {
+    return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE products
+       SET is_active = FALSE, is_available = FALSE, updated_at = NOW()
+       WHERE id = $1 AND is_active = TRUE
+       RETURNING id, name`,
+      [productId]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    realtimeEmitter.emit('order_update', {
+      type: 'PRODUCT_CATALOG_CHANGED',
+      productId: String(rows[0].id),
+      timestamp: Date.now(),
+    });
+    return res.status(200).json({ success: true, data: rows[0] });
+  } catch (error) {
+    console.error('Error archiving menu item:', error);
+    return res.status(500).json({ success: false, message: 'Failed to remove product from the menu.' });
+  }
+});
+
 // GET /api/menu/:id - Get single menu item by ID
 router.get('/menu/:id', async (req, res) => {
   try {
@@ -115,7 +201,7 @@ router.get('/menu/:id', async (req, res) => {
       SELECT p.*, c.name AS category
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.id = $1
+      WHERE p.id = $1 AND p.is_active = TRUE
     `;
     const { rows } = await query(sql, [id]);
 
@@ -325,7 +411,7 @@ router.get('/categories', async (req, res) => {
     const sql = `
       SELECT c.id, c.name, COUNT(p.id)::int AS "itemCount"
       FROM categories c
-      LEFT JOIN products p ON c.id = p.category_id
+      LEFT JOIN products p ON c.id = p.category_id AND p.is_active = TRUE
       GROUP BY c.id, c.name
       ORDER BY c.id ASC
     `;

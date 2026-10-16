@@ -57,6 +57,23 @@ test('image routes run authentication and active Admin authorization before pars
   );
 });
 
+test('product catalog mutations require authentication and active Admin authorization', () => {
+  const createRoute = menuRoutes.stack.find((layer) =>
+    layer.route?.path === '/menu' && layer.route.methods.post
+  );
+  const archiveRoute = menuRoutes.stack.find((layer) =>
+    layer.route?.path === '/menu/:id' && layer.route.methods.delete
+  );
+  assert.deepEqual(
+    createRoute.route.stack.slice(0, 2).map((layer) => layer.handle.name),
+    ['requireAuth', 'requireActiveAdmin'],
+  );
+  assert.deepEqual(
+    archiveRoute.route.stack.slice(0, 2).map((layer) => layer.handle.name),
+    ['requireAuth', 'requireActiveAdmin'],
+  );
+});
+
 test('availability route requires authenticated Kitchen or Admin role checks', () => {
   const route = menuRoutes.stack.find((layer) =>
     layer.route?.path === '/menu/:id/availability' && layer.route.methods.patch

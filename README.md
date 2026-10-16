@@ -9,7 +9,7 @@
 - **Frontend:** React, TypeScript, Vite, Tailwind CSS (Hosted on **Firebase Hosting**)
 - **Backend:** Node.js, Express (Containerized & Deployed to **GCP Cloud Run**)
 - **Database:** PostgreSQL (Production: **GCP Cloud SQL**, Local Dev: **Docker Desktop**)
-- **Email Service:** Resend API (6-digit OTP verification & Password Reset links)
+- **Email Service:** Resend API (6-digit OTP verification, password resets, & staff activation links)
 - **Real-Time Engine:** Hybrid 3-tier sync (`BroadcastChannel`, local event bus, storage events, and automated 8s HTTP polling)
 - **CI/CD Pipeline:** Google Cloud Build
 
@@ -18,6 +18,7 @@
 ## ✨ Key Platform Features
 
 - 🔐 **Flexible Authentication**: Log in using **Email** or **Username** (with username editing in profile settings).
+- ✉️ **Staff Account Activation**: Admin-created staff accounts stay pending until a single-use email link is completed.
 - 📧 **6-Digit OTP Email Verification**: Verifies new registration emails via Resend API.
 - 🔑 **Persistent Password Reset (`/reset-password`)**: Secure token reset links with 5-minute expiry, backed by PostgreSQL `password_resets`.
 - ⚡ **Automated Real-Time Order Sync**: Cross-device, zero-config real-time synchronization between Customer, POS, Kitchen KDS, Rider, and Admin views.
@@ -62,7 +63,11 @@
    DB_USER=postgres
    DB_PASSWORD=postgrespassword
    DB_NAME=seafudz_db
+   RESEND_API_KEY=your-resend-api-key
+   RESEND_FROM_EMAIL="Seafudz ng Bayan <noreply@your-verified-sender-domain>"
+   FRONTEND_BASE_URL=http://localhost:5173
    ```
+   Configure `RESEND_API_KEY`, a verified `RESEND_FROM_EMAIL`, and the deployed HTTPS `FRONTEND_BASE_URL` in the backend environment for production staff invitations. Backend startup applies the staff activation database migration.
 3. Install dependencies and start the development server:
    ```bash
    npm install
@@ -118,4 +123,3 @@ Seafudz-ng-Bayan/
 | **Backend** | `cd Backend && node server.js` | Start local Express API server |
 | **Frontend** | `cd Frontend && npm run dev` | Start local React dev server |
 | **Deploy FE** | `firebase deploy` | Deploy frontend to Firebase Hosting |
-

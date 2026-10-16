@@ -14,6 +14,7 @@ import Login from './features/Login'
 import ResetPassword from './features/ResetPassword'
 import AboutUs from './features/AboutUs'
 import UserManagement from './features/UserManagement'
+import ActivateStaffAccount from './features/ActivateStaffAccount'
 import ProtectedRoute from './components/ProtectedRoute'
 
 function App() {
@@ -33,6 +34,8 @@ function App() {
         <Route path="/dashboard" element={<LandingPage />} />
 
         <Route path="/login" element={<Login />} />
+
+        <Route path="/activate-account" element={<ActivateStaffAccount />} />
 
         <Route path="/reset-password" element={<ResetPassword />} />
 

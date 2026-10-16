@@ -1,15 +1,81 @@
 import { Router } from 'express';
 import crypto from 'crypto';
-import { query } from '../config/db.js';
+import { getDbPool, query } from '../config/db.js';
 import { supabase } from '../config/supabase.js';
-import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { activationLimiter } from '../middleware/rateLimiter.js';
+import { requireActiveAdmin, requireAuth } from '../middleware/authMiddleware.js';
 import { generateSessionHashToken, verifySessionHashToken } from '../cryptography/index.js';
+import { hashPassword, verifyPassword } from '../cryptography/passwordHash.js';
+import {
+  createStaffActivationToken,
+  hashStaffActivationToken,
+  isValidStaffActivationToken,
+  isStaffLoginEligible,
+  isValidStaffUsername,
+} from '../cryptography/staffActivation.js';
+import { sendEmail } from '../services/emailService.js';
 
 const router = Router();
 
-function hashPassword(pwd) {
-  if (!pwd) return null;
-  return crypto.createHash('sha256').update(pwd + 'seafudz_salt_2026').digest('hex');
+function staffActivationLink(token) {
+  const configuredBase = process.env.FRONTEND_BASE_URL?.trim();
+  const baseUrl = configuredBase || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173');
+  if (!baseUrl) throw new Error('FRONTEND_BASE_URL is required for staff activation emails.');
+
+  const frontendUrl = new URL(baseUrl);
+  if (!['http:', 'https:'].includes(frontendUrl.protocol)) {
+    throw new Error('FRONTEND_BASE_URL must use HTTP or HTTPS.');
+  }
+  if (process.env.NODE_ENV === 'production' && frontendUrl.protocol !== 'https:') {
+    throw new Error('FRONTEND_BASE_URL must use HTTPS in production.');
+  }
+  return `${frontendUrl.origin}/activate-account#token=${encodeURIComponent(token)}`;
+}
+
+async function sendStaffActivationEmail(email, token) {
+  const activationLink = staffActivationLink(token);
+  await sendEmail({
+    to: email,
+    subject: 'Activate your Seafudz ng Bayan staff account',
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 28px; color: #2d3748; max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; background: #ffffff;">
+        <h2 style="color: #e74c3c; text-align: center; margin: 0 0 20px;">Seafudz ng Bayan</h2>
+        <h3 style="text-align: center; margin: 0 0 16px;">Activate your staff account</h3>
+        <p style="font-size: 14px; line-height: 1.6; color: #4a5568;">Your administrator created a staff account for you. Set your username and password to activate it.</p>
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${activationLink}" style="background: #e74c3c; color: #fff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-weight: bold; display: inline-block;">Set up account</a>
+        </div>
+        <p style="font-size: 12px; color: #718096;">This one-time link expires in 72 hours. If you were not expecting this invitation, you can ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+async function lockUsername(client, username) {
+  await client.query('SELECT pg_advisory_xact_lock(hashtext(LOWER($1)))', [username]);
+}
+
+async function findAvailableUsername(client, requestedUsername, fullname) {
+  const generated = fullname
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 32) || 'staff.user';
+  const base = (requestedUsername || generated).trim();
+  if (!isValidStaffUsername(base)) return null;
+
+  for (let suffix = 0; suffix < 1000; suffix += 1) {
+    const suffixText = suffix === 0 ? '' : `.${suffix}`;
+    const candidate = `${base.slice(0, 32 - suffixText.length)}${suffixText}`;
+    await lockUsername(client, candidate);
+    const { rows } = await client.query(
+      'SELECT 1 FROM employees WHERE LOWER(username) = LOWER($1) LIMIT 1',
+      [candidate]
+    );
+    if (rows.length === 0) return candidate;
+  }
+  return null;
 }
 
 /**
@@ -67,10 +133,10 @@ router.get('/auth/me', requireAuth, async (req, res) => {
  * GET /api/users
  * Returns list of all employee staff profiles for management dashboard
  */
-router.get('/users', async (req, res) => {
+router.get('/users', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const sql = `
-      SELECT id, supabase_user_id, fullname, username, email, phone, role, is_active, created_at
+      SELECT id, supabase_user_id, fullname, username, email, phone, role, is_active, activation_status, created_at
       FROM employees
       ORDER BY created_at ASC
     `;
@@ -84,7 +150,7 @@ router.get('/users', async (req, res) => {
       email: emp.email,
       contact: emp.phone || '-',
       role: emp.role === 'kitchen' ? 'Kitchen Staff' : emp.role.charAt(0).toUpperCase() + emp.role.slice(1),
-      status: emp.is_active ? 'active' : 'inactive',
+      status: emp.activation_status === 'pending' ? 'pending' : emp.is_active ? 'active' : 'inactive',
     }));
 
     return res.status(200).json({
@@ -106,85 +172,301 @@ router.get('/users', async (req, res) => {
  * POST /api/users
  * Persists a newly created staff employee user into PostgreSQL database
  */
-router.post('/users', async (req, res) => {
-  try {
-    const { id, name, username, email, contact, phone, role } = req.body;
-    const cleanName = (name || '').trim();
-    const cleanUsername = (username || '').trim();
-    const rawRole = (role || 'cashier').toString().trim().toLowerCase();
-    const cleanContact = (contact || phone || '').trim();
+router.post('/users', requireAuth, requireActiveAdmin, async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const contact = typeof req.body?.contact === 'string'
+    ? req.body.contact.trim()
+    : typeof req.body?.phone === 'string'
+      ? req.body.phone.trim()
+      : '';
+  const roleMap = new Map([
+    ['admin', 'admin'],
+    ['cashier', 'cashier'],
+    ['assistant', 'assistant'],
+    ['kitchen', 'kitchen'],
+    ['kitchen staff', 'kitchen'],
+    ['rider', 'rider'],
+  ]);
+  const role = roleMap.get(typeof req.body?.role === 'string' ? req.body.role.trim().toLowerCase() : '');
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!cleanName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Name is required to save employee user.',
-      });
+  if (!name || name.length > 255) {
+    return res.status(400).json({ success: false, message: 'A valid staff name is required.' });
+  }
+  if (!emailPattern.test(email) || email.length > 255) {
+    return res.status(400).json({ success: false, message: 'A valid staff email address is required.' });
+  }
+  if (!role) {
+    return res.status(400).json({ success: false, message: 'A valid staff role is required.' });
+  }
+  if (username && !isValidStaffUsername(username)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Username must be 3–32 characters and use only letters, numbers, dots, underscores, or hyphens.',
+    });
+  }
+
+  const { token, tokenHash, expiresAt } = createStaffActivationToken();
+  let client;
+  let employee;
+  try {
+    client = await (await getDbPool()).connect();
+    await client.query('BEGIN');
+    const existingEmail = await client.query(
+      'SELECT 1 FROM employees WHERE LOWER(email) = $1 UNION ALL SELECT 1 FROM customers WHERE LOWER(email) = $1 LIMIT 1',
+      [email]
+    );
+    if (existingEmail.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'An account with this email address already exists.' });
     }
 
-    // Role mapping to fit DB CHECK constraint: ('admin', 'cashier', 'assistant', 'kitchen', 'rider')
-    let dbRole = 'cashier';
-    if (rawRole.includes('admin')) dbRole = 'admin';
-    else if (rawRole.includes('kitchen')) dbRole = 'kitchen';
-    else if (rawRole.includes('rider')) dbRole = 'rider';
-    else if (rawRole.includes('assistant')) dbRole = 'assistant';
-    else if (rawRole.includes('cashier')) dbRole = 'cashier';
+    const availableUsername = await findAvailableUsername(client, username, name);
+    if (!availableUsername) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'Could not generate an available username.' });
+    }
 
-    // Unique fallback for username and email if blank
-    const fallbackUsername = cleanUsername || (cleanName.replace(/\s+/g, '.').toLowerCase() + Math.floor(100 + Math.random() * 900));
-    const cleanEmail = (email || '').trim().toLowerCase() || `${fallbackUsername.replace(/[^a-zA-Z0-9._-]/g, '')}@seafudz.ph`;
+    const { rows } = await client.query(
+      `INSERT INTO employees (
+         fullname, username, email, phone, role, is_active, activation_status,
+         activation_token_hash, activation_expires_at
+       )
+       VALUES ($1, $2, $3, $4, $5, FALSE, 'pending', $6, $7)
+       RETURNING id, fullname, username, email, phone, role, is_active, activation_status, created_at`,
+      [name, availableUsername, email, contact || null, role, tokenHash, expiresAt]
+    );
+    employee = rows[0];
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Error creating pending staff account:', error);
+    return res.status(error.code === '23505' ? 409 : 500).json({
+      success: false,
+      message: error.code === '23505'
+        ? 'An account with this email or username already exists.'
+        : 'Failed to create staff account.',
+    });
+  } finally {
+    client?.release();
+  }
 
-    const sql = `
-      INSERT INTO employees (fullname, username, email, phone, role, is_active)
-      VALUES ($1, $2, $3, $4, $5, true)
-      ON CONFLICT (email) DO UPDATE SET
-        fullname = EXCLUDED.fullname,
-        username = EXCLUDED.username,
-        phone = COALESCE(EXCLUDED.phone, employees.phone),
-        role = EXCLUDED.role,
-        is_active = true,
-        updated_at = NOW()
-      RETURNING id, fullname, username, email, phone, role, is_active, created_at
-    `;
+  let activationEmailSent = false;
+  try {
+    await sendStaffActivationEmail(employee.email, token);
+    activationEmailSent = true;
+  } catch (error) {
+    console.warn('Staff activation email could not be delivered:', error.message);
+  }
 
-    const { rows } = await query(sql, [
-      cleanName,
-      fallbackUsername,
-      cleanEmail,
-      cleanContact || null,
-      dbRole,
-    ]);
+  return res.status(201).json({
+    success: true,
+    message: activationEmailSent
+      ? 'Staff account created. Activation email sent.'
+      : 'Staff account created pending activation, but the email could not be sent. Resend it from the user list.',
+    activationEmailSent,
+    data: {
+      id: req.body?.id || employee.id,
+      db_id: employee.id,
+      name: employee.fullname,
+      username: employee.username,
+      email: employee.email,
+      contact: employee.phone || '-',
+      role: employee.role === 'kitchen' ? 'Kitchen Staff' : employee.role.charAt(0).toUpperCase() + employee.role.slice(1),
+      status: 'pending',
+    },
+  });
+});
 
-    const emp = rows[0];
+router.post('/users/:id/resend-activation', requireAuth, requireActiveAdmin, async (req, res) => {
+  const { id } = req.params;
+  let client;
+  let employee;
+  const { token, tokenHash, expiresAt } = createStaffActivationToken();
 
-    return res.status(201).json({
+  try {
+    client = await (await getDbPool()).connect();
+    await client.query('BEGIN');
+    const existing = await client.query(
+      `SELECT id, email, activation_status
+       FROM employees
+       WHERE (id::text = $1 OR username = $1 OR email = $1)
+       FOR UPDATE`,
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, message: 'Staff account not found.' });
+    }
+    if (existing.rows[0].activation_status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'Only pending accounts can receive activation emails.' });
+    }
+
+    const updated = await client.query(
+      `UPDATE employees
+       SET activation_token_hash = $1, activation_expires_at = $2, updated_at = NOW()
+       WHERE id = $3 AND activation_status = 'pending'
+       RETURNING id, email`,
+      [tokenHash, expiresAt, existing.rows[0].id]
+    );
+    employee = updated.rows[0];
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Could not refresh staff activation token:', error);
+    return res.status(500).json({ success: false, message: 'Could not resend activation email.' });
+  } finally {
+    client?.release();
+  }
+
+  try {
+    await sendStaffActivationEmail(employee.email, token);
+    return res.status(200).json({ success: true, message: 'A new activation email was sent.' });
+  } catch (error) {
+    console.warn('Staff activation resend failed:', error.message);
+    return res.status(502).json({
+      success: false,
+      message: 'The activation link was refreshed, but the email could not be sent. Please try again.',
+    });
+  }
+});
+
+router.post('/auth/staff-activation/validate', activationLimiter, async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!isValidStaffActivationToken(token)) {
+    return res.status(400).json({ success: false, message: 'This activation link is invalid or expired.' });
+  }
+
+  try {
+    const { rows } = await query(
+      `SELECT fullname, username, email, role
+       FROM employees
+       WHERE activation_token_hash = $1
+         AND activation_status = 'pending'
+         AND activation_expires_at > NOW()`,
+      [hashStaffActivationToken(token)]
+    );
+    if (rows.length === 0) {
+      return res.status(400).json({ success: false, message: 'This activation link is invalid or expired.' });
+    }
+
+    const employee = rows[0];
+    return res.status(200).json({
       success: true,
-      message: `Employee ${emp.fullname} saved to database successfully`,
       data: {
-        id: id || emp.id,
-        db_id: emp.id,
-        name: emp.fullname,
-        username: emp.username,
-        email: emp.email,
-        contact: emp.phone || '-',
-        role: role || emp.role,
-        status: emp.is_active ? 'active' : 'inactive',
+        name: employee.fullname,
+        username: employee.username,
+        email: employee.email,
+        role: employee.role === 'kitchen' ? 'Kitchen Staff' : employee.role.charAt(0).toUpperCase() + employee.role.slice(1),
       },
     });
   } catch (error) {
-    console.error('Error saving employee user to database:', error);
-    return res.status(500).json({
+    console.error('Could not validate staff activation link:', error);
+    return res.status(500).json({ success: false, message: 'Could not validate this activation link.' });
+  }
+});
+
+router.post('/auth/staff-activation/complete', activationLimiter, async (req, res) => {
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  if (!isValidStaffActivationToken(token)) {
+    return res.status(400).json({ success: false, message: 'This activation link is invalid or expired.' });
+  }
+  if (!isValidStaffUsername(username)) {
+    return res.status(400).json({
       success: false,
-      message: 'Failed to save employee user to database',
-      error: error.message,
+      message: 'Username must be 3–32 characters and use only letters, numbers, dots, underscores, or hyphens.',
     });
   }
+  if (password.length < 12 || password.length > 128) {
+    return res.status(400).json({ success: false, message: 'Password must be between 12 and 128 characters.' });
+  }
+
+  const tokenHash = hashStaffActivationToken(token);
+  const passwordHash = await hashPassword(password);
+  let client;
+  let employee;
+  try {
+    client = await (await getDbPool()).connect();
+    await client.query('BEGIN');
+    const pending = await client.query(
+      `SELECT id
+       FROM employees
+       WHERE activation_token_hash = $1
+         AND activation_status = 'pending'
+         AND activation_expires_at > NOW()
+       FOR UPDATE`,
+      [tokenHash]
+    );
+    if (pending.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'This activation link is invalid or expired.' });
+    }
+
+    const employeeId = pending.rows[0].id;
+    await lockUsername(client, username);
+    const conflict = await client.query(
+      'SELECT 1 FROM employees WHERE LOWER(username) = LOWER($1) AND id <> $2 LIMIT 1',
+      [username, employeeId]
+    );
+    if (conflict.rows.length > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, message: 'That username is already taken. Please choose another.' });
+    }
+
+    const updated = await client.query(
+      `UPDATE employees
+       SET username = $1,
+           password_hash = $2,
+           is_active = TRUE,
+           activation_status = 'active',
+           activation_token_hash = NULL,
+           activation_expires_at = NULL,
+           activated_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $3
+         AND activation_token_hash = $4
+         AND activation_status = 'pending'
+         AND activation_expires_at > NOW()
+       RETURNING fullname, username, email, role`,
+      [username, passwordHash, employeeId, tokenHash]
+    );
+    if (updated.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, message: 'This activation link is invalid or expired.' });
+    }
+    employee = updated.rows[0];
+    await client.query('COMMIT');
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Could not activate staff account:', error);
+    return res.status(500).json({ success: false, message: 'Could not activate this account.' });
+  } finally {
+    client?.release();
+  }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Your staff account is active. You can now sign in.',
+    data: {
+      name: employee.fullname,
+      username: employee.username,
+      email: employee.email,
+      role: employee.role,
+    },
+  });
 });
 
 /**
  * PATCH /api/users/:id/toggle-status
  * Updates employee active/inactive status in PostgreSQL database
  */
-router.patch('/users/:id/toggle-status', async (req, res) => {
+router.patch('/users/:id/toggle-status', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -192,11 +474,18 @@ router.patch('/users/:id/toggle-status', async (req, res) => {
 
     const sql = `
       UPDATE employees
-      SET is_active = $1, updated_at = NOW()
-      WHERE id::text = $2 OR username = $2 OR email = $2 OR fullname = $2
-      RETURNING id, fullname, is_active
+      SET is_active = $1,
+          activation_status = CASE WHEN $1 THEN 'active' ELSE 'inactive' END,
+          updated_at = NOW()
+      WHERE (id::text = $2 OR username = $2 OR email = $2 OR fullname = $2)
+        AND activation_status <> 'pending'
+      RETURNING id, fullname, is_active, activation_status
     `;
     const { rows } = await query(sql, [isActive, id]);
+
+    if (rows.length === 0) {
+      return res.status(409).json({ success: false, message: 'Pending accounts must be activated through their email link.' });
+    }
 
     return res.status(200).json({
       success: true,
@@ -215,7 +504,7 @@ router.patch('/users/:id/toggle-status', async (req, res) => {
  * PUT /api/users/:id
  * Updates an employee staff profile (fullname, username, email, phone, role) in PostgreSQL database
  */
-router.put('/users/:id', async (req, res) => {
+router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, username, email, contact, phone, role } = req.body;
@@ -229,6 +518,25 @@ router.put('/users/:id', async (req, res) => {
         success: false,
         message: 'Name cannot be empty',
       });
+    }
+    if (cleanUsername && !isValidStaffUsername(cleanUsername)) {
+      return res.status(400).json({ success: false, message: 'Username must be 3–32 valid characters.' });
+    }
+    if (cleanUsername) {
+      const ownUser = await query(
+        'SELECT id FROM employees WHERE id::text = $1 OR username = $1 OR email = $1 LIMIT 1',
+        [id]
+      );
+      if (ownUser.rows.length === 0) {
+        return res.status(404).json({ success: false, message: 'Employee record not found for update.' });
+      }
+      const usernameConflict = await query(
+        'SELECT 1 FROM employees WHERE LOWER(username) = LOWER($1) AND id <> $2 LIMIT 1',
+        [cleanUsername, ownUser.rows[0].id]
+      );
+      if (usernameConflict.rows.length > 0) {
+        return res.status(409).json({ success: false, message: 'That username is already taken.' });
+      }
     }
 
     let dbRole = null;
@@ -249,9 +557,17 @@ router.put('/users/:id', async (req, res) => {
         email = COALESCE(NULLIF($3, ''), email),
         phone = COALESCE(NULLIF($4, ''), phone),
         role = COALESCE($5, role),
+        activation_token_hash = CASE
+          WHEN activation_status = 'pending' AND LOWER(COALESCE(NULLIF($3, ''), email)) <> LOWER(email) THEN NULL
+          ELSE activation_token_hash
+        END,
+        activation_expires_at = CASE
+          WHEN activation_status = 'pending' AND LOWER(COALESCE(NULLIF($3, ''), email)) <> LOWER(email) THEN NULL
+          ELSE activation_expires_at
+        END,
         updated_at = NOW()
-      WHERE id::text = $6 OR username = $6 OR email = $6 OR fullname = $6
-      RETURNING id, fullname, username, email, phone, role, is_active
+      WHERE id::text = $6 OR username = $6 OR email = $6
+      RETURNING id, fullname, username, email, phone, role, is_active, activation_status
     `;
 
     const { rows } = await query(sql, [
@@ -282,7 +598,7 @@ router.put('/users/:id', async (req, res) => {
         email: emp.email,
         contact: emp.phone || '-',
         role: emp.role === 'kitchen' ? 'Kitchen Staff' : emp.role.charAt(0).toUpperCase() + emp.role.slice(1),
-        status: emp.is_active ? 'active' : 'inactive',
+        status: emp.activation_status === 'pending' ? 'pending' : emp.is_active ? 'active' : 'inactive',
       },
     });
   } catch (error) {
@@ -299,7 +615,7 @@ router.put('/users/:id', async (req, res) => {
  * DELETE /api/users/:id
  * Permanently deletes a user/employee from PostgreSQL (employees, customers) and Supabase Auth
  */
-router.delete('/users/:id', async (req, res) => {
+router.delete('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -328,16 +644,6 @@ router.delete('/users/:id', async (req, res) => {
       } catch (sErr) {
         console.warn('Supabase Admin deleteUser note:', sErr.message);
       }
-    } else if (targetEmail) {
-      try {
-        const { data: usersData } = await supabase.auth.admin.listUsers();
-        const foundAuthUser = usersData?.users?.find(u => u.email?.toLowerCase() === targetEmail.toLowerCase());
-        if (foundAuthUser?.id) {
-          await supabase.auth.admin.deleteUser(foundAuthUser.id);
-        }
-      } catch (sErr) {
-        console.warn('Supabase listUsers delete note:', sErr.message);
-      }
     }
 
     return res.status(200).json({
@@ -358,7 +664,7 @@ router.delete('/users/:id', async (req, res) => {
  * POST /api/auth/cleanup-user
  * Utility endpoint to purge a test email from customers, employees, and Supabase Auth
  */
-router.post('/auth/cleanup-user', async (req, res) => {
+router.post('/auth/cleanup-user', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const { email } = req.body;
     if (!email || !email.trim()) {
@@ -398,17 +704,10 @@ router.post('/auth/cleanup-user', async (req, res) => {
  */
 router.post('/auth/login', async (req, res) => {
   try {
-    const { username, supabaseUserId, email, password, pinCode, loginInput } = req.body;
+    const { username, email, password, pinCode, loginInput } = req.body;
     const searchValue = (loginInput || email || username || '').trim();
 
-    if (!searchValue && !supabaseUserId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Email or username is required.',
-      });
-    }
-
-    let verifiedSupabaseUserId = supabaseUserId || null;
+    let verifiedSupabaseUserId = null;
 
     // 1. If an Authorization Bearer token is passed in header, verify via Supabase Auth
     const authHeader = req.headers.authorization;
@@ -420,6 +719,13 @@ router.post('/auth/login', async (req, res) => {
           verifiedSupabaseUserId = sbData.user.id;
         }
       } catch { }
+    }
+
+    if (!searchValue && !verifiedSupabaseUserId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email or username is required.',
+      });
     }
 
     // 2. Locate user in employees or customers database table
@@ -460,6 +766,16 @@ router.post('/auth/login', async (req, res) => {
       }
     }
 
+    if (emp && !isStaffLoginEligible(emp)) {
+      return res.status(403).json({
+        success: false,
+        code: emp.activation_status === 'pending' ? 'STAFF_PENDING_ACTIVATION' : 'STAFF_ACCOUNT_INACTIVE',
+        message: emp.activation_status === 'pending'
+          ? 'This staff account is pending activation. Check your email for the activation link.'
+          : 'This staff account is inactive. Contact an administrator.',
+      });
+    }
+
     // Direct Supabase Auth Verification Fallback (for local dev / offline DB)
     if (!emp && !cust && password && searchValue.includes('@')) {
       try {
@@ -485,7 +801,7 @@ router.post('/auth/login', async (req, res) => {
     }
 
     // Fallback: Pre-provisioned Staff Accounts fallback if DB is un-seeded or offline
-    if (!emp && !cust && searchValue) {
+    if (!emp && !cust && searchValue && process.env.NODE_ENV !== 'production') {
       const lowerKey = searchValue.trim().toLowerCase();
       const defaultStaff = {
         admin1: { id: 'emp-admin-1', fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin', pin_code: '0000' },
@@ -523,7 +839,9 @@ router.post('/auth/login', async (req, res) => {
     const userRole = emp ? emp.role : 'customer';
 
     // 4. Verify password / PIN if user is not already authenticated via Bearer token
-    if (!verifiedSupabaseUserId) {
+    if (!verifiedSupabaseUserId || (
+      isEmployee && userRecord.supabase_user_id !== verifiedSupabaseUserId
+    )) {
       let isVerified = false;
 
       // Default PIN mapping for staff roles as documented in Operations Manual
@@ -535,7 +853,11 @@ router.post('/auth/login', async (req, res) => {
         admin: '0000',
       };
       const submittedPin = String(pinCode || password || '').trim();
-      const expectedPin = emp?.pin_code ? String(emp.pin_code).trim() : (emp?.role ? defaultPins[emp.role] : null);
+      const expectedPin = emp?.pin_code
+        ? String(emp.pin_code).trim()
+        : emp?.role && !emp?.activated_at
+          ? defaultPins[emp.role]
+          : null;
 
       if (isEmployee && expectedPin && submittedPin && expectedPin === submittedPin) {
         isVerified = true;
@@ -549,7 +871,14 @@ router.post('/auth/login', async (req, res) => {
             password,
           });
 
-          if (!loginError && loginData?.user) {
+          if (
+            !loginError &&
+            loginData?.user &&
+            (!isEmployee || (
+              userRecord.supabase_user_id &&
+              loginData.user.id === userRecord.supabase_user_id
+            ))
+          ) {
             isVerified = true;
             verifiedSupabaseUserId = loginData.user.id;
           }
@@ -558,9 +887,13 @@ router.post('/auth/login', async (req, res) => {
 
       // Check password via PostgreSQL password_hash fallback
       if (!isVerified && password && userRecord.password_hash) {
-        const submittedHash = hashPassword(password);
-        if (userRecord.password_hash === submittedHash) {
-          isVerified = true;
+        isVerified = await verifyPassword(password, userRecord.password_hash);
+        if (isVerified && !userRecord.password_hash.startsWith('scrypt$')) {
+          const upgradedHash = await hashPassword(password);
+          await query(
+            `UPDATE ${isEmployee ? 'employees' : 'customers'} SET password_hash = $1 WHERE id = $2`,
+            [upgradedHash, userRecord.id]
+          );
         }
       }
 
@@ -580,10 +913,23 @@ router.post('/auth/login', async (req, res) => {
       role: userRole,
     });
 
+    const safeUser = isEmployee
+      ? {
+          id: emp.id,
+          supabase_user_id: emp.supabase_user_id,
+          fullname: emp.fullname,
+          username: emp.username,
+          email: emp.email,
+          phone: emp.phone,
+          role: emp.role,
+          is_active: emp.is_active,
+        }
+      : { ...cust, password_hash: undefined };
+
     return res.status(200).json({
       success: true,
       message: `Login successful for ${userRecord.fullname || userRecord.email}`,
-      data: isEmployee ? emp : { ...cust, role: 'customer' },
+      data: isEmployee ? safeUser : { ...safeUser, role: 'customer' },
       sessionToken: cryptoSession.sessionToken,
       hashToken: cryptoSession.hashToken,
     });
@@ -622,12 +968,22 @@ router.post('/auth/send-otp', async (req, res) => {
     let checkEmp = { rows: [] };
     try {
       checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-      checkEmp = await query('SELECT id, supabase_user_id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+      checkEmp = await query(
+        'SELECT id, supabase_user_id, activation_status FROM employees WHERE LOWER(email) = $1',
+        [cleanEmail]
+      );
     } catch (dbErr) {
       console.warn('[AUTH OTP] DB query check notice:', dbErr.message);
     }
 
     if (checkCust.rows.length > 0 || checkEmp.rows.length > 0) {
+      if (checkEmp.rows.some((employee) => employee.activation_status === 'pending')) {
+        return res.status(400).json({
+          success: false,
+          message: 'An account with this email address already exists.',
+        });
+      }
+
       // Check if user still exists in Supabase Auth
       let existsInSupabase = false;
       try {
@@ -642,7 +998,11 @@ router.post('/auth/send-otp', async (req, res) => {
         // User was deleted from Supabase Auth Dashboard! Auto-clean PostgreSQL orphaned records
         console.log(`[AUTH SYNC] User ${cleanEmail} was deleted from Supabase Auth. Auto-purging DB records...`);
         await query('DELETE FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-        await query('DELETE FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+        await query(
+          `DELETE FROM employees
+           WHERE LOWER(email) = $1 AND activation_status <> 'pending'`,
+          [cleanEmail]
+        );
       } else {
         return res.status(400).json({
           success: false,
@@ -656,8 +1016,6 @@ router.post('/auth/send-otp', async (req, res) => {
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
 
     otpStore.set(cleanEmail, { otp, expiresAt });
-
-    console.log(`[AUTH OTP] Generated 6-digit OTP for ${cleanEmail}: ${otp}`);
 
     // Dispatch real email via Resend API if API Key is configured
     if (process.env.RESEND_API_KEY) {
@@ -784,7 +1142,17 @@ router.post('/auth/forgot-password', async (req, res) => {
 
     // Verify user exists in database or Supabase Auth
     const checkCust = await query('SELECT id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-    const checkEmp = await query('SELECT id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
+    const checkEmp = await query(
+      'SELECT id, activation_status FROM employees WHERE LOWER(email) = $1',
+      [cleanEmail]
+    );
+
+    if (checkEmp.rows.some((employee) => employee.activation_status === 'pending')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Activate this staff account using the email invitation before requesting a password reset.',
+      });
+    }
 
     let existsInSupabase = false;
     try {
@@ -823,8 +1191,6 @@ router.post('/auth/forgot-password', async (req, res) => {
 
     const clientOrigin = req.headers.origin || 'http://localhost:5173';
     const resetLink = `${clientOrigin}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
-
-    console.log(`[AUTH RESET LINK] Persistent reset link for ${cleanEmail}: ${resetLink}`);
 
     // Dispatch email via Resend API
     if (process.env.RESEND_API_KEY) {
@@ -921,7 +1287,20 @@ router.post('/auth/reset-password', async (req, res) => {
       });
     }
 
-    const hashed = hashPassword(newPassword);
+    const pendingStaff = await query(
+      `SELECT 1 FROM employees
+       WHERE LOWER(email) = $1 AND activation_status = 'pending'
+       LIMIT 1`,
+      [cleanEmail]
+    );
+    if (pendingStaff.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Activate this staff account using the email invitation before resetting its password.',
+      });
+    }
+
+    const hashed = await hashPassword(newPassword);
 
     // 1. Ensure password_hash columns exist on PostgreSQL tables
     try {
@@ -975,14 +1354,14 @@ router.post('/auth/reset-password', async (req, res) => {
  * POST /api/auth/change-password
  * Authenticated / Direct Password Change for Profile/Account Settings
  */
-router.post('/auth/change-password', async (req, res) => {
+router.post('/auth/change-password', requireAuth, async (req, res) => {
   try {
-    const { email, newPassword } = req.body;
+    const { currentPassword, newPassword } = req.body;
 
-    if (!email || !newPassword) {
+    if (!currentPassword || !newPassword) {
       return res.status(400).json({
         success: false,
-        message: 'Email and new password are required.',
+        message: 'Current and new passwords are required.',
       });
     }
 
@@ -993,47 +1372,47 @@ router.post('/auth/change-password', async (req, res) => {
       });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
-
-    // Verify user exists in PostgreSQL
-    const checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-    const checkEmp = await query('SELECT id, supabase_user_id FROM employees WHERE LOWER(email) = $1', [cleanEmail]);
-
-    if (checkCust.rows.length === 0 && checkEmp.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'No user account found with this email address.',
-      });
+    const isEmployee = req.user?.type === 'employee';
+    if (isEmployee && (req.user.is_active === false || req.user.activation_status === 'pending')) {
+      return res.status(403).json({ success: false, message: 'This staff account is inactive.' });
+    }
+    const table = isEmployee ? 'employees' : 'customers';
+    const accountRes = await query(
+      `SELECT id, email, supabase_user_id, password_hash
+       FROM ${table}
+       WHERE id::text = $1 OR supabase_user_id::text = $1
+       LIMIT 1`,
+      [String(req.user?.id || req.user?.supabase_user_id || '')]
+    );
+    const account = accountRes.rows[0];
+    if (!account) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
     }
 
-    const hashed = hashPassword(newPassword);
-
-    try {
-      await query('ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash TEXT;');
-      await query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT;');
-    } catch { }
-
-    await query('UPDATE employees SET password_hash = $1, updated_at = NOW() WHERE LOWER(email) = $2', [hashed, cleanEmail]);
-    await query('UPDATE customers SET password_hash = $1, updated_at = NOW() WHERE LOWER(email) = $2', [hashed, cleanEmail]);
-
-    try {
-      const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
-      const authUser = usersData?.users?.find((u) => u.email?.toLowerCase() === cleanEmail);
-      if (authUser?.id) {
-        await supabase.auth.admin.updateUserById(authUser.id, { password: newPassword });
-      } else {
-        const { data: createData } = await supabase.auth.admin.createUser({
-          email: cleanEmail,
-          password: newPassword,
-          email_confirm: true,
+    let currentPasswordValid = account.password_hash
+      ? await verifyPassword(currentPassword, account.password_hash)
+      : false;
+    if (!currentPasswordValid && account.supabase_user_id) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: account.email,
+          password: currentPassword,
         });
-        if (createData?.user?.id) {
-          await query('UPDATE employees SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
-          await query('UPDATE customers SET supabase_user_id = $1 WHERE LOWER(email) = $2', [createData.user.id, cleanEmail]);
-        }
+        currentPasswordValid = !error && data?.user?.id === account.supabase_user_id;
+      } catch { }
+    }
+    if (!currentPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Current password is incorrect.' });
+    }
+
+    const hashed = await hashPassword(newPassword);
+    await query(`UPDATE ${table} SET password_hash = $1, updated_at = NOW() WHERE id = $2`, [hashed, account.id]);
+    if (account.supabase_user_id) {
+      try {
+        await supabase.auth.admin.updateUserById(account.supabase_user_id, { password: newPassword });
+      } catch (error) {
+        console.warn('Supabase password sync note:', error.message);
       }
-    } catch (sErr) {
-      console.warn('[CHANGE PASSWORD] Supabase sync note:', sErr.message);
     }
 
     return res.status(200).json({
@@ -1055,7 +1434,7 @@ router.post('/auth/change-password', async (req, res) => {
  */
 router.post('/auth/register', async (req, res) => {
   try {
-    const { fullname, username, email, role, token, phone, address } = req.body;
+    const { fullname, username, email, role, phone, address } = req.body;
 
     if (!fullname || !email) {
       return res.status(400).json({
@@ -1068,85 +1447,43 @@ router.post('/auth/register', async (req, res) => {
     const cleanFullname = fullname.trim();
     const selectedRole = (role || 'customer').toLowerCase();
 
-    // Staff/Employee account creation
     if (selectedRole !== 'customer') {
-      const validStaffToken = (process.env.STAFF_REGISTRATION_TOKEN || '').trim().toUpperCase();
-      if (!validStaffToken || !token || token.trim().toUpperCase() !== validStaffToken) {
-        return res.status(403).json({
-          success: false,
-          message: 'Access Denied: Invalid or unconfigured Employee Access Token for staff account.',
-        });
-      }
-
-      // Ensure role is valid according to schema CHECK constraint
-      const validRoles = ['admin', 'cashier', 'assistant', 'kitchen', 'rider'];
-      const finalRole = validRoles.includes(selectedRole) ? selectedRole : 'cashier';
-
-      // Generate clean unique username if not supplied
-      const cleanUsername = (username || cleanEmail.split('@')[0] + '_' + Math.floor(100 + Math.random() * 900)).trim().toLowerCase();
-
-      const sql = `
-        INSERT INTO employees (supabase_user_id, fullname, username, email, role)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (email) DO UPDATE SET
-          supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, employees.supabase_user_id),
-          fullname = EXCLUDED.fullname,
-          role = EXCLUDED.role
-        RETURNING id, supabase_user_id, fullname, username, email, role, is_active, created_at
-      `;
-
-      const { rows } = await query(sql, [
-        req.body.supabaseUserId || null,
-        cleanFullname,
-        cleanUsername,
-        cleanEmail,
-        finalRole,
-      ]);
-
-      const emp = rows[0];
-      const cryptoSession = generateSessionHashToken({ userId: emp.id, email: emp.email, role: emp.role });
-
-      return res.status(201).json({
-        success: true,
-        message: `Staff profile provisioned successfully for ${cleanFullname}`,
-        data: emp,
-        sessionToken: cryptoSession.sessionToken,
-        hashToken: cryptoSession.hashToken,
-      });
-    } else {
-      // Customer account creation
-      const cleanUsername = (username || cleanEmail.split('@')[0]).trim();
-
-      const sql = `
-        INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (email) DO UPDATE SET
-          supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, customers.supabase_user_id),
-          fullname = EXCLUDED.fullname,
-          phone = COALESCE(EXCLUDED.phone, customers.phone),
-          delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address)
-        RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
-      `;
-
-      const { rows } = await query(sql, [
-        req.body.supabaseUserId || null,
-        cleanFullname,
-        cleanEmail,
-        phone || null,
-        address || null,
-      ]);
-
-      const cust = rows[0];
-      const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
-
-      return res.status(201).json({
-        success: true,
-        message: `Customer profile provisioned successfully for ${cleanFullname}`,
-        data: { ...cust, role: 'customer' },
-        sessionToken: cryptoSession.sessionToken,
-        hashToken: cryptoSession.hashToken,
+      return res.status(403).json({
+        success: false,
+        message: 'Staff accounts must be created by an administrator.',
       });
     }
+
+    const cleanUsername = (username || cleanEmail.split('@')[0]).trim();
+    const sql = `
+      INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (email) DO UPDATE SET
+        supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, customers.supabase_user_id),
+        fullname = EXCLUDED.fullname,
+        phone = COALESCE(EXCLUDED.phone, customers.phone),
+        delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address)
+      RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
+    `;
+
+    const { rows } = await query(sql, [
+      req.body.supabaseUserId || null,
+      cleanFullname,
+      cleanEmail,
+      phone || null,
+      address || null,
+    ]);
+
+    const cust = rows[0];
+    const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
+
+    return res.status(201).json({
+      success: true,
+      message: `Customer profile provisioned successfully for ${cleanFullname}`,
+      data: { ...cust, role: 'customer' },
+      sessionToken: cryptoSession.sessionToken,
+      hashToken: cryptoSession.hashToken,
+    });
   } catch (error) {
     console.error('Error registering user:', error);
     return res.status(500).json({
@@ -1238,16 +1575,22 @@ router.get('/auth/me-profile', async (req, res) => {
  * PUT /api/auth/profile
  * Updates or provisions user profile details (fullname, phone, address, email) in PostgreSQL database
  */
-router.put('/auth/profile', async (req, res) => {
+router.put('/auth/profile', requireAuth, async (req, res) => {
   try {
-    const { id, originalEmail, email, fullname, phone, address, username, role } = req.body;
+    const { originalEmail, email, fullname, phone, address, username } = req.body;
     const cleanEmail = (email || originalEmail || '').trim().toLowerCase();
-    const cleanOrigEmail = (originalEmail || email || '').trim().toLowerCase();
     const cleanFullname = (fullname || '').trim();
     const cleanPhone = (phone || '').trim();
     const cleanAddress = (address || '').trim();
-    const cleanId = (id || '').trim();
-    const isEmployee = role && ['admin', 'cashier', 'assistant', 'kitchen', 'rider'].includes(String(role).toLowerCase());
+    const cleanId = String(req.user?.id || '');
+    const isEmployee = req.user?.type === 'employee';
+
+    if (!cleanId) {
+      return res.status(401).json({ success: false, message: 'Authenticated profile is required.' });
+    }
+    if (req.user?.is_active === false) {
+      return res.status(403).json({ success: false, message: 'Inactive accounts cannot edit their profile.' });
+    }
 
     if (!cleanEmail && !cleanId && !cleanFullname) {
       return res.status(400).json({
@@ -1260,32 +1603,54 @@ router.put('/auth/profile', async (req, res) => {
 
     // 1. Employee Profile Update
     if (isEmployee) {
-      try {
-        const empRes = await query(
-          `UPDATE employees
-           SET fullname = COALESCE(NULLIF($1, ''), fullname),
-               email = COALESCE(NULLIF($2, ''), email),
-               username = COALESCE(NULLIF($3, ''), username),
-               phone = COALESCE(NULLIF($4, ''), phone),
-               updated_at = NOW()
-           WHERE (id::text = $5 OR supabase_user_id::text = $5) OR ($6 <> '' AND LOWER(email) = $6) OR ($7 <> '' AND LOWER(email) = $7)
-           RETURNING id, supabase_user_id, fullname, username, email, phone, role, created_at, updated_at`,
-          [
-            cleanFullname,
-            cleanEmail,
-            (username || '').trim(),
-            cleanPhone,
-            cleanId || '00000000-0000-0000-0000-000000000000',
-            cleanOrigEmail,
-            cleanEmail,
-          ]
+      if (username && !isValidStaffUsername(username.trim())) {
+        return res.status(400).json({ success: false, message: 'Username must be 3–32 valid characters.' });
+      }
+      const employeeTarget = await query(
+        'SELECT id, activation_status FROM employees WHERE id::text = $1 LIMIT 1',
+        [cleanId]
+      );
+      if (!employeeTarget.rows[0]) {
+        return res.status(404).json({ success: false, message: 'Staff profile not found.' });
+      }
+      if (employeeTarget.rows[0]?.activation_status === 'pending') {
+        return res.status(403).json({
+          success: false,
+          message: 'Pending staff details can only be managed from the admin user list.',
+        });
+      }
+      if (username && employeeTarget.rows[0]) {
+        const usernameConflict = await query(
+          'SELECT 1 FROM employees WHERE LOWER(username) = LOWER($1) AND id <> $2 LIMIT 1',
+          [username.trim(), employeeTarget.rows[0].id]
         );
-
-        if (empRes.rows.length > 0) {
-          updatedRecord = empRes.rows[0];
+        if (usernameConflict.rows.length > 0) {
+          return res.status(409).json({ success: false, message: 'That username is already taken.' });
         }
-      } catch (empErr) {
-        console.warn('Employee profile update notice:', empErr.message);
+      }
+
+      const empRes = await query(
+        `UPDATE employees
+         SET fullname = COALESCE(NULLIF($1, ''), fullname),
+             email = COALESCE(NULLIF($2, ''), email),
+             username = COALESCE(NULLIF($3, ''), username),
+             phone = COALESCE(NULLIF($4, ''), phone),
+             updated_at = NOW()
+         WHERE id::text = $5
+         RETURNING id, supabase_user_id, fullname, username, email, phone, role, created_at, updated_at`,
+        [
+          cleanFullname,
+          cleanEmail,
+          (username || '').trim(),
+          cleanPhone,
+          cleanId,
+        ]
+      );
+
+      if (empRes.rows.length > 0) {
+        updatedRecord = empRes.rows[0];
+      } else {
+        return res.status(404).json({ success: false, message: 'Staff profile not found.' });
       }
     }
 
@@ -1301,7 +1666,7 @@ router.put('/auth/profile', async (req, res) => {
                phone = COALESCE(NULLIF($4, ''), phone),
                delivery_address = COALESCE(NULLIF($5, ''), delivery_address),
                updated_at = NOW()
-           WHERE (id::text = $6 OR supabase_user_id::text = $6) OR ($7 <> '' AND LOWER(email) = $7) OR ($8 <> '' AND LOWER(email) = $8)
+           WHERE id::text = $6
            RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, created_at, updated_at`,
           [
             cleanFullname,
@@ -1309,31 +1674,12 @@ router.put('/auth/profile', async (req, res) => {
             cleanEmail,
             cleanPhone,
             cleanAddress,
-            cleanId || '00000000-0000-0000-0000-000000000000',
-            cleanOrigEmail,
-            cleanEmail,
+            cleanId,
           ]
         );
 
         if (custRes.rows.length > 0) {
           updatedRecord = { ...custRes.rows[0], role: 'customer' };
-        } else if (cleanEmail && cleanFullname) {
-          // If no row matched, UPSERT new customer profile in DB
-          const upsertRes = await query(
-            `INSERT INTO customers (fullname, email, phone, delivery_address)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (email) DO UPDATE SET
-               fullname = EXCLUDED.fullname,
-               phone = COALESCE(EXCLUDED.phone, customers.phone),
-               delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address),
-               updated_at = NOW()
-             RETURNING id, supabase_user_id, fullname, email, phone, delivery_address AS address, created_at, updated_at`,
-            [cleanFullname, cleanEmail, cleanPhone || null, cleanAddress || null]
-          );
-
-          if (upsertRes.rows.length > 0) {
-            updatedRecord = { ...upsertRes.rows[0], role: 'customer' };
-          }
         }
       } catch (custErr) {
         console.warn('Customer profile update/upsert notice:', custErr.message);
@@ -1341,15 +1687,7 @@ router.put('/auth/profile', async (req, res) => {
     }
 
     if (!updatedRecord) {
-      // Fallback response constructing saved profile data
-      updatedRecord = {
-        id: cleanId || `CUST-${Date.now()}`,
-        fullname: cleanFullname,
-        email: cleanEmail,
-        phone: cleanPhone,
-        address: cleanAddress,
-        role: role || 'customer',
-      };
+      return res.status(404).json({ success: false, message: 'Profile record not found.' });
     }
 
     return res.status(200).json({

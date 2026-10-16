@@ -147,6 +147,7 @@ const Login = () => {
       let supabaseAccessToken: string | null = null;
       let profileData = null;
       let supabaseAuthErr: string | null = null;
+      let blockedStaffMessage: string | null = null;
 
       // 1. Try Supabase Auth login first if an email is provided
       if (isEmail) {
@@ -183,7 +184,6 @@ const Login = () => {
             username: !isEmail ? loginInput.trim() : undefined,
             password: loginPassword,
             pinCode: loginPassword,
-            supabaseUserId: supabaseUser?.id,
           }),
         });
 
@@ -191,6 +191,9 @@ const Login = () => {
           profileData = await res.json();
         } else {
           const errData = await res.json().catch(() => null);
+          if (errData?.code === 'STAFF_PENDING_ACTIVATION' || errData?.code === 'STAFF_ACCOUNT_INACTIVE') {
+            blockedStaffMessage = errData.message || 'This staff account cannot sign in yet.';
+          }
           if (errData?.message && !supabaseUser) {
             supabaseAuthErr = errData.message;
           }
@@ -198,6 +201,8 @@ const Login = () => {
       } catch (backendErr) {
         console.warn('Backend API connection note:', backendErr);
       }
+
+      if (blockedStaffMessage) throw new Error(blockedStaffMessage);
 
       // 3. Fallback: If username login was used, attempt Supabase Auth using the user's email from database
       if (!supabaseUser && profileData?.data?.email) {

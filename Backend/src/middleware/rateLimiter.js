@@ -15,6 +15,17 @@ export const authLimiter = rateLimit({
   },
 });
 
+export const activationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many activation attempts. Please wait before trying again.',
+  },
+});
+
 /**
  * Rate Limiter for Order Creation & Checkout endpoints.
  * Protects against order spamming and Denial-of-Service on database transactions.
@@ -49,6 +60,7 @@ export const apiLimiter = rateLimit({
 
 export default {
   authLimiter,
+  activationLimiter,
   orderLimiter,
   apiLimiter,
 };

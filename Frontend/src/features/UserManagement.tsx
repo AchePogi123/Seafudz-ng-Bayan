@@ -10,20 +10,19 @@ interface User {
     contact: string
     email: string
     role: string
-    status: 'active' | 'inactive'
+    status: 'active' | 'inactive' | 'pending'
 }
 
 const UserManagement = () => {
-    const [users, setUsers] = useState<User[]>([
-        { id: 'U101', name: 'Maria Santos', username: 'M.Santos', contact: '09171234567', email: 'maria.cashier@seafudz.ph', role: 'Cashier', status: 'active' },
-        { id: 'U102', name: 'Ben Chef', username: 'B.Chef', contact: '09182345678', email: 'chef.ben@seafudz.ph', role: 'Kitchen Staff', status: 'active' },
-        { id: 'U103', name: 'Dan Cruz', username: 'D.Cruz', contact: '09193456789', email: 'dan.rider@seafudz.ph', role: 'Rider', status: 'active' },
-        { id: 'U104', name: 'Joy Flores', username: 'J.Flores', contact: '09204567890', email: 'joy.floor@seafudz.ph', role: 'Assistant', status: 'active' },
-    ])
-    const [idCounter, setIdCounter] = useState(105)
+    const [users, setUsers] = useState<User[]>([])
+    const [idCounter, setIdCounter] = useState(101)
     const [searchTerm, setSearchTerm] = useState('')
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [isUsernameCustom, setIsUsernameCustom] = useState(false)
+    const [createError, setCreateError] = useState('')
+    const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [isCreating, setIsCreating] = useState(false)
+    const [resendingUserId, setResendingUserId] = useState<string | null>(null)
 
     // Edit modal states
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
@@ -45,8 +44,6 @@ const UserManagement = () => {
         firstName: '',
         lastName: '',
         username: '',
-        password: '',
-        confirmPassword: '',
         contact: '',
         email: '',
         role: '',
@@ -58,12 +55,12 @@ const UserManagement = () => {
                 const headers = await getAuthHeaders()
                 const res = await fetch(`${API_BASE_URL}/users`, { headers })
                 const data = await res.json()
-                if (data.success && Array.isArray(data.data) && data.data.length > 0) {
+                if (data.success && Array.isArray(data.data)) {
                     setUsers(data.data)
                     setIdCounter(101 + data.data.length)
                 }
             } catch (err) {
-                console.warn('Could not load users from backend DB, using initial state:', err)
+                console.warn('Could not load users from backend DB:', err)
             }
         }
         void fetchUsers()
@@ -76,12 +73,13 @@ const UserManagement = () => {
         const cleanLast = lastName.trim()
         if (!cleanFirst && !cleanLast) return ''
         const firstInitial = cleanFirst ? cleanFirst.charAt(0).toUpperCase() : ''
-        if (firstInitial && cleanLast) {
-            return `${firstInitial}.${cleanLast}`
-        } else if (firstInitial) {
-            return `${firstInitial}.`
-        }
-        return cleanLast
+        const generated = firstInitial && cleanLast ? `${firstInitial}.${cleanLast}` : firstInitial || cleanLast
+        const safeUsername = generated
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^A-Za-z0-9._-]+/g, '.')
+            .slice(0, 32)
+        return safeUsername.length >= 3 ? safeUsername : 'staff.user'
     }
 
     const handleFirstNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -122,12 +120,11 @@ const UserManagement = () => {
     const handleCloseModal = () => {
         setIsModalOpen(false)
         setIsUsernameCustom(false)
+        setCreateError('')
         setFormData({
             firstName: '',
             lastName: '',
             username: '',
-            password: '',
-            confirmPassword: '',
             contact: '',
             email: '',
             role: '',
@@ -208,13 +205,9 @@ const UserManagement = () => {
 
     const handleCreateUser = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!formData.firstName.trim() || !formData.lastName.trim() || !formData.role) {
-            alert('First Name, Last Name, and Role are required!')
-            return
-        }
-
-        if (formData.password !== formData.confirmPassword) {
-            alert('Passwords do not match! Please check and re-enter your password.')
+        setCreateError('')
+        if (!formData.firstName.trim() || !formData.lastName.trim() || !formData.role || !formData.email.trim()) {
+            setCreateError('First name, last name, email, and role are required.')
             return
         }
 
@@ -222,17 +215,7 @@ const UserManagement = () => {
         const finalUsername =
             formData.username.trim() || generateDefaultUsername(formData.firstName, formData.lastName)
 
-        const newUser: User = {
-            id: nextUserId,
-            name: fullName,
-            username: finalUsername,
-            contact: formData.contact.trim() || '-',
-            email: formData.email.trim() || '-',
-            role: formData.role,
-            status: 'active',
-        }
-
-        // Save to PostgreSQL database via Backend API
+        setIsCreating(true)
         try {
             const headers = await getAuthHeaders()
             const res = await fetch(`${API_BASE_URL}/users`, {
@@ -248,54 +231,60 @@ const UserManagement = () => {
                 }),
             })
             const data = await res.json()
-            if (data.success && data.data) {
-                const saved = data.data
-                setUsers((prev) => [...prev, {
-                    id: saved.id || nextUserId,
-                    name: saved.name || fullName,
-                    username: saved.username || finalUsername,
-                    contact: saved.contact || '-',
-                    email: saved.email || '-',
-                    role: saved.role || formData.role,
-                    status: saved.status || 'active',
-                }])
-            } else {
-                setUsers((prev) => [...prev, newUser])
+            if (!res.ok || !data.success || !data.data) {
+                throw new Error(data.message || 'Could not create the staff account.')
             }
-        } catch (err) {
-            console.warn('Failed to persist user to backend DB, updating local state:', err)
-            setUsers((prev) => [...prev, newUser])
+            const saved = data.data
+            setUsers((prev) => [...prev, {
+                id: saved.id || nextUserId,
+                db_id: saved.db_id,
+                name: saved.name || fullName,
+                username: saved.username || finalUsername,
+                contact: saved.contact || '-',
+                email: saved.email || formData.email.trim(),
+                role: saved.role || formData.role,
+                status: 'pending',
+            }])
+            setActionMessage({
+                type: data.activationEmailSent ? 'success' : 'error',
+                text: data.message || 'Staff account created pending activation.',
+            })
+            setIdCounter((prev) => prev + 1)
+            handleCloseModal()
+        } catch (error) {
+            setCreateError(error instanceof Error ? error.message : 'Could not create the staff account.')
+        } finally {
+            setIsCreating(false)
         }
-
-        setIdCounter((prev) => prev + 1)
-        handleCloseModal()
     }
 
     const toggleStatus = async (id: string) => {
         const target = users.find((u) => u.id === id)
-        if (!target) return
+        if (!target || target.status === 'pending') return
         const nextStatus = target.status === 'active' ? 'inactive' : 'active'
-
-        setUsers((prev) =>
-            prev.map((u) => (u.id === id ? { ...u, status: nextStatus } : u))
-        )
-
         try {
             const headers = await getAuthHeaders()
-            await fetch(`${API_BASE_URL}/users/${encodeURIComponent(id)}/toggle-status`, {
+            const identifier = target.db_id || target.username || target.email || id
+            const response = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(identifier)}/toggle-status`, {
                 method: 'PATCH',
                 headers,
                 body: JSON.stringify({ status: nextStatus }),
             })
-        } catch (err) {
-            console.warn('Status toggle persistence error:', err)
+            const payload = await response.json()
+            if (!response.ok || !payload.success) throw new Error(payload.message || 'Could not update account status.')
+            setUsers((prev) => prev.map((user) => user.id === id ? { ...user, status: nextStatus } : user))
+        } catch (error) {
+            setActionMessage({
+                type: 'error',
+                text: error instanceof Error ? error.message : 'Could not update account status.',
+            })
         }
     }
 
     const handleDeactivateClick = (user: User) => {
         if (user.status === 'active') {
             setDeactivatingUser(user)
-        } else {
+        } else if (user.status === 'inactive') {
             void toggleStatus(user.id)
         }
     }
@@ -306,11 +295,55 @@ const UserManagement = () => {
         setDeactivatingUser(null)
     }
 
+    const handleResendActivation = async (user: User) => {
+        const identifier = user.db_id || user.id
+        setResendingUserId(user.id)
+        setActionMessage(null)
+        try {
+            const response = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(identifier)}/resend-activation`, {
+                method: 'POST',
+                headers: await getAuthHeaders(),
+            })
+            const payload = await response.json()
+            if (!response.ok || !payload.success) throw new Error(payload.message || 'Could not resend activation email.')
+            setActionMessage({ type: 'success', text: payload.message || `Activation email sent to ${user.email}.` })
+        } catch (error) {
+            setActionMessage({
+                type: 'error',
+                text: error instanceof Error ? error.message : 'Could not resend activation email.',
+            })
+        } finally {
+            setResendingUserId(null)
+        }
+    }
+
+    const handleDeletePendingUser = async (user: User) => {
+        if (user.status !== 'pending') return
+        if (!window.confirm(`Delete the pending account for ${user.name}? Its activation link will stop working.`)) return
+
+        setActionMessage(null)
+        try {
+            const response = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(user.db_id || user.id)}`, {
+                method: 'DELETE',
+                headers: await getAuthHeaders(),
+            })
+            const payload = await response.json()
+            if (!response.ok || !payload.success) throw new Error(payload.message || 'Could not delete pending account.')
+            setUsers((prev) => prev.filter((entry) => entry.id !== user.id))
+            setActionMessage({ type: 'success', text: `Pending account for ${user.name} was deleted.` })
+        } catch (error) {
+            setActionMessage({
+                type: 'error',
+                text: error instanceof Error ? error.message : 'Could not delete pending account.',
+            })
+        }
+    }
     const filteredUsers = users.filter(
         (u) =>
             u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             u.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
             u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
             u.id.toLowerCase().includes(searchTerm.toLowerCase())
     )
 
@@ -344,11 +377,24 @@ const UserManagement = () => {
                     <input
                         type="text"
                         className="w-full max-w-[450px] py-[0.9rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] bg-white text-[0.95rem] text-[#2d3748] focus:outline-none focus:border-[#e74c3c] focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                        placeholder="Search by name, role, or ID..."
+                        placeholder="Search by name, role, username, or email..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
+
+                {actionMessage && (
+                    <div
+                        role="status"
+                        className={`mb-5 rounded-xl border px-4 py-3 text-sm font-semibold ${
+                            actionMessage.type === 'success'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                : 'border-rose-200 bg-rose-50 text-rose-700'
+                        }`}
+                    >
+                        {actionMessage.text}
+                    </div>
+                )}
 
                 {/* Table */}
                 <div className="bg-white rounded-[20px] shadow-[0_10px_30px_rgba(0,0,0,0.02)] border border-black/[0.04] overflow-x-auto">
@@ -388,33 +434,58 @@ const UserManagement = () => {
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">{user.email}</td>
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">
                                             <span
-                                                className={`py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.78rem] font-bold ${user.status === 'active'
-                                                    ? 'bg-[#e6fffa] text-[#319795]'
-                                                    : 'bg-[#fff5f5] text-[#e53e3e]'
-                                                    }`}
+                                                className={`py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.78rem] font-bold ${
+                                                    user.status === 'active'
+                                                        ? 'bg-[#e6fffa] text-[#319795]'
+                                                        : user.status === 'pending'
+                                                            ? 'bg-amber-50 text-amber-700'
+                                                            : 'bg-[#fff5f5] text-[#e53e3e]'
+                                                }`}
                                             >
-                                                {user.status.toUpperCase()}
+                                                {user.status === 'pending' ? 'PENDING ACTIVATION' : user.status.toUpperCase()}
                                             </span>
                                         </td>
                                         <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">
                                             <div className="flex items-center gap-2">
-                                                <button
-                                                    type="button"
-                                                    className="border border-solid border-[#e2e8f0] bg-[#edf2f7] hover:bg-[#e2e8f0] text-[#4a5568] py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer transition-colors"
-                                                    onClick={() => handleOpenEditModal(user)}
-                                                >
-                                                    Edit
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className={`border border-solid py-[0.5rem] px-[1rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer ${user.status === 'active'
-                                                        ? 'border-[#feb2b2] text-[#e53e3e] hover:bg-[#fff5f5]'
-                                                        : 'border-[#b2f5ea] text-[#319795] hover:bg-[#e6fffa]'
-                                                        }`}
-                                                    onClick={() => handleDeactivateClick(user)}
-                                                >
-                                                    {user.status === 'active' ? 'Deactivate' : 'Activate'}
-                                                </button>
+                                                {user.status === 'pending' ? (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            disabled={resendingUserId === user.id}
+                                                            className="border border-solid border-orange-200 bg-orange-50 py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.8rem] font-bold text-orange-700 cursor-pointer transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60"
+                                                            onClick={() => void handleResendActivation(user)}
+                                                        >
+                                                            {resendingUserId === user.id ? 'Sending…' : 'Resend activation'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="border border-solid border-rose-200 py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.8rem] font-bold text-rose-600 cursor-pointer transition-colors hover:bg-rose-50"
+                                                            onClick={() => void handleDeletePendingUser(user)}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            className="border border-solid border-[#e2e8f0] bg-[#edf2f7] hover:bg-[#e2e8f0] text-[#4a5568] py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer transition-colors"
+                                                            onClick={() => handleOpenEditModal(user)}
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className={`border border-solid py-[0.5rem] px-[1rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer ${user.status === 'active'
+                                                                ? 'border-[#feb2b2] text-[#e53e3e] hover:bg-[#fff5f5]'
+                                                                : 'border-[#b2f5ea] text-[#319795] hover:bg-[#e6fffa]'
+                                                                }`}
+                                                            onClick={() => handleDeactivateClick(user)}
+                                                        >
+                                                            {user.status === 'active' ? 'Deactivate' : 'Activate'}
+                                                        </button>
+                                                    </>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
@@ -532,57 +603,36 @@ const UserManagement = () => {
                                         className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
                                         value={formData.username}
                                         onChange={handleUsernameChange}
+                                        maxLength={32}
+                                        pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}"
+                                        title="Use 3–32 letters, numbers, dots, underscores, or hyphens."
                                     />
                                 </div>
 
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Password</label>
-                                    <input
-                                        type="password"
-                                        name="password"
-                                        placeholder="••••••••"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.password}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Confirm Password</label>
-                                    <input
-                                        type="password"
-                                        name="confirmPassword"
-                                        placeholder="••••••••"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.confirmPassword}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Contact Number</label>
-                                    <input
-                                        type="tel"
-                                        name="contact"
-                                        placeholder="0912 345 6789"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.contact}
-                                        onChange={handleInputChange}
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Email Address</label>
-                                    <input
-                                        type="email"
-                                        name="email"
+                                <div className="flex flex-col gap-[0.5rem] md:col-span-2">
+                                        <label className="text-[0.9rem] font-bold text-[#4a5568]">
+                                            Email Address <span className="text-[#e74c3c]">*</span>
+                                        </label>
+                                        <input
+                                            type="email"
+                                            name="email"
                                         placeholder="staff@gmail.com"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.email}
-                                        onChange={handleInputChange}
-                                    />
+                                            className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
+                                            value={formData.email}
+                                            onChange={handleInputChange}
+                                            required
+                                        />
+                                    </div>
                                 </div>
-                            </div>
+
+                            <p className="mb-5 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-xs leading-relaxed text-orange-800">
+                                An activation link will be emailed to the staff member. Their account remains pending until they set a password and username.
+                            </p>
+                            {createError && (
+                                <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+                                    {createError}
+                                </p>
+                            )}
 
                             <div className="flex justify-end gap-[1rem] border-t border-[#edf2f7] pt-[1.5rem]">
                                 <button
@@ -594,9 +644,10 @@ const UserManagement = () => {
                                 </button>
                                 <button
                                     type="submit"
-                                    className="bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer"
+                                    disabled={isCreating}
+                                    className="bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer disabled:cursor-wait disabled:opacity-60"
                                 >
-                                    Create User
+                                    {isCreating ? 'Creating…' : 'Create Pending Account'}
                                 </button>
                             </div>
                         </form>

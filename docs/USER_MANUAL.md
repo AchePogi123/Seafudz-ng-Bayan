@@ -17,7 +17,7 @@ For quick system testing, use the pre-loaded PIN codes or register a new Supabas
 | **Admin / Manager** | `admin1` | `admin@seafudz.ph` | `0000` | `/dashboard` |
 | **Customer** | `Z.Realista` | `zacris024@gmail.com` | *(Your Password)* | `/customer` |
 
-> 🔒 **Employee Access Token**: Staff registrations require token: `SFB-STAFF-99`
+> 🔒 **Staff Account Setup**: An administrator creates staff accounts. New staff receive a one-time activation link by email and must choose a username and password before signing in.
 
 ---
 

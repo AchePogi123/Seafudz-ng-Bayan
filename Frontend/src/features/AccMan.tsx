@@ -6,7 +6,7 @@ import NavbarCashier from '../components/NavbarCashier'
 import NavbarKitchen from '../components/NavbarKitchen'
 import NavbarRider from '../components/Navbarrider'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
-import { API_BASE_URL } from '../utils/api'
+import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { supabase } from '../utils/supabase'
 
 interface UserProfile {
@@ -237,9 +237,9 @@ export const AccMan: React.FC = () => {
         try {
             const res = await fetch(`${API_BASE_URL}/auth/change-password`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: await getAuthHeaders(),
                 body: JSON.stringify({
-                    email: profile.email,
+                    currentPassword,
                     newPassword,
                 }),
             })

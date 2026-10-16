@@ -141,46 +141,12 @@ export async function getAuthHeaders(extraHeaders: Record<string, string> = {}):
 
 ## 📝 Step 4: User Registration Flow
 
-When a new user signs up in [`Frontend/src/features/Login.tsx`](file:///home/ohmyiu/Documents/Seafudz-ng-Bayan/Frontend/src/features/Login.tsx):
+Customer self-registration remains in [`Frontend/src/features/Login.tsx`](file:///home/ohmyiu/Documents/Seafudz-ng-Bayan/Frontend/src/features/Login.tsx):
 
 1. **Step A**: Call `supabase.auth.signUp()` to register credentials in Supabase.
 2. **Step B**: Take the generated `supabaseUserId` and post the profile data to Express backend `POST /api/auth/register`.
 
-```typescript
-const handleRegister = async (e: React.FormEvent) => {
-  e.preventDefault();
-
-  // 1. Create account in Supabase Auth Provider
-  const { data: authData, error: authError } = await supabase.auth.signUp({
-    email: email,
-    password: password,
-  });
-
-  if (authError) throw new Error(authError.message);
-
-  const supabaseUserId = authData.user?.id;
-
-  // 2. Register profile in PostgreSQL Express Backend
-  const res = await fetch(`${API_BASE_URL}/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      supabaseUserId,
-      fullname,
-      username,
-      email,
-      role, // 'customer', 'cashier', 'kitchen', 'rider', 'assistant'
-      token: verificationCode, // Business access token: 'SFB-STAFF-99' for staff
-    }),
-  });
-
-  const resData = await res.json();
-  if (!res.ok) throw new Error(resData.message);
-
-  // Navigate user to their respective role dashboard
-  navigateByRole(role);
-};
-```
+Staff accounts are created only by an authenticated active administrator through `POST /api/users`. They remain pending and inactive until a one-time Resend activation email is completed at `/activate-account`. The activation token is stored as a hash, expires after 72 hours, and is invalidated when used, resent, or when the pending account is deleted. Staff choose their username and password during activation; their assigned role is read-only.
 
 ---
 
@@ -265,4 +231,4 @@ How `requireAuth` works under the hood:
 | `Email rate limit exceeded` | Default Supabase free tier email limit hit during testing. | Go to Supabase Dashboard → **Authentication** → **Providers** → **Email** → Toggle OFF **"Confirm email"**. |
 | `ECONNREFUSED 127.0.0.1:5433` | Local PostgreSQL Docker container is not running. | Run `docker compose up -d` in project root. |
 | `Port 5000 is already in use` | An existing Node process is listening on port 5000. | Run `fuser -k 5000/tcp` to free port 5000. |
-| `Access Denied: Invalid Employee Access Token` | Registering for staff role (`cashier`, `kitchen`, etc.) without token. | Enter access token `SFB-STAFF-99` when selecting staff role. |
+| Staff account cannot sign in | Staff account is pending or inactive. | An administrator must resend the activation link for pending accounts; staff must complete setup before signing in. |

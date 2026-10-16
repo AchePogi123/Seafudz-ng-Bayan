@@ -5,6 +5,7 @@ export interface BrandLogoProps {
   variant?: 'light' | 'dark'; // 'light' for light backgrounds, 'dark' for dark backgrounds
   size?: 'sm' | 'md' | 'lg' | 'xl';
   showSubtitle?: boolean;
+  showEmblem?: boolean;
   subtitle?: string; // Custom subtitle e.g. 'Admin Dashboard', 'Cashier POS Terminal', etc.
   badge?: string; // e.g. 'ADMIN', 'CASHIER', 'KITCHEN', 'RIDER', 'ASSISTANT'
   badgeColor?: string; // optional custom badge style classes
@@ -18,6 +19,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   variant = 'light',
   size = 'md',
   showSubtitle = true,
+  showEmblem = true,
   subtitle,
   badge,
   badgeColor,
@@ -49,13 +51,29 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     xl: 'text-xs tracking-[0.25em]'
   };
 
+  const emblemSizes = {
+    sm: 'w-7 h-7 sm:w-8 sm:h-8',
+    md: 'w-8 h-8 sm:w-9 sm:h-9',
+    lg: 'w-10 h-10 sm:w-12 sm:h-12',
+    xl: 'w-14 h-14 sm:w-16 sm:h-16'
+  };
+
   const defaultBadgeClasses = isDarkBg
     ? 'bg-slate-800 text-orange-400 border border-slate-700'
     : 'bg-orange-50 text-orange-700 border border-orange-200/80';
 
   const content = (
-    <div className={`group inline-flex flex-col select-none text-left transition-all duration-200 ${className}`}>
-      {/* Main Text Logo Row */}
+    <div className={`group inline-flex items-center gap-2.5 select-none text-left transition-all duration-200 ${className}`}>
+      {showEmblem && (
+        <img
+          src="/logo.png"
+          alt="Seafudz ng Bayan"
+          className={`shrink-0 object-contain drop-shadow-xs group-hover:scale-105 transition-transform duration-200 ${emblemSizes[size]}`}
+          loading="eager"
+        />
+      )}
+      <div className="flex flex-col">
+        {/* Main Text Logo Row */}
       <div className="flex items-baseline gap-1.5 leading-none">
         {/* Typographic Wordmark */}
         <span
@@ -108,6 +126,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           {subtitle || 'Fresh Seafood & Bilao Feasts'}
         </span>
       )}
+      </div>
     </div>
   );
 

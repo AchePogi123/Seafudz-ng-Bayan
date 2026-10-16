@@ -10,6 +10,12 @@ import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
+import { reverseGeocodeCoordinates, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
+import {
+    calculateDeliveryFee,
+    geocodeAddress,
+    SEAFUDZ_FLAGSHIP_STORE,
+} from '../utils/riderDispatchAlgorithms'
 
 interface CartItem {
     item: MenuItem
@@ -22,6 +28,8 @@ interface OnlineOrderState {
     customerName: string
     phone: string
     address: string
+    deliveryLatitude?: number | null
+    deliveryLongitude?: number | null
     paymentMethod: string
     paymentReference?: string
     paymentReceipt?: string // Base64 or image data URL
@@ -243,6 +251,12 @@ export const OnlineCustomer: React.FC = () => {
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
+    const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null)
+    const [isFindingAddress, setIsFindingAddress] = useState(false)
+    const [addressLookupMessage, setAddressLookupMessage] = useState('')
+    const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null)
+    const [isCalculatingDeliveryFee, setIsCalculatingDeliveryFee] = useState(false)
+    const [deliveryDistanceMessage, setDeliveryDistanceMessage] = useState('')
     const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
@@ -261,6 +275,46 @@ export const OnlineCustomer: React.FC = () => {
     const [additionalReceiptFile, setAdditionalReceiptFile] = useState<string | null>(null)
     const [additionalRefNumber, setAdditionalRefNumber] = useState<string>('')
     const [isSubmittingOosChoice, setIsSubmittingOosChoice] = useState(false)
+
+    const handleUseCurrentLocation = () => {
+        if (!navigator.geolocation) {
+            setAddressLookupMessage('Location is not supported by this browser.')
+            return
+        }
+
+        setIsFindingAddress(true)
+        setAddressLookupMessage('')
+        navigator.geolocation.getCurrentPosition(
+            async ({ coords }) => {
+                const currentCoordinates = { lat: coords.latitude, lng: coords.longitude }
+                setAddressCoordinates(currentCoordinates)
+                setDeliveryDistanceKm(null)
+                setIsCalculatingDeliveryFee(true)
+                setDeliveryDistanceMessage('')
+                try {
+                    const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates)
+                    setAddress(resolvedAddress)
+                    setAddressLookupMessage('Current location added. Please check the address and add unit or gate details if needed.')
+                } catch (error) {
+                    setAddress(`${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`)
+                    setAddressLookupMessage(
+                        `${error instanceof Error ? error.message : 'Could not find a readable address.'} Coordinates were added instead; add any helpful delivery details.`
+                    )
+                } finally {
+                    setIsFindingAddress(false)
+                }
+            },
+            (error) => {
+                setIsFindingAddress(false)
+                setAddressLookupMessage(
+                    error.code === 1
+                        ? 'Location permission was denied. Enter your delivery address manually.'
+                        : 'Could not get your location. Check your device settings and try again.'
+                )
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+        )
+    }
 
     const handleAdditionalReceiptChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -763,9 +817,68 @@ export const OnlineCustomer: React.FC = () => {
     }, [cartItems, getEffectivePrice])
     // 12% VAT added on top of base subtotal
     const vat = useMemo(() => subtotal * 0.12, [subtotal])
-    // Shipping/Delivery fee detailed in breakdown (NOT in item display price)
-    const deliveryFee = useMemo(() => (subtotal > 0 ? 50 : 0), [subtotal])
-    const total = useMemo(() => Math.round(subtotal + vat + deliveryFee), [subtotal, vat, deliveryFee])
+    const deliveryDestination = useMemo(
+        () => address.trim() ? addressCoordinates || geocodeAddress(address) : null,
+        [address, addressCoordinates]
+    )
+    const deliveryLatitude = deliveryDestination?.lat
+    const deliveryLongitude = deliveryDestination?.lng
+
+    useEffect(() => {
+        const controller = new AbortController()
+        const timer = window.setTimeout(() => {
+            if (deliveryLatitude === undefined || deliveryLongitude === undefined) {
+                setDeliveryDistanceKm(null)
+                setIsCalculatingDeliveryFee(false)
+                setDeliveryDistanceMessage('')
+                return
+            }
+
+            setIsCalculatingDeliveryFee(true)
+            const destination = { lat: deliveryLatitude, lng: deliveryLongitude }
+            const origin = SEAFUDZ_FLAGSHIP_STORE
+            void fetchRoadDistances(origin, [{ id: 'checkout', coord: destination }], controller.signal)
+                .then((distances) => {
+                    if (controller.signal.aborted) return
+                    const routeDistance = distances.get('checkout')
+                    setDeliveryDistanceKm(routeDistance ?? null)
+                    setDeliveryDistanceMessage(
+                        routeDistance === undefined
+                            ? 'Road distance unavailable. Please retry before placing the order.'
+                            : routeDistance > 8
+                                ? 'Delivery is available only within 8 km of the store.'
+                                : ''
+                    )
+                    setIsCalculatingDeliveryFee(false)
+                })
+                .catch(() => {
+                    if (controller.signal.aborted) return
+                    setDeliveryDistanceKm(null)
+                    setDeliveryDistanceMessage('Road distance unavailable. Please retry before placing the order.')
+                    setIsCalculatingDeliveryFee(false)
+                })
+        }, 300)
+
+        return () => {
+            window.clearTimeout(timer)
+            controller.abort()
+        }
+    }, [deliveryLatitude, deliveryLongitude])
+
+    const deliveryFee = useMemo(
+        () => {
+            if (subtotal <= 0) return 0
+            if (deliveryDistanceKm === null) return address.trim() ? null : 50
+            return calculateDeliveryFee(deliveryDistanceKm)
+        },
+        [subtotal, deliveryDistanceKm, address]
+    )
+    const deliveryDistanceLabel = isCalculatingDeliveryFee
+        ? 'Calculating distance…'
+        : deliveryDistanceKm === null
+            ? ''
+            : `${deliveryDistanceKm.toFixed(1)} km`
+    const total = useMemo(() => Math.round(subtotal + vat + (deliveryFee ?? 0)), [subtotal, vat, deliveryFee])
 
     // Filters: Menu Display Price = Base Price + 12% VAT (e.g. 199 + 12% VAT = ₱223)
     const filteredItems = useMemo(() => {
@@ -836,6 +949,10 @@ export const OnlineCustomer: React.FC = () => {
 
     const handlePlaceOrder = async (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
+        if (isFindingAddress || isCalculatingDeliveryFee) {
+            alert('Please wait while your location and delivery fee are calculated.')
+            return
+        }
         if (hasUnavailableCartItems) {
             alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before placing your order.')
             return
@@ -861,6 +978,12 @@ export const OnlineCustomer: React.FC = () => {
             alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
             return
         }
+        if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
+            alert(deliveryDistanceKm === null
+                ? 'The road distance could not be verified. Please try again before ordering.'
+                : 'Delivery is available only within 8 km of the store.')
+            return
+        }
 
         isSubmittingOrderRef.current = true
         setIsSubmittingOrder(true)
@@ -872,6 +995,8 @@ export const OnlineCustomer: React.FC = () => {
                 customerName: customerName.trim(),
                 phone: phone.trim(),
                 deliveryAddress: address.trim(),
+                deliveryLatitude: addressCoordinates?.lat,
+                deliveryLongitude: addressCoordinates?.lng,
                 paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
@@ -925,6 +1050,8 @@ export const OnlineCustomer: React.FC = () => {
                 phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
                 address: serverOrder?.address || serverOrder?.delivery_address || address,
                 deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || address,
+                deliveryLatitude: serverOrder?.deliveryLatitude ?? addressCoordinates?.lat,
+                deliveryLongitude: serverOrder?.deliveryLongitude ?? addressCoordinates?.lng,
                 paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
@@ -1427,9 +1554,14 @@ export const OnlineCustomer: React.FC = () => {
                                             <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span>Delivery Fee</span>
-                                            <span>₱{deliveryFee.toLocaleString()}</span>
+                                            <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
+                                            <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
                                         </div>
+                                        {deliveryDistanceMessage && (
+                                            <p role="status" className="text-[11px] text-amber-700">
+                                                {deliveryDistanceMessage}
+                                            </p>
+                                        )}
                                         <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
                                             <span>Total Amount</span>
                                             <span className="text-orange-600">₱{total.toLocaleString()}</span>
@@ -1543,17 +1675,58 @@ export const OnlineCustomer: React.FC = () => {
                                 </div>
 
                                 <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                        Delivery Address *
-                                    </label>
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                            Delivery Address *
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={handleUseCurrentLocation}
+                                            disabled={isFindingAddress}
+                                            className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60"
+                                        >
+                                            {isFindingAddress ? 'Finding location…' : 'Use my current location'}
+                                        </button>
+                                        {addressCoordinates && (
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setAddressCoordinates(null)
+                                                    setDeliveryDistanceKm(null)
+                                                    setIsCalculatingDeliveryFee(Boolean(address.trim()))
+                                                    setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.')
+                                                }}
+                                                className="text-xs font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700"
+                                            >
+                                                Remove location pin
+                                            </button>
+                                        )}
+                                    </div>
                                     <textarea
                                         required
                                         rows={3}
+                                        disabled={isFindingAddress}
                                         placeholder="Enter your complete delivery address"
                                         value={address}
-                                        onChange={(e) => setAddress(e.target.value)}
+                                        onChange={(e) => {
+                                            setAddress(e.target.value)
+                                            setAddressLookupMessage('')
+                                            if (!addressCoordinates) {
+                                                setDeliveryDistanceKm(null)
+                                                setIsCalculatingDeliveryFee(Boolean(e.target.value.trim()))
+                                                setDeliveryDistanceMessage('')
+                                            }
+                                        }}
                                         className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
                                     />
+                                    {addressLookupMessage && (
+                                        <p role="status" className="text-xs text-neutral-500">
+                                            {addressLookupMessage}
+                                        </p>
+                                    )}
+                                    <p className="text-[11px] text-neutral-400">
+                                        Address lookup uses OpenStreetMap. Please verify the address before ordering.
+                                    </p>
                                 </div>
 
                                 <div className="flex flex-col gap-1.5">
@@ -1675,9 +1848,14 @@ export const OnlineCustomer: React.FC = () => {
                                         <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                     <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>Delivery Fee</span>
-                                        <span>₱{deliveryFee.toLocaleString()}</span>
+                                        <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
+                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
                                     </div>
+                                    {deliveryDistanceMessage && (
+                                        <p role="status" className="text-[11px] text-amber-700">
+                                            {deliveryDistanceMessage}
+                                        </p>
+                                    )}
                                     <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
                                         <span>Total Amount</span>
                                         <span className="text-orange-600 text-lg">₱{total.toLocaleString()}</span>
@@ -2606,9 +2784,14 @@ export const OnlineCustomer: React.FC = () => {
                                         <span>₱{vat.toLocaleString()}</span>
                                     </div>
                                     <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>Delivery Fee</span>
-                                        <span>₱{deliveryFee.toLocaleString()}</span>
+                                        <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
+                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
                                     </div>
+                                    {deliveryDistanceMessage && (
+                                        <p role="status" className="text-[11px] text-amber-700">
+                                            {deliveryDistanceMessage}
+                                        </p>
+                                    )}
                                     <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-1.5 border-t border-dashed border-neutral-100">
                                         <span>Total Amount</span>
                                         <span className="text-orange-600">₱{total.toLocaleString()}</span>

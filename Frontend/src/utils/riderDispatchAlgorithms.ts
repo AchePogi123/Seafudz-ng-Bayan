@@ -1,14 +1,3 @@
-/**
- * Rider Dispatch & Geolocation Algorithms for Seafudz ng Bayan
- *
- * Implements:
- * 1. Haversine Great-Circle Distance Formula (100% client-side math, zero external API costs)
- * 2. Urban Road Circuity & Motorcycle Travel Time Estimation
- * 3. Metro Manila Address Geocoding Dictionary
- * 4. Foodpanda & Grab Style Spatial Order Batching (Multi-drop clustering & route sequencing)
- * 5. Bipartite Matching Dispatch Heuristics
- */
-
 export interface GeoCoordinate {
   lat: number
   lng: number
@@ -23,108 +12,24 @@ export interface DeliveryJob {
   address: string
   items: Array<{ name: string; quantity: number }>
   total: number
+  deliveryFee?: number | null
   status: 'Ready' | 'Out for Delivery' | 'Completed' | 'Preparing' | string
   createdAt?: string
   paymentMethod?: string
-  // Algorithmic additions
   coord: GeoCoordinate
-  straightDistanceKm?: number
   roadDistanceKm?: number
-  estimatedMinutes?: number
 }
 
-export interface DeliveryBatch {
-  id: string
-  orders: DeliveryJob[]
-  totalStraightKm: number
-  totalRoadKm: number
-  estimatedMinutes: number
-  savingsKm: number
-  savingsMinutes: number
-  optimizedSequence: DeliveryJob[]
-}
-
-// Default Store Location: Caloocan Flagship Branch (Metro Manila)
+// Store location: Barangay 176, Bagong Silang, Caloocan
 export const SEAFUDZ_FLAGSHIP_STORE: GeoCoordinate = {
-  lat: 14.6571,
-  lng: 120.9841,
-  label: 'Seafudz ng Bayan - Caloocan Main Flagship',
+  lat: 14.762,
+  lng: 121.045,
+  label: 'Seafudz ng Bayan - Barangay 176, Bagong Silang',
 }
 
-// Earth's mean radius in kilometers
-const EARTH_RADIUS_KM = 6371.0088
-
-// Average urban delivery speeds for motorcycles in Metro Manila
-export const URBAN_PARAMS = {
-  MOTORCYCLE_SPEED_KMH: 26, // Realistic Metro Manila speed accounting for stoplights & traffic
-  DETOUR_CIRCUITY_FACTOR: 1.32, // Road distance vs straight-line distance factor
-  PICKUP_BUFFER_MINUTES: 3, // Parking & staging at store
-  DROPOFF_BUFFER_MINUTES: 4, // Calling customer, elevator/gate entry, payment collection
-}
-
-/**
- * 1. Haversine Formula
- * Calculates the exact great-circle distance between two GPS points on a sphere.
- * Pure mathematical formula: O(1) time complexity, zero API cost, runs offline.
- */
-export function haversineDistanceKm(from: GeoCoordinate, to: GeoCoordinate): number {
-  const toRad = (degree: number) => (degree * Math.PI) / 180
-
-  const dLat = toRad(to.lat - from.lat)
-  const dLng = toRad(to.lng - from.lng)
-
-  const lat1 = toRad(from.lat)
-  const lat2 = toRad(to.lat)
-
-  // a = sin²(Δlat/2) + cos(lat1) * cos(lat2) * sin²(Δlng/2)
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2)
-
-  // c = 2 * atan2(√a, √(1−a))
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
-
-  return EARTH_RADIUS_KM * c
-}
-
-/**
- * Converts straight-line Haversine distance into realistic road navigation distance.
- */
-export function calculateRoadDistanceKm(
-  straightKm: number,
-  circuity = URBAN_PARAMS.DETOUR_CIRCUITY_FACTOR
-): number {
-  return Number((straightKm * circuity).toFixed(2))
-}
-
-/**
- * Estimates motorcycle travel time in minutes based on distance and city traffic speed.
- */
-export function calculateTravelMinutes(
-  roadDistanceKm: number,
-  speedKmh = URBAN_PARAMS.MOTORCYCLE_SPEED_KMH,
-  bufferMinutes = URBAN_PARAMS.DROPOFF_BUFFER_MINUTES
-): number {
-  const travelTimeMinutes = (roadDistanceKm / speedKmh) * 60
-  return Math.max(3, Math.round(travelTimeMinutes + bufferMinutes))
-}
-
-/**
- * Bearing angle from coordinate A to coordinate B in degrees (0 = North, 90 = East, etc.)
- */
-export function calculateBearingDegrees(from: GeoCoordinate, to: GeoCoordinate): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180
-  const toDeg = (rad: number) => (rad * 180) / Math.PI
-
-  const dLng = toRad(to.lng - from.lng)
-  const lat1 = toRad(from.lat)
-  const lat2 = toRad(to.lat)
-
-  const y = Math.sin(dLng) * Math.cos(lat2)
-  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
-
-  const brng = toDeg(Math.atan2(y, x))
-  return (brng + 360) % 360
+export function calculateDeliveryFee(distanceKm: number): number | null {
+  if (!Number.isFinite(distanceKm) || distanceKm < 0 || distanceKm > 8) return null
+  return distanceKm < 3.9 ? 50 : 100
 }
 
 /**
@@ -206,98 +111,4 @@ export function geocodeAddress(addressText: string): GeoCoordinate {
     lng: Number((SEAFUDZ_FLAGSHIP_STORE.lng + lngOffset).toFixed(6)),
     label: addressText.trim() || 'Metro Manila Area',
   }
-}
-
-/**
- * 3. Foodpanda & Grab Style Smart Batching Algorithm (Clarke-Wright Savings Heuristic)
- * Finds orders that can be combined into a single motorcycle trip to save time & fuel.
- *
- * Conditions for batching:
- * - Both orders are 'Ready' or active for dispatch.
- * - Distance between Dropoff A and Dropoff B <= maxClusterRadiusKm (default 3.0 km).
- */
-export function findSmartDeliveryBatches(
-  orders: DeliveryJob[],
-  storeCoord: GeoCoordinate = SEAFUDZ_FLAGSHIP_STORE,
-  maxInterDropKm = 3.2
-): DeliveryBatch[] {
-  const readyOrders = orders.filter((o) => o.status === 'Ready' || o.status === 'Out for Delivery')
-  if (readyOrders.length < 2) return []
-
-  const batches: DeliveryBatch[] = []
-  const usedOrderIds = new Set<string>()
-
-  // Calculate Clarke-Wright Savings: S(i, j) = Distance(Store, i) + Distance(Store, j) - Distance(i, j)
-  type SavingsPair = { orderA: DeliveryJob; orderB: DeliveryJob; savingsKm: number; interDropKm: number }
-  const savingsList: SavingsPair[] = []
-
-  for (let i = 0; i < readyOrders.length; i++) {
-    for (let j = i + 1; j < readyOrders.length; j++) {
-      const oA = readyOrders[i]
-      const oB = readyOrders[j]
-
-      const distStoreA = haversineDistanceKm(storeCoord, oA.coord)
-      const distStoreB = haversineDistanceKm(storeCoord, oB.coord)
-      const distAB = haversineDistanceKm(oA.coord, oB.coord)
-
-      // Only batch if dropoffs are reasonably close together
-      if (distAB <= maxInterDropKm) {
-        const savingsKm = distStoreA + distStoreB - distAB
-        if (savingsKm > 0) {
-          savingsList.push({ orderA: oA, orderB: oB, savingsKm, interDropKm: distAB })
-        }
-      }
-    }
-  }
-
-  // Sort pairs by highest savings first
-  savingsList.sort((a, b) => b.savingsKm - a.savingsKm)
-
-  // Greedily create batches
-  savingsList.forEach((pair, idx) => {
-    if (usedOrderIds.has(pair.orderA.id) || usedOrderIds.has(pair.orderB.id)) return
-
-    usedOrderIds.add(pair.orderA.id)
-    usedOrderIds.add(pair.orderB.id)
-
-    // Sequence optimization (Traveling Salesperson Problem with 2 drops):
-    // Sequence 1: Store -> A -> B
-    // Sequence 2: Store -> B -> A
-    const distStoreA = haversineDistanceKm(storeCoord, pair.orderA.coord)
-    const distStoreB = haversineDistanceKm(storeCoord, pair.orderB.coord)
-    const distAB = pair.interDropKm
-
-    let sequence: DeliveryJob[] = []
-    let totalStraightKm = 0
-
-    if (distStoreA <= distStoreB) {
-      sequence = [pair.orderA, pair.orderB]
-      totalStraightKm = distStoreA + distAB
-    } else {
-      sequence = [pair.orderB, pair.orderA]
-      totalStraightKm = distStoreB + distAB
-    }
-
-    const unbatchedStraightKm = distStoreA * 2 + distStoreB * 2 // Two separate round trips
-    const roadKm = calculateRoadDistanceKm(totalStraightKm)
-    const unbatchedRoadKm = calculateRoadDistanceKm(unbatchedStraightKm)
-    const savedRoadKm = Number(Math.max(0, unbatchedRoadKm - roadKm).toFixed(2))
-
-    const travelMins = calculateTravelMinutes(roadKm, URBAN_PARAMS.MOTORCYCLE_SPEED_KMH, 6)
-    const unbatchedMins = calculateTravelMinutes(unbatchedRoadKm, URBAN_PARAMS.MOTORCYCLE_SPEED_KMH, 10)
-    const savedMins = Math.max(0, unbatchedMins - travelMins)
-
-    batches.push({
-      id: `BATCH-${idx + 1}-${pair.orderA.ref.slice(-4)}-${pair.orderB.ref.slice(-4)}`,
-      orders: [pair.orderA, pair.orderB],
-      totalStraightKm: Number(totalStraightKm.toFixed(2)),
-      totalRoadKm: roadKm,
-      estimatedMinutes: travelMins,
-      savingsKm: savedRoadKm,
-      savingsMinutes: savedMins,
-      optimizedSequence: sequence,
-    })
-  })
-
-  return batches
 }

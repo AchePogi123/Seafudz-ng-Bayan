@@ -112,7 +112,8 @@ router.patch('/assistant/calls/:id/resolve', requireAuth, requireRole(['admin', 
 router.get('/assistant/orders', optionalAuth, async (req, res) => {
   try {
     const sql = `
-      SELECT o.id, o.id AS ref, o.order_type, o.status, o.total, o.notes, o.created_at,
+      SELECT o.id, o.id AS ref, o.order_type, o.status, o.subtotal, o.tax AS vat,
+             o.delivery_fee, o.total, o.notes, o.created_at,
              c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
              p_pay.payment_method, p_pay.status AS payment_status,
              COALESCE(
@@ -149,6 +150,9 @@ router.get('/assistant/orders', optionalAuth, async (req, res) => {
       paymentStatus: o.payment_status || 'PENDING',
       status: o.status === 'PENDING' ? 'pending' : (o.status === 'IN_PROCESS' || o.status === 'PREPARING' ? 'preparing' : o.status.toLowerCase()),
       items: o.items || [],
+      subtotal: parseFloat(o.subtotal || 0),
+      vat: parseFloat(o.vat || 0),
+      deliveryFee: parseFloat(o.delivery_fee || 50),
       total: parseFloat(o.total || 0),
       createdAt: o.created_at,
       notes: o.notes,

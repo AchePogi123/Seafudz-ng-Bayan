@@ -193,6 +193,8 @@ export function formatOrderResponse(row) {
     phone: row.customer_phone || row.phone || '0917-000-0000',
     address: row.delivery_address || row.address || 'Delivery Address',
     deliveryAddress: row.delivery_address || row.address || 'Delivery Address',
+    deliveryLatitude: row.delivery_latitude ?? row.deliveryLatitude ?? null,
+    deliveryLongitude: row.delivery_longitude ?? row.deliveryLongitude ?? null,
     paymentMethod: row.payment_method || row.paymentMethod || 'GCash',
     paymentReceipt: row.payment_receipt || row.paymentReceipt || undefined,
     refundReceipt: row.refund_receipt || row.refundReceipt || refundReceiptFromRefunds || undefined,
@@ -229,4 +231,3 @@ export function formatOrderResponse(row) {
     updatedAt: row.updated_at || row.updatedAt || new Date().toISOString(),
   };
 }
-

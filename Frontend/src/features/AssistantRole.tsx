@@ -43,6 +43,9 @@ export interface OnlineOrder {
   payments?: any[]
   refunds?: any[]
   additionalPaymentReceipt?: string
+  subtotal?: number
+  vat?: number
+  deliveryFee?: number
   total: number
   createdAt: string
   correctionNote?: string
@@ -291,6 +294,9 @@ export const AssistantRole: React.FC = () => {
                 payments: o.payments || [],
                 refunds: o.refunds || [],
                 additionalPaymentReceipt: o.additionalPaymentReceipt,
+                subtotal: Number(o.subtotal || 0),
+                vat: Number(o.vat || 0),
+                deliveryFee: Number(o.deliveryFee || o.delivery_fee || 50),
                 total: o.total || 0,
                 createdAt: o.createdAt || 'Just now',
                 correctionNote: o.notes,
@@ -349,6 +355,9 @@ export const AssistantRole: React.FC = () => {
                 customerResolution: o.customerResolution || o.customer_resolution || null,
                 customerResolutionStatus: o.customerResolutionStatus || o.customer_resolution_status || 'NONE',
                 customerReplacements: o.customerReplacements || o.customer_replacements || [],
+                  subtotal: Number(o.subtotal || 0),
+                  vat: Number(o.vat || o.tax || 0),
+                  deliveryFee: Number(o.deliveryFee || o.delivery_fee || 50),
                   total: Number(o.total || 0),
                   createdAt: o.dateTime || 'Just now',
                   correctionNote: o.notes,
@@ -818,6 +827,8 @@ export const AssistantRole: React.FC = () => {
                 paginatedOrders.map((ord) => {
                   const isSelected = selectedOrderId === ord.id
                   const s = normalizeStatusStr(ord.status)
+                  const deliveryFee = Number(ord.deliveryFee ?? 0)
+                  const priceBeforeDelivery = Math.max(0, Number(ord.total || 0) - deliveryFee)
 
                   return (
                     <div
@@ -865,6 +876,17 @@ export const AssistantRole: React.FC = () => {
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
                         <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
                         <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                      </div>
+
+                      <div className="space-y-1 border-t border-neutral-100 pt-2 text-[11px] text-neutral-500">
+                        <div className="flex justify-between">
+                          <span>Food price + VAT</span>
+                          <span>₱{priceBeforeDelivery.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Delivery fee</span>
+                          <span>₱{deliveryFee.toLocaleString()}</span>
+                        </div>
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
@@ -946,6 +968,19 @@ export const AssistantRole: React.FC = () => {
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Payment Details</span>
                     <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
+                  </div>
+
+                  <div className="space-y-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Food price + VAT:</span>
+                      <span className="font-semibold text-slate-800">
+                        ₱{Math.max(0, selectedOrder.total - Number(selectedOrder.deliveryFee ?? 0)).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500 font-medium">Delivery fee:</span>
+                      <span className="font-semibold text-slate-800">₱{Number(selectedOrder.deliveryFee ?? 0).toLocaleString()}</span>
+                    </div>
                   </div>
 
                   <div className="space-y-1.5 text-[11px]">

@@ -151,6 +151,10 @@ CREATE TABLE orders (
     total NUMERIC(10,2) NOT NULL DEFAULT 0
         CHECK (total >= 0),
     notes TEXT,
+    delivery_latitude DOUBLE PRECISION
+        CHECK (delivery_latitude BETWEEN -90 AND 90),
+    delivery_longitude DOUBLE PRECISION
+        CHECK (delivery_longitude BETWEEN -180 AND 180),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

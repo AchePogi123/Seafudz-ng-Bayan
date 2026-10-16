@@ -263,7 +263,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       return acc + (price * ci.quantity);
     }, 0);
     const tax = Math.round(subtotal * 0.12 * 100) / 100;
-    const deliveryFee = (type === 'ONLINE' || type === 'Delivery' || orderType === 'ONLINE') ? 100 : 0;
+    const deliveryFee = (type === 'ONLINE' || type === 'Delivery' || orderType === 'ONLINE') ? 50 : 0;
     const totalAmount = subtotal + tax + deliveryFee;
 
     const normalizedOrderType = (type === 'ONLINE' || type === 'Delivery' || orderType === 'ONLINE') ? 'ONLINE' : 'ON_SITE';
@@ -575,6 +575,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       phone,
       deliveryAddress,
       address,
+      deliveryLatitude: rawDeliveryLatitude,
+      deliveryLongitude: rawDeliveryLongitude,
       paymentMethod,
       notes,
       items,
@@ -606,6 +608,26 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     const cleanCustomer = customerName || (req.user && req.user.fullname) || 'Online Customer';
     const cleanPhone = phone || (req.user && req.user.phone) || '0917-000-0000';
     const cleanAddress = deliveryAddress || address || (req.user && req.user.delivery_address) || 'Metro Manila Address';
+    const hasLatitude = rawDeliveryLatitude !== undefined && rawDeliveryLatitude !== null
+    const hasLongitude = rawDeliveryLongitude !== undefined && rawDeliveryLongitude !== null
+    const deliveryLatitude = hasLatitude ? Number(rawDeliveryLatitude) : null
+    const deliveryLongitude = hasLongitude ? Number(rawDeliveryLongitude) : null
+    if (
+      hasLatitude !== hasLongitude ||
+      (hasLatitude && (
+        !Number.isFinite(deliveryLatitude) ||
+        !Number.isFinite(deliveryLongitude) ||
+        deliveryLatitude < -90 ||
+        deliveryLatitude > 90 ||
+        deliveryLongitude < -180 ||
+        deliveryLongitude > 180
+      ))
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'Delivery coordinates must include a valid latitude and longitude.',
+      });
+    }
     const customerId = (req.user && req.user.id) ? req.user.id : null;
 
     const requestedOrderId = req.body.id || req.body.ref;
@@ -644,6 +666,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       phone: cleanPhone,
       delivery_address: cleanAddress,
       address: cleanAddress,
+      delivery_latitude: deliveryLatitude,
+      delivery_longitude: deliveryLongitude,
       payment_method: initialPaymentMethod,
       paymentMethod: initialPaymentMethod,
       payment_receipt: req.body.paymentReceipt || undefined,
@@ -681,10 +705,35 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         await client.query('BEGIN');
         await assertItemsAvailable(client, normalizedItems);
         await client.query(
-          `INSERT INTO orders (id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes, created_at)
-           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW())
-           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status`,
-          [orderId, customerId, calcSubtotal, calcVat, calcFee, calcTotal, notes || null, initialStatus]
+          `INSERT INTO orders (
+             id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes,
+             created_at, delivery_latitude, delivery_longitude
+           )
+           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW(), $9, $10)
+           ON CONFLICT (id) DO UPDATE SET
+             status = EXCLUDED.status,
+             delivery_latitude = COALESCE(EXCLUDED.delivery_latitude, orders.delivery_latitude),
+             delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, orders.delivery_longitude)`,
+          [
+            orderId,
+            customerId,
+            calcSubtotal,
+            calcVat,
+            calcFee,
+            calcTotal,
+            notes || null,
+            initialStatus,
+            deliveryLatitude,
+            deliveryLongitude,
+          ]
+        );
+        await client.query(
+          `INSERT INTO deliveries (order_id, delivery_address, status)
+           VALUES ($1, $2, 'PENDING')
+           ON CONFLICT (order_id) DO UPDATE SET
+             delivery_address = EXCLUDED.delivery_address,
+             updated_at = NOW()`,
+          [orderId, cleanAddress]
         );
 
         const existingItems = await client.query(

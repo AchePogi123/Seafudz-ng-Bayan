@@ -52,9 +52,11 @@ router.get('/user-flow/orders', async (req, res) => {
     try {
       const { rows } = await query(`
         SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+               o.delivery_latitude, o.delivery_longitude,
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
                o.created_at, o.updated_at,
-               c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
+               c.fullname AS customer_name, c.phone AS customer_phone,
+               COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
                COALESCE(
                  json_agg(
                    json_build_object(
@@ -74,8 +76,9 @@ router.get('/user-flow/orders', async (req, res) => {
                ) AS refunds
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
+        LEFT JOIN deliveries d ON d.order_id = o.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address
         ORDER BY o.created_at DESC
       `);
       dbOrders = rows;

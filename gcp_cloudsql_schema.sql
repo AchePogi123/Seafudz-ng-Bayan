@@ -143,6 +143,10 @@ CREATE TABLE orders (
     total NUMERIC(10,2) NOT NULL DEFAULT 0
         CHECK (total >= 0),
     notes TEXT,
+    delivery_latitude DOUBLE PRECISION
+        CHECK (delivery_latitude BETWEEN -90 AND 90),
+    delivery_longitude DOUBLE PRECISION
+        CHECK (delivery_longitude BETWEEN -180 AND 180),
     customer_resolution VARCHAR(20)
         CHECK (customer_resolution IS NULL OR customer_resolution IN ('REPLACE', 'REFUND')),
     customer_resolution_status VARCHAR(30) NOT NULL DEFAULT 'NONE'

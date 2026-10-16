@@ -64,7 +64,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
     setIsSubmitting(true)
 
     const prefix = orderType === 'Delivery' ? 'SFB' : 'POS'
-    const orderId = `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`
+    const orderId = `${prefix}-${crypto.randomUUID()}`
 
     const newOrderPayload = {
       id: orderId,

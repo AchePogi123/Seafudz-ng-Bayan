@@ -188,7 +188,7 @@ export const POS: React.FC = () => {
             status: (o.status || 'CONFIRMED').toUpperCase(),
             subtotal: o.subtotal || o.total || 0,
             vat: o.vat || 0,
-            deliveryFee: o.deliveryFee || 50,
+            deliveryFee: o.deliveryFee ?? 50,
             total: o.total || 0,
             items: Array.isArray(o.cartItems)
               ? o.cartItems.map((ci: any) => ({

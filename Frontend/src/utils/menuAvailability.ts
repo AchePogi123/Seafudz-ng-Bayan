@@ -1,134 +1,138 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useState } from "react"
+import { API_BASE_URL, getAuthHeaders } from "./api"
 
-const STORAGE_KEY = 'sfb_unavailable_items'
-const EVENT_NAME = 'sfb_availability_changed'
+const EVENT_NAME = "sfb_availability_changed"
 
-/**
- * Returns array of unavailable item IDs stored in localStorage
- */
-export function getUnavailableItemIds(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) || []
-  } catch (err) {
-    console.warn('Error reading unavailable items:', err)
-    return []
-  }
-}
+let availabilityById: Record<string, boolean> = {}
+let availabilityRequest: Promise<void> | null = null
+let availabilityRevision = 0
 
-/**
- * Checks if a specific item is available
- */
-export function isItemAvailable(itemId: string): boolean {
-  const list = getUnavailableItemIds()
-  return !list.includes(itemId)
-}
-
-/**
- * Toggles an item's availability (Available <-> Unavailable)
- */
-export function toggleItemAvailability(itemId: string): boolean {
-  const currentList = getUnavailableItemIds()
-  let nextList: string[]
-  let isNowAvailable = false
-
-  if (currentList.includes(itemId)) {
-    // Make it available by removing from unavailable list
-    nextList = currentList.filter((id) => id !== itemId)
-    isNowAvailable = true
-  } else {
-    // Make it unavailable by adding to list
-    nextList = [...currentList, itemId]
-    isNowAvailable = false
-  }
-
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList))
-    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: nextList }))
-    window.dispatchEvent(new Event('storage'))
-  } catch (err) {
-    console.error('Error saving unavailable items:', err)
-  }
-
-  return isNowAvailable
-}
-
-/**
- * Set item availability explicitly
- */
-export function setItemAvailability(itemId: string, available: boolean): void {
-  const currentList = getUnavailableItemIds()
-  let nextList: string[]
-
-  if (available) {
-    nextList = currentList.filter((id) => id !== itemId)
-  } else {
-    if (!currentList.includes(itemId)) {
-      nextList = [...currentList, itemId]
-    } else {
-      nextList = currentList
+function publishAvailability(next: Record<string, boolean>) {
+  let changed = false
+  for (const [key, value] of Object.entries(next)) {
+    if (availabilityById[key] !== value) {
+      availabilityById[key] = value
+      changed = true
     }
   }
 
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList))
-    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: nextList }))
-    window.dispatchEvent(new Event('storage'))
-  } catch (err) {
-    console.error('Error setting unavailable items:', err)
+  if (changed && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: { ...availabilityById } }))
   }
 }
 
-/**
- * React hook to reactively listen to availability changes across tabs & components
- */
-export function useMenuAvailability() {
-  const [unavailableIds, setUnavailableIds] = useState<string[]>(() => getUnavailableItemIds())
+export function applyProductAvailabilityChange(productId: string, isAvailable: boolean) {
+  const id = String(productId)
+  const boolVal = Boolean(isAvailable)
+  // Deduplication guard: Never emit or loop if the value is already identical
+  if (availabilityById[id] === boolVal) {
+    return
+  }
 
-  const sync = useCallback(() => {
-    setUnavailableIds(getUnavailableItemIds())
-  }, [])
+  availabilityRevision += 1
+  publishAvailability({ [id]: boolVal })
+}
+
+export function getUnavailableItemIds(): string[] {
+  return Object.entries(availabilityById)
+    .filter(([, available]) => !available)
+    .map(([id]) => id)
+}
+
+export function isItemAvailable(itemId: string): boolean {
+  return availabilityById[String(itemId)] !== false
+}
+
+async function fetchAvailability() {
+  if (availabilityRequest) return availabilityRequest
+
+  availabilityRequest = (async () => {
+    const revisionAtRequest = availabilityRevision
+    try {
+      const response = await fetch(`${API_BASE_URL}/menu`)
+      if (!response.ok) return
+      const payload = await response.json()
+      const next: Record<string, boolean> = {}
+      if (Array.isArray(payload?.data)) {
+        for (const product of payload.data) {
+          if (product?.id != null && typeof product.is_available === "boolean") {
+            next[String(product.id)] = product.is_available
+          }
+        }
+      }
+      if (revisionAtRequest === availabilityRevision) {
+        publishAvailability(next)
+      }
+    } catch (error) {
+      console.warn("Could not load product availability:", error)
+    }
+  })()
+
+  try {
+    await availabilityRequest
+  } finally {
+    availabilityRequest = null
+  }
+}
+
+export async function setItemAvailability(itemId: string, available: boolean): Promise<boolean> {
+  const id = String(itemId)
+  const previous = isItemAvailable(id)
+  if (previous === available) return true
+
+  // 1. Instant optimistic update (0ms local lag)
+  applyProductAvailabilityChange(id, available)
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(id)}/availability`, {
+      method: "PATCH",
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ is_available: available }),
+    })
+    if (!response.ok) {
+      // Revert if rejected by server
+      applyProductAvailabilityChange(id, previous)
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error("Could not update product availability:", error)
+    applyProductAvailabilityChange(id, previous)
+    return false
+  }
+}
+
+export function toggleItemAvailability(itemId: string): Promise<boolean> {
+  return setItemAvailability(itemId, !isItemAvailable(itemId))
+}
+
+export function useMenuAvailability() {
+  const [availability, setAvailability] = useState<Record<string, boolean>>(() => availabilityById)
 
   useEffect(() => {
-    const handleCustomEvent = (e: Event) => {
-      const customEvent = e as CustomEvent<string[]>
-      if (customEvent.detail) {
-        setUnavailableIds(customEvent.detail)
-      } else {
-        sync()
-      }
+    const sync = (event?: Event) => {
+      const detail = (event as CustomEvent<Record<string, boolean>> | undefined)?.detail
+      setAvailability(detail || { ...availabilityById })
     }
-
-    const handleStorageEvent = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEY || !e.key) {
-        sync()
-      }
-    }
-
-    window.addEventListener(EVENT_NAME, handleCustomEvent)
-    window.addEventListener('storage', handleStorageEvent)
-
-    return () => {
-      window.removeEventListener(EVENT_NAME, handleCustomEvent)
-      window.removeEventListener('storage', handleStorageEvent)
-    }
-  }, [sync])
+    window.addEventListener(EVENT_NAME, sync)
+    void fetchAvailability()
+    return () => window.removeEventListener(EVENT_NAME, sync)
+  }, [])
 
   const toggle = useCallback((itemId: string) => {
     return toggleItemAvailability(itemId)
   }, [])
 
   const checkIsAvailable = useCallback(
-    (itemId: string) => {
-      return !unavailableIds.includes(itemId)
-    },
-    [unavailableIds]
+    (itemId: string) => availability[String(itemId)] !== false,
+    [availability]
   )
 
   return {
-    unavailableIds,
+    availability,
+    unavailableIds: Object.entries(availability).filter(([, available]) => !available).map(([id]) => id),
     toggleAvailability: toggle,
     isAvailable: checkIsAvailable,
+    setAvailability: setItemAvailability,
   }
 }

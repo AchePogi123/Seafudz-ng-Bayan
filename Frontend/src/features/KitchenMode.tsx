@@ -5,9 +5,13 @@ import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { useProductImages } from '../utils/useProductImages'
+import { useMenuAvailability } from '../utils/menuAvailability'
+import { CLIENT_CATEGORIES } from '../components/MenuCard'
 
 interface OrderItem {
   id?: number
+  productId?: string
   name: string
   quantity: number
   price?: number
@@ -33,6 +37,9 @@ export interface KitchenOrder {
 export const KitchenMode: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
+  const canManageStock = ['kitchen', 'admin'].includes(currentUser?.role?.toLowerCase() || '')
+  const { menuItems } = useProductImages()
+  const { isAvailable, unavailableIds, setAvailability } = useMenuAvailability()
 
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
@@ -43,6 +50,10 @@ export const KitchenMode: React.FC = () => {
   const [outOfStockModalOrderId, setOutOfStockModalOrderId] = useState<string | null>(null)
   const [selectedOosItemIds, setSelectedOosItemIds] = useState<number[]>([])
   const [isSubmittingOos, setIsSubmittingOos] = useState(false)
+  const [isStockDrawerOpen, setIsStockDrawerOpen] = useState(false)
+  const [stockSearch, setStockSearch] = useState('')
+  const [stockCategory, setStockCategory] = useState('All Menu')
+  const [stockError, setStockError] = useState('')
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
@@ -121,6 +132,8 @@ export const KitchenMode: React.FC = () => {
             customer: customerName,
             total: calcTotal,
             items: (o.cartItems || o.items || []).map((ci: any) => ({
+              id: ci.id,
+              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
               name: ci.item?.name || ci.name || 'Food Item',
               quantity: ci.quantity || 1,
             })),
@@ -201,6 +214,7 @@ export const KitchenMode: React.FC = () => {
                   total: calcTotal,
                   items: (o.items || []).map((item: any) => ({
                     id: item.id,
+                    productId: item.product_id || item.productId,
                     name: item.name || item.product_name_snapshot || 'Food Item',
                     quantity: item.quantity || 1,
                     price: parseFloat(item.unit_price || item.price || 0),
@@ -388,6 +402,8 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
+  const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
+
   // Out-of-stock flagging handler
   const handleFlagOutOfStock = async () => {
     if (!outOfStockModalOrderId || selectedOosItemIds.length === 0) return
@@ -401,6 +417,19 @@ export const KitchenMode: React.FC = () => {
       })
 
       if (res.ok) {
+        // Automatically mark flagged dishes as Out of Stock for all users
+        const selectedProducts = outOfStockOrder?.items
+          .filter((item, index) => selectedOosItemIds.includes(item.id || index + 1))
+          .map((item) => item.productId || menuItems.find(
+            (product) => product.name.toLowerCase() === item.name.toLowerCase()
+          )?.id)
+          .filter((productId): productId is string => Boolean(productId));
+
+        if (selectedProducts && selectedProducts.length > 0) {
+          void Promise.all(
+            selectedProducts.map((productId) => setAvailability(productId, false))
+          );
+        }
         // Update local state immediately
         setOrders((prev) =>
           prev.map((o) =>
@@ -432,10 +461,19 @@ export const KitchenMode: React.FC = () => {
       setIsSubmittingOos(false)
       setOutOfStockModalOrderId(null)
       setSelectedOosItemIds([])
-    }
+          }
   }
 
-  const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
+  const filteredStockItems = useMemo(() => menuItems.filter((item) => {
+    const matchesSearch = `${item.name} ${item.category}`.toLowerCase().includes(stockSearch.toLowerCase())
+    return matchesSearch && (stockCategory === 'All Menu' || item.category.toLowerCase() === stockCategory.toLowerCase())
+  }), [menuItems, stockSearch, stockCategory])
+
+  const handleSetProductAvailability = async (productId: string, available: boolean) => {
+    setStockError('')
+    const updated = await setAvailability(productId, available)
+    if (!updated) setStockError('Could not update stock. Check your connection and kitchen/admin access.')
+  }
 
   const queueOrders = useMemo(
     () =>
@@ -478,6 +516,18 @@ export const KitchenMode: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            {canManageStock && (
+              <button
+                type="button"
+                onClick={() => setIsStockDrawerOpen(true)}
+                className="relative flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100"
+              >
+                <span>📋 Manage Item Stock</span>
+                <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-black text-white">
+                  {unavailableIds.length}
+                </span>
+              </button>
+            )}
             {isAdmin && (
               <button
                 onClick={() => setIsAdminCreateOpen(true)}
@@ -813,6 +863,89 @@ export const KitchenMode: React.FC = () => {
         </div>
       )}
 
+      {isStockDrawerOpen && canManageStock && (
+        <div className="fixed inset-0 z-[60] flex justify-end bg-slate-950/60 transition-opacity">
+          <section className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-[#f8f7f2] shadow-2xl">
+            <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Kitchen stock control</p>
+                <h2 className="mt-1 text-xl font-black text-slate-950">86 Board</h2>
+                <p className="mt-1 text-xs font-medium text-slate-500">Availability only. Product details remain Admin-managed.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsStockDrawerOpen(false)}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-600 hover:bg-slate-200"
+                aria-label="Close stock board"
+              >
+                ×
+              </button>
+            </header>
+
+            <div className="space-y-3 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
+              <input
+                type="search"
+                value={stockSearch}
+                onChange={(event) => setStockSearch(event.target.value)}
+                placeholder="Search dishes or categories"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+              />
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {CLIENT_CATEGORIES.map((category) => (
+                  <button
+                    type="button"
+                    key={category}
+                    onClick={() => setStockCategory(category)}
+                    className={`shrink-0 rounded-full px-3 py-2 text-[11px] font-extrabold ${
+                      stockCategory === category ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {category}
+                  </button>
+                ))}
+              </div>
+              {stockError && <p role="alert" className="text-xs font-bold text-rose-700">{stockError}</p>}
+            </div>
+
+            <div className="flex-1 space-y-2.5 overflow-y-auto p-4 sm:p-6 overscroll-contain">
+              {filteredStockItems.map((item) => {
+                const available = isAvailable(item.id)
+                                return (
+                  <article key={item.id} style={{ contain: "content" }} className={`flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${available ? "border-slate-200" : "border-rose-300 bg-rose-50/20"}`}>
+                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-20 sm:w-20">
+                      <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">{item.category}</span>
+                      <h3 className="truncate text-sm font-black text-slate-900 sm:text-base">{item.name}</h3>
+                      <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-[9px] font-black tracking-wider ${available ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                        {available ? "🟢 IN STOCK" : "🔴 OUT OF STOCK"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={available}
+                      aria-label={`${available ? "Mark" : "Set"} ${item.name} ${available ? "out of stock" : "in stock"}`}
+                      onClick={() => void handleSetProductAvailability(item.id, !available)}
+                      className={`relative inline-flex h-9 w-[76px] shrink-0 cursor-pointer items-center rounded-full p-1 transition-colors duration-200 ease-in-out focus:outline-none select-none shadow-inner active:scale-95 ${available ? "bg-emerald-600" : "bg-rose-600"}`}
+                    >
+                      <span className={`absolute text-[10px] font-black tracking-wider text-white transition-opacity duration-200 pointer-events-none select-none ${available ? "left-2.5 opacity-100" : "right-2.5 opacity-100"}`}>
+                        {available ? "ON" : "86"}
+                      </span>
+                      <span className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ease-in-out ${available ? "translate-x-[40px]" : "translate-x-0"}`} />
+                    </button>
+                  </article>
+                )
+              })}
+              {filteredStockItems.length === 0 && (
+                <p className="py-10 text-center text-sm font-semibold text-slate-500">No dishes match this search.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
       {/* OUT OF STOCK MODAL */}
       {outOfStockModalOrderId && outOfStockOrder && (
         <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -873,6 +1006,8 @@ export const KitchenMode: React.FC = () => {
                   )
                 })}
               </div>
+
+
 
               <div className="flex gap-3 pt-2">
                 <button

@@ -21,12 +21,13 @@ export const authLimiter = rateLimit({
  */
 export const orderLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute window
-  max: 30, // Max 30 order operations per minute
+  max: process.env.NODE_ENV === "production" ? 60 : 300,
+  skip: (req) => req.method === "GET" || req.method === "OPTIONS",
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
-    message: 'Too many checkout requests in a short period. Please wait a moment before trying again.',
+    message: "Too many checkout requests in a short period. Please wait a moment before trying again.",
   },
 });
 
@@ -36,12 +37,13 @@ export const orderLimiter = rateLimit({
  */
 export const apiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute window
-  max: 180, // Max 180 requests per minute
+  max: process.env.NODE_ENV === "production" ? 300 : 2000,
+  skip: (req) => req.method === "OPTIONS" || req.path?.includes("/events/"),
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
-    message: 'Too many API requests from this IP. Please slow down.',
+    message: "Too many API requests from this IP. Please slow down.",
   },
 });
 

@@ -7,7 +7,7 @@ import { ReceiptModal } from './ReceiptModal'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
-import { API_BASE_URL } from '../utils/api'
+import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { NavbarCashier } from '../components/NavbarCashier'
@@ -15,11 +15,13 @@ import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { useProductImages } from '../utils/useProductImages'
+import { useMenuAvailability } from '../utils/menuAvailability'
 
 export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
   const { getEffectivePrice, updatePrice } = useMenuPrices()
+  const { isAvailable } = useMenuAvailability()
 
   const { menuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
@@ -36,6 +38,7 @@ export const POS: React.FC = () => {
         : cartItem
     })
   }, [menuItems, storedCartItems])
+  const hasUnavailableItems = cartItems.some((ci) => !isAvailable(ci.item.id))
   const [orderType, setOrderType] = useState('Take Out')
   const [orderNotes, setOrderNotes] = useState('')
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)
@@ -97,6 +100,18 @@ export const POS: React.FC = () => {
     phone?: string
     address?: string
   } | null>(null)
+
+  const removeUnavailableItems = () => {
+    const availableItems = storedCartItems.filter((ci) => isAvailable(ci.item.id))
+    setCartItems(availableItems)
+    setLastOrderDetails((prev) => prev
+      ? {
+          ...prev,
+          cartItems: availableItems,
+          total: Math.round(availableItems.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0) * 1.12),
+        }
+      : prev)
+  }
 
   // Fetch On-Site POS Orders for Cashier Sub-Module
   const fetchPosOrders = useCallback(() => {
@@ -505,6 +520,7 @@ export const POS: React.FC = () => {
   }
 
   const handleAddToCart = (item: MenuItem) => {
+    if (!isAvailable(item.id)) return
     setCartItems((prevItems) => {
       const existing = prevItems.find((ci) => ci.item.id === item.id)
       if (existing) {
@@ -540,6 +556,7 @@ export const POS: React.FC = () => {
 
   const handleConfirmOrder = () => {
     if (cartItems.length === 0) return
+    if (hasUnavailableItems) return
 
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
     const totalWithVat = Math.round(rawSubtotal * 1.12)
@@ -563,6 +580,10 @@ export const POS: React.FC = () => {
   }
 
   const handleConfirmPayment = async (cashReceived: string, change: number | null, paymentMethod: string) => {
+    if (hasUnavailableItems) {
+      alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
+      return
+    }
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
     const vat = rawSubtotal * 0.12
     const total = Math.round(rawSubtotal + vat)
@@ -592,13 +613,23 @@ export const POS: React.FC = () => {
     }
 
     try {
-      await fetch(`${API_BASE_URL}/orders`, {
+      const response = await fetch(`${API_BASE_URL}/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await getAuthHeaders(),
         body: JSON.stringify(posOrderPayload),
       })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        if (result.error === 'ITEM_OUT_OF_STOCK') {
+          alert(result.message || 'An item in this order is out of stock.')
+          return
+        }
+        throw new Error(result.message || 'Could not create the POS order.')
+      }
     } catch (err) {
       console.error('POS order API error:', err)
+      alert(err instanceof Error ? err.message : 'Could not create the POS order. Please try again.')
+      return
     }
 
     // Direct User Flow: POS Cashier -> Kitchen (Bypasses Rider and Assistant)
@@ -742,8 +773,7 @@ export const POS: React.FC = () => {
                 <MenuGrid
                   items={filteredItems}
                   onAddToCart={handleAddToCart}
-                  showAvailabilityToggle={true}
-                  allowPriceEdit={true}
+                  allowPriceEdit={isAdmin}
                   onUpdatePrice={handlePriceUpdate}
                 />
               </section>
@@ -760,6 +790,8 @@ export const POS: React.FC = () => {
                 onDecrement={handleDecrement}
                 onRemove={handleRemove}
                 onConfirmOrder={handleConfirmOrder}
+                isItemAvailable={isAvailable}
+                onRemoveUnavailable={removeUnavailableItems}
               />
             </div>
           </div>
@@ -1224,6 +1256,8 @@ export const POS: React.FC = () => {
               onDecrement={handleDecrement}
               onRemove={handleRemove}
               onConfirmOrder={handleConfirmOrder}
+              isItemAvailable={isAvailable}
+              onRemoveUnavailable={removeUnavailableItems}
               onClose={() => setIsMobileCartOpen(false)}
             />
           </div>
@@ -1235,6 +1269,9 @@ export const POS: React.FC = () => {
         onClose={handleCloseSuccessModal}
         onConfirm={handleConfirmPayment}
         orderDetails={lastOrderDetails}
+        hasUnavailableItems={hasUnavailableItems}
+        isItemAvailable={isAvailable}
+        onRemoveUnavailable={removeUnavailableItems}
       />
 
       <ReceiptModal

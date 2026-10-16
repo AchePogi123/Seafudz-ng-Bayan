@@ -1,5 +1,6 @@
 import React from 'react'
 import { ProductImage } from './ProductImage'
+import { getActiveUser } from '../cryptography/cryptoSession'
 
 export interface MenuItem {
   id: string
@@ -390,6 +391,9 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   allowPriceEdit = false,
   onUpdatePrice,
 }) => {
+  const currentRole = getActiveUser()?.role?.toLowerCase()
+  const canManageAvailability = currentRole === 'kitchen' || currentRole === 'admin'
+  const canEditPrice = currentRole === 'admin'
   const [isEditingPrice, setIsEditingPrice] = React.useState(false)
   const [tempPrice, setTempPrice] = React.useState(String(item.price))
 
@@ -504,7 +508,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
               >
                 ₱{item.price.toLocaleString()}
               </span>
-              {allowPriceEdit && (
+              {allowPriceEdit && canEditPrice && (
                 <button
                   type="button"
                   onClick={() => {
@@ -522,7 +526,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
 
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {/* POS Staff Stock Toggle Button (Next to +Add) */}
-            {showAvailabilityToggle && onToggleAvailability && (
+            {showAvailabilityToggle && canManageAvailability && onToggleAvailability && (
               <button
                 type="button"
                 onClick={(e) => {
@@ -547,7 +551,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
               >
                 <span>+ Add</span>
               </button>
-            ) : !showAvailabilityToggle ? (
+            ) : !(showAvailabilityToggle && canManageAvailability) ? (
               <span className="text-xs font-bold text-neutral-400 bg-neutral-100 px-3 py-1.5 rounded-lg select-none border border-neutral-200">
                 Sold Out
               </span>

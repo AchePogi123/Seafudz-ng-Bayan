@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { requireActiveAdmin } from '../src/middleware/authMiddleware.js';
 import menuRoutes from '../src/routes/menuRoutes.js';
+import orderRoutes, { assertItemsAvailable } from '../src/routes/orderRoutes.js';
 import {
   isManagedProductImagePath,
 } from '../src/config/productImageStorage.js';
@@ -53,6 +54,64 @@ test('image routes run authentication and active Admin authorization before pars
   assert.deepEqual(
     deleteRoute.route.stack.slice(0, 2).map((layer) => layer.handle.name),
     ['requireAuth', 'requireActiveAdmin'],
+  );
+});
+
+test('availability route requires authenticated Kitchen or Admin role checks', () => {
+  const route = menuRoutes.stack.find((layer) =>
+    layer.route?.path === '/menu/:id/availability' && layer.route.methods.patch
+  );
+  assert.equal(route.route.stack[0].handle.name, 'requireAuth');
+  const guard = route.route.stack[1].handle;
+  const checkRole = (role) => {
+    let passed = false;
+    let statusCode;
+    guard({ user: { role } }, { status(code) { statusCode = code; return this; }, json() {} }, () => { passed = true; });
+    return { passed, statusCode };
+  };
+  assert.equal(checkRole('kitchen').passed, true);
+  assert.equal(checkRole('admin').passed, true);
+  assert.equal(checkRole('cashier').statusCode, 403);
+  assert.equal(checkRole('assistant').statusCode, 403);
+});
+
+test('POS order creation remains authenticated and role restricted', () => {
+  const route = orderRoutes.stack.find((layer) => layer.route?.path === '/orders' && layer.route.methods.post);
+  assert.equal(route.route.stack[0].handle.name, 'requireAuth');
+  let passed = false;
+  const res = { status() { return this; }, json() {} };
+  route.route.stack[1].handle({ user: { role: 'kitchen' } }, res, () => { passed = true; });
+  assert.equal(passed, false);
+});
+
+test('order availability validation locks products and rejects missing or unavailable items with 409', async () => {
+  let queryText = '';
+  const client = {
+    async query(sql) {
+      queryText = sql;
+      return { rows: [{ id: 'shrimp', name: 'Shrimp', is_available: false }] };
+    },
+  };
+
+  await assert.rejects(
+    () => assertItemsAvailable(client, [{ productId: 'shrimp', name: 'Shrimp' }]),
+    (error) => error.code === 'ITEM_OUT_OF_STOCK'
+      && error.statusCode === 409
+      && error.message === 'Item "Shrimp" is currently out of stock.'
+  );
+  assert.match(queryText, /FOR SHARE/);
+});
+
+test('order availability validation accepts only confirmed available catalog rows', async () => {
+  const client = {
+    async query() {
+      return { rows: [{ id: 'shrimp', name: 'Shrimp', is_available: true }] };
+    },
+  };
+  await assert.doesNotReject(() => assertItemsAvailable(client, [{ productId: 'shrimp', name: 'Shrimp' }]));
+  await assert.rejects(
+    () => assertItemsAvailable(client, [{ productId: 'missing', name: 'Missing Dish' }]),
+    (error) => error.code === 'ITEM_OUT_OF_STOCK' && error.statusCode === 409
   );
 });
 

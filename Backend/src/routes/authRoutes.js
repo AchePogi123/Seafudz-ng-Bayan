@@ -17,23 +17,32 @@ import { sendEmail } from '../services/emailService.js';
 
 const router = Router();
 
-function staffActivationLink(token) {
+function staffActivationLink(token, req) {
   const configuredBase = process.env.FRONTEND_BASE_URL?.trim();
-  const baseUrl = configuredBase || (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173');
-  if (!baseUrl) throw new Error('FRONTEND_BASE_URL is required for staff activation emails.');
+  const origin = req?.headers?.origin?.trim();
+
+  // If explicitly configured, prioritize that
+  let baseUrl = configuredBase;
+
+  // If request comes from a live HTTPS production domain (e.g. seafudzngbayan.app or vercel), use it
+  if (!baseUrl && origin && origin.startsWith('https://')) {
+    baseUrl = origin;
+  }
+
+  // Default to confirmed production domain so invitation emails never link to localhost
+  if (!baseUrl) {
+    baseUrl = 'https://seafudzngbayan.app';
+  }
 
   const frontendUrl = new URL(baseUrl);
   if (!['http:', 'https:'].includes(frontendUrl.protocol)) {
     throw new Error('FRONTEND_BASE_URL must use HTTP or HTTPS.');
   }
-  if (process.env.NODE_ENV === 'production' && frontendUrl.protocol !== 'https:') {
-    throw new Error('FRONTEND_BASE_URL must use HTTPS in production.');
-  }
   return `${frontendUrl.origin}/activate-account#token=${encodeURIComponent(token)}`;
 }
 
-async function sendStaffActivationEmail(email, token) {
-  const activationLink = staffActivationLink(token);
+async function sendStaffActivationEmail(email, token, req) {
+  const activationLink = staffActivationLink(token, req);
   await sendEmail({
     to: email,
     subject: 'Activate your Seafudz ng Bayan staff account',
@@ -255,7 +264,7 @@ router.post('/users', requireAuth, requireActiveAdmin, async (req, res) => {
 
   let activationEmailSent = false;
   try {
-    await sendStaffActivationEmail(employee.email, token);
+    await sendStaffActivationEmail(employee.email, token, req);
     activationEmailSent = true;
   } catch (error) {
     console.warn('Staff activation email could not be delivered:', error.message);
@@ -323,7 +332,7 @@ router.post('/users/:id/resend-activation', requireAuth, requireActiveAdmin, asy
   }
 
   try {
-    await sendStaffActivationEmail(employee.email, token);
+    await sendStaffActivationEmail(employee.email, token, req);
     return res.status(200).json({ success: true, message: 'A new activation email was sent.' });
   } catch (error) {
     console.warn('Staff activation resend failed:', error.message);
@@ -1189,7 +1198,7 @@ router.post('/auth/forgot-password', async (req, res) => {
       [cleanEmail, token, expiresAt]
     );
 
-    const clientOrigin = req.headers.origin || 'http://localhost:5173';
+    const clientOrigin = (req.headers.origin && req.headers.origin.startsWith('https://')) ? req.headers.origin : (process.env.FRONTEND_BASE_URL?.trim() || 'https://seafudzngbayan.app');
     const resetLink = `${clientOrigin}/reset-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
 
     // Dispatch email via Resend API

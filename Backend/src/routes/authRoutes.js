@@ -516,7 +516,7 @@ router.patch('/users/:id/toggle-status', requireAuth, requireActiveAdmin, async 
 router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, username, email, contact, phone, role } = req.body;
+    const { name, username, email, contact, phone, role, password } = req.body;
     const cleanName = (name || '').trim();
     const cleanUsername = (username || '').trim();
     const cleanEmail = (email || '').trim().toLowerCase();
@@ -548,6 +548,18 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
       }
     }
 
+    let newPasswordHash = null;
+    if (typeof password === 'string' && password.trim().length > 0) {
+      const cleanPassword = password.trim();
+      if (cleanPassword.length < 6 || cleanPassword.length > 128) {
+        return res.status(400).json({
+          success: false,
+          message: 'Password must be between 6 and 128 characters.',
+        });
+      }
+      newPasswordHash = await hashPassword(cleanPassword);
+    }
+
     let dbRole = null;
     if (role) {
       const rawRole = role.toString().trim().toLowerCase();
@@ -566,6 +578,7 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
         email = COALESCE(NULLIF($3, ''), email),
         phone = COALESCE(NULLIF($4, ''), phone),
         role = COALESCE($5, role),
+        password_hash = COALESCE($6, password_hash),
         activation_token_hash = CASE
           WHEN activation_status = 'pending' AND LOWER(COALESCE(NULLIF($3, ''), email)) <> LOWER(email) THEN NULL
           ELSE activation_token_hash
@@ -575,8 +588,8 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
           ELSE activation_expires_at
         END,
         updated_at = NOW()
-      WHERE id::text = $6 OR username = $6 OR email = $6
-      RETURNING id, fullname, username, email, phone, role, is_active, activation_status
+      WHERE id::text = $7 OR username = $7 OR email = $7
+      RETURNING id, supabase_user_id, fullname, username, email, phone, role, is_active, activation_status
     `;
 
     const { rows } = await query(sql, [
@@ -585,6 +598,7 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
       cleanEmail,
       cleanPhone,
       dbRole,
+      newPasswordHash,
       id,
     ]);
 
@@ -596,9 +610,20 @@ router.put('/users/:id', requireAuth, requireActiveAdmin, async (req, res) => {
     }
 
     const emp = rows[0];
+
+    if (newPasswordHash && emp.supabase_user_id) {
+      try {
+        await supabase.auth.admin.updateUserById(emp.supabase_user_id, { password: password.trim() });
+      } catch (sbErr) {
+        console.warn('Supabase auth password sync note:', sbErr.message);
+      }
+    }
+
     return res.status(200).json({
       success: true,
-      message: `Employee ${emp.fullname} updated successfully`,
+      message: newPasswordHash
+        ? `Employee ${emp.fullname} and password updated successfully`
+        : `Employee ${emp.fullname} updated successfully`,
       data: {
         id: id,
         db_id: emp.id,

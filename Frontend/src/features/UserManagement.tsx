@@ -28,12 +28,10 @@ const UserManagement = () => {
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [editingUser, setEditingUser] = useState<User | null>(null)
     const [editFormData, setEditFormData] = useState({
-        name: '',
+        firstName: '',
+        lastName: '',
         username: '',
         password: '',
-        contact: '',
-        email: '',
-        role: '',
     })
 
     // Deactivation confirmation modal state
@@ -134,13 +132,15 @@ const UserManagement = () => {
     // Open Edit Modal
     const handleOpenEditModal = (user: User) => {
         setEditingUser(user)
+        const nameParts = (user.name || '').trim().split(/\s+/)
+        const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(' ') : nameParts[0] || ''
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : ''
+
         setEditFormData({
-            name: user.name,
+            firstName,
+            lastName,
             username: user.username,
             password: '',
-            contact: user.contact === '-' ? '' : user.contact,
-            email: user.email === '-' ? '' : user.email,
-            role: user.role,
         })
         setIsEditModalOpen(true)
     }
@@ -153,15 +153,19 @@ const UserManagement = () => {
     // Submit Edit User
     const handleUpdateUser = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!editingUser || !editFormData.name.trim()) return
+        if (!editingUser) return
+        const cleanFirst = editFormData.firstName.trim()
+        const cleanLast = editFormData.lastName.trim()
+        if (!cleanFirst || !cleanLast) {
+            alert('First Name and Last Name are required.')
+            return
+        }
 
+        const fullName = `${cleanFirst} ${cleanLast}`
         const updatedUser: User = {
             ...editingUser,
-            name: editFormData.name.trim(),
+            name: fullName,
             username: editFormData.username.trim() || editingUser.username,
-            contact: editFormData.contact.trim() || '-',
-            email: editFormData.email.trim() || '-',
-            role: editFormData.role || editingUser.role,
         }
 
         const identifier = editingUser.db_id || editingUser.username || editingUser.email || editingUser.id
@@ -172,32 +176,45 @@ const UserManagement = () => {
         // Persist edits to PostgreSQL database via API
         try {
             const headers = await getAuthHeaders()
+            const payload: { name: string; username: string; password?: string } = {
+                name: fullName,
+                username: editFormData.username.trim(),
+            }
+            if (editFormData.password.trim()) {
+                payload.password = editFormData.password.trim()
+            }
+
             const res = await fetch(`${API_BASE_URL}/users/${encodeURIComponent(identifier)}`, {
                 method: 'PUT',
                 headers,
-                body: JSON.stringify({
-                    name: editFormData.name.trim(),
-                    username: editFormData.username.trim(),
-                    password: editFormData.password,
-                    contact: editFormData.contact.trim(),
-                    email: editFormData.email.trim(),
-                    role: editFormData.role,
-                }),
+                body: JSON.stringify(payload),
             })
             const data = await res.json()
-            if (data.success && data.data) {
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Failed to update staff user.')
+            }
+
+            if (data.data) {
                 const saved = data.data
                 setUsers((prev) => prev.map((u) => (u.id === editingUser.id ? {
                     ...u,
                     name: saved.name || updatedUser.name,
                     username: saved.username || updatedUser.username,
-                    contact: saved.contact || updatedUser.contact,
-                    email: saved.email || updatedUser.email,
                     role: saved.role || updatedUser.role,
                 } : u)))
             }
+            setActionMessage({
+                type: 'success',
+                text: editFormData.password.trim()
+                    ? `Staff ${fullName} updated and new password set successfully.`
+                    : `Staff ${fullName} updated successfully.`,
+            })
         } catch (err) {
             console.warn('Failed to update user in backend database:', err)
+            setActionMessage({
+                type: 'error',
+                text: err instanceof Error ? err.message : 'Failed to update user in database.',
+            })
         }
 
         handleCloseEditModal()
@@ -680,13 +697,30 @@ const UserManagement = () => {
 
                         <form onSubmit={handleUpdateUser} className="p-[2.2rem]">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.5rem] mb-[2rem]">
-                                <div className="flex flex-col gap-[0.5rem] md:col-span-2">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Full Name <span className="text-[#e74c3c]">*</span></label>
+                                <div className="flex flex-col gap-[0.5rem]">
+                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
+                                        First Name <span className="text-[#e74c3c]">*</span>
+                                    </label>
                                     <input
                                         type="text"
+                                        placeholder="e.g. Maria"
                                         className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.name}
-                                        onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                                        value={editFormData.firstName}
+                                        onChange={(e) => setEditFormData({ ...editFormData, firstName: e.target.value })}
+                                        required
+                                    />
+                                </div>
+
+                                <div className="flex flex-col gap-[0.5rem]">
+                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
+                                        Last Name <span className="text-[#e74c3c]">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Santos"
+                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
+                                        value={editFormData.lastName}
+                                        onChange={(e) => setEditFormData({ ...editFormData, lastName: e.target.value })}
                                         required
                                     />
                                 </div>
@@ -695,6 +729,7 @@ const UserManagement = () => {
                                     <label className="text-[0.9rem] font-bold text-[#4a5568]">Username</label>
                                     <input
                                         type="text"
+                                        placeholder="e.g. M.Santos"
                                         className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
                                         value={editFormData.username}
                                         onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
@@ -709,30 +744,6 @@ const UserManagement = () => {
                                         className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
                                         value={editFormData.password}
                                         onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Role</label>
-                                    <select
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.role}
-                                        onChange={(e) => setEditFormData({ ...editFormData, role: e.target.value })}
-                                    >
-                                        <option value="Rider">Rider</option>
-                                        <option value="Cashier">Cashier</option>
-                                        <option value="Assistant">Assistant</option>
-                                        <option value="Kitchen Staff">Kitchen Staff</option>
-                                    </select>
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Contact Number</label>
-                                    <input
-                                        type="tel"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.contact}
-                                        onChange={(e) => setEditFormData({ ...editFormData, contact: e.target.value })}
                                     />
                                 </div>
                             </div>

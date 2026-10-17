@@ -203,7 +203,7 @@ export const LandingPage: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-white text-slate-800 font-sans antialiased selection:bg-orange-500 selection:text-white">
+    <div className="landing-page min-h-screen bg-white text-slate-800 font-sans antialiased selection:bg-[#FF6900] selection:text-[#2b180c]">
       {/* 1. HEADER */}
       <header
         className={`sticky top-0 z-50 w-full transition-all duration-300 ${isScrolled
@@ -219,27 +219,27 @@ export const LandingPage: React.FC = () => {
           <nav className="hidden lg:flex items-center gap-8 text-sm font-semibold text-slate-600">
             <a href="#hero" onClick={(e) => handleNavClick(e, 'hero')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Home
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
             <a href="#specialties" onClick={(e) => handleNavClick(e, 'specialties')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Specialties
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
             <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Standard
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
             <a href="#our-story" onClick={(e) => handleNavClick(e, 'our-story')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Story
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
             <a href="#branches" onClick={(e) => handleNavClick(e, 'branches')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Branches
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
             <a href="#faqs" onClick={(e) => handleNavClick(e, 'faqs')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               FAQs
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-gradient-to-r from-orange-600 to-amber-500 transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
           </nav>
 
@@ -322,7 +322,7 @@ export const LandingPage: React.FC = () => {
       </header>
 
       {/* 3. HERO SECTION */}
-      <section id="hero" className="relative bg-gradient-to-b from-orange-50/50 via-white to-white pt-14 pb-20 lg:pt-20 lg:pb-28">
+      <section id="hero" className="relative bg-white pt-14 pb-20 lg:pt-20 lg:pb-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-10 items-center">
             {/* Left Content Column */}
@@ -460,7 +460,7 @@ export const LandingPage: React.FC = () => {
         </div>
 
         {/* Bottom Full-Width Animated Marquee Bar */}
-        <div className="w-full bg-orange-600 text-white text-xs font-semibold py-2.5 overflow-hidden whitespace-nowrap select-none border-t border-orange-500/40">
+        <div className="w-full bg-orange-600 text-[#2b180c] text-xs font-semibold py-2.5 overflow-hidden whitespace-nowrap select-none border-t border-orange-500/40">
           <div className="animate-marquee flex items-center gap-8">
             <span className="flex items-center gap-3 tracking-wider uppercase">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-300 animate-pulse"></span>
@@ -526,7 +526,7 @@ export const LandingPage: React.FC = () => {
                 <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 bg-white/95 backdrop-blur-md px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold text-orange-700 shadow-sm border border-orange-100/80">
                   {dish.tag}
                 </div>
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent flex flex-col justify-end p-3 sm:p-5 text-white transition-opacity duration-300">
+                <div className="absolute inset-0 bg-slate-950/45 flex flex-col justify-end p-3 sm:p-5 text-white transition-opacity duration-300">
                   <h3 className="font-extrabold text-xs sm:text-xl leading-snug drop-shadow-sm line-clamp-2">
                     {dish.name}
                   </h3>
@@ -538,7 +538,7 @@ export const LandingPage: React.FC = () => {
           <div className="text-center mt-12">
             <button
               onClick={handleOrderOnline}
-              className="inline-block bg-slate-900 hover:bg-orange-600 text-white font-bold text-sm px-8 py-3.5 rounded-xl transition-colors shadow-xs cursor-pointer"
+              className="inline-block bg-slate-900 hover:bg-orange-600 hover:text-[#2b180c] text-white font-bold text-sm px-8 py-3.5 rounded-xl transition-colors shadow-xs cursor-pointer"
             >
               Explore Full Online Menu
             </button>
@@ -686,7 +686,7 @@ export const LandingPage: React.FC = () => {
               <div className="p-5 rounded-2xl border border-orange-300 bg-orange-50/40">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-bold text-orange-600 font-mono">Present Day</span>
-                  <span className="text-[10px] font-bold bg-orange-600 text-white px-2 py-0.5 rounded-md">Active</span>
+                  <span className="text-[10px] font-bold bg-orange-600 text-[#2b180c] px-2 py-0.5 rounded-md">Active</span>
                 </div>
                 <h4 className="text-sm font-bold text-slate-900">Caloocan Flagship Hub</h4>
                 <p className="text-xs text-slate-600 mt-1">
@@ -843,7 +843,7 @@ export const LandingPage: React.FC = () => {
       {/* 10. CALL TO ACTION BANNER */}
       <section className="py-16 bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-gradient-to-r from-orange-600 to-orange-500 rounded-3xl p-8 sm:p-12 lg:p-16 text-center text-white shadow-lg">
+          <div className="bg-[#FF6900] rounded-3xl p-8 sm:p-12 lg:p-16 text-center text-[#2b180c] shadow-lg">
             <div className="max-w-2xl mx-auto space-y-4">
               <span className="text-xs font-bold uppercase tracking-wider bg-white/20 px-3.5 py-1.5 rounded-full inline-block">
                 Hot & Fresh Delivery
@@ -853,7 +853,7 @@ export const LandingPage: React.FC = () => {
                 Ready for a Seafood Feast?
               </h2>
 
-              <p className="text-sm sm:text-base text-orange-100 leading-relaxed">
+              <p className="text-sm sm:text-base text-black/75 leading-relaxed">
                 Order your favorite Seafood Bilao Feast or Cajun Boils now. We prepare each platter fresh upon ordering and deliver it hot to your door.
               </p>
 
@@ -883,7 +883,7 @@ export const LandingPage: React.FC = () => {
       <button
         onClick={scrollToTop}
         aria-label="Scroll back to top"
-        className={`fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-gradient-to-tr from-orange-600 to-amber-500 text-white shadow-lg shadow-orange-500/30 border border-white/25 hover:from-orange-500 hover:to-amber-400 hover:shadow-orange-500/50 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group ${showScrollTop
+        className={`fixed bottom-6 right-6 z-40 p-3.5 sm:p-4 rounded-2xl bg-[#FF6900] text-white shadow-lg shadow-orange-500/30 border border-white/25 hover:bg-[#a82c00] hover:shadow-orange-500/50 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group ${showScrollTop
           ? 'opacity-100 translate-y-0 pointer-events-auto'
           : 'opacity-0 translate-y-6 pointer-events-none'
           }`}

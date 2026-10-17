@@ -8,7 +8,7 @@ import BrandLogo from './BrandLogo'
 export const NavbarCustomer: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const location = useLocation()
-  const [activeUser, setActiveUser] = useState(() => getActiveUser())
+  const [, setActiveUser] = useState(() => getActiveUser())
   const fetchedProfileRef = useRef(false)
 
   useEffect(() => {
@@ -53,15 +53,6 @@ export const NavbarCustomer: React.FC = () => {
     return 'Customer Portal'
   }
 
-  const getDisplayName = () => {
-    if (!activeUser) return 'GUEST MENU'
-    const name = activeUser.fullname || activeUser.username || activeUser.email || ''
-    if (!name || isUuidString(name)) {
-      return activeUser.email ? activeUser.email.split('@')[0] : 'CUSTOMER'
-    }
-    return name
-  }
-
   return (
     <>
       <header className="relative z-40 bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-3 sm:p-3.5 shadow-lg shadow-slate-200/40 flex items-center justify-between gap-4 transition-all duration-200">
@@ -82,8 +73,6 @@ export const NavbarCustomer: React.FC = () => {
           <BrandLogo
             to="/"
             size="md"
-            badge={getDisplayName()}
-            badgeColor="bg-orange-100 text-orange-700 border border-orange-200"
             subtitle={getCurrentPageName()}
           />
         </div>

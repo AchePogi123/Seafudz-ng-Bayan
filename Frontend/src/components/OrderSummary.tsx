@@ -11,6 +11,7 @@ interface OrderSummaryProps {
   onIncrement: (itemId: string) => void
   onDecrement: (itemId: string) => void
   onRemove: (itemId: string) => void
+  onSetQuantity?: (itemId: string, quantity: number) => void
   onConfirmOrder: () => void
   onClose?: () => void
   isItemAvailable?: (itemId: string) => boolean
@@ -26,6 +27,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
   onIncrement,
   onDecrement,
   onRemove,
+  onSetQuantity,
   onConfirmOrder,
   onClose,
   isItemAvailable = () => true,
@@ -109,6 +111,7 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                 onIncrement={onIncrement}
                 onDecrement={onDecrement}
                 onRemove={onRemove}
+                onSetQuantity={onSetQuantity}
               />
             ))
           )}

@@ -75,3 +75,191 @@ button, input, select, textarea {
 .animate-marquee:hover {
   animation-play-state: paused;
 }
+
+.landing-page,
+.login-page {
+  --color-orange-600: #FF6900;
+  --color-orange-700: #a82c00;
+}
+
+.landing-page .text-orange-600,
+.landing-page .hover\:text-orange-600:hover,
+.login-page .text-orange-600,
+.login-page .hover\:text-orange-600:hover {
+  color: #a82c00;
+}
+
+.login-page {
+  background: #fbf6f1;
+}
+
+.login-card {
+  animation: login-card-enter 350ms ease-out both;
+  transition: max-width 420ms cubic-bezier(0.22, 1, 0.36, 1), grid-template-columns 450ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.login-hero-from-left {
+  animation: login-hero-from-left 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.login-hero-from-right {
+  animation: login-hero-from-right 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hero-boat-motion {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: boat-float 3.2s ease-in-out infinite;
+}
+
+.hero-boat-waves path {
+  stroke-dasharray: 24 16;
+  animation: boat-current 6s linear infinite;
+}
+
+.hero-boat-waves path:nth-child(2) {
+  animation-duration: 8s;
+  animation-delay: -3s;
+}
+
+.hero-bird,
+.hero-fish {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-fill-mode: both;
+}
+
+.hero-bird-one {
+  animation: boat-bird-flight 2.15s ease-out both;
+}
+
+.hero-bird-two {
+  animation: boat-bird-flight 2.35s ease-out 100ms both;
+}
+
+.hero-bird-three {
+  animation: boat-bird-flight 2s ease-out 180ms both;
+}
+
+.hero-fish-one {
+  animation: boat-fish-swim 2.35s ease-in-out both;
+}
+
+.hero-fish-two {
+  animation: boat-fish-swim 2.5s ease-in-out 120ms reverse both;
+}
+
+.login-form-content {
+  animation: login-content-enter 550ms cubic-bezier(0.2, 0.75, 0.25, 1) both;
+}
+
+.login-form-content {
+  animation-delay: 80ms;
+}
+
+@keyframes login-card-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes login-content-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes login-hero-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes login-hero-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes boat-float {
+  0%, 100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-5px) rotate(-1deg);
+  }
+}
+
+@keyframes boat-current {
+  to {
+    stroke-dashoffset: -80;
+  }
+}
+
+@keyframes boat-bird-flight {
+  0% {
+    opacity: 0;
+    transform: translate(0, 10px) scale(0.7);
+  }
+  20%, 70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(38px, -24px) scale(0.9);
+  }
+}
+
+@keyframes boat-fish-swim {
+  0% {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  20%, 75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(44px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-card,
+  .login-hero-from-left,
+  .login-hero-from-right,
+  .hero-boat-motion,
+  .hero-boat-waves path,
+  .hero-bird,
+  .hero-fish,
+  .login-form-content {
+    animation: none;
+  }
+
+  .hero-bird,
+  .hero-fish {
+    opacity: 1;
+  }
+
+  .login-card {
+    transition: none;
+  }
+}

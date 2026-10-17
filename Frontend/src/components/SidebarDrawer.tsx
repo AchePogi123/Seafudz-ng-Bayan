@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { getActiveUser, clearSession } from '../cryptography/cryptoSession'
+import { getActiveUser, clearSession, isUuidString } from '../cryptography/cryptoSession'
 import BrandLogo from './BrandLogo'
 
 interface SidebarDrawerProps {
@@ -21,6 +21,13 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
   const location = useLocation()
   const navigate = useNavigate()
   const currentUser = getActiveUser()
+
+  const getDisplayName = () => {
+    const name = currentUser?.fullname || currentUser?.username || ""
+    if (name && !isUuidString(name)) return name
+    if (currentUser?.email) return currentUser.email.split("@")[0]
+    return activeRole
+  }
 
   // Determine active role: Prioritize logged-in user role if available, otherwise fall back to role prop
   const activeRole = (currentUser?.role || role || 'customer').toLowerCase()
@@ -342,15 +349,16 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
             to="/"
             onClick={onClose}
             size="md"
-            badge={activeRole}
+            badge={getDisplayName()}
+            badgeMinimal
             subtitle="System Navigator"
           />
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-xl bg-slate-50 border border-slate-200 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+            className="p-1 text-slate-400 hover:text-slate-800 transition-colors cursor-pointer flex items-center justify-center focus:outline-none"
             aria-label="Close Sidebar"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
@@ -361,9 +369,6 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
           <span className="flex items-center gap-1.5 font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
             Caloocan Flagship Branch
-          </span>
-          <span className="text-[10px] text-slate-400 font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">
-            ESC to close
           </span>
         </div>
 

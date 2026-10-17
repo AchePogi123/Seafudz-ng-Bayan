@@ -1,7 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import BrandLogo from '../components/BrandLogo';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
@@ -11,8 +10,34 @@ type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [showCreateAccount, setShowCreateAccount] = useState(false);
+  const [authMode, setAuthMode] = useState<'welcome' | 'login' | 'signup'>(() => {
+    return location.state?.from ? 'login' : 'welcome';
+  });
+  const [isExpandingAuth, setIsExpandingAuth] = useState(false);
+  const authTransitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [boatSceneKey, setBoatSceneKey] = useState(0);
+  const [isBoatSceneActive, setIsBoatSceneActive] = useState(false);
+  const boatSceneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const role: UserRole = 'customer';
+
+  // Device & browser back button handler: Always navigate to Landing Page
+  useEffect(() => {
+    window.history.pushState({ page: 'login' }, '', window.location.href);
+
+    const handlePopState = () => {
+      navigate('/landingpage', { replace: true });
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [navigate]);
+
+  useEffect(() => () => {
+    if (authTransitionTimer.current) clearTimeout(authTransitionTimer.current);
+    if (boatSceneTimer.current) clearTimeout(boatSceneTimer.current);
+  }, []);
 
   // Form states
   const [loginInput, setLoginInput] = useState('');
@@ -65,7 +90,8 @@ const Login = () => {
   const [forgotSuccess, setForgotSuccess] = useState('');
 
   // UI states
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [isRegisterLoading, setIsRegisterLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
@@ -139,7 +165,7 @@ const Login = () => {
       return;
     }
 
-    setIsLoading(true);
+    setIsLoginLoading(true);
 
     try {
       const isEmail = loginInput.trim().includes('@');
@@ -237,7 +263,7 @@ const Login = () => {
       const msg = err instanceof Error ? err.message : 'Login failed. Please check your credentials.';
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsLoginLoading(false);
     }
   };
 
@@ -269,7 +295,7 @@ const Login = () => {
     }
 
     setIsSendingOtp(true);
-    setIsLoading(true);
+    setIsRegisterLoading(true);
 
     try {
       // Send 5-digit OTP verification code to user email
@@ -298,7 +324,7 @@ const Login = () => {
       setErrorMessage(msg);
     } finally {
       setIsSendingOtp(false);
-      setIsLoading(false);
+      setIsRegisterLoading(false);
     }
   };
 
@@ -406,7 +432,7 @@ const Login = () => {
   };
 
   const executeRegistration = async () => {
-    setIsLoading(true);
+    setIsRegisterLoading(true);
 
     try {
       let supabaseUserId: string | undefined = undefined;
@@ -471,7 +497,7 @@ const Login = () => {
       const msg = err instanceof Error ? err.message : 'Registration failed. Please try again.';
       setErrorMessage(msg);
     } finally {
-      setIsLoading(false);
+      setIsRegisterLoading(false);
     }
   };
 
@@ -509,444 +535,565 @@ const Login = () => {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    try {
-      setErrorMessage('');
+  const beginAuth = (mode: 'login' | 'signup') => {
+    setErrorMessage('');
+    setSuccessMessage('');
 
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { redirectTo: window.location.origin + '/customer' },
-      });
+    if (authTransitionTimer.current) clearTimeout(authTransitionTimer.current);
 
-      if (error) throw error;
-
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Google authentication failed';
-      setErrorMessage(msg);
+    if (
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+      !window.matchMedia('(min-width: 768px)').matches
+    ) {
+      setIsExpandingAuth(false);
+      setAuthMode(mode);
+      return;
     }
+
+    setIsExpandingAuth(true);
+    authTransitionTimer.current = setTimeout(() => {
+      setAuthMode(mode);
+      setIsExpandingAuth(false);
+      authTransitionTimer.current = null;
+    }, 420);
   };
 
-  return (
-    <div className="font-sans min-h-screen bg-[#faf9f6] flex flex-col">
+  const returnToWelcome = () => {
+    if (authTransitionTimer.current) clearTimeout(authTransitionTimer.current);
+    setAuthMode('welcome');
 
-      {/* Navbar */}
-      <nav className="flex justify-between items-center py-4 px-[4%] bg-white sticky top-0 z-50 border-b border-neutral-200/80 shadow-2xs">
-        <div>
-          <Link
-            to="/landingpage"
-            className="inline-flex items-center gap-2 text-xl font-bold text-neutral-900 hover:text-orange-600 tracking-tight transition-colors duration-200"
-          >
-            <svg
-              className="w-5 h-5 text-current transition-colors duration-200"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15.75 19.5L8.25 12l7.5-7.5"
-              />
+    if (
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches ||
+      !window.matchMedia('(min-width: 768px)').matches
+    ) {
+      setIsExpandingAuth(false);
+      return;
+    }
+
+    setIsExpandingAuth(true);
+    authTransitionTimer.current = setTimeout(() => {
+      setIsExpandingAuth(false);
+      authTransitionTimer.current = null;
+    }, 450);
+  };
+
+  const animateBoatScene = () => {
+    setBoatSceneKey((key) => key + 1);
+    setIsBoatSceneActive(true);
+    if (boatSceneTimer.current) clearTimeout(boatSceneTimer.current);
+    boatSceneTimer.current = setTimeout(() => {
+      setIsBoatSceneActive(false);
+      boatSceneTimer.current = null;
+    }, 2600);
+  };
+
+  const heroPanel = (
+    <div className={`login-hero relative min-w-0 min-h-[330px] md:min-h-0 bg-[#FF6900] px-6 pt-8 sm:px-9 sm:pt-9 pb-8 md:p-10 lg:p-12 text-white overflow-hidden flex flex-col justify-between ${
+      authMode === 'signup'
+        ? 'login-hero-from-right rounded-t-[30px] sm:rounded-t-[34px] md:rounded-t-none md:rounded-r-[28px] lg:rounded-r-[36px]'
+        : 'login-hero-from-left rounded-b-[30px] sm:rounded-b-[34px] md:rounded-b-none md:rounded-l-[28px] lg:rounded-l-[36px]'
+    }`}>
+      <div className="pointer-events-none absolute -right-24 -top-16 h-80 w-80 rounded-full border border-white/15" />
+      <div className="pointer-events-none absolute -right-10 top-16 h-56 w-56 rounded-full border border-white/10" />
+      <button
+        type="button"
+        onClick={animateBoatScene}
+        aria-label="Make the boat sail with birds and swimming fish"
+        className="group pointer-events-auto absolute left-1/2 top-1/2 z-0 hidden h-48 w-64 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white md:block lg:h-56 lg:w-80"
+      >
+        <svg className="h-full w-full transition-transform duration-300 group-hover:scale-[1.03] group-focus-visible:scale-[1.03]" viewBox="0 0 320 220" fill="none" aria-hidden="true">
+          <ellipse cx="160" cy="181" rx="104" ry="9" fill="#7D3300" fillOpacity=".24" />
+          <g className="hero-boat-motion">
+            <path d="M86 119 39 103M234 119l47-16" stroke="#F5D49F" strokeWidth="6" strokeLinecap="round" />
+            <path d="M16 101q24 15 48 0l-7 12q-18 9-35 0Z" fill="#16495A" />
+            <path d="M256 101q24 15 48 0l-6 12q-18 9-35 0Z" fill="#16495A" />
+            <path d="M71 119h178l-29 43q-60 22-120 0Z" fill="#16394B" />
+            <path d="M86 147h148l-14 21q-60 18-120 0Z" fill="#0B6975" />
+            <path d="M75 116h170l10 14H65Z" fill="#F2B967" />
+            <path d="M119 75h82l19 41H100Z" fill="#FFF3D9" />
+            <path d="M111 74h94l-8 12h-78Z" fill="#16495A" />
+            <path d="M126 90h24v19h-24Zm34 0h24v19h-24Z" fill="#0D5968" />
+            <path d="M155 50v26" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
+            <path d="M145 51h21" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
+            <path d="M75 133h170" stroke="#FF6900" strokeWidth="4" strokeLinecap="round" />
+          </g>
+          <g className="hero-boat-waves" stroke="#FFF5E7" strokeWidth="3" strokeLinecap="round" opacity=".78">
+            <path d="M42 190q18-9 36 0t36 0 36 0 36 0 36 0 36 0 36 0" />
+            <path d="M70 205q18-8 36 0t36 0 36 0 36 0 36 0" />
+          </g>
+          {isBoatSceneActive && (
+            <g key={boatSceneKey}>
+              <g className="hero-bird hero-bird-one" fill="none" stroke="#FFF5E7" strokeWidth="3" strokeLinecap="round">
+                <path d="M208 56q7-9 14 0 7-9 14 0" />
+              </g>
+              <g className="hero-bird hero-bird-two" fill="none" stroke="#FFF5E7" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M234 39q6-7 12 0 6-7 12 0" />
+              </g>
+              <g className="hero-bird hero-bird-three" fill="none" stroke="#FFF5E7" strokeWidth="2" strokeLinecap="round">
+                <path d="M183 43q5-6 10 0 5-6 10 0" />
+              </g>
+              <g className="hero-fish hero-fish-one" stroke="#16495A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M83 194c7-8 18-11 29-7l10 7-10 7c-11 4-22 1-29-7Z" fill="#FFF3D9" />
+                <path d="m83 194-11-8v16Z" fill="#F5D49F" />
+                <path d="m96 187 5-7 5 9m-9 12 5 7 5-9" fill="#F5D49F" />
+                <path d="M100 188q6 6 0 12m-9-8 4 2m-4 2 4 1" fill="none" />
+                <circle cx="114" cy="191" r="1.7" fill="#16495A" stroke="none" />
+              </g>
+              <g className="hero-fish hero-fish-two" stroke="#16495A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M237 204c-7-8-18-10-28-6l-10 7 10 7c10 4 21 1 28-8Z" fill="#F5D49F" />
+                <path d="m237 205 11-8v16Z" fill="#FFF3D9" />
+                <path d="m224 198-5-7-5 9m9 11-5 7-5-9" fill="#FFF3D9" />
+                <path d="M220 199q-6 6 0 12m9-8-4 2m4 2-4 1" fill="none" />
+                <circle cx="204" cy="201" r="1.7" fill="#16495A" stroke="none" />
+              </g>
+            </g>
+          )}
+        </svg>
+      </button>
+      <div className="login-hero-copy relative z-10 space-y-3">
+        <div className="inline-flex items-center gap-2 text-white/90 text-[11px] font-bold tracking-[0.16em] uppercase">
+          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/15 text-white">
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 13.5c2.2-1.2 3.4-4.1 6.2-4.1 2.7 0 3.7 2.5 6.2 2.5 1.2 0 2.3-.5 3.6-1.5-.3 4.3-3.8 7.6-8.1 7.6-3.7 0-6.8-1.7-7.9-4.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M6 7.5c.8-.8 1.6-1.2 2.6-1.2" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
-            <span>Seafudz Ng Bayan</span>
-          </Link>
+          </span>
+          Seafudz ng Bayan
         </div>
-      </nav>
+        <h1 className="text-[2rem] sm:text-4xl lg:text-[2.7rem] font-extrabold tracking-[-0.045em] leading-[1.05] text-white">
+          {authMode === 'signup'
+            ? <>Good food is even<br className="hidden sm:block" /> better shared.</>
+            : <>A little taste<br className="hidden sm:block" /> of the sea.</>}
+        </h1>
+        <p className="text-xs sm:text-sm text-white/90 font-medium leading-relaxed max-w-sm">
+          {authMode === 'signup'
+            ? 'Bring your favorite people together over a seafood feast.'
+            : 'Welcome back—your seafood favorites are waiting.'}
+        </p>
+      </div>
+      <div className="relative z-10 flex items-center gap-5 sm:gap-7 text-[10px] sm:text-[11px] text-white/90 font-semibold border-t border-white/20 pt-4">
+        <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-white" />Fresh daily</span>
+        <span className="flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-white" />Made for sharing</span>
+      </div>
+    </div>
+  );
 
-      {/* Main Auth Container */}
-      <div className="flex-1 flex justify-center items-center py-12 px-6">
-        <div className="bg-white w-full max-w-[480px] rounded-2xl shadow-2xs border border-neutral-200/80 p-8 sm:p-10 transition-all">
+  return (
+    <div className="login-page font-sans min-h-screen flex items-center justify-center p-0 sm:p-6 lg:p-10">
+      {/* Responsive Card: Mobile App Phone Frame on small screens, Expansive Split Dashboard on Windows/Desktop */}
+      <div className={`login-card w-full min-h-screen sm:min-h-[560px] md:min-h-[680px] lg:min-h-[720px] bg-white sm:rounded-[28px] lg:rounded-[36px] shadow-[0_32px_100px_-42px_rgba(75,42,25,0.28)] border border-white/70 overflow-hidden grid grid-cols-1 relative ${
+        authMode === 'welcome'
+          ? isExpandingAuth
+            ? 'max-w-[520px] md:max-w-5xl lg:max-w-6xl xl:max-w-7xl md:grid-cols-[minmax(0,0fr)_minmax(0,1fr)]'
+            : 'max-w-[520px] md:grid-cols-[minmax(0,0fr)_minmax(0,1fr)]'
+          : 'max-w-[520px] md:max-w-5xl lg:max-w-6xl xl:max-w-7xl md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'
+      }`}>
+        {authMode === 'login' && heroPanel}
 
-          {/* Logo */}
-          <div className="text-center mb-8 flex flex-col items-center">
-            <BrandLogo
-              to="/"
-              size="lg"
-              subtitle="FRESH SEAFOOD & BILAO FEASTS"
-            />
-            <p className="text-xs text-neutral-400 mt-2 font-medium">
-              By: Joemarie Gobangco & Gelyn Basilio-Alday
-            </p>
-          </div>
-
-          {/* Notice when redirected from Order Online */}
+        <div className={`login-form-panel min-w-0 px-6 py-8 sm:px-10 sm:py-10 md:px-8 lg:px-12 xl:px-14 bg-white ${
+          authMode === 'welcome'
+            ? 'flex flex-col justify-center md:col-start-2'
+            : authMode === 'signup'
+              ? 'flex flex-col justify-center md:rounded-l-[28px] lg:rounded-l-[36px]'
+              : 'flex flex-col justify-center md:rounded-r-[28px] lg:rounded-r-[36px]'
+        }`}>
+          {/* Notification when redirected from customer order */}
           {(location.state?.from === '/customer' ||
             (typeof location.state?.from === 'object' &&
               location.state?.from?.pathname === '/customer')) &&
             !errorMessage &&
             !successMessage && (
-              <div className="py-2.5 px-3.5 rounded-xl text-xs font-semibold mb-5 bg-orange-50 text-orange-900 border border-orange-200 flex items-center gap-2.5 text-left">
-                <svg
-                  className="w-4 h-4 text-orange-600 shrink-0"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
+              <div className="md:col-span-2 py-2.5 px-3.5 rounded-2xl text-xs font-semibold mb-4 bg-amber-50 text-amber-900 border border-amber-200/80 flex items-center gap-2 text-left">
+                <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
-                <span>
-                  Please sign in or create an account to verify your details
-                  and complete your seafood order.
-                </span>
+                <span>Please sign in or create an account to complete your seafood order.</span>
               </div>
             )}
 
           {errorMessage && (
-            <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#fff5f5] text-[#c53030] border border-[#fed7d7]">
-              {errorMessage}
+            <div className="md:col-span-2 py-2.5 px-3.5 rounded-2xl text-xs font-bold mb-4 bg-red-50 text-red-700 border border-red-200 flex items-center gap-2">
+              <svg className="w-4 h-4 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{errorMessage}</span>
             </div>
           )}
 
           {successMessage && (
-            <div className="py-[1rem] px-[1.2rem] rounded-[12px] text-[0.9rem] font-semibold mb-[1.5rem] leading-[1.4] animate-[fadeIn_0.3s_ease] bg-[#f0fff4] text-[#22543d] border border-[#c6f6d5]">
-              {successMessage}
+            <div className="md:col-span-2 py-2.5 px-3.5 rounded-2xl text-xs font-bold mb-4 bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-2">
+              <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>{successMessage}</span>
             </div>
           )}
 
-          {!showCreateAccount ? (
-            /* Login Form */
-            <form onSubmit={handleLogin}>
-              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">
-                Welcome Back
-              </h2>
-
-              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">
-                Sign in with your Supabase credentials
-              </p>
-
-              <div className="mb-[1.2rem]">
-                <input
-                  type="text"
-                  placeholder="Email or Username"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={loginInput}
-                  onChange={(e) => setLoginInput(e.target.value)}
-                />
+          {/* VIEW 1: WELCOME ONBOARDING STATE (Matches reference image directly) */}
+          {authMode === 'welcome' && (
+            <div className="login-form-content max-w-sm w-full mx-auto flex flex-col items-center justify-center py-2 space-y-6 my-auto text-center">
+              <div className="text-center space-y-2 pt-1">
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-[#a82c00]">
+                  Fresh seafood · Made for sharing
+                </p>
+                <h2 className="text-3xl sm:text-[2.15rem] font-bold text-[#4a2b1d] tracking-tight">
+                  Gather around something delicious.
+                </h2>
+                <p className="text-sm text-neutral-500 font-medium leading-relaxed max-w-[290px] mx-auto">
+                  Create an account or sign in to order your favorites.
+                </p>
               </div>
 
-              <div className="mb-[1.2rem] relative">
-                <input
-                  type={showLoginPassword ? 'text' : 'password'}
-                  placeholder="Password"
-                  required
-                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                />
+              <div className="w-full max-w-xs mx-auto space-y-3 pt-1 translate-y-8">
+                <button
+                  type="button"
+                  onClick={() => beginAuth('signup')}
+                  className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm tracking-wide rounded-xl shadow-lg shadow-orange-600/25 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.99] cursor-pointer"
+                >
+                  Create an account
+                </button>
 
                 <button
                   type="button"
-                  onClick={() => setShowLoginPassword(!showLoginPassword)}
-                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
-                  aria-label="Toggle password visibility"
+                  onClick={() => beginAuth('login')}
+                  className="w-full py-4 bg-white hover:bg-[#fff8f2] text-[#4a2b1d] font-bold text-sm tracking-wide rounded-xl border border-[#eadfd7] transition-all duration-200 active:scale-[0.99] cursor-pointer"
                 >
-                  {showLoginPassword ? (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
-                      />
-                    </svg>
-                  )}
+                  Sign in
                 </button>
+                <p className="pt-2 text-xs font-medium text-neutral-400">
+                  Your favorites and orders, all in one place.
+                </p>
               </div>
 
-              <div className="flex justify-between items-center mb-[2rem] text-[0.9rem]">
-                <label className="flex items-center gap-[0.5rem] text-[#4a5568] cursor-pointer font-medium">
-                  <input
-                    type="checkbox"
-                    className="accent-[#e74c3c]"
-                    defaultChecked
-                  />
-                  Remember me
-                </label>
+            </div>
+          )}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setForgotError('');
-                    setForgotSuccess('');
-                    setForgotEmail(loginInput.includes('@') ? loginInput : '');
-                    setShowForgotPasswordModal(true);
-                  }}
-                  className="bg-none border-none text-[#e74c3c] font-semibold font-sans text-[0.9rem] cursor-pointer p-0 transition-all hover:text-[#c0392b] hover:underline"
-                >
-                  Forgot Password?
-                </button>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full p-[1rem] bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none rounded-[12px] font-bold text-[1rem] font-sans cursor-pointer shadow-[0_6px_20px_rgba(231,76,60,0.2)] transition-all duration-300 hover:translate-y-[-2px] hover:shadow-[0_10px_25px_rgba(231,76,60,0.35)] mb-[1rem] tracking-[0.5px] disabled:opacity-50"
-              >
-                {isLoading ? 'SIGNING IN...' : 'LOGIN'}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="w-full p-[0.9rem] bg-white text-[#4a5568] border border-[#e2e8f0] rounded-[12px] font-semibold text-[0.95rem] font-sans cursor-pointer transition-all duration-[0.25s] flex items-center justify-center gap-[0.8rem] mb-[2rem] hover:bg-[#f7fafc] hover:border-[#cbd5e0]"
-              >
-                <span className="font-extrabold bg-gradient-to-r from-[#4285f4] via-[#ea4335] via-[#fbbc05] to-[#34a853] bg-clip-text text-transparent">
-                  G
-                </span>
-                Sign in with Google
-              </button>
-
-              <p className="text-center text-[0.9rem] text-[#718096] m-0">
-                Don't have an account?{' '}
-                <span
-                  className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline"
-                  onClick={() => setShowCreateAccount(true)}
-                >
-                  Create Account
-                </span>
-              </p>
-            </form>
-          ) : (
-            /* Create Account Form */
-            <form onSubmit={handleRegister}>
-              <h2 className="text-[1.6rem] font-bold text-[#2d3748] mt-0 mb-[0.4rem]">
-                Create Account
-              </h2>
-
-              <p className="text-[0.95rem] text-[#718096] mt-0 mb-[1.5rem]">
-                Join us to start ordering fresh seafood
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-[1.2rem]">
-                <input
-                  type="text"
-                  placeholder="First Name"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={firstName}
-                  onChange={(e) => handleFirstNameChange(e.target.value)}
-                />
-                <input
-                  type="text"
-                  placeholder="Last Name"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={lastName}
-                  onChange={(e) => handleLastNameChange(e.target.value)}
-                />
-              </div>
-
-              <div className="mb-[1.2rem]">
-                <input
-                  type="text"
-                  placeholder="Username"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-              </div>
-
-              <div className="mb-[1.2rem]">
-                <input
-                  type="email"
-                  placeholder="Email Address"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
-              </div>
-
-              <div className="mb-[1.2rem]">
-                <input
-                  type="tel"
-                  placeholder="Phone Number"
-                  required
-                  className="w-full py-[1rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                />
-              </div>
-
-              <div className="mb-[1.2rem] relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Password"
-                  required
-                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
-                  aria-label="Toggle password visibility"
-                >
-                  {showPassword ? (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-3.057-9.542-7z"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              <div className="mb-[1.2rem] relative">
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Confirm Password"
-                  required
-                  className="w-full py-[1rem] pl-[1.2rem] pr-[3rem] rounded-[12px] border border-[#e2e8f0] font-sans text-[0.95rem] font-medium text-[#2d3748] transition-all duration-[0.25s] box-border bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c] focus:bg-white focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-[1rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 focus:outline-none transition-colors"
-                  aria-label="Toggle confirm password visibility"
-                >
-                  {showConfirmPassword ? (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18"
-                      />
-                    </svg>
-                  ) : (
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7z"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* Terms and Conditions Checkbox */}
-              <label className="flex items-center gap-[0.5rem] mb-[2rem] text-[0.9rem] text-[#4a5568] cursor-pointer font-medium">
-                <input
-                  type="checkbox"
-                  className="accent-[#e74c3c]"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                />
-
-                <span>
-                  I agree to the{' '}
+          {/* VIEW 2: LOGIN FORM */}
+          {authMode === 'login' && (
+            <form id="login-form" onSubmit={handleLogin} className="login-form-content max-w-sm w-full mx-auto flex flex-col justify-center my-auto">
+              <div>
+                <div className="flex items-center mb-3">
                   <button
                     type="button"
-                    onClick={() => setShowTerms(true)}
-                    className="text-[#e74c3c] font-semibold hover:text-[#c0392b] hover:underline"
+                    onClick={returnToWelcome}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
                   >
-                    Terms and Conditions
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                    </svg>
+                    Back
                   </button>
-                </span>
-              </label>
+                </div>
 
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full p-[1rem] bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none rounded-[12px] font-bold text-[1rem] font-sans cursor-pointer shadow-[0_6px_20px_rgba(231,76,60,0.2)] transition-all duration-300 hover:translate-y-[-2px] hover:shadow-[0_10px_25px_rgba(231,76,60,0.35)] mb-[1rem] tracking-[0.5px] disabled:opacity-50"
-              >
-                {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT'}
-              </button>
+                <div className="mb-4">
+                  <h2 className="text-3xl sm:text-[2.15rem] font-bold text-[#4a2b1d] tracking-tight">
+                    Welcome back
+                  </h2>
+                  <p className="text-sm text-neutral-500 font-medium mt-1">
+                    Sign in to pick up where the good food begins.
+                  </p>
+                </div>
 
-              <p className="text-center text-[0.9rem] text-[#718096] m-0">
-                Already have an Account?{' '}
-                <span
-                  className="text-[#e74c3c] font-bold cursor-pointer transition-all hover:text-[#c0392b] hover:underline"
-                  onClick={() => setShowCreateAccount(false)}
+                {/* Email / Username Input */}
+                <label className="block mb-4">
+                  <span className="block mb-2 text-xs font-bold text-neutral-700">Email or username</span>
+                  <input
+                    type="text"
+                    autoComplete="username"
+                    placeholder="you@example.com"
+                    required
+                    className="w-full py-3.5 px-4 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={loginInput}
+                    onChange={(e) => setLoginInput(e.target.value)}
+                  />
+                </label>
+
+                {/* Password Input */}
+                <label className="block mb-4 relative">
+                  <span className="block mb-2 text-xs font-bold text-neutral-700">Password</span>
+                  <input
+                    type={showLoginPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    placeholder="Enter your password"
+                    required
+                    className="w-full py-3.5 pl-4 pr-11 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword(!showLoginPassword)}
+                    className="absolute right-3.5 top-[calc(50%+0.5rem)] -translate-y-1/2 text-neutral-400 hover:text-[#a82c00] p-1 focus:outline-none transition-colors cursor-pointer"
+                    aria-label="Toggle password visibility"
+                  >
+                    {showLoginPassword ? (
+                      <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </label>
+
+                {/* Remember & Forgot Password */}
+                <div className="flex justify-between items-center mb-4 text-xs">
+                  <label className="flex items-center gap-2 text-neutral-600 cursor-pointer font-medium select-none">
+                    <input
+                      type="checkbox"
+                      className="accent-[#FF6900] rounded cursor-pointer"
+                    />
+                    Remember me
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotError('');
+                      setForgotSuccess('');
+                      setForgotEmail(loginInput.includes('@') ? loginInput : '');
+                      setShowForgotPasswordModal(true);
+                    }}
+                    className="text-[#a82c00] hover:text-[#711d00] font-bold transition-colors cursor-pointer"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-2">
+                <button
+                  type="submit"
+                  disabled={isLoginLoading}
+                  className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm tracking-wide rounded-xl shadow-lg shadow-orange-600/25 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.99] cursor-pointer disabled:opacity-50"
                 >
-                  Login
-                </span>
-              </p>
+                  {isLoginLoading ? 'SIGNING IN...' : 'Log in'}
+                </button>
+
+                <p className="text-center text-xs text-neutral-400 font-medium pt-2">
+                  Don't have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage('');
+                      setSuccessMessage('');
+                      setAuthMode('signup');
+                    }}
+                    className="text-[#a82c00] hover:text-[#711d00] font-bold transition-colors cursor-pointer"
+                  >
+                    Sign Up
+                  </button>
+                </p>
+              </div>
+            </form>
+          )}
+
+          {/* VIEW 3: SIGN UP FORM */}
+          {authMode === 'signup' && (
+            <form id="register-form" onSubmit={handleRegister} className="login-form-content max-w-md w-full mx-auto flex flex-col justify-center my-auto">
+              <div>
+                <div className="flex items-center mb-3">
+                  <button
+                    type="button"
+                    onClick={returnToWelcome}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+                    </svg>
+                    Back
+                  </button>
+                </div>
+
+                <div className="mb-3">
+                  <h2 className="text-xl sm:text-2xl font-black text-neutral-900 tracking-tight">
+                    Join the feast
+                  </h2>
+                  <p className="text-xs text-neutral-500 font-medium mt-0.5">
+                    Set up your profile to make ordering easier.
+                  </p>
+                  <p className="text-[11px] font-medium text-neutral-400 mt-1">
+                    <span className="font-bold text-[#a82c00]">*</span> Email and phone number are required.
+                  </p>
+                </div>
+
+                {/* Name inputs */}
+                <div className="grid grid-cols-2 gap-2 mb-2.5">
+                  <input
+                    type="text"
+                    placeholder="First Name"
+                    required
+                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={firstName}
+                    onChange={(e) => handleFirstNameChange(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Last Name"
+                    required
+                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={lastName}
+                    onChange={(e) => handleLastNameChange(e.target.value)}
+                  />
+                </div>
+
+                {/* Username */}
+                <div className="mb-2.5">
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    value={username}
+                    readOnly
+                    className="w-full py-3 px-3.5 rounded-2xl border border-neutral-200 font-sans text-xs font-medium text-neutral-500 bg-neutral-100 cursor-not-allowed box-border"
+                  />
+                </div>
+
+                {/* Email */}
+                <div className="mb-2.5">
+                  <label htmlFor="register-email" className="block mb-1.5 text-xs font-semibold text-neutral-700">
+                    Email address <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="register-email"
+                    type="email"
+                    placeholder="you@example.com"
+                    required
+                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+
+                {/* Phone */}
+                <div className="mb-2.5">
+                  <label htmlFor="register-phone" className="block mb-1.5 text-xs font-semibold text-neutral-700">
+                    Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="register-phone"
+                    type="tel"
+                    placeholder="09XXXXXXXXX"
+                    required
+                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </div>
+
+                {/* Password */}
+                <div className="mb-2.5 relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="Password"
+                    required
+                    className="w-full py-3 pl-3.5 pr-10 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-[#a82c00] p-1 focus:outline-none transition-colors cursor-pointer"
+                    aria-label="Toggle password visibility"
+                  >
+                    {showPassword ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
+                {/* Confirm Password */}
+                <div className="mb-2.5 relative">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    placeholder="Confirm Password"
+                    required
+                    className="w-full py-3 pl-3.5 pr-10 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-[#a82c00] p-1 focus:outline-none transition-colors cursor-pointer"
+                    aria-label="Toggle password visibility"
+                  >
+                    {showConfirmPassword ? (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+
+                {/* Terms and Conditions */}
+                <div className="mb-4">
+                  <label className="flex items-start gap-2 text-[11px] text-neutral-600 cursor-pointer font-medium leading-tight select-none">
+                    <input
+                      type="checkbox"
+                      checked={termsAccepted}
+                      onChange={(e) => setTermsAccepted(e.target.checked)}
+                      className="accent-[#FF6900] rounded mt-0.5 cursor-pointer"
+                      required
+                    />
+                    <span>
+                      I agree to the{' '}
+                      <button
+                        type="button"
+                        onClick={() => setShowTerms(true)}
+                        className="text-[#a82c00] hover:text-[#711d00] font-bold underline cursor-pointer"
+                      >
+                        Terms and Conditions
+                      </button>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-1">
+                <button
+                  type="submit"
+                  disabled={isRegisterLoading}
+                  className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm tracking-wide rounded-xl shadow-lg shadow-orange-600/25 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.99] cursor-pointer disabled:opacity-50"
+                >
+                  {isRegisterLoading ? 'CREATING ACCOUNT...' : 'Sign Up'}
+                </button>
+
+                <p className="text-center text-xs text-neutral-400 font-medium pt-2">
+                  Already have an account?{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setErrorMessage('');
+                      setSuccessMessage('');
+                      setAuthMode('login');
+                    }}
+                    className="text-[#a82c00] hover:text-[#711d00] font-bold transition-colors cursor-pointer"
+                  >
+                    Log in
+                  </button>
+                </p>
+              </div>
             </form>
           )}
         </div>
+        {authMode === 'signup' && heroPanel}
+      </div>
 
         {/* Terms and Conditions Modal */}
         {showTerms && (
@@ -1024,9 +1171,7 @@ const Login = () => {
 
                 <p className="mb-3">
                   Customers may access their account using their registered
-                  username and password. The system also provides a{' '}
-                  <strong>Google Sign-In</strong> option
-                  for account access.
+                  username and password.
                 </p>
 
                 <p className="mb-5">
@@ -1093,7 +1238,7 @@ const Login = () => {
                 <button
                   type="button"
                   onClick={() => setShowTerms(false)}
-                  className="px-5 py-2.5 bg-[#e74c3c] hover:bg-[#c0392b] text-white rounded-xl font-semibold text-sm transition-colors"
+                  className="px-5 py-2.5 bg-[#FF6900] hover:bg-[#a82c00] text-white rounded-xl font-semibold text-sm transition-colors"
                 >
                   Close
                 </button>
@@ -1156,7 +1301,7 @@ const Login = () => {
                 <button
                   type="submit"
                   disabled={isSendingForgot || !forgotEmail.trim()}
-                  className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  className="w-full py-3.5 bg-[#FF6900] hover:bg-[#a82c00] text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {isSendingForgot ? 'SENDING RESET LINK...' : 'SEND RESET LINK'}
                 </button>
@@ -1217,7 +1362,7 @@ const Login = () => {
                 type="button"
                 disabled={isVerifyingOtp || otpDigits.join('').length < 6}
                 onClick={() => handleVerifyOtp(otpDigits.join(''))}
-                className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer mb-5"
+                className="w-full py-3.5 bg-[#FF6900] hover:bg-[#a82c00] text-white font-bold text-sm rounded-xl shadow-md transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer mb-5"
               >
                 {isVerifyingOtp ? 'Verifying Code...' : 'Verify & Continue'}
               </button>
@@ -1241,7 +1386,6 @@ const Login = () => {
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 };

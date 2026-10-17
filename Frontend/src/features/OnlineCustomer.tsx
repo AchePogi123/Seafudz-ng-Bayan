@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
@@ -143,9 +143,267 @@ export function getStatusRank(rawStatus?: string): number {
     }
 }
 
+
+interface CartQuantityControlProps {
+    quantity: number
+    onIncrement: () => void
+    onDecrement: () => void
+    onSetQuantity: (quantity: number) => void
+}
+
+const CartQuantityControl: React.FC<CartQuantityControlProps> = ({
+    quantity,
+    onIncrement,
+    onDecrement,
+    onSetQuantity,
+}) => {
+    const [inputValue, setInputValue] = useState(String(quantity))
+
+    useEffect(() => {
+        setInputValue(String(quantity))
+    }, [quantity])
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value
+        // Allow digits only or empty string so user can clear/backspace
+        if (val === '' || /^[0-9]+$/.test(val)) {
+            setInputValue(val)
+            const num = parseInt(val, 10)
+            if (!isNaN(num) && num > 0) {
+                onSetQuantity(num)
+            }
+        }
+    }
+
+    const handleInputBlur = () => {
+        const num = parseInt(inputValue, 10)
+        if (isNaN(num) || num <= 0) {
+            setInputValue('1')
+            onSetQuantity(1)
+        } else {
+            setInputValue(String(num))
+            onSetQuantity(num)
+        }
+    }
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            e.currentTarget.blur()
+        }
+    }
+
+    return (
+        <div className="flex items-center bg-neutral-100 rounded-lg p-0.5 border border-neutral-200/60">
+            <button
+                type="button"
+                onClick={onDecrement}
+                className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                title="Decrease quantity"
+            >
+                -
+            </button>
+            <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={inputValue}
+                onChange={handleInputChange}
+                onBlur={handleInputBlur}
+                onKeyDown={handleKeyDown}
+                aria-label="Quantity"
+                className="w-8 text-center text-xs font-bold text-neutral-900 bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500 rounded py-0.5 border-none select-all"
+            />
+            <button
+                type="button"
+                onClick={onIncrement}
+                className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                title="Increase quantity"
+            >
+                +
+            </button>
+        </div>
+    )
+}
+
+
+
+interface CategorySwipeRowProps {
+    id: string
+    category: string
+    items: (MenuItem & { basePrice?: number })[]
+    renderProductCard: (item: MenuItem & { basePrice?: number }) => React.ReactNode
+}
+
+const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
+    id,
+    category,
+    items,
+    renderProductCard,
+}) => {
+    const scrollRef = useRef<HTMLDivElement>(null)
+    const [canScrollLeft, setCanScrollLeft] = useState(false)
+    const [canScrollRight, setCanScrollRight] = useState(false)
+    const [isDragging, setIsDragging] = useState(false)
+    const [hasDragged, setHasDragged] = useState(false)
+    const startXRef = useRef(0)
+    const scrollLeftRef = useRef(0)
+
+    const updateScrollState = useCallback(() => {
+        const el = scrollRef.current
+        if (!el) return
+        const { scrollLeft, scrollWidth, clientWidth } = el
+        const hasOverflow = scrollWidth > clientWidth + 8
+        if (!hasOverflow) {
+            setCanScrollLeft(false)
+            setCanScrollRight(false)
+        } else {
+            setCanScrollLeft(scrollLeft > 12)
+            setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 12)
+        }
+    }, [])
+
+    useEffect(() => {
+        updateScrollState()
+        const el = scrollRef.current
+        if (!el) return
+
+        el.addEventListener('scroll', updateScrollState, { passive: true })
+        window.addEventListener('resize', updateScrollState)
+        const t1 = setTimeout(updateScrollState, 200)
+        const t2 = setTimeout(updateScrollState, 600)
+
+        return () => {
+            el.removeEventListener('scroll', updateScrollState)
+            window.removeEventListener('resize', updateScrollState)
+            clearTimeout(t1)
+            clearTimeout(t2)
+        }
+    }, [items, updateScrollState])
+
+    const handleScroll = (direction: 'left' | 'right') => {
+        const el = scrollRef.current
+        if (!el) return
+        const offset = direction === 'left' ? -340 : 340
+        el.scrollBy({ left: offset, behavior: 'smooth' })
+    }
+
+    // Mouse drag-to-scroll handlers
+    const handleMouseDown = (e: React.MouseEvent) => {
+        const el = scrollRef.current
+        if (!el) return
+        setIsDragging(true)
+        setHasDragged(false)
+        startXRef.current = e.pageX - el.offsetLeft
+        scrollLeftRef.current = el.scrollLeft
+    }
+
+    const handleMouseMove = (e: React.MouseEvent) => {
+        if (!isDragging) return
+        const el = scrollRef.current
+        if (!el) return
+        e.preventDefault()
+        const x = e.pageX - el.offsetLeft
+        const walk = (x - startXRef.current) * 1.3
+        if (Math.abs(walk) > 6) {
+            setHasDragged(true)
+        }
+        el.scrollLeft = scrollLeftRef.current - walk
+        updateScrollState()
+    }
+
+    const handleMouseUpOrLeave = () => {
+        setIsDragging(false)
+        setTimeout(() => setHasDragged(false), 50)
+    }
+
+    const hasAnyArrows = canScrollLeft || canScrollRight
+
+    return (
+        <section id={id} className="scroll-mt-24 select-none">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-2.5 px-1">
+                <h3 className="font-extrabold text-neutral-900 text-lg sm:text-xl tracking-tight">
+                    {category}
+                </h3>
+
+                {/* Context-aware dynamic navigation arrows */}
+                {hasAnyArrows && (
+                    <div className="flex items-center gap-1.5">
+                            {canScrollLeft && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleScroll('left')}
+                                    className="w-8 h-8 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-800 shadow-2xs active:scale-90 transition-all cursor-pointer font-bold text-sm"
+                                    title="Scroll left"
+                                    aria-label="Scroll left"
+                                >
+                                    ←
+                                </button>
+                            )}
+                            {canScrollRight && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleScroll('right')}
+                                    className="w-8 h-8 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-800 shadow-2xs active:scale-90 transition-all cursor-pointer font-bold text-sm"
+                                    title="Scroll right"
+                                    aria-label="Scroll right"
+                                >
+                                    →
+                                </button>
+                            )}
+                        </div>
+                    )}
+            </div>
+
+            {/* Swipeable & Mouse-Draggable Container */}
+            <div
+                ref={scrollRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUpOrLeave}
+                onMouseLeave={handleMouseUpOrLeave}
+                className={`flex gap-4 sm:gap-5 overflow-x-auto pb-4 pt-1 px-1 scroll-smooth snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${
+                    isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+                }`}
+                style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+                {items.map((item) => (
+                    <div
+                        key={item.id}
+                        onClickCapture={(e) => {
+                            if (hasDragged) {
+                                e.stopPropagation()
+                                e.preventDefault()
+                            }
+                        }}
+                    >
+                        {renderProductCard(item)}
+                    </div>
+                ))}
+            </div>
+        </section>
+    )
+}
+
+
+const getCategoryPillData = (cat: string) => {
+    const lower = cat.toLowerCase()
+    if (cat === 'All Menu' || cat === 'All') return { label: 'All', emoji: '' }
+    if (lower.includes('seafood')) return { label: 'Seafoods', emoji: '🦐' }
+    if (lower.includes('value meal')) return { label: 'Value Meals', emoji: '🍱' }
+    if (lower.includes('siomai')) return { label: 'Siomai', emoji: '🥟' }
+    if (lower.includes('add on') || lower.includes('add-on')) return { label: 'Add Ons', emoji: '🍢' }
+    if (lower.includes('shake') || lower.includes('lemonade')) return { label: 'Shake & Lemonade', emoji: '🍹' }
+    if (lower.includes('dessert')) return { label: 'Desserts', emoji: '🍧' }
+    if (lower.includes('drink')) return { label: 'Drinks', emoji: '🥤' }
+    return { label: cat, emoji: '🍽️' }
+}
+
 export const OnlineCustomer: React.FC = () => {
     const navigate = useNavigate()
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+    const currentUser = getActiveUser()
+    const userProfileName = currentUser?.fullname || currentUser?.username || 'Guest'
 
     // Availability & Price sync
     const { isAvailable } = useMenuAvailability()
@@ -880,26 +1138,56 @@ export const OnlineCustomer: React.FC = () => {
             : `${deliveryDistanceKm.toFixed(1)} km`
     const total = useMemo(() => Math.round(subtotal + vat + (deliveryFee ?? 0)), [subtotal, vat, deliveryFee])
 
+
+
+    const handleCategoryClick = (cat: string) => {
+        setSelectedCategory(cat)
+        if (cat === 'All Menu') {
+            const el = document.getElementById('menu-display-area')
+            el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        } else {
+            const secId = `category-section-${cat.replace(/\s+/g, '-').toLowerCase()}`
+            const el = document.getElementById(secId)
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+        }
+    }
+
     // Filters: Menu Display Price = Base Price + 12% VAT (e.g. 199 + 12% VAT = ₱223)
+    const allEffectiveItems = useMemo(() => {
+        return menuItems.map((item) => {
+            const basePrice = getEffectivePrice(item.id, item.price)
+            return {
+                ...item,
+                basePrice,
+                price: Math.round(basePrice * 1.12),
+            }
+        })
+    }, [menuItems, getEffectivePrice])
+
+    const availableCategories = useMemo(() => {
+        const set = new Set<string>()
+        allEffectiveItems.forEach((item) => {
+            if (item.category) set.add(item.category)
+        })
+        const ordered = CLIENT_CATEGORIES.filter((c) => c !== 'All Menu' && set.has(c))
+        set.forEach((c) => {
+            if (!ordered.includes(c)) ordered.push(c)
+        })
+        return ordered
+    }, [allEffectiveItems])
+
     const filteredItems = useMemo(() => {
-        return menuItems
-            .map((item) => {
-                const basePrice = getEffectivePrice(item.id, item.price)
-                return {
-                    ...item,
-                    basePrice,
-                    price: Math.round(basePrice * 1.12),
-                }
-            })
-            .filter((item) => {
-                const matchesSearch =
-                    item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                    item.description.toLowerCase().includes(searchQuery.toLowerCase())
-                const matchesCategory =
-                    selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
-                return matchesSearch && matchesCategory
-            })
-    }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
+        return allEffectiveItems.filter((item) => {
+            const matchesSearch =
+                item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                item.description.toLowerCase().includes(searchQuery.toLowerCase())
+            const matchesCategory =
+                selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+            return matchesSearch && matchesCategory
+        })
+    }, [allEffectiveItems, searchQuery, selectedCategory])
 
     // Handlers
     const handleAddToCart = (item: MenuItem) => {
@@ -932,6 +1220,12 @@ export const OnlineCustomer: React.FC = () => {
             prev
                 .map((ci) => (ci.item.id === itemId ? { ...ci, quantity: ci.quantity - 1 } : ci))
                 .filter((ci) => ci.quantity > 0)
+        )
+    }
+
+    const handleSetQuantity = (itemId: string, quantity: number) => {
+        setCartItems((prev) =>
+            prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: Math.max(1, quantity) } : ci))
         )
     }
 
@@ -1238,6 +1532,145 @@ export const OnlineCustomer: React.FC = () => {
         }
     }
 
+    const renderProductCard = (item: MenuItem & { basePrice?: number }) => {
+        const available = isAvailable(item.id)
+        const cartItem = cartItems.find((ci) => ci.item.id === item.id)
+        return (
+            <div
+                key={item.id}
+                className={`w-[calc(50vw-22px)] min-w-[150px] max-w-[185px] sm:w-[260px] sm:max-w-none shrink-0 snap-start bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${
+                    !available
+                        ? 'border-rose-200 bg-neutral-50/70 opacity-80'
+                        : 'border-neutral-100 shadow-2xs hover:shadow-md'
+                }`}
+            >
+                <div className="relative aspect-square sm:aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                    <ProductImage
+                        src={item.image}
+                        fallbackSrc={item.bundledImage}
+                        alt={item.name}
+                        className={`w-full h-full object-cover transition-transform duration-300 ${
+                            !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
+                        }`}
+                    />
+                    <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                        {item.category}
+                    </span>
+
+                    {!available && (
+                        <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
+                            <span className="bg-rose-600 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
+                                Sold Out
+                            </span>
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-3 sm:p-5 flex-grow flex flex-col justify-between gap-2 sm:gap-3">
+                    <div>
+                        <h3
+                            className={`font-bold text-xs sm:text-base leading-snug transition-colors line-clamp-1 ${
+                                !available ? 'text-neutral-500 line-through' : 'text-neutral-800'
+                            }`}
+                            title={item.name}
+                        >
+                            {item.name}
+                        </h3>
+                        <p className="text-[10px] sm:text-xs text-neutral-400 mt-0.5 sm:mt-1 line-clamp-1 sm:line-clamp-2 min-h-0 sm:min-h-[32px]">
+                            {item.description}
+                        </p>
+                    </div>
+
+                    <div className="flex items-center justify-between mt-auto pt-2 border-t border-neutral-100/70 gap-1">
+                        <div>
+                            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-neutral-400 block leading-tight">Price</span>
+                            <span
+                                className={`font-extrabold text-xs sm:text-lg leading-tight ${
+                                    !available ? 'text-neutral-400' : 'text-orange-600'
+                                }`}
+                            >
+                                ₱{item.price.toLocaleString()}
+                            </span>
+                        </div>
+
+                        {available ? (
+                            replacementTargetItem ? (
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const itemKey = String(replacementTargetItem.id ?? 0)
+                                        const effectivePrice = getEffectivePrice(item.id, item.price)
+                                        setReplacementSelections((prev) => ({
+                                            ...prev,
+                                            [itemKey]: {
+                                                productId: item.id,
+                                                name: item.name,
+                                                price: effectivePrice,
+                                                image: item.image,
+                                                category: item.category,
+                                            },
+                                        }))
+                                        setReplacementTargetItem(null)
+                                        setActiveTab('tracking')
+                                    }}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-[10px] sm:text-xs font-black flex items-center gap-1 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
+                                >
+                                    <span>✓</span> Select
+                                </button>
+                            ) : cartItem ? (
+                                <div className="flex items-center bg-neutral-100 rounded-lg p-0.5 border border-neutral-200/60 shrink-0">
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDecrement(item.id)}
+                                        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                                        title="Decrease quantity"
+                                    >
+                                        -
+                                    </button>
+                                    <span className="w-5 sm:w-6 text-center text-xs font-bold text-neutral-900 select-none">
+                                        {cartItem.quantity}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleIncrement(item.id)}
+                                        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                                        title="Increase quantity"
+                                    >
+                                        +
+                                    </button>
+                                </div>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => handleAddToCart(item)}
+                                    className="p-1 sm:p-1.5 text-neutral-400 hover:text-neutral-700 active:scale-90 transition-all cursor-pointer flex items-center justify-center shrink-0 select-none"
+                                    title={`Add ${item.name} to cart`}
+                                    aria-label={`Add ${item.name} to cart`}
+                                >
+                                    <svg
+                                        className="w-5 h-5 sm:w-6 sm:h-6 stroke-current"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        strokeWidth="1.75"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                    >
+                                        <line x1="12" y1="5" x2="12" y2="19" />
+                                        <line x1="5" y1="12" x2="19" y2="12" />
+                                    </svg>
+                                </button>
+                            )
+                        ) : (
+                            <span className="bg-neutral-100 text-neutral-400 text-[10px] sm:text-xs font-bold px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl cursor-not-allowed select-none border border-neutral-200">
+                                Sold Out
+                            </span>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
@@ -1278,168 +1711,152 @@ export const OnlineCustomer: React.FC = () => {
                                     </button>
                                 </div>
                             )}
-                            {/* Category Toolbar Row with Integrated Search Bar */}
-                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white p-3.5 sm:p-4 rounded-2xl border border-neutral-100 shadow-2xs">
-                                {/* Left: Browse Menu Button + Category Pills */}
-                                <div className="flex items-center gap-3 overflow-x-auto pb-1 md:pb-0 scrollbar-thin flex-1 min-w-0">
-                                    <button
-                                        onClick={() => setActiveTab('menu')}
-                                        className="px-5 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer bg-orange-500 text-white shadow-md shadow-orange-500/20"
-                                    >
-                                        Browse Menu
-                                    </button>
-
-                                    {activeOrder && (
+                            {/* Search Bar matching reference mockup */}
+                            <div className="relative w-full">
+                                <div className="flex items-center px-4 py-3 bg-white rounded-2xl border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
+                                    <svg className="w-5 h-5 text-neutral-400 mr-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                    </svg>
+                                    <input
+                                        type="text"
+                                        value={searchQuery}
+                                        onChange={(e) => setSearchQuery(e.target.value)}
+                                        placeholder="Search any foods or dishes..."
+                                        className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
+                                    />
+                                    {searchQuery && (
                                         <button
-                                            onClick={() => setActiveTab('tracking')}
-                                            className="px-4 py-2 rounded-xl text-xs sm:text-sm font-extrabold whitespace-nowrap transition-all duration-200 cursor-pointer flex items-center gap-1.5 bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100"
+                                            type="button"
+                                            onClick={() => setSearchQuery('')}
+                                            className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1"
                                         >
-                                            <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
-                                            Track Order ({activeOrder.id})
+                                            ✕
                                         </button>
                                     )}
-
-                                    <div className="h-6 w-px bg-neutral-200 shrink-0 mx-1 hidden sm:block" />
-
-                                    {/* Category Pills */}
-                                    <div className="flex items-center gap-2">
-                                        {categories.map((cat) => (
-                                            <button
-                                                key={cat}
-                                                onClick={() => setSelectedCategory(cat)}
-                                                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold whitespace-nowrap border transition-all duration-200 cursor-pointer ${selectedCategory === cat
-                                                    ? 'bg-neutral-900 border-neutral-900 text-white shadow-xs'
-                                                    : 'bg-white border-neutral-200 text-neutral-600 hover:border-neutral-300'
-                                                    }`}
-                                            >
-                                                {cat}
-                                            </button>
-                                        ))}
-                                    </div>
                                 </div>
+                            </div>
 
-                                {/* Right: Search Bar Inside Category Toolbar */}
-                                <div className="relative w-full md:w-56 lg:w-60 xl:w-64 shrink-0">
-                                    <div className="flex items-center px-3 py-1.5 bg-neutral-50 hover:bg-white rounded-xl border border-neutral-200 focus-within:border-orange-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-orange-500/20 transition-all shadow-2xs">
-                                        <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                        </svg>
-                                        <input
-                                            type="text"
-                                            value={searchQuery}
-                                            onChange={(e) => setSearchQuery(e.target.value)}
-                                            placeholder="Search dishes..."
-                                            className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
-                                        />
-                                        {searchQuery && (
-                                            <button onClick={() => setSearchQuery('')} className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold">
-                                                ✕
+                            {/* Welcome Banner Card (Replaced 'Hot deal of the month' with 'Welcome (user's name)' + Project Logo) */}
+                            <div className="lg:hidden relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 text-white p-5 sm:p-7 shadow-lg shadow-orange-500/20 flex items-center justify-between">
+                                <div className="relative z-10 max-w-[65%] sm:max-w-[70%] space-y-2">
+                                    <span className="inline-block text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-100 bg-black/15 px-3 py-1 rounded-full backdrop-blur-xs">
+                                        Seafudz ng Bayan
+                                    </span>
+                                    <h2 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight leading-tight text-white drop-shadow-xs">
+                                        Welcome, {userProfileName}!
+                                    </h2>
+                                    <p className="text-xs sm:text-sm text-amber-100 font-medium leading-relaxed line-clamp-2">
+                                        Cajun butter seafood, hearty sharing bowls, and fiesta trays crafted fresh.
+                                    </p>
+                                    <div className="pt-1 sm:pt-2 flex items-center gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const el = document.getElementById('menu-display-area')
+                                                el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                                            }}
+                                            className="bg-white hover:bg-neutral-50 text-neutral-900 font-extrabold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-md active:scale-95 transition-all cursor-pointer inline-flex items-center gap-1.5"
+                                        >
+                                            Order Now
+                                        </button>
+                                        {activeOrder && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setActiveTab('tracking')}
+                                                className="bg-black/20 hover:bg-black/30 text-white font-bold text-xs px-3.5 py-2.5 rounded-full backdrop-blur-xs transition-colors cursor-pointer"
+                                            >
+                                                Track Order ({activeOrder.id})
                                             </button>
                                         )}
                                     </div>
                                 </div>
+
+                                {/* Project Logo on the right */}
+                                <div className="relative z-10 shrink-0 w-28 h-28 sm:w-36 sm:h-36 md:w-40 md:h-40 flex items-center justify-center -mr-2 sm:mr-2">
+                                    <img
+                                        src="/logo.png"
+                                        alt="Seafudz ng Bayan Logo"
+                                        className="w-full h-full object-contain filter drop-shadow-2xl transform hover:scale-105 transition-transform duration-300"
+                                    />
+                                </div>
+
+                                {/* Decorative Background Elements */}
+                                <div className="absolute -right-8 -bottom-8 w-44 h-44 rounded-full bg-white/10 pointer-events-none blur-sm" />
+                                <div className="absolute -top-10 right-1/4 w-36 h-36 rounded-full bg-white/10 pointer-events-none blur-xl" />
                             </div>
 
-                            {/* Grid of Dishes */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {filteredItems.map((item) => {
-                                    const available = isAvailable(item.id)
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className={`bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${!available
-                                                ? 'border-rose-200 bg-neutral-50/70 opacity-80'
-                                                : 'border-neutral-100 shadow-xs hover:shadow-md'
+                            {/* Categories Section based directly on reference mockup */}
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-center justify-between px-1">
+                                    <h2 className="font-extrabold text-neutral-900 text-lg sm:text-xl">Categories</h2>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleCategoryClick('All Menu')}
+                                        className="text-xs font-bold text-neutral-400 hover:text-neutral-700 cursor-pointer transition-colors"
+                                    >
+                                        See all
+                                    </button>
+                                </div>
+
+                                {/* Horizontal Scrollable Category Pills */}
+                                <div className="flex items-center gap-2.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                                    {categories.map((cat) => {
+                                        const { label, emoji } = getCategoryPillData(cat)
+                                        const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
+                                        return (
+                                            <button
+                                                key={cat}
+                                                type="button"
+                                                onClick={() => handleCategoryClick(cat)}
+                                                className={`px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition-all duration-150 cursor-pointer border ${
+                                                    isSelected
+                                                        ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/30'
+                                                        : 'bg-white text-neutral-800 border-neutral-200/90 hover:border-amber-400 hover:bg-amber-50/20'
                                                 }`}
-                                        >
-                                            <div className="relative aspect-4/3 w-full overflow-hidden bg-neutral-50">
-                                                <ProductImage
-                                                    src={item.image}
-                                                    fallbackSrc={item.bundledImage}
-                                                    alt={item.name}
-                                                    className={`w-full h-full object-cover transition-transform duration-300 ${!available
-                                                        ? 'grayscale-75 opacity-60 contrast-125'
-                                                        : 'group-hover:scale-105'
-                                                        }`}
-                                                />
-                                                <span className="absolute top-3 right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-xs font-bold px-2.5 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
-                                                    {item.category}
-                                                </span>
+                                            >
+                                                {emoji && <span className="text-sm sm:text-base leading-none">{emoji}</span>}
+                                                <span>{label}</span>
+                                            </button>
+                                        )
+                                    })}
+                                </div>
+                            </div>
 
-                                                {!available && (
-                                                    <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
-                                                        <span className="bg-rose-600 text-white font-extrabold text-xs uppercase tracking-wider px-3.5 py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                                            Unavailable / Sold Out
-                                                        </span>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            <div className="p-5 flex-grow flex flex-col justify-between gap-4">
-                                                <div>
-                                                    <h3
-                                                        className={`font-bold text-lg leading-snug transition-colors ${!available
-                                                            ? 'text-neutral-500 line-through'
-                                                            : 'text-neutral-800'
-                                                            }`}
-                                                    >
-                                                        {item.name}
-                                                    </h3>
-                                                    <p className="text-xs text-neutral-400 mt-1 line-clamp-2">
-                                                        {item.description}
-                                                    </p>
-                                                </div>
-
-                                                <div className="flex items-center justify-between mt-auto">
-                                                    <span
-                                                        className={`font-extrabold text-lg ${!available ? 'text-neutral-400' : 'text-orange-600'
-                                                            }`}
-                                                    >
-                                                        ₱{item.price.toLocaleString()}
-                                                    </span>
-
-                                                    {available ? (
-                                                        replacementTargetItem ? (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => {
-                                                                    const itemKey = String(replacementTargetItem.id ?? 0)
-                                                                    const effectivePrice = getEffectivePrice(item.id, item.price)
-                                                                    setReplacementSelections((prev) => ({
-                                                                        ...prev,
-                                                                        [itemKey]: {
-                                                                            productId: item.id,
-                                                                            name: item.name,
-                                                                            price: effectivePrice,
-                                                                            image: item.image,
-                                                                            category: item.category,
-                                                                        },
-                                                                    }))
-                                                                    setReplacementTargetItem(null)
-                                                                    setActiveTab('tracking')
-                                                                }}
-                                                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
-                                                            >
-                                                                <span>✓</span> Select as Replacement
-                                                            </button>
-                                                        ) : (
-                                                            <button
-                                                                onClick={() => handleAddToCart(item)}
-                                                                className="bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-2xs active:scale-95"
-                                                            >
-                                                                <span>+</span> Add
-                                                            </button>
-                                                        )
-                                                    ) : (
-                                                        <span className="bg-neutral-100 text-neutral-400 text-xs font-bold px-3.5 py-2 rounded-xl cursor-not-allowed select-none border border-neutral-200">
-                                                            Sold Out
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            </div>
+                            {/* Per-Category Horizontal Swipeable Rows & Search */}
+                            <div id="menu-display-area" className="flex flex-col gap-8">
+                                {searchQuery.trim().length > 0 ? (
+                                    /* When search query is active, show Search Results */
+                                    filteredItems.length === 0 ? (
+                                        <div className="bg-white rounded-2xl p-10 border border-neutral-100 text-center text-neutral-400">
+                                            <span className="text-3xl block mb-2">🍽️</span>
+                                            <p className="font-bold text-neutral-700">No dishes found matching your search</p>
+                                            <p className="text-xs text-neutral-400 mt-1">Try searching for other seafood favorites</p>
                                         </div>
+                                    ) : (
+                                        <CategorySwipeRow
+                                            id="search-results-section"
+                                            category={`Search Results for "${searchQuery}"`}
+                                            items={filteredItems}
+                                            renderProductCard={renderProductCard}
+                                        />
                                     )
-                                })}
+                                ) : (
+                                    /* All categories displayed row-by-row; category tabs automatically scroll into view */
+                                    availableCategories.map((cat) => {
+                                        const catItems = allEffectiveItems.filter((i) => i.category.toLowerCase() === cat.toLowerCase())
+                                        if (catItems.length === 0) return null
+
+                                        return (
+                                            <CategorySwipeRow
+                                                key={cat}
+                                                id={`category-section-${cat.replace(/\s+/g, '-').toLowerCase()}`}
+                                                category={cat}
+                                                items={catItems}
+                                                renderProductCard={renderProductCard}
+                                            />
+                                        )
+                                    })
+                                )}
                             </div>
                         </main>
 
@@ -1477,23 +1894,12 @@ export const OnlineCustomer: React.FC = () => {
                                                         </p>
                                                     </div>
 
-                                                    <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
-                                                        <button
-                                                            onClick={() => handleDecrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
-                                                        >
-                                                            -
-                                                        </button>
-                                                        <span className="text-xs font-bold text-neutral-700 w-4 text-center">
-                                                            {ci.quantity}
-                                                        </span>
-                                                        <button
-                                                            onClick={() => handleIncrement(ci.item.id)}
-                                                            className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
-                                                        >
-                                                            +
-                                                        </button>
-                                                    </div>
+                                                    <CartQuantityControl
+                                                        quantity={ci.quantity}
+                                                        onIncrement={() => handleIncrement(ci.item.id)}
+                                                        onDecrement={() => handleDecrement(ci.item.id)}
+                                                        onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
+                                                    />
                                                 </div>
 
                                                 <div className="mt-2">
@@ -2709,23 +3115,12 @@ export const OnlineCustomer: React.FC = () => {
                                                         ₱{(ci.item.price * ci.quantity).toLocaleString()}
                                                     </p>
                                                 </div>
-                                                <div className="flex items-center gap-2 bg-neutral-50 px-2 py-1 rounded-lg border border-neutral-100">
-                                                    <button
-                                                        onClick={() => handleDecrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
-                                                    >
-                                                        -
-                                                    </button>
-                                                    <span className="text-xs font-bold text-neutral-700 w-4 text-center">
-                                                        {ci.quantity}
-                                                    </span>
-                                                    <button
-                                                        onClick={() => handleIncrement(ci.item.id)}
-                                                        className="text-neutral-500 hover:text-neutral-800 font-bold px-1 cursor-pointer"
-                                                    >
-                                                        +
-                                                    </button>
-                                                </div>
+                                                <CartQuantityControl
+                                                    quantity={ci.quantity}
+                                                    onIncrement={() => handleIncrement(ci.item.id)}
+                                                    onDecrement={() => handleDecrement(ci.item.id)}
+                                                    onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
+                                                />
                                             </div>
 
                                             <div className="mt-2">

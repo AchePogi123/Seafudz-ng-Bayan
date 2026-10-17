@@ -8,6 +8,7 @@ export interface BrandLogoProps {
   subtitle?: string; // Custom subtitle e.g. 'Admin Dashboard', 'Cashier POS Terminal', etc.
   badge?: string; // e.g. 'ADMIN', 'CASHIER', 'KITCHEN', 'RIDER', 'ASSISTANT'
   badgeColor?: string; // optional custom badge style classes
+  badgeMinimal?: boolean;
   clickable?: boolean;
   to?: string;
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
@@ -21,6 +22,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   subtitle,
   badge,
   badgeColor,
+  badgeMinimal = false,
   clickable = true,
   to = '/',
   onClick,
@@ -88,13 +90,23 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
 
         {/* Optional Role / Status Badge */}
         {badge && (
-          <span
-            className={`ml-1.5 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider inline-flex items-center align-middle shadow-2xs ${
-              badgeColor || defaultBadgeClasses
-            }`}
-          >
-            {badge}
-          </span>
+          badgeMinimal ? (
+            <span
+              className={`ml-1.5 sm:ml-2 text-[10px] sm:text-[11px] font-bold text-black uppercase tracking-wider inline-flex items-center align-middle ${
+                badgeColor || ""
+              }`}
+            >
+              {badge}
+            </span>
+          ) : (
+            <span
+              className={`ml-1.5 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider inline-flex items-center align-middle shadow-2xs ${
+                badgeColor || defaultBadgeClasses
+              }`}
+            >
+              {badge}
+            </span>
+          )
         )}
       </div>
 

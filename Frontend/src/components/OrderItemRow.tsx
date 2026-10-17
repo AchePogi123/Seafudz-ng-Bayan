@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import type { MenuItem } from './MenuCard'
 import { ProductImage } from './ProductImage'
 
@@ -13,6 +13,7 @@ interface OrderItemRowProps {
   onIncrement: (itemId: string) => void
   onDecrement: (itemId: string) => void
   onRemove: (itemId: string) => void
+  onSetQuantity?: (itemId: string, quantity: number) => void
 }
 
 export const OrderItemRow: React.FC<OrderItemRowProps> = ({
@@ -21,8 +22,43 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
   onIncrement,
   onDecrement,
   onRemove,
+  onSetQuantity,
 }) => {
   const { item, quantity } = cartItem
+  const [inputValue, setInputValue] = useState(String(quantity))
+
+  useEffect(() => {
+    setInputValue(String(quantity))
+  }, [quantity])
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value
+    // Allow digits only or empty string so user can clear/backspace
+    if (val === '' || /^[0-9]+$/.test(val)) {
+      setInputValue(val)
+      const num = parseInt(val, 10)
+      if (!isNaN(num) && num > 0) {
+        onSetQuantity?.(item.id, num)
+      }
+    }
+  }
+
+  const handleInputBlur = () => {
+    const num = parseInt(inputValue, 10)
+    if (isNaN(num) || num <= 0) {
+      setInputValue('1')
+      onSetQuantity?.(item.id, 1)
+    } else {
+      setInputValue(String(num))
+      onSetQuantity?.(item.id, num)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.currentTarget.blur()
+    }
+  }
 
   return (
     <div className={`flex items-center justify-between gap-2 py-2.5 border-b group transition-all ${isAvailable ? 'border-neutral-100' : 'border-rose-200 bg-rose-50/70 px-2 rounded-lg'}`}>
@@ -53,19 +89,29 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
 
       {/* Controls & Total Price & Remove Icon */}
       <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Quantity Controls (- 1 +) */}
+        {/* Quantity Controls (- [input] +) */}
         <div className="flex items-center bg-neutral-100 rounded-lg p-0.5 border border-neutral-200/60">
           <button
+            type="button"
             onClick={() => onDecrement(item.id)}
             className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
             title="Decrease quantity"
           >
             -
           </button>
-          <span className="w-4 text-center text-xs font-bold text-neutral-900 select-none">
-            {quantity}
-          </span>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={inputValue}
+            onChange={handleInputChange}
+            onBlur={handleInputBlur}
+            onKeyDown={handleKeyDown}
+            aria-label="Quantity"
+            className="w-8 text-center text-xs font-bold text-neutral-900 bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500 rounded py-0.5 border-none select-all"
+          />
           <button
+            type="button"
             onClick={() => onIncrement(item.id)}
             className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
             title="Increase quantity"
@@ -81,6 +127,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
 
         {/* Remove Button */}
         <button
+          type="button"
           onClick={() => onRemove(item.id)}
           className="text-neutral-300 hover:text-red-500 p-1 rounded transition-all cursor-pointer flex-shrink-0"
           title="Remove item"

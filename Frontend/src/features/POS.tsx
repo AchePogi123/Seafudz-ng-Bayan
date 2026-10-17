@@ -550,6 +550,14 @@ export const POS: React.FC = () => {
     )
   }
 
+  const handleSetQuantity = (itemId: string, quantity: number) => {
+    setCartItems((prevItems) =>
+      prevItems.map((ci) =>
+        ci.item.id === itemId ? { ...ci, quantity: Math.max(1, quantity) } : ci
+      )
+    )
+  }
+
   const handleRemove = (itemId: string) => {
     setCartItems((prevItems) => prevItems.filter((ci) => ci.item.id !== itemId))
   }
@@ -789,6 +797,7 @@ export const POS: React.FC = () => {
                 onIncrement={handleIncrement}
                 onDecrement={handleDecrement}
                 onRemove={handleRemove}
+                onSetQuantity={handleSetQuantity}
                 onConfirmOrder={handleConfirmOrder}
                 isItemAvailable={isAvailable}
                 onRemoveUnavailable={removeUnavailableItems}
@@ -1255,6 +1264,7 @@ export const POS: React.FC = () => {
               onIncrement={handleIncrement}
               onDecrement={handleDecrement}
               onRemove={handleRemove}
+              onSetQuantity={handleSetQuantity}
               onConfirmOrder={handleConfirmOrder}
               isItemAvailable={isAvailable}
               onRemoveUnavailable={removeUnavailableItems}

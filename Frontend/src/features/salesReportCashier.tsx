@@ -4,7 +4,7 @@ import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
-import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { AdminEditTransactionModal, type TransactionData } from '../components/AdminEditTransactionModal'
 
 export interface LiveTransaction {
   id: string
@@ -37,6 +37,42 @@ type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
 
 const PAGE_SIZE = 10
 
+type RawOrder = Record<string, unknown>
+
+interface OrderPageResult {
+  transactions: LiveTransaction[]
+  totalMatchingCount: number
+}
+
+const isRawOrder = (value: unknown): value is RawOrder =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const toRawOrders = (value: unknown): RawOrder[] =>
+  Array.isArray(value) ? value.filter(isRawOrder) : []
+
+const readString = (...values: unknown[]): string | undefined => {
+  const value = values.find((candidate) =>
+    (typeof candidate === 'string' && candidate.trim()) || typeof candidate === 'number'
+  )
+  return value === undefined ? undefined : String(value)
+}
+
+const readNumber = (value: unknown, fallback = 0): number => {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+const summarizeItems = (items: unknown, fallback: string): string => {
+  if (typeof items === 'string') return items
+  const summaries = toRawOrders(items).map((item) => {
+    const nestedItem = isRawOrder(item.item) ? item.item : {}
+    const name = readString(item.name, item.product_name_snapshot, nestedItem.name) || 'Seafood'
+    const quantity = readNumber(item.quantity, 1) || 1
+    return `${name} x${quantity}`
+  })
+  return summaries.length ? summaries.join(', ') : fallback
+}
+
 const SalesReportCashier: React.FC = () => {
   const navigate = useNavigate()
   const currentUser = getActiveUser()
@@ -57,7 +93,7 @@ const SalesReportCashier: React.FC = () => {
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
   const [totalMatchingCount, setTotalMatchingCount] = useState(0)
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const [summaryData, setSummaryData] = useState<SummaryData>({
     totalOrders: 0,
     grossRevenue: 0,
@@ -75,7 +111,7 @@ const SalesReportCashier: React.FC = () => {
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
-  const [editingTransaction, setEditingTransaction] = useState<any | null>(null)
+  const [editingTransaction, setEditingTransaction] = useState<TransactionData | null>(null)
 
   // Debounce search input
   useEffect(() => {
@@ -86,30 +122,39 @@ const SalesReportCashier: React.FC = () => {
     return () => clearTimeout(handler)
   }, [searchQuery])
 
-  // If navigated from dashboard with specific state, sync them
-  useEffect(() => {
+  const [previousLocationKey, setPreviousLocationKey] = useState(location.key)
+  if (location.key !== previousLocationKey) {
+    setPreviousLocationKey(location.key)
     if (navState?.channel) setChannelFilter(navState.channel)
     if (navState?.tab) setActiveTab(navState.tab)
     if (navState?.payment) setPaymentFilter(navState.payment)
-  }, [navState])
+  }
 
   const handleTabChange = (tab: TabType) => {
+    setIsLoading(true)
     setActiveTab(tab)
     setCurrentPage(1)
   }
 
   const handleChannelChange = (channel: string) => {
+    setIsLoading(true)
     setChannelFilter(channel)
     setCurrentPage(1)
   }
 
   const handlePaymentChange = (pm: string) => {
+    setIsLoading(true)
     setPaymentFilter(pm)
     setCurrentPage(1)
   }
 
-  const formatOrderRow = useCallback((dbO: any): LiveTransaction => {
-    const rawType = dbO.order_type || dbO.type || ''
+  const handlePageChange = (page: number) => {
+    setIsLoading(true)
+    setCurrentPage(page)
+  }
+
+  const formatOrderRow = useCallback((dbO: RawOrder): LiveTransaction => {
+    const rawType = readString(dbO.order_type, dbO.type) || ''
     const normalizedType =
       rawType.toUpperCase() === 'ONLINE'
         ? 'Delivery'
@@ -117,40 +162,33 @@ const SalesReportCashier: React.FC = () => {
           ? 'POS Order'
           : rawType || 'POS Order'
 
-    let itemsSummary = 'Seafood Dish'
-    if (Array.isArray(dbO.items) && dbO.items.length > 0) {
-      itemsSummary = dbO.items
-        .map((i: any) => `${i.name || i.product_name_snapshot || 'Dish'} x${i.quantity || 1}`)
-        .join(', ')
-    } else if (typeof dbO.items === 'string') {
-      itemsSummary = dbO.items
-    }
+    const createdAt = dbO.created_at
 
     return {
-      id: String(dbO.id),
-      ref: String(dbO.id),
-      dateTime: dbO.created_at ? new Date(dbO.created_at).toLocaleString() : new Date().toLocaleString(),
-      items: itemsSummary,
-      customer:
-        dbO.customer_name ||
+      id: readString(dbO.id) || '',
+      ref: readString(dbO.id) || '',
+      dateTime: createdAt ? new Date(String(createdAt)).toLocaleString() : new Date().toLocaleString(),
+      items: summarizeItems(dbO.items, 'Seafood Dish'),
+      customer: readString(dbO.customer_name) ||
         (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In Customer'),
-      total: Number(dbO.total || 0),
       type: normalizedType,
-      paymentMethod: dbO.payment_method || 'Cash',
-      status: dbO.status || 'Completed',
+      total: readNumber(dbO.total),
+      paymentMethod: readString(dbO.payment_method) || 'Cash',
+      status: readString(dbO.status) || 'Completed',
     }
   }, [])
 
-  const getOrderDate = (order: any): Date | null => {
+  const getOrderDate = (order: RawOrder | LiveTransaction): Date | null => {
     const value =
-      order.created_at ??
-      order.createdAt ??
-      order.dateTime ??
-      order.date ??
+      ('created_at' in order ? order.created_at : undefined) ??
+      ('createdAt' in order ? order.createdAt : undefined) ??
+      ('dateTime' in order ? order.dateTime : undefined) ??
+      ('date' in order ? order.date : undefined) ??
       null
 
     if (!value) return null
     if (value instanceof Date) return isNaN(value.getTime()) ? null : value
+    if (typeof value !== 'string' && typeof value !== 'number') return null
     const parsed = new Date(value)
     if (!isNaN(parsed.getTime())) return parsed
     const num = Number(value)
@@ -161,7 +199,7 @@ const SalesReportCashier: React.FC = () => {
     return null
   }
 
-  const checkIsInSelectedPeriod = useCallback((order: any, tab: TabType): boolean => {
+  const checkIsInSelectedPeriod = useCallback((order: RawOrder | LiveTransaction, tab: TabType): boolean => {
     const orderDate = getOrderDate(order)
     if (!orderDate) return true
 
@@ -193,54 +231,35 @@ const SalesReportCashier: React.FC = () => {
     return true
   }, [])
 
-  const fetchSummary = useCallback(async () => {
+  const fetchSummary = useCallback(async (): Promise<SummaryData | null> => {
+    const orderMap = new Map<string, RawOrder>()
     try {
-      const orderMap = new Map<string, any>()
-
-      // 1. Include locally stored orders matching selected period
       try {
         const localRaw = localStorage.getItem('seafudz_orders')
-
         if (localRaw) {
-          const localOrders = JSON.parse(localRaw)
-
-          if (Array.isArray(localOrders)) {
-            localOrders
-              .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
-              .forEach((order: any, index: number) => {
-                const key = String(
-                  order.id ??
-                  order.ref ??
-                  `local-${index}`
-                )
-                orderMap.set(key, order)
-              })
-          }
+          const localOrders: unknown = JSON.parse(localRaw)
+          toRawOrders(localOrders)
+            .filter((order) => checkIsInSelectedPeriod(order, activeTab))
+            .forEach((order, index) => {
+              const key = readString(order.id, order.ref) || `local-${index}`
+              orderMap.set(key, order)
+            })
         }
       } catch (localErr) {
         console.warn('Failed to read local orders for sales summary:', localErr)
       }
 
-      // 2. Fetch backend orders matching selected period
       try {
         const ordersRes = await fetch(
           `${API_BASE_URL}/orders?limit=200&offset=0&tab=${encodeURIComponent(activeTab)}`
         )
-
         if (ordersRes.ok) {
-          const ordersJson = await ordersRes.json()
-          const backendOrders = Array.isArray(ordersJson.data)
-            ? ordersJson.data
-            : []
-
+          const ordersJson: unknown = await ordersRes.json()
+          const backendOrders = isRawOrder(ordersJson) ? toRawOrders(ordersJson.data) : []
           backendOrders
-            .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
-            .forEach((order: any, index: number) => {
-              const key = String(
-                order.id ??
-                order.ref ??
-                `backend-${index}`
-              )
+            .filter((order) => checkIsInSelectedPeriod(order, activeTab))
+            .forEach((order, index) => {
+              const key = readString(order.id, order.ref) || `backend-${index}`
               orderMap.set(key, order)
             })
         }
@@ -260,23 +279,14 @@ const SalesReportCashier: React.FC = () => {
 
       let grossRevenue = 0
 
-      orders.forEach((order: any) => {
-        const total = Number(
-          order.total ??
-          order.totalAmount ??
-          order.grandTotal ??
-          order.amount ??
-          0
-        ) || 0
+      orders.forEach((order) => {
+        const total = readNumber(
+          order.total ?? order.totalAmount ?? order.grandTotal ?? order.amount
+        )
 
         grossRevenue += total
 
-        const payment = String(
-          order.payment_method ??
-          order.paymentMethod ??
-          order.payment ??
-          'Cash'
-        ).toLowerCase()
+        const payment = (readString(order.payment_method, order.paymentMethod, order.payment) || 'Cash').toLowerCase()
 
         if (payment.includes('hybrid') || payment.includes('split')) {
           breakdown.hybrid.total += total
@@ -296,61 +306,48 @@ const SalesReportCashier: React.FC = () => {
         }
       })
 
-      setSummaryData({
+      return {
         totalOrders: orders.length,
         grossRevenue,
         subtotalRevenue: 0,
         vatCollected: 0,
         averageOrderValue: orders.length > 0 ? grossRevenue / orders.length : 0,
         breakdown,
-      })
+      }
     } catch (err) {
       console.warn('Failed to calculate sales summary:', err)
+      return null
     }
   }, [activeTab, checkIsInSelectedPeriod])
 
-  const fetchOrdersPage = useCallback(async () => {
-    setIsLoading(true)
+  const fetchOrdersPage = useCallback(async (): Promise<OrderPageResult> => {
     try {
       const orderMap = new Map<string, LiveTransaction>()
 
-      // 1. Read local orders matching period
       try {
         const localRaw = localStorage.getItem('seafudz_orders')
         if (localRaw) {
-          const parsed = JSON.parse(localRaw)
-          if (Array.isArray(parsed)) {
-            parsed.forEach((o: any, idx: number) => {
-              if (checkIsInSelectedPeriod(o, activeTab)) {
-                let itemsStr = 'Seafood Dish'
-                if (typeof o.items === 'string') {
-                  itemsStr = o.items
-                } else if (Array.isArray(o.items)) {
-                  itemsStr = o.items
-                    .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
-                    .join(', ')
-                }
-                const tx: LiveTransaction = {
-                  id: String(o.id || o.ref || `local-${idx}`),
-                  ref: String(o.ref || o.id || `local-${idx}`),
-                  dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
-                  type: o.type || 'POS Order',
-                  status: o.status || 'Completed',
-                  customer: o.customerName || o.customer || 'Walk-In',
-                  items: itemsStr,
-                  total: Number(o.total || 0),
-                  paymentMethod: o.paymentMethod || 'Cash',
-                }
-                orderMap.set(tx.id, tx)
-              }
-            })
-          }
+          const parsed: unknown = JSON.parse(localRaw)
+          toRawOrders(parsed).forEach((order, index) => {
+            if (!checkIsInSelectedPeriod(order, activeTab)) return
+            const tx: LiveTransaction = {
+              id: readString(order.id, order.ref) || `local-${index}`,
+              ref: readString(order.ref, order.id) || `local-${index}`,
+              dateTime: readString(order.dateTime, order.createdAt) || new Date().toLocaleString(),
+              type: readString(order.type, order.order_type) || 'POS Order',
+              status: readString(order.status) || 'Completed',
+              customer: readString(order.customerName, order.customer, order.customer_name) || 'Walk-In',
+              items: summarizeItems(order.items, 'Seafood Dish'),
+              total: readNumber(order.total),
+              paymentMethod: readString(order.paymentMethod, order.payment_method) || 'Cash',
+            }
+            orderMap.set(tx.id, tx)
+          })
         }
       } catch (e) {
         console.warn('Error reading local orders:', e)
       }
 
-      // 2. Fetch backend orders matching period
       try {
         const params = new URLSearchParams({
           limit: '1000',
@@ -358,8 +355,8 @@ const SalesReportCashier: React.FC = () => {
         })
         const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`)
         if (res.ok) {
-          const json = await res.json()
-          const list = json.data || []
+          const json: unknown = await res.json()
+          const list = isRawOrder(json) ? toRawOrders(json.data) : []
           const formatted = list.map(formatOrderRow)
           formatted.forEach((dbO: LiveTransaction) => {
             if (checkIsInSelectedPeriod(dbO, activeTab)) {
@@ -415,23 +412,51 @@ const SalesReportCashier: React.FC = () => {
         return dB - dA
       })
 
-      setTotalMatchingCount(allMatching.length)
       const offset = (currentPage - 1) * PAGE_SIZE
-      setTransactions(allMatching.slice(offset, offset + PAGE_SIZE))
+      return {
+        totalMatchingCount: allMatching.length,
+        transactions: allMatching.slice(offset, offset + PAGE_SIZE),
+      }
     } catch (err) {
       console.error('Failed to fetch page of orders:', err)
-    } finally {
-      setIsLoading(false)
+      return { totalMatchingCount: 0, transactions: [] }
     }
   }, [currentPage, activeTab, channelFilter, paymentFilter, debouncedSearch, formatOrderRow, checkIsInSelectedPeriod])
 
   useEffect(() => {
-    void fetchSummary()
+    let isCurrent = true
+    void fetchSummary().then((summary) => {
+      if (isCurrent && summary) setSummaryData(summary)
+    })
+    return () => {
+      isCurrent = false
+    }
   }, [fetchSummary])
 
   useEffect(() => {
-    void fetchOrdersPage()
+    let isCurrent = true
+    void fetchOrdersPage().then((page) => {
+      if (!isCurrent) return
+      setTotalMatchingCount(page.totalMatchingCount)
+      setTransactions(page.transactions)
+      setIsLoading(false)
+    })
+    return () => {
+      isCurrent = false
+    }
   }, [fetchOrdersPage])
+
+  const refreshData = () => {
+    setIsLoading(true)
+    void fetchSummary().then((summary) => {
+      if (summary) setSummaryData(summary)
+    })
+    void fetchOrdersPage().then((page) => {
+      setTotalMatchingCount(page.totalMatchingCount)
+      setTransactions(page.transactions)
+      setIsLoading(false)
+    })
+  }
 
   const handleDeleteTransaction = async (id: string) => {
     const confirmDelete = window.confirm(
@@ -439,22 +464,27 @@ const SalesReportCashier: React.FC = () => {
     )
     if (!confirmDelete) return
 
+    setIsLoading(true)
     try {
-      await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' }).catch(() => { })
-    } catch { }
+      const response = await fetch(`${API_BASE_URL}/orders/${id}`, { method: 'DELETE' })
+      if (!response.ok) console.warn('Failed to delete transaction from backend:', response.status)
+    } catch (err) {
+      console.warn('Failed to delete transaction from backend:', err)
+    }
 
     try {
       const local = localStorage.getItem('seafudz_orders')
       if (local) {
-        const parsed = JSON.parse(local)
-        const updated = parsed.filter((o: any) => o.id !== id && o.ref !== id)
+        const parsed: unknown = JSON.parse(local)
+        const updated = toRawOrders(parsed).filter((order) => readString(order.id, order.ref) !== id)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-    } catch { }
+    } catch (err) {
+      console.warn('Failed to remove transaction from local storage:', err)
+    }
 
     if (selectedTransaction?.id === id) setSelectedTransaction(null)
-    void fetchSummary()
-    void fetchOrdersPage()
+    refreshData()
   }
 
   const getOrderedItems = (items: string) => {
@@ -537,8 +567,7 @@ const SalesReportCashier: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                void fetchSummary()
-                void fetchOrdersPage()
+                refreshData()
               }}
               className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
               title="Refresh data"
@@ -717,7 +746,10 @@ const SalesReportCashier: React.FC = () => {
                   <input
                     type="text"
                     value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onChange={(e) => {
+                      setIsLoading(true)
+                      setSearchQuery(e.target.value)
+                    }}
                     placeholder="Search order ID or customer..."
                     className="w-48 sm:w-60 bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:border-orange-500"
                   />
@@ -875,7 +907,7 @@ const SalesReportCashier: React.FC = () => {
                   {/* Previous Button */}
                   <button
                     type="button"
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
                     disabled={currentPage === 1 || isLoading}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                   >
@@ -902,7 +934,7 @@ const SalesReportCashier: React.FC = () => {
                       <button
                         key={`page-${pageNum}`}
                         type="button"
-                        onClick={() => setCurrentPage(pageNum)}
+                        onClick={() => handlePageChange(pageNum)}
                         disabled={isLoading}
                         className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
                           ? 'bg-orange-500 text-white shadow-2xs'
@@ -917,7 +949,7 @@ const SalesReportCashier: React.FC = () => {
                   {/* Next Button */}
                   <button
                     type="button"
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage >= totalPages || isLoading}
                     className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
                   >
@@ -1064,20 +1096,14 @@ const SalesReportCashier: React.FC = () => {
       <AdminCreateTransactionModal
         isOpen={isAdminCreateOpen}
         onClose={() => setIsAdminCreateOpen(false)}
-        onCreated={() => {
-          void fetchSummary()
-          void fetchOrdersPage()
-        }}
+        onCreated={refreshData}
       />
 
       <AdminEditTransactionModal
         isOpen={Boolean(editingTransaction)}
         transaction={editingTransaction}
         onClose={() => setEditingTransaction(null)}
-        onSave={() => {
-          void fetchSummary()
-          void fetchOrdersPage()
-        }}
+        onSave={refreshData}
       />
 
     </div>

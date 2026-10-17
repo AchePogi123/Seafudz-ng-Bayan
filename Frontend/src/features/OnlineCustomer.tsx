@@ -1,4 +1,6 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { HeroBoat } from '../components/HeroBoat'
+import { DrawnWaves } from '../components/DrawnWaves'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
@@ -248,7 +250,7 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
     const startXRef = useRef(0)
     const scrollLeftRef = useRef(0)
 
-    const updateScrollState = useCallback(() => {
+    const updateScrollState = () => {
         const el = scrollRef.current
         if (!el) return
         const { scrollLeft, scrollWidth, clientWidth } = el
@@ -260,7 +262,7 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
             setCanScrollLeft(scrollLeft > 12)
             setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 12)
         }
-    }, [])
+    }
 
     useEffect(() => {
         updateScrollState()
@@ -278,12 +280,12 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
             clearTimeout(t1)
             clearTimeout(t2)
         }
-    }, [items, updateScrollState])
+    }, [items])
 
     const handleScroll = (direction: 'left' | 'right') => {
         const el = scrollRef.current
         if (!el) return
-        const offset = direction === 'left' ? -340 : 340
+        const offset = direction === 'left' ? -Math.max(320, el.clientWidth * 0.75) : Math.max(320, el.clientWidth * 0.75)
         el.scrollBy({ left: offset, behavior: 'smooth' })
     }
 
@@ -316,8 +318,6 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
         setTimeout(() => setHasDragged(false), 50)
     }
 
-    const hasAnyArrows = canScrollLeft || canScrollRight
-
     return (
         <section id={id} className="scroll-mt-24 select-none">
             {/* Header */}
@@ -325,61 +325,66 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
                 <h3 className="font-extrabold text-neutral-900 text-lg sm:text-xl tracking-tight">
                     {category}
                 </h3>
-
-                {/* Context-aware dynamic navigation arrows */}
-                {hasAnyArrows && (
-                    <div className="flex items-center gap-1.5">
-                            {canScrollLeft && (
-                                <button
-                                    type="button"
-                                    onClick={() => handleScroll('left')}
-                                    className="w-8 h-8 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-800 shadow-2xs active:scale-90 transition-all cursor-pointer font-bold text-sm"
-                                    title="Scroll left"
-                                    aria-label="Scroll left"
-                                >
-                                    ←
-                                </button>
-                            )}
-                            {canScrollRight && (
-                                <button
-                                    type="button"
-                                    onClick={() => handleScroll('right')}
-                                    className="w-8 h-8 rounded-full bg-white hover:bg-neutral-100 border border-neutral-200 flex items-center justify-center text-neutral-800 shadow-2xs active:scale-90 transition-all cursor-pointer font-bold text-sm"
-                                    title="Scroll right"
-                                    aria-label="Scroll right"
-                                >
-                                    →
-                                </button>
-                            )}
-                        </div>
-                    )}
             </div>
 
-            {/* Swipeable & Mouse-Draggable Container */}
-            <div
-                ref={scrollRef}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUpOrLeave}
-                onMouseLeave={handleMouseUpOrLeave}
-                className={`flex gap-4 sm:gap-5 overflow-x-auto pb-4 pt-1 px-1 scroll-smooth snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${
-                    isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
-                }`}
-                style={{ WebkitOverflowScrolling: 'touch' }}
-            >
-                {items.map((item) => (
-                    <div
-                        key={item.id}
-                        onClickCapture={(e) => {
-                            if (hasDragged) {
-                                e.stopPropagation()
-                                e.preventDefault()
-                            }
-                        }}
+            {/* Carousel Container with Side-by-Side Floating Arrows on Desktop */}
+            <div className="relative group/carousel">
+                {/* Left Side Arrow (Desktop Only, nestled near the picture) */}
+                {canScrollLeft && (
+                    <button
+                        type="button"
+                        onClick={() => handleScroll('left')}
+                        className="hidden md:flex absolute left-2 lg:left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 lg:w-10 lg:h-10 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 backdrop-blur-xs"
+                        title="Scroll left"
+                        aria-label="Scroll left"
                     >
-                        {renderProductCard(item)}
-                    </div>
-                ))}
+                        <svg className="w-4.5 h-4.5 text-neutral-800" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                        </svg>
+                    </button>
+                )}
+
+                {/* Right Side Arrow (Desktop Only, nestled near the picture) */}
+                {canScrollRight && (
+                    <button
+                        type="button"
+                        onClick={() => handleScroll('right')}
+                        className="hidden md:flex absolute right-2 lg:right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 lg:w-10 lg:h-10 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 backdrop-blur-xs"
+                        title="Scroll right"
+                        aria-label="Scroll right"
+                    >
+                        <svg className="w-4.5 h-4.5 text-neutral-800" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                        </svg>
+                    </button>
+                )}
+
+                {/* Swipeable & Mouse-Draggable Container */}
+                <div
+                    ref={scrollRef}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUpOrLeave}
+                    onMouseLeave={handleMouseUpOrLeave}
+                    className={`flex gap-4 sm:gap-5 overflow-x-auto pb-4 pt-1 px-1 scroll-smooth snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${
+                        isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+                    }`}
+                    style={{ WebkitOverflowScrolling: 'touch' }}
+                >
+                    {items.map((item) => (
+                        <div
+                            key={item.id}
+                            onClickCapture={(e) => {
+                                if (hasDragged) {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                }
+                            }}
+                        >
+                            {renderProductCard(item)}
+                        </div>
+                    ))}
+                </div>
             </div>
         </section>
     )
@@ -388,15 +393,15 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
 
 const getCategoryPillData = (cat: string) => {
     const lower = cat.toLowerCase()
-    if (cat === 'All Menu' || cat === 'All') return { label: 'All', emoji: '' }
-    if (lower.includes('seafood')) return { label: 'Seafoods', emoji: '🦐' }
-    if (lower.includes('value meal')) return { label: 'Value Meals', emoji: '🍱' }
-    if (lower.includes('siomai')) return { label: 'Siomai', emoji: '🥟' }
-    if (lower.includes('add on') || lower.includes('add-on')) return { label: 'Add Ons', emoji: '🍢' }
-    if (lower.includes('shake') || lower.includes('lemonade')) return { label: 'Shake & Lemonade', emoji: '🍹' }
-    if (lower.includes('dessert')) return { label: 'Desserts', emoji: '🍧' }
-    if (lower.includes('drink')) return { label: 'Drinks', emoji: '🥤' }
-    return { label: cat, emoji: '🍽️' }
+    if (cat === 'All Menu' || cat === 'All') return { label: 'All' }
+    if (lower.includes('seafood')) return { label: 'Seafoods' }
+    if (lower.includes('value meal')) return { label: 'Value Meals' }
+    if (lower.includes('siomai')) return { label: 'Siomai' }
+    if (lower.includes('add on') || lower.includes('add-on')) return { label: 'Add Ons' }
+    if (lower.includes('shake') || lower.includes('lemonade')) return { label: 'Shake & Lemonade' }
+    if (lower.includes('dessert')) return { label: 'Desserts' }
+    if (lower.includes('drink')) return { label: 'Drinks' }
+    return { label: cat }
 }
 
 export const OnlineCustomer: React.FC = () => {
@@ -413,7 +418,16 @@ export const OnlineCustomer: React.FC = () => {
     const lastFetchTimeRef = useRef(0)
 
     // Navigation states (automatically open tracking tab if there is an ongoing uncompleted order)
-    const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() => {
+    interface FlyingDeliveryItem {
+    id: number
+    startX: number
+    startY: number
+    targetX: number
+    targetY: number
+    image?: string
+}
+
+const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() => {
         try {
             const user = getActiveUser()
             if (!user) return 'menu'
@@ -501,7 +515,43 @@ export const OnlineCustomer: React.FC = () => {
     const handleRemoveUnavailableItems = () => {
         setCartItems((prev) => prev.filter((ci) => isAvailable(ci.item.id)))
     }
-    const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
+    const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
+    const [flyingItems, setFlyingItems] = useState<FlyingDeliveryItem[]>([])
+    const [isCartBumping, setIsCartBumping] = useState(false)
+    const cartIconRef = useRef<HTMLButtonElement | null>(null)
+
+    const triggerDeliverAnimation = (e: React.MouseEvent, image?: string) => {
+        let targetX = window.innerWidth - 65
+        let targetY = 35
+        if (cartIconRef.current) {
+            const rect = cartIconRef.current.getBoundingClientRect()
+            targetX = rect.left + rect.width / 2
+            targetY = rect.top + rect.height / 2
+        }
+
+        const startX = e.clientX || window.innerWidth / 2
+        const startY = e.clientY || window.innerHeight / 2
+
+        const newItem: FlyingDeliveryItem = {
+            id: Date.now() + Math.random(),
+            startX,
+            startY,
+            targetX,
+            targetY,
+            image,
+        }
+
+        setFlyingItems((prev) => [...prev, newItem])
+
+        setTimeout(() => {
+            setIsCartBumping(true)
+            setTimeout(() => setIsCartBumping(false), 450)
+        }, 550)
+
+        setTimeout(() => {
+            setFlyingItems((prev) => prev.filter((item) => item.id !== newItem.id))
+        }, 700)
+    }
     const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
     const [tempNote, setTempNote] = useState('')
 
@@ -853,7 +903,7 @@ export const OnlineCustomer: React.FC = () => {
         syncUserProfileFromDB(currentUser)
         if (cartItems.length > 0) {
             setActiveTab('billing')
-            setIsMobileCartOpen(false)
+            setIsCartDrawerOpen(false)
         }
     }
 
@@ -1190,8 +1240,15 @@ export const OnlineCustomer: React.FC = () => {
     }, [allEffectiveItems, searchQuery, selectedCategory])
 
     // Handlers
-    const handleAddToCart = (item: MenuItem) => {
+    const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
+
+        if (e) {
+            triggerDeliverAnimation(e, item.image || item.bundledImage)
+        } else {
+            setIsCartBumping(true)
+            setTimeout(() => setIsCartBumping(false), 450)
+        }
 
         const effectiveItem = {
             ...item,
@@ -1209,7 +1266,14 @@ export const OnlineCustomer: React.FC = () => {
         })
     }
 
-    const handleIncrement = (itemId: string) => {
+    const handleIncrement = (itemId: string, e?: React.MouseEvent) => {
+        if (e) {
+            const ci = cartItems.find((c) => c.item.id === itemId)
+            triggerDeliverAnimation(e, ci?.item.image || ci?.item.bundledImage)
+        } else {
+            setIsCartBumping(true)
+            setTimeout(() => setIsCartBumping(false), 450)
+        }
         setCartItems((prev) =>
             prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci))
         )
@@ -1391,7 +1455,7 @@ export const OnlineCustomer: React.FC = () => {
                 setIsWaitingModalOpen(true)
                 setIsVerificationModalOpen(false)
             }
-            setIsMobileCartOpen(false)
+            setIsCartDrawerOpen(false)
             notifyOrderSync()
         } catch (err) {
             console.error('Error sending order to backend API:', err)
@@ -1632,7 +1696,7 @@ export const OnlineCustomer: React.FC = () => {
                                     </span>
                                     <button
                                         type="button"
-                                        onClick={() => handleIncrement(item.id)}
+                                        onClick={(e) => handleIncrement(item.id, e)}
                                         className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
                                         title="Increase quantity"
                                     >
@@ -1642,7 +1706,7 @@ export const OnlineCustomer: React.FC = () => {
                             ) : (
                                 <button
                                     type="button"
-                                    onClick={() => handleAddToCart(item)}
+                                    onClick={(e) => handleAddToCart(item, e)}
                                     className="p-1 sm:p-1.5 text-neutral-400 hover:text-neutral-700 active:scale-90 transition-all cursor-pointer flex items-center justify-center shrink-0 select-none"
                                     title={`Add ${item.name} to cart`}
                                     aria-label={`Add ${item.name} to cart`}
@@ -1675,13 +1739,19 @@ export const OnlineCustomer: React.FC = () => {
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
                 {/* Integrated Customer Navbar */}
-                <NavbarCustomer />
+                <NavbarCustomer
+                    cartItemCount={cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
+                    cartTotal={total}
+                    onOpenCart={() => setIsCartDrawerOpen(true)}
+                    isCartBumping={isCartBumping}
+                    cartButtonRef={cartIconRef}
+                />
 
                 {/* VIEW 1: MENU / BROWSE */}
                 {activeTab === 'menu' && (
-                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-                        {/* Main Menu Area (Left 3 Columns) */}
-                        <main className="lg:col-span-3 flex flex-col gap-6">
+                    <div className="w-full flex flex-col gap-6 items-start">
+                        {/* Main Menu Area (Full Width, Right Aside Removed) */}
+                        <main className="w-full flex flex-col gap-6">
                             {/* Sticky Replacement Banner */}
                             {replacementTargetItem && (
                                 <div className="sticky top-4 z-40 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-amber-300/40 animate-in slide-in-from-top-4">
@@ -1711,114 +1781,124 @@ export const OnlineCustomer: React.FC = () => {
                                     </button>
                                 </div>
                             )}
-                            {/* Search Bar matching reference mockup */}
-                            <div className="relative w-full">
-                                <div className="flex items-center px-4 py-3 bg-white rounded-2xl border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
-                                    <svg className="w-5 h-5 text-neutral-400 mr-3 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search any foods or dishes..."
-                                        className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
-                                    />
-                                    {searchQuery && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setSearchQuery('')}
-                                            className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1"
-                                        >
-                                            ✕
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Welcome Banner Card (Replaced 'Hot deal of the month' with 'Welcome (user's name)' + Project Logo) */}
-                            <div className="lg:hidden relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 text-white p-5 sm:p-7 shadow-lg shadow-orange-500/20 flex items-center justify-between">
-                                <div className="relative z-10 max-w-[65%] sm:max-w-[70%] space-y-2">
-                                    <span className="inline-block text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-100 bg-black/15 px-3 py-1 rounded-full backdrop-blur-xs">
-                                        Seafudz ng Bayan
-                                    </span>
-                                    <h2 className="text-xl sm:text-2xl md:text-3xl font-black tracking-tight leading-tight text-white drop-shadow-xs">
+                            {/* Welcome Banner Card with Animated Boat (Now applied to both Desktop and Mobile) */}
+                            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 text-white p-5 sm:p-7 lg:p-8 shadow-lg shadow-orange-500/20 flex items-center justify-between">
+                                <div className="relative z-10 max-w-[62%] sm:max-w-[70%] lg:max-w-[72%] space-y-2 lg:space-y-3">
+                                    <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black tracking-tight leading-tight text-white drop-shadow-xs">
                                         Welcome, {userProfileName}!
                                     </h2>
-                                    <p className="text-xs sm:text-sm text-amber-100 font-medium leading-relaxed line-clamp-2">
-                                        Cajun butter seafood, hearty sharing bowls, and fiesta trays crafted fresh.
+                                    <p className="text-xs sm:text-sm lg:text-base text-amber-50/95 font-medium leading-relaxed max-w-xl italic">
+                                        “Fresh catch crafted with authentic coastal passion —<br />
+                                        bringing the true taste of the ocean to Seafudz ng Bayan.”
                                     </p>
-                                    <div className="pt-1 sm:pt-2 flex items-center gap-3">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const el = document.getElementById('menu-display-area')
-                                                el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-                                            }}
-                                            className="bg-white hover:bg-neutral-50 text-neutral-900 font-extrabold text-xs sm:text-sm px-5 py-2.5 rounded-full shadow-md active:scale-95 transition-all cursor-pointer inline-flex items-center gap-1.5"
-                                        >
-                                            Order Now
-                                        </button>
-                                        {activeOrder && (
+                                    {activeOrder && (
+                                        <div className="pt-1 sm:pt-2 flex items-center gap-3">
                                             <button
                                                 type="button"
                                                 onClick={() => setActiveTab('tracking')}
-                                                className="bg-black/20 hover:bg-black/30 text-white font-bold text-xs px-3.5 py-2.5 rounded-full backdrop-blur-xs transition-colors cursor-pointer"
+                                                className="bg-black/20 hover:bg-black/30 text-white font-bold text-xs sm:text-sm px-4 py-2 rounded-full backdrop-blur-xs transition-colors cursor-pointer"
                                             >
                                                 Track Order ({activeOrder.id})
                                             </button>
-                                        )}
-                                    </div>
+                                        </div>
+                                    )}
                                 </div>
 
-                                {/* Project Logo on the right */}
-                                <div className="relative z-10 shrink-0 w-28 h-28 sm:w-36 sm:h-36 md:w-40 md:h-40 flex items-center justify-center -mr-2 sm:mr-2">
-                                    <img
-                                        src="/logo.png"
-                                        alt="Seafudz ng Bayan Logo"
-                                        className="w-full h-full object-contain filter drop-shadow-2xl transform hover:scale-105 transition-transform duration-300"
-                                    />
+                                {/* Animated Boat Scene on the right */}
+                                <div className="relative z-10 shrink-0 w-32 h-24 sm:w-44 sm:h-32 md:w-52 md:h-38 lg:w-64 lg:h-48 flex items-center justify-center -mr-1 sm:mr-2">
+                                    <HeroBoat className="w-full h-full" />
                                 </div>
+
 
                                 {/* Decorative Background Elements */}
-                                <div className="absolute -right-8 -bottom-8 w-44 h-44 rounded-full bg-white/10 pointer-events-none blur-sm" />
-                                <div className="absolute -top-10 right-1/4 w-36 h-36 rounded-full bg-white/10 pointer-events-none blur-xl" />
+                                <div className="absolute -right-8 -bottom-8 w-44 h-44 lg:w-60 lg:h-60 rounded-full bg-white/10 pointer-events-none blur-sm" />
+                                <div className="absolute -top-10 right-1/4 w-36 h-36 lg:w-48 lg:h-48 rounded-full bg-white/10 pointer-events-none blur-xl" />
+
+                                {/* Stylized Hand-Drawn Animated Ocean Waves (Vector Drawing Style) */}
+                                <DrawnWaves className="absolute inset-x-0 bottom-0 h-14 sm:h-18 md:h-20 lg:h-24 z-0 text-amber-50" />
                             </div>
 
                             {/* Categories Section based directly on reference mockup */}
                             <div className="flex flex-col gap-3">
-                                <div className="flex items-center justify-between px-1">
-                                    <h2 className="font-extrabold text-neutral-900 text-lg sm:text-xl">Categories</h2>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleCategoryClick('All Menu')}
-                                        className="text-xs font-bold text-neutral-400 hover:text-neutral-700 cursor-pointer transition-colors"
-                                    >
-                                        See all
-                                    </button>
+                                {/* Top Row: Categories Heading & (on narrower viewports) Search Bar going up */}
+                                <div className="flex items-center justify-between gap-3 px-1">
+                                    <h2 className="font-extrabold text-neutral-900 text-lg sm:text-xl shrink-0">Categories</h2>
+                                    {/* Search input when screen is narrower (going up beside Categories, as shown in 2nd pic) */}
+                                    <div className="xl:hidden relative flex-1 max-w-[210px] sm:max-w-xs">
+                                        <div className="flex items-center px-3 py-1.5 sm:py-2 bg-white rounded-full border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
+                                            <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                            </svg>
+                                            <input
+                                                type="text"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                placeholder="Search dishes..."
+                                                className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
+                                            />
+                                            {searchQuery && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSearchQuery('')}
+                                                    className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1 shrink-0"
+                                                    title="Clear search"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
 
-                                {/* Horizontal Scrollable Category Pills */}
-                                <div className="flex items-center gap-2.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                                    {categories.map((cat) => {
-                                        const { label, emoji } = getCategoryPillData(cat)
-                                        const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
-                                        return (
-                                            <button
-                                                key={cat}
-                                                type="button"
-                                                onClick={() => handleCategoryClick(cat)}
-                                                className={`px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-2 whitespace-nowrap transition-all duration-150 cursor-pointer border ${
-                                                    isSelected
-                                                        ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/30'
-                                                        : 'bg-white text-neutral-800 border-neutral-200/90 hover:border-amber-400 hover:bg-amber-50/20'
-                                                }`}
-                                            >
-                                                {emoji && <span className="text-sm sm:text-base leading-none">{emoji}</span>}
-                                                <span>{label}</span>
-                                            </button>
-                                        )
-                                    })}
+                                {/* Bottom Row: Category Pills & (on wide screens like 1st pic) Search Bar aligned with pills */}
+                                <div className="flex items-center justify-between gap-4">
+                                    {/* Horizontal Scrollable Category Pills */}
+                                    <div className="flex items-center gap-2.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] min-w-0">
+                                        {categories.map((cat) => {
+                                            const { label } = getCategoryPillData(cat)
+                                            const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
+                                            return (
+                                                <button
+                                                    key={cat}
+                                                    type="button"
+                                                    onClick={() => handleCategoryClick(cat)}
+                                                    className={`px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center whitespace-nowrap transition-all duration-150 cursor-pointer border ${
+                                                        isSelected
+                                                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/30'
+                                                            : 'bg-white text-neutral-800 border-neutral-200/90 hover:border-amber-400 hover:bg-amber-50/20'
+                                                    }`}
+                                                >
+                                                    <span>{label}</span>
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+
+                                    {/* Search input aligned with category pills (wide screen view, as shown in 1st pic) */}
+                                    <div className="hidden xl:block shrink-0 w-64 2xl:w-72">
+                                        <div className="flex items-center px-3.5 py-2 sm:py-2.5 bg-white rounded-full border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
+                                            <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                            </svg>
+                                            <input
+                                                type="text"
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                placeholder="Search dishes..."
+                                                className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
+                                            />
+                                            {searchQuery && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSearchQuery('')}
+                                                    className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1 shrink-0"
+                                                    title="Clear search"
+                                                >
+                                                    ✕
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1828,7 +1908,7 @@ export const OnlineCustomer: React.FC = () => {
                                     /* When search query is active, show Search Results */
                                     filteredItems.length === 0 ? (
                                         <div className="bg-white rounded-2xl p-10 border border-neutral-100 text-center text-neutral-400">
-                                            <span className="text-3xl block mb-2">🍽️</span>
+                                            <div className="mx-auto w-10 h-10 mb-2 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg></div>
                                             <p className="font-bold text-neutral-700">No dishes found matching your search</p>
                                             <p className="text-xs text-neutral-400 mt-1">Try searching for other seafood favorites</p>
                                         </div>
@@ -1860,130 +1940,7 @@ export const OnlineCustomer: React.FC = () => {
                             </div>
                         </main>
 
-                        {/* Desktop Right Side Column (1 Column) - Original Cart */}
-                        <aside className="hidden lg:block lg:col-span-1 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 flex flex-col justify-between max-h-[80vh] overflow-y-auto sticky top-6">
-                            <div>
-                                <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3 flex items-center gap-2">
-                                    Your Cart
-                                    {cartItems.length > 0 && (
-                                        <span className="bg-orange-100 text-orange-600 text-xs font-bold px-2 py-0.5 rounded-full">
-                                            {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
-                                        </span>
-                                    )}
-                                </h3>
-
-                                {cartItems.length === 0 ? (
-                                    <div className="flex flex-col items-center justify-center py-12 text-center text-neutral-400">
-                                        <p className="text-sm font-medium">Cart is empty</p>
-                                        <p className="text-xs mt-1 max-w-[200px]">Add delicious dishes from the menu to start!</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4 py-4 divide-y divide-neutral-50">
-                                        {cartItems.map((ci) => (
-                                            <div key={ci.item.id} className={`pt-4 first:pt-0 ${isAvailable(ci.item.id) ? '' : 'rounded-xl border border-rose-300 bg-rose-50 p-3'}`}>
-                                                <div className="flex justify-between items-start gap-2">
-                                                    <div>
-                                                        <h4 className="font-semibold text-neutral-800 text-sm leading-snug">
-                                                            {ci.item.name}
-                                                        </h4>
-                                                        {!isAvailable(ci.item.id) && (
-                                                            <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
-                                                        )}
-                                                        <p className="text-xs text-orange-600 font-bold mt-0.5">
-                                                            ₱{(ci.item.price * ci.quantity).toLocaleString()}
-                                                        </p>
-                                                    </div>
-
-                                                    <CartQuantityControl
-                                                        quantity={ci.quantity}
-                                                        onIncrement={() => handleIncrement(ci.item.id)}
-                                                        onDecrement={() => handleDecrement(ci.item.id)}
-                                                        onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
-                                                    />
-                                                </div>
-
-                                                <div className="mt-2">
-                                                    {editingNoteItemId === ci.item.id ? (
-                                                        <div className="flex gap-2 mt-1">
-                                                            <input
-                                                                type="text"
-                                                                value={tempNote}
-                                                                onChange={(e) => setTempNote(e.target.value)}
-                                                                placeholder="Add instruction..."
-                                                                className="text-xs border border-neutral-200 rounded-lg px-2 py-1 w-full focus:outline-none focus:border-orange-500"
-                                                            />
-                                                            <button
-                                                                onClick={() => handleSaveNote(ci.item.id)}
-                                                                className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
-                                                            >
-                                                                Save
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex items-center justify-between text-xs mt-1">
-                                                            <p className="text-neutral-400 italic leading-snug">
-                                                                {ci.specialNote ? `"${ci.specialNote}"` : 'No instructions added'}
-                                                            </p>
-                                                            <button
-                                                                onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                                className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
-                                                            >
-                                                                {ci.specialNote ? 'Edit note' : '+ Add Note'}
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            {hasUnavailableCartItems && (
-                                <div className="mb-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
-                                    <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
-                                    <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
-                                        Remove Unavailable Items
-                                    </button>
-                                </div>
-                            )}
-
-                            {cartItems.length > 0 && (
-                                <div className="border-t border-neutral-100 pt-4 space-y-4">
-                                    <div className="space-y-1.5 text-xs text-neutral-500">
-                                        <div className="flex justify-between">
-                                            <span>Subtotal</span>
-                                            <span>₱{subtotal.toLocaleString()}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>VAT (12%)</span>
-                                            <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                            <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
-                                        </div>
-                                        {deliveryDistanceMessage && (
-                                            <p role="status" className="text-[11px] text-amber-700">
-                                                {deliveryDistanceMessage}
-                                            </p>
-                                        )}
-                                        <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
-                                            <span>Total Amount</span>
-                                            <span className="text-orange-600">₱{total.toLocaleString()}</span>
-                                        </div>
-                                    </div>
-
-                                    <button
-                                        onClick={handleProceedToCheckout}
-                                        disabled={hasUnavailableCartItems}
-                                        className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
-                                    >
-                                        Proceed to Checkout
-                                    </button>
-                                </div>
-                            )}
-                        </aside>
+                        
                     </div>
                 )}
 
@@ -2010,7 +1967,7 @@ export const OnlineCustomer: React.FC = () => {
                                         onClick={() => setActiveTab('tracking')}
                                         className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
                                     >
-                                        <span>📍 View Kitchen Tracking</span>
+                                        <span>View Kitchen Tracking</span>
                                     </button>
                                 ) : (
                                     <button
@@ -2026,7 +1983,7 @@ export const OnlineCustomer: React.FC = () => {
                                         }}
                                         className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
                                     >
-                                        <span>📱 Open Payment & Verification Popup</span>
+                                        <span>Open Payment & Verification Popup</span>
                                     </button>
                                 )}
                             </div>
@@ -2228,7 +2185,7 @@ export const OnlineCustomer: React.FC = () => {
                                                 </span>
                                             </div>
                                             {!isAvailable(ci.item.id) && (
-                                                <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
+                                                <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">Out of Stock</span>
                                             )}
                                             {ci.specialNote && (
                                                 <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
@@ -2296,7 +2253,7 @@ export const OnlineCustomer: React.FC = () => {
                                 if (isCancelled) {
                                     return (
                                         <span className="bg-rose-100 text-rose-800 font-extrabold text-xs px-4 py-2 rounded-xl border border-rose-300">
-                                            ❌ Order Cancelled
+                                            Order Cancelled
                                         </span>
                                     )
                                 }
@@ -2309,7 +2266,7 @@ export const OnlineCustomer: React.FC = () => {
                                             disabled={isCancellingOrder}
                                             className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 hover:border-rose-300 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1.5"
                                         >
-                                            <span>❌</span> {isCancellingOrder ? 'Cancelling...' : 'Cancel Order'}
+                                            {isCancellingOrder ? 'Cancelling...' : 'Cancel Order'}
                                         </button>
                                     )
                                 }
@@ -2317,7 +2274,7 @@ export const OnlineCustomer: React.FC = () => {
                                 return (
                                     <div className="text-right">
                                         <span className="bg-neutral-100 text-neutral-500 font-bold text-xs px-3 py-1.5 rounded-xl border border-neutral-200 inline-block">
-                                            {isOutOfStock ? '⚠️ Out-of-Stock Decision Needed' : '🍳 Kitchen Processing'}
+                                            {isOutOfStock ? 'Out-of-Stock Decision Needed' : 'Kitchen Processing'}
                                         </span>
                                         <p className="text-[10px] text-neutral-400 mt-1">
                                             {isOutOfStock ? 'Choose a replacement or request a refund below.' : 'Cannot cancel once cooking starts'}
@@ -2333,7 +2290,7 @@ export const OnlineCustomer: React.FC = () => {
                                 {['GCASH_PENDING_APPROVAL', 'PENDING'].includes(activeOrder.status) && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-900 space-y-1">
                                         <div className="flex items-center gap-2 font-bold text-sm">
-                                            <span>ℹ️ Staff Verification Required</span>
+                                            <span>Staff Verification Required</span>
                                         </div>
                                         <p className="text-xs text-blue-700 leading-relaxed">
                                             Your GCash payment requires verification from staff before payment authorization and order confirmation. Please wait for an assistant to authorize your transaction.
@@ -2344,7 +2301,7 @@ export const OnlineCustomer: React.FC = () => {
                                 {activeOrder.status === 'GCASH_AUTHORIZED' && (
                                     <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-emerald-900 space-y-3">
                                         <div className="flex items-center justify-between">
-                                            <span className="font-extrabold text-sm text-emerald-800">✅ GCash Payment Authorized by Staff</span>
+                                            <span className="font-extrabold text-sm text-emerald-800">GCash Payment Authorized by Staff</span>
                                             <span className="text-xs font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full">Authorized</span>
                                         </div>
                                         <p className="text-xs text-emerald-700 leading-relaxed">
@@ -2388,7 +2345,7 @@ export const OnlineCustomer: React.FC = () => {
                                                             disabled={isSubmittingReceipt}
                                                             className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
                                                         >
-                                                            {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                            {isSubmittingReceipt ? 'Submitting...' : 'Submit Payment Receipt'}
                                                         </button>
                                                         <button
                                                             type="button"
@@ -2431,14 +2388,14 @@ export const OnlineCustomer: React.FC = () => {
 
                                 {activeOrder.status === 'RECEIPT_SUBMITTED' && (
                                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-blue-900 space-y-1 text-left">
-                                        <p className="font-bold text-sm">📸 Payment Screenshot Uploaded</p>
+                                        <p className="font-bold text-sm">Payment Screenshot Uploaded</p>
                                         <p className="text-xs text-blue-700">Staff is currently inspecting your reference screenshot to verify payment.</p>
                                     </div>
                                 )}
 
                                 {activeOrder.status === 'RECEIPT_REJECTED' && (
                                     <div className="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-900 space-y-3 text-left">
-                                        <p className="font-extrabold text-sm text-rose-800">⚠️ Payment Receipt Rejected</p>
+                                        <p className="font-extrabold text-sm text-rose-800">Payment Receipt Rejected</p>
                                         <p className="text-xs text-rose-700 leading-relaxed">
                                             {(activeOrder as any).rejectionReason || 'Invalid payment receipt or reference image. Please upload a clear official GCash screenshot.'}
                                         </p>
@@ -2492,7 +2449,7 @@ export const OnlineCustomer: React.FC = () => {
                         {/* COD Verification Banner */}
                         {activeOrder.paymentMethod === 'COD' && activeOrder.status === 'PENDING_COD' && (
                             <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-emerald-900 space-y-1">
-                                <p className="font-bold text-sm">💵 Cash on Delivery (COD) Selected</p>
+                                <p className="font-bold text-sm">Cash on Delivery (COD) Selected</p>
                                 <p className="text-xs text-emerald-700">
                                     Cash on Delivery requires staff product availability verification before order confirmation. Staff is checking item availability now...
                                 </p>
@@ -2504,7 +2461,7 @@ export const OnlineCustomer: React.FC = () => {
                             <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 sm:p-6 text-amber-950 shadow-md space-y-4 animate-in fade-in">
                                 <div className="space-y-1">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-xl">⚠️</span>
+                                        
                                         <h4 className="text-base sm:text-lg font-black text-amber-900 tracking-tight">Item Unavailable in Kitchen</h4>
                                     </div>
                                     <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
@@ -2537,13 +2494,13 @@ export const OnlineCustomer: React.FC = () => {
                                         )}
                                         {activeOrder.excessAmount ? (
                                             <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg text-emerald-900 text-xs flex justify-between items-center">
-                                                <span className="font-bold">💰 Excess Refund Due:</span>
+                                                <span className="font-bold">Excess Refund Due:</span>
                                                 <span className="font-black">₱{Number(activeOrder.excessAmount).toLocaleString()}</span>
                                             </div>
                                         ) : null}
                                         {activeOrder.additionalRequired ? (
                                             <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-900 text-xs flex justify-between items-center">
-                                                <span className="font-bold">⚠️ Additional Required:</span>
+                                                <span className="font-bold">Additional Required:</span>
                                                 <span className="font-black">₱{Number(activeOrder.additionalRequired).toLocaleString()}</span>
                                             </div>
                                         ) : null}
@@ -2646,7 +2603,7 @@ export const OnlineCustomer: React.FC = () => {
                                                                         }}
                                                                         className="w-full py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs active:scale-98"
                                                                     >
-                                                                        <span>🔍</span> Choose Replacement from Menu
+                                                                        Choose Replacement from Menu
                                                                     </button>
                                                                 </div>
                                                             )}
@@ -2687,7 +2644,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     {/* Financial Scenario Handling */}
                                                     {isCOD ? (
                                                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 space-y-1">
-                                                            <p className="font-black text-sm">💵 Cash on Delivery Balance: ₱{projectedTotal.toLocaleString()}</p>
+                                                            <p className="font-black text-sm">Cash on Delivery Balance: ₱{projectedTotal.toLocaleString()}</p>
                                                             <p className="text-[11px] text-slate-600">
                                                                 No advance online payment or refund required. Your delivery rider will collect the updated amount of ₱{projectedTotal.toLocaleString()} in cash upon delivery.
                                                             </p>
@@ -2695,7 +2652,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     ) : excessAmount > 0 ? (
                                                         <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1.5">
                                                             <div className="flex items-center justify-between">
-                                                                <span className="font-black text-emerald-900 text-xs sm:text-sm">💰 Excess Refund Due:</span>
+                                                                <span className="font-black text-emerald-900 text-xs sm:text-sm">Excess Refund Due:</span>
                                                                 <span className="font-black text-lg text-emerald-700">₱{excessAmount.toLocaleString()}</span>
                                                             </div>
                                                             <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
@@ -2705,7 +2662,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     ) : additionalRequired > 0 ? (
                                                         <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-xs text-amber-950 space-y-3">
                                                             <div className="flex items-center justify-between">
-                                                                <span className="font-black text-amber-900 text-xs sm:text-sm">⚠️ Additional Payment Required:</span>
+                                                                <span className="font-black text-amber-900 text-xs sm:text-sm">Additional Payment Required:</span>
                                                                 <span className="font-black text-lg text-amber-700">₱{additionalRequired.toLocaleString()}</span>
                                                             </div>
                                                             <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
@@ -2810,7 +2767,7 @@ export const OnlineCustomer: React.FC = () => {
                                 <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
                                     <div className="space-y-1">
                                         <div className="flex items-center gap-2">
-                                            <span className="text-xl">❌</span>
+                                            
                                             <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">
                                                 {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
                                                     ? 'Order Cancelled & Refunded'
@@ -2858,7 +2815,7 @@ export const OnlineCustomer: React.FC = () => {
                                             onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
                                             className="px-3 py-1.5 text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1 shrink-0"
                                         >
-                                            <span>🔍</span> View Full Proof
+                                            View Full Proof
                                         </button>
                                     </div>
                                 )}
@@ -3065,142 +3022,228 @@ export const OnlineCustomer: React.FC = () => {
 
                 {/* Mobile Floating Cart Bar */}
                 {activeTab === 'menu' && cartItems.length > 0 && (
-                    <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-neutral-900 text-white rounded-2xl shadow-xl p-4 flex items-center justify-between border border-neutral-800">
+                    <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-white text-neutral-900 rounded-2xl shadow-2xl p-4 flex items-center justify-between border border-neutral-200/90 backdrop-blur-md">
                         <div className="flex flex-col">
-                            <span className="text-xs text-neutral-400 font-bold uppercase">
+                            <span className="text-xs text-neutral-500 font-bold uppercase tracking-wide">
                                 {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)} Items Added
                             </span>
-                            <span className="text-lg font-extrabold text-orange-400">
+                            <span className="text-lg font-extrabold text-orange-600">
                                 ₱{total.toLocaleString()}
                             </span>
                         </div>
                         <button
-                            onClick={() => setIsMobileCartOpen(true)}
-                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20 cursor-pointer"
+                            onClick={() => setIsCartDrawerOpen(true)}
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20 cursor-pointer active:scale-95 transition-all"
                         >
                             View Cart
                         </button>
                     </div>
                 )}
 
-                {/* Mobile Cart Modal */}
-                {isMobileCartOpen && (
-                    <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-end animate-in fade-in duration-250">
-                        <div className="bg-white w-full max-h-[85vh] rounded-t-[2.5rem] p-6 flex flex-col justify-between overflow-y-auto space-y-4 animate-in slide-in-from-bottom duration-300">
-                            <div>
-                                <div className="flex justify-between items-center border-b border-neutral-100 pb-3">
-                                    <h3 className="font-bold text-neutral-800 text-lg flex items-center gap-2">
+                {/* Centered Cart Modal Dialog (Middle View) */}
+                {isCartDrawerOpen && (
+                    <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
+                        {/* Backdrop */}
+                        <div
+                            className="fixed inset-0 bg-neutral-950/60 backdrop-blur-xs transition-opacity"
+                            onClick={() => setIsCartDrawerOpen(false)}
+                            aria-hidden="true"
+                        />
+
+                        {/* Centered Modal Card */}
+                        <div className="relative w-full max-w-lg md:max-w-xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden animate-in zoom-in-95 duration-200 border border-neutral-100 z-10">
+                            {/* Header */}
+                            <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-white z-10 shrink-0">
+                                <div>
+                                    <h3 className="font-extrabold text-neutral-800 text-lg leading-tight flex items-center gap-2">
                                         Your Cart
-                                    </h3>
-                                    <button
-                                        onClick={() => setIsMobileCartOpen(false)}
-                                        className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold p-1 cursor-pointer"
-                                    >
-                                        ×
-                                    </button>
+                                            {cartItems.length > 0 && (
+                                                <span className="bg-amber-500 text-white text-xs font-black px-2 py-0.5 rounded-full shadow-2xs">
+                                                    {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)} items
+                                                </span>
+                                            )}
+                                        </h3>
+                                        <p className="text-xs text-neutral-400 font-medium">Review your fresh seafood items</p>
                                 </div>
-
-                                <div className="divide-y divide-neutral-50 max-h-[40vh] overflow-y-auto py-2">
-                                    {cartItems.map((ci) => (
-                                        <div key={ci.item.id} className="py-3">
-                                            <div className="flex justify-between items-start gap-2">
-                                                <div>
-                                                    <p className="font-semibold text-neutral-800 text-sm leading-snug">
-                                                        {ci.item.name}
-                                                    </p>
-                                                    {!isAvailable(ci.item.id) && (
-                                                        <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">⚠️ Out of Stock</span>
-                                                    )}
-                                                    <p className="text-xs text-orange-600 font-bold mt-0.5">
-                                                        ₱{(ci.item.price * ci.quantity).toLocaleString()}
-                                                    </p>
-                                                </div>
-                                                <CartQuantityControl
-                                                    quantity={ci.quantity}
-                                                    onIncrement={() => handleIncrement(ci.item.id)}
-                                                    onDecrement={() => handleDecrement(ci.item.id)}
-                                                    onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
-                                                />
-                                            </div>
-
-                                            <div className="mt-2">
-                                                {editingNoteItemId === ci.item.id ? (
-                                                    <div className="flex gap-2 mt-1">
-                                                        <input
-                                                            type="text"
-                                                            value={tempNote}
-                                                            onChange={(e) => setTempNote(e.target.value)}
-                                                            placeholder="Add instruction..."
-                                                            className="text-xs border border-neutral-200 rounded-lg px-2 py-1 w-full focus:outline-none focus:border-orange-500"
-                                                        />
-                                                        <button
-                                                            onClick={() => handleSaveNote(ci.item.id)}
-                                                            className="bg-orange-500 text-white px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer"
-                                                        >
-                                                            Save
-                                                        </button>
-                                                    </div>
-                                                ) : (
-                                                    <div className="flex items-center justify-between text-xs mt-1">
-                                                        <p className="text-neutral-400 italic leading-snug">
-                                                            {ci.specialNote ? `"${ci.specialNote}"` : 'No instructions added'}
-                                                        </p>
-                                                        <button
-                                                            onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                            className="text-orange-500 hover:text-orange-600 font-bold text-[11px] cursor-pointer"
-                                                        >
-                                                            {ci.specialNote ? 'Edit note' : '+ Add Note'}
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
+                                <button
+                                    onClick={() => setIsCartDrawerOpen(false)}
+                                    className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 hover:text-neutral-800 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
+                                    aria-label="Close cart"
+                                >
+                                    ✕
+                                </button>
                             </div>
 
-                            {hasUnavailableCartItems && (
-                                <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
-                                    <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
-                                    <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
-                                        Remove Unavailable Items
+                            {/* Items List (Scrollable) */}
+                            <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3.5">
+                                {cartItems.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center py-16 text-center text-neutral-400">
+                                        <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mb-3 border border-amber-100">
+                                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                                            </svg>
+                                        </div>
+                                        <p className="text-base font-extrabold text-neutral-800">Your cart is empty</p>
+                                        <p className="text-xs text-neutral-400 mt-1 max-w-[240px]">Explore our mouthwatering seafood menu and start adding dishes!</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsCartDrawerOpen(false)}
+                                            className="mt-4 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md shadow-amber-500/20 cursor-pointer transition-all"
+                                        >
+                                            Browse Menu
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3.5 divide-y divide-neutral-100">
+                                        {cartItems.map((ci) => (
+                                            <div
+                                                key={ci.item.id}
+                                                className={`pt-3.5 first:pt-0 ${
+                                                    isAvailable(ci.item.id)
+                                                        ? ''
+                                                        : 'rounded-2xl border border-rose-300 bg-rose-50 p-3'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3.5">
+                                                    {/* Item picture */}
+                                                    <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-neutral-100 shrink-0 border border-neutral-100 shadow-2xs">
+                                                        <ProductImage
+                                                            src={ci.item.image}
+                                                            fallbackSrc={ci.item.bundledImage}
+                                                            alt={ci.item.name}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    </div>
+
+                                                    {/* Info & Quantity */}
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <p className="font-bold text-neutral-800 text-sm sm:text-base leading-snug truncate">
+                                                                {ci.item.name}
+                                                            </p>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setCartItems((prev) => prev.filter((c) => c.item.id !== ci.item.id))}
+                                                                className="text-neutral-400 hover:text-rose-600 transition-colors p-1 cursor-pointer shrink-0 rounded-lg hover:bg-rose-50"
+                                                                title="Remove item"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                                                </svg>
+                                                            </button>
+                                                        </div>
+                                                        {!isAvailable(ci.item.id) && (
+                                                            <span className="mt-0.5 inline-flex rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+                                                                Out of Stock
+                                                            </span>
+                                                        )}
+                                                        <div className="flex items-center justify-between mt-2.5">
+                                                            <p className="text-sm text-orange-600 font-extrabold">
+                                                                ₱{(ci.item.price * ci.quantity).toLocaleString()}
+                                                            </p>
+                                                            <CartQuantityControl
+                                                                quantity={ci.quantity}
+                                                                onIncrement={() => handleIncrement(ci.item.id)}
+                                                                onDecrement={() => handleDecrement(ci.item.id)}
+                                                                onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Instruction Note */}
+                                                <div className="mt-2.5 bg-neutral-50 rounded-xl p-2 sm:p-2.5">
+                                                    {editingNoteItemId === ci.item.id ? (
+                                                        <div className="flex gap-2">
+                                                            <input
+                                                                type="text"
+                                                                value={tempNote}
+                                                                onChange={(e) => setTempNote(e.target.value)}
+                                                                placeholder="e.g. less spicy, sauce on side..."
+                                                                className="text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-orange-500"
+                                                            />
+                                                            <button
+                                                                onClick={() => handleSaveNote(ci.item.id)}
+                                                                className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:bg-orange-600 transition-colors"
+                                                            >
+                                                                Save
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="flex items-center justify-between text-xs">
+                                                            <p className="text-neutral-500 italic text-[11px] leading-tight truncate">
+                                                                {ci.specialNote ? `"${ci.specialNote}"` : 'No special requests'}
+                                                            </p>
+                                                            <button
+                                                                onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
+                                                                className="text-orange-600 hover:text-orange-700 font-bold text-[11px] cursor-pointer shrink-0 ml-2"
+                                                            >
+                                                                {ci.specialNote ? 'Edit note' : '+ Add Note'}
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {hasUnavailableCartItems && (
+                                    <div className="rounded-2xl border border-rose-300 bg-rose-50 p-3.5 text-xs text-rose-900 mt-3">
+                                        <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
+                                        <button
+                                            type="button"
+                                            onClick={handleRemoveUnavailableItems}
+                                            className="mt-2 rounded-xl bg-rose-600 px-3.5 py-1.5 font-bold text-white hover:bg-rose-700 text-xs cursor-pointer transition-colors"
+                                        >
+                                            Remove Unavailable Items
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer Summary & Checkout */}
+                            {cartItems.length > 0 && (
+                                <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
+                                    <div className="space-y-1.5">
+                                        <div className="flex justify-between text-xs text-neutral-500">
+                                            <span>Subtotal</span>
+                                            <span className="font-semibold text-neutral-800">₱{subtotal.toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs text-neutral-500">
+                                            <span>VAT (12%)</span>
+                                            <span className="font-semibold text-neutral-800">₱{vat.toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex justify-between text-xs text-neutral-500">
+                                            <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
+                                            <span className="font-semibold text-neutral-800">{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
+                                        </div>
+                                        {deliveryDistanceMessage && (
+                                            <p role="status" className="text-[11px] text-amber-700">
+                                                {deliveryDistanceMessage}
+                                            </p>
+                                        )}
+                                        <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
+                                            <span>Total Amount</span>
+                                            <span className="text-orange-600 font-black">₱{total.toLocaleString()}</span>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        onClick={() => {
+                                            setIsCartDrawerOpen(false)
+                                            handleProceedToCheckout()
+                                        }}
+                                        disabled={hasUnavailableCartItems || cartItems.length === 0}
+                                        className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                    >
+                                        <span>Proceed to Checkout</span>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                                        </svg>
                                     </button>
                                 </div>
                             )}
-
-                            <div className="border-t border-neutral-100 pt-4 space-y-4">
-                                <div className="space-y-1.5">
-                                    <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>Subtotal</span>
-                                        <span>₱{subtotal.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>VAT (12%)</span>
-                                        <span>₱{vat.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
-                                    </div>
-                                    {deliveryDistanceMessage && (
-                                        <p role="status" className="text-[11px] text-amber-700">
-                                            {deliveryDistanceMessage}
-                                        </p>
-                                    )}
-                                    <div className="flex justify-between text-sm font-extrabold text-neutral-800 pt-1.5 border-t border-dashed border-neutral-100">
-                                        <span>Total Amount</span>
-                                        <span className="text-orange-600">₱{total.toLocaleString()}</span>
-                                    </div>
-                                </div>
-
-                                <button
-                                    onClick={handleProceedToCheckout}
-                                    disabled={hasUnavailableCartItems}
-                                    className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
-                                >
-                                    Proceed to Checkout
-                                </button>
-                            </div>
                         </div>
                     </div>
                 )}
@@ -3219,7 +3262,7 @@ export const OnlineCustomer: React.FC = () => {
 
                         <div className="text-center space-y-1">
                             <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-amber-500/20 animate-pulse">
-                                ⏳
+                                
                             </div>
                             <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
                                 Order #{activeOrder.id} Submitted
@@ -3266,7 +3309,7 @@ export const OnlineCustomer: React.FC = () => {
                         {/* Modal Header */}
                         <div className="text-center space-y-1">
                             <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-orange-500/20">
-                                ⏳
+                                
                             </div>
                             <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
                                 Order #{activeOrder.id} Submitted
@@ -3281,7 +3324,7 @@ export const OnlineCustomer: React.FC = () => {
                             <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
                                 <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 text-center animate-in fade-in duration-300">
                                     <span className="text-xs font-black text-emerald-950 flex items-center justify-center gap-1.5">
-                                        <span>✅</span> GCash Payment Authorized by Assistant!
+                                        GCash Payment Authorized by Assistant!
                                     </span>
                                 </div>
 
@@ -3307,7 +3350,7 @@ export const OnlineCustomer: React.FC = () => {
 
                                     {activeOrder.status === 'RECEIPT_REJECTED' && (
                                         <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
-                                            <p className="font-extrabold text-rose-900">⚠️ Reference Screenshot Rejected by Staff</p>
+                                            <p className="font-extrabold text-rose-900">Reference Screenshot Rejected by Staff</p>
                                             <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
                                         </div>
                                     )}
@@ -3315,7 +3358,7 @@ export const OnlineCustomer: React.FC = () => {
                                     {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
                                         <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
                                             <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
-                                                <span>📸 Payment Screenshot Submitted</span>
+                                                Payment Screenshot Submitted
                                             </div>
                                             <p className="text-xs text-blue-800 leading-relaxed">
                                                 Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
@@ -3358,7 +3401,7 @@ export const OnlineCustomer: React.FC = () => {
                                                     disabled={isSubmittingReceipt}
                                                     className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
                                                 >
-                                                    {isSubmittingReceipt ? 'Submitting...' : '📤 Submit Payment Receipt'}
+                                                    {isSubmittingReceipt ? 'Submitting...' : 'Submit Payment Receipt'}
                                                 </button>
                                                 <button
                                                     type="button"
@@ -3371,7 +3414,7 @@ export const OnlineCustomer: React.FC = () => {
                                         </div>
                                     ) : !activeOrder.paymentReceipt ? (
                                         <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
-                                            <span className="text-2xl">📱</span>
+                                            
                                             <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
                                             <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
                                             <input
@@ -3432,7 +3475,7 @@ export const OnlineCustomer: React.FC = () => {
                         {/* Confirmed / Sent to Kitchen Status */}
                         {['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes((activeOrder.status || '').toUpperCase()) && (
                             <div className="bg-emerald-500 text-white rounded-2xl p-4 text-center space-y-2 shadow-md">
-                                <p className="font-extrabold text-sm">🎉 Order Confirmed & Approved by Staff!</p>
+                                <p className="font-extrabold text-sm">Order Confirmed & Approved by Staff!</p>
                                 <p className="text-xs text-emerald-100">Your order is now being prepared in the kitchen.</p>
                                 <button
                                     onClick={() => {
@@ -3530,6 +3573,31 @@ export const OnlineCustomer: React.FC = () => {
                     </div>
                 </div>
             )}
+                    {/* Flying delivery animation elements */}
+            {flyingItems.map((fi) => (
+                <div
+                    key={fi.id}
+                    className="fixed z-[9999] pointer-events-none animate-deliver-flight"
+                    style={
+                        {
+                            left: `${fi.startX}px`,
+                            top: `${fi.startY}px`,
+                            '--target-x': `${fi.targetX - fi.startX}px`,
+                            '--target-y': `${fi.targetY - fi.startY}px`,
+                        } as React.CSSProperties
+                    }
+                >
+                    <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white shadow-2xl border-2 border-white flex items-center justify-center overflow-hidden ring-4 ring-amber-500/25">
+                        {fi.image ? (
+                            <img src={fi.image} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                            <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                            </svg>
+                        )}
+                    </div>
+                </div>
+            ))}
         </div>
     )
 }

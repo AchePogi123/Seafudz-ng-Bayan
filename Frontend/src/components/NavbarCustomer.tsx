@@ -5,7 +5,21 @@ import { API_BASE_URL } from '../utils/api'
 import SidebarDrawer from './SidebarDrawer'
 import BrandLogo from './BrandLogo'
 
-export const NavbarCustomer: React.FC = () => {
+export interface NavbarCustomerProps {
+  cartItemCount?: number
+  cartTotal?: number
+  onOpenCart?: () => void
+  isCartBumping?: boolean
+  cartButtonRef?: React.RefObject<HTMLButtonElement | null>
+}
+
+export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
+  cartItemCount = 0,
+  cartTotal: _cartTotal = 0,
+  onOpenCart,
+  isCartBumping = false,
+  cartButtonRef,
+}) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const location = useLocation()
   const [, setActiveUser] = useState(() => getActiveUser())
@@ -76,6 +90,33 @@ export const NavbarCustomer: React.FC = () => {
             subtitle={getCurrentPageName()}
           />
         </div>
+
+        {/* Shopping Cart Button */}
+        {onOpenCart && (
+          <button
+            ref={cartButtonRef}
+            type="button"
+            onClick={onOpenCart}
+            aria-label={`Open Cart with ${cartItemCount} items`}
+            title={cartItemCount > 0 ? `Cart (${cartItemCount} items)` : 'Cart'}
+            className={`relative flex items-center justify-center p-2.5 sm:p-2.5 rounded-xl cursor-pointer transition-all duration-200 select-none shrink-0 ${
+              cartItemCount > 0
+                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/25 active:scale-95'
+                : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
+            } ${isCartBumping ? 'animate-cart-bump ring-4 ring-amber-400/40' : ''}`}
+          >
+            <div className="relative flex items-center justify-center">
+              <svg className="w-5.5 h-5.5 text-current" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+              </svg>
+              {cartItemCount > 0 && (
+                <span className="absolute -top-2.5 -right-2.5 bg-rose-600 text-white text-[10px] font-black min-w-[19px] h-[19px] px-1 rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                  {cartItemCount > 99 ? '99+' : cartItemCount}
+                </span>
+              )}
+            </div>
+          </button>
+        )}
       </header>
 
       {/* Global Sidebar Drawer */}

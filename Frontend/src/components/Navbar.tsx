@@ -30,23 +30,6 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
     }
   }
 
-  const getRoleBadgeStyle = (roleStr: string) => {
-    switch (roleStr) {
-      case 'admin':
-        return 'bg-purple-100 text-purple-700 border border-purple-200'
-      case 'cashier':
-        return 'bg-teal-100 text-teal-700 border border-teal-200'
-      case 'kitchen':
-        return 'bg-amber-100 text-amber-700 border border-amber-200'
-      case 'rider':
-        return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
-      case 'assistant':
-        return 'bg-cyan-100 text-cyan-700 border border-cyan-200'
-      default:
-        return 'bg-orange-100 text-orange-700 border border-orange-200'
-    }
-  }
-
   return (
     <>
       <header className="relative z-40 bg-white/90 backdrop-blur-xl border border-slate-200/80 rounded-2xl p-3 sm:p-3.5 shadow-lg shadow-slate-200/40 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 transition-all duration-200">
@@ -69,8 +52,6 @@ export const Navbar: React.FC<NavbarProps> = ({ searchQuery, setSearchQuery }) =
           <BrandLogo
             to="/"
             size="md"
-            badge={userRole}
-            badgeColor={getRoleBadgeStyle(userRole)}
             subtitle={getCurrentRoleName()}
           />
         </div>

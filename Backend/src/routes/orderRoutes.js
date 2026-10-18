@@ -13,6 +13,13 @@ function outOfStockError(name) {
   });
 }
 
+function itemDeletedError(name) {
+  return Object.assign(new Error(`Item "${name}" has been removed from the menu and can no longer be ordered.`), {
+    statusCode: 409,
+    code: 'ITEM_DELETED',
+  });
+}
+
 export async function assertItemsAvailable(client, items) {
   const ids = items
     .map((item) => item.product_id || item.productId || item.item?.id || item.id)
@@ -23,7 +30,7 @@ export async function assertItemsAvailable(client, items) {
     .filter(Boolean)
     .map((name) => String(name).toLowerCase());
   const { rows } = await client.query(
-    `SELECT id::text AS id, name, is_available
+    `SELECT id::text AS id, name, is_available, is_active
      FROM products
      WHERE id::text = ANY($1::text[]) OR LOWER(name) = ANY($2::text[])
      FOR SHARE`,
@@ -35,14 +42,16 @@ export async function assertItemsAvailable(client, items) {
     const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood Dish';
     const product = rows.find((row) => row.id === id)
       || rows.find((row) => row.name.toLowerCase() === String(name).toLowerCase());
-    if (!product || !product.is_available) throw outOfStockError(name);
+    if (!product) throw outOfStockError(name);
+    if (product.is_active === false) throw itemDeletedError(name);
+    if (!product.is_available) throw outOfStockError(name);
   }
 }
 
 // GET /api/orders - Get orders with pagination, search, and filtering (Staff only)
 router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant', 'kitchen', 'rider']), async (req, res) => {
   try {
-    const { status, type, limit, offset, page, search, payment, tab, period } = req.query;
+    const { status, type, limit, offset, page, search, payment, tab, period, startDate, endDate } = req.query;
     let sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
              o.order_type AS type, o.order_type, o.status,
@@ -99,15 +108,24 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       params.push(status);
     }
 
-    const selectedPeriod = (tab || period || '').toLowerCase();
-    if (selectedPeriod === 'today') {
-      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date`;
-    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
-      sql += ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'`;
-    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
-      sql += ` AND o.created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila')`;
-    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
-      sql += ` AND o.created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila')`;
+    const selectedPeriod = (tab || period || '').toLowerCase().trim();
+    if (selectedPeriod === 'today' || selectedPeriod === '1d') {
+      sql += ` AND o.created_at >= (((NOW() AT TIME ZONE 'Asia/Manila')::date)::timestamp AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week' || selectedPeriod === '1w') {
+      sql += ` AND o.created_at >= ((((NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'))::timestamp AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month' || selectedPeriod === '1m') {
+      sql += ` AND o.created_at >= (DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year' || selectedPeriod === '1y') {
+      sql += ` AND o.created_at >= (DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else {
+      if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(String(startDate).trim())) {
+        sql += ` AND o.created_at >= (($${paramIndex++}::date)::timestamp AT TIME ZONE 'Asia/Manila')`;
+        params.push(String(startDate).trim());
+      }
+      if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(String(endDate).trim())) {
+        sql += ` AND o.created_at < ((($${paramIndex++}::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+        params.push(String(endDate).trim());
+      }
     }
 
     if (type && type !== 'All') {
@@ -368,7 +386,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     await client.query('ROLLBACK');
     client.release();
     console.error('Error creating order:', error);
-    if (error.code === 'ITEM_OUT_OF_STOCK') {
+    if (error.code === 'ITEM_OUT_OF_STOCK' || error.code === 'ITEM_DELETED') {
       return res.status(409).json({ success: false, error: error.code, message: error.message });
     }
     return res.status(500).json({
@@ -785,7 +803,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       }
       inMemoryOrders.set(orderId, orderRecord);
     } catch (dbErr) {
-      if (dbErr.code === 'ITEM_OUT_OF_STOCK') {
+      if (dbErr.code === 'ITEM_OUT_OF_STOCK' || dbErr.code === 'ITEM_DELETED') {
         return res.status(409).json({ success: false, error: dbErr.code, message: dbErr.message });
       }
       console.error('Could not validate or persist order availability:', dbErr.message);

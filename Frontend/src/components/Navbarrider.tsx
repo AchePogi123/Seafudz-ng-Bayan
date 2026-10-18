@@ -27,8 +27,6 @@ export const NavbarRider: React.FC = () => {
                     <BrandLogo
                         to="/"
                         size="md"
-                        badge="RIDER"
-                        badgeColor="bg-emerald-100 text-emerald-700 border border-emerald-200"
                         subtitle={location.pathname === '/rider' ? 'Rider Dispatch & Tracking' : 'Delivery Dispatch'}
                     />
                 </div>

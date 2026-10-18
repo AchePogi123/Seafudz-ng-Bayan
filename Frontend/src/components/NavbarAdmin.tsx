@@ -35,8 +35,6 @@ export const NavbarAdmin: React.FC = () => {
                     <BrandLogo
                         to="/"
                         size="md"
-                        badge="ADMIN"
-                        badgeColor="bg-purple-100 text-purple-700 border border-purple-200"
                         subtitle={getCurrentPageName()}
                     />
                 </div>

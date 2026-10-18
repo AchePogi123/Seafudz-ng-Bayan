@@ -153,7 +153,10 @@ router.post('/menu', requireAuth, requireActiveAdmin, async (req, res) => {
     const product = { ...rows[0], category, image: getProductImageUrl(rows[0].image) };
     realtimeEmitter.emit('order_update', {
       type: 'PRODUCT_CATALOG_CHANGED',
+      action: 'CREATE',
       product,
+      productId: String(product.id),
+      productName: product.name,
       timestamp: Date.now(),
     });
     return res.status(201).json({ success: true, data: product });
@@ -183,7 +186,9 @@ router.delete('/menu/:id', requireAuth, requireActiveAdmin, async (req, res) => 
 
     realtimeEmitter.emit('order_update', {
       type: 'PRODUCT_CATALOG_CHANGED',
+      action: 'DELETE',
       productId: String(rows[0].id),
+      productName: rows[0].name,
       timestamp: Date.now(),
     });
     return res.status(200).json({ success: true, data: rows[0] });
@@ -249,6 +254,7 @@ router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'adm
     realtimeEmitter.emit('order_update', {
       type: 'PRODUCT_AVAILABILITY_CHANGED',
       productId: String(product.id),
+      productName: product.name,
       isAvailable: product.is_available,
       timestamp: Date.now(),
     });
@@ -341,6 +347,13 @@ router.post('/menu/:id/image', requireAuth, requireActiveAdmin, parseImageUpload
     }
   }
 
+  realtimeEmitter.emit('order_update', {
+    type: 'PRODUCT_CATALOG_CHANGED',
+    productId,
+    image: getProductImageUrl(objectPath),
+    timestamp: Date.now(),
+  });
+
   return res.status(200).json({
     success: true,
     data: { id: productId, image: getProductImageUrl(objectPath) },
@@ -401,6 +414,13 @@ router.delete('/menu/:id/image', requireAuth, requireActiveAdmin, async (req, re
       console.error(`Stale product image requires cleanup (${oldImage}):`, error);
     }
   }
+
+  realtimeEmitter.emit('order_update', {
+    type: 'PRODUCT_CATALOG_CHANGED',
+    productId,
+    image: null,
+    timestamp: Date.now(),
+  });
 
   return res.status(200).json({ success: true, data: { id: productId, image: null }, cleanupPending });
 });

@@ -10,6 +10,18 @@ type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowTerms(false);
+        setShowForgotPasswordModal(false);
+        setShowOtpModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const [authMode, setAuthMode] = useState<'welcome' | 'login' | 'signup'>(() => {
     return location.state?.from ? 'login' : 'welcome';
   });
@@ -29,7 +41,8 @@ const Login = () => {
     };
 
     window.addEventListener('popstate', handlePopState);
-    return () => {
+  
+return () => {
       window.removeEventListener('popstate', handlePopState);
     };
   }, [navigate]);
@@ -70,6 +83,8 @@ const Login = () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [mobileTermsAgreed, setMobileTermsAgreed] = useState(false);
+  const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'privacy'>('terms');
 
   // Terms and Conditions modal
   const [showTerms, setShowTerms] = useState(false);
@@ -129,6 +144,7 @@ const Login = () => {
       );
 
     saveActiveUser({
+      id: (userData?.id as string) || (userData?.supabase_user_id as string) || undefined,
       fullname: (userData?.fullname as string) || (userData?.username as string) || loginInput || fullname || 'Customer',
       username: (userData?.username as string) || (loginInput ? loginInput.split('@')[0] : username || 'customer'),
       email: (userData?.email as string) || (loginInput.includes('@') ? loginInput : email || undefined),
@@ -679,9 +695,9 @@ const Login = () => {
   );
 
   return (
-    <div className="login-page font-sans min-h-screen flex items-center justify-center p-0 sm:p-6 lg:p-10">
-      {/* Responsive Card: Mobile App Phone Frame on small screens, Expansive Split Dashboard on Windows/Desktop */}
-      <div className={`login-card w-full min-h-screen sm:min-h-[560px] md:min-h-[680px] lg:min-h-[720px] bg-white sm:rounded-[28px] lg:rounded-[36px] shadow-[0_32px_100px_-42px_rgba(75,42,25,0.28)] border border-white/70 overflow-hidden grid grid-cols-1 relative ${
+    <div className="login-page font-sans min-h-screen flex items-center justify-center p-0 md:p-6 lg:p-10 bg-[#FF6900] md:bg-[#fbf6f1]">
+      {/* WINDOWS / DESKTOP VIEW (Visible ONLY on md screens and above - EXACT ROLLBACK of windows view UI) */}
+      <div className={`hidden md:grid login-card w-full min-h-[560px] md:min-h-[680px] lg:min-h-[720px] bg-white sm:rounded-[28px] lg:rounded-[36px] shadow-[0_32px_100px_-42px_rgba(75,42,25,0.28)] border border-white/70 overflow-hidden grid-cols-1 relative ${
         authMode === 'welcome'
           ? isExpandingAuth
             ? 'max-w-[520px] md:max-w-5xl lg:max-w-6xl xl:max-w-7xl md:grid-cols-[minmax(0,0fr)_minmax(0,1fr)]'
@@ -1095,159 +1111,581 @@ const Login = () => {
         {authMode === 'signup' && heroPanel}
       </div>
 
-        {/* Terms and Conditions Modal */}
-        {showTerms && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+      {/* MOBILE VIEW (Visible ONLY on screens below md - Redesigned based on Mobile Reference Mockup) */}
+      <div className="flex md:hidden w-full min-h-screen bg-[#FF6900] flex-col justify-between relative selection:bg-orange-700 selection:text-white overflow-x-hidden">
+        {/* Back navigation button to return to Landing Page */}
+        <button
+          type="button"
+          onClick={() => navigate('/landingpage')}
+          className="absolute top-4 left-4 z-20 p-2 text-white/90 hover:text-white rounded-full hover:bg-white/15 transition-all cursor-pointer"
+          title="Back to Landing Page"
+          aria-label="Back to Landing Page"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+          </svg>
+        </button>
 
-            <div className="bg-white w-full max-w-3xl max-h-[85vh] rounded-2xl shadow-2xl border border-neutral-200 flex flex-col">
+        {/* Top Orange Section: Taller (~45vh) with Welcome Back, Standout One-Line Brand Name & Sailing Boat */}
+        <div className="flex-1 min-h-[42vh] max-h-[48vh] flex flex-col items-center justify-center pt-10 sm:pt-12 pb-3 px-4 text-center select-none z-10 relative gap-2 sm:gap-3">
+          {/* Welcome Back + Bigger Standout Brand Name moved down above the boat */}
+          <div className="w-full flex flex-col items-center justify-center mt-3 sm:mt-4">
+            <p className="text-xs sm:text-sm font-bold tracking-[0.2em] uppercase text-white/90 drop-shadow-xs">
+              {authMode === 'signup' ? 'Create an account' : 'Welcome back'}
+            </p>
+            <h1 className="text-[2.1rem] sm:text-[2.45rem] font-[900] tracking-tight text-white font-['Outfit',sans-serif] drop-shadow-[0_2px_14px_rgba(0,0,0,0.18)] whitespace-nowrap mt-1 leading-tight">
+              Seafudz ng Bayan
+            </h1>
+          </div>
 
-              {/* Modal Header */}
-              <div className="flex items-center justify-between px-6 py-5 border-b border-neutral-200">
-                <div>
-                  <h2 className="text-xl font-bold text-[#2d3748]">
-                    TERMS AND CONDITIONS
-                  </h2>
+          {/* Interactive sailing boat from windows view */}
+          <div className="flex items-center justify-center w-full">
+            <button
+              type="button"
+              onClick={animateBoatScene}
+              aria-label="Make the boat sail with birds and swimming fish"
+              className="group pointer-events-auto cursor-pointer rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white block h-32 w-52 sm:h-36 sm:w-56 mx-auto"
+            >
+              <svg className="h-full w-full transition-transform duration-300 group-hover:scale-[1.03]" viewBox="0 0 320 220" fill="none" aria-hidden="true">
+                <ellipse cx="160" cy="181" rx="104" ry="9" fill="#7D3300" fillOpacity=".24" />
+                <g className="hero-boat-motion">
+                  <path d="M86 119 39 103M234 119l47-16" stroke="#F5D49F" strokeWidth="6" strokeLinecap="round" />
+                  <path d="M16 101q24 15 48 0l-7 12q-18 9-35 0Z" fill="#16495A" />
+                  <path d="M256 101q24 15 48 0l-6 12q-18 9-35 0Z" fill="#16495A" />
+                  <path d="M71 119h178l-29 43q-60 22-120 0Z" fill="#16394B" />
+                  <path d="M86 147h148l-14 21q-60 18-120 0Z" fill="#0B6975" />
+                  <path d="M75 116h170l10 14H65Z" fill="#F2B967" />
+                  <path d="M119 75h82l19 41H100Z" fill="#FFF3D9" />
+                  <path d="M111 74h94l-8 12h-78Z" fill="#16495A" />
+                  <path d="M126 90h24v19h-24Zm34 0h24v19h-24Z" fill="#0D5968" />
+                  <path d="M155 50v26" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
+                  <path d="M145 51h21" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
+                  <path d="M75 133h170" stroke="#FF6900" strokeWidth="4" strokeLinecap="round" />
+                </g>
+                <g className="hero-boat-waves" stroke="#FFF5E7" strokeWidth="3" strokeLinecap="round" opacity=".78">
+                  <path d="M42 190q18-9 36 0t36 0 36 0 36 0 36 0 36 0 36 0" />
+                  <path d="M70 205q18-8 36 0t36 0 36 0 36 0 36 0" />
+                </g>
+                {isBoatSceneActive && (
+                  <g key={boatSceneKey}>
+                    <g className="hero-bird hero-bird-one" fill="none" stroke="#FFF5E7" strokeWidth="3" strokeLinecap="round">
+                      <path d="M208 56q7-9 14 0 7-9 14 0" />
+                    </g>
+                    <g className="hero-bird hero-bird-two" fill="none" stroke="#FFF5E7" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M234 39q6-7 12 0 6-7 12 0" />
+                    </g>
+                    <g className="hero-bird hero-bird-three" fill="none" stroke="#FFF5E7" strokeWidth="2" strokeLinecap="round">
+                      <path d="M183 43q5-6 10 0 5-6 10 0" />
+                    </g>
+                    <g className="hero-fish hero-fish-one" stroke="#16495A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M83 194c7-8 18-11 29-7l10 7-10 7c-11 4-22 1-29-7Z" fill="#FFF3D9" />
+                      <path d="m83 194-11-8v16Z" fill="#F5D49F" />
+                      <path d="m96 187 5-7 5 9m-9 12 5 7 5-9" fill="#F5D49F" />
+                      <path d="M100 188q6 6 0 12m-9-8 4 2m-4 2 4 1" fill="none" />
+                      <circle cx="114" cy="191" r="1.7" fill="#16495A" stroke="none" />
+                    </g>
+                    <g className="hero-fish hero-fish-two" stroke="#16495A" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M237 204c-7-8-18-10-28-6l-10 7 10 7c10 4 21 1 28-8Z" fill="#F5D49F" />
+                      <path d="m237 205 11-8v16Z" fill="#FFF3D9" />
+                      <path d="m224 198-5-7-5 9m9 11-5 7-5-9" fill="#FFF3D9" />
+                      <path d="M220 199q-6 6 0 12m9-8-4 2m4 2-4 1" fill="none" />
+                      <circle cx="204" cy="201" r="1.7" fill="#16495A" stroke="none" />
+                    </g>
+                  </g>
+                )}
+              </svg>
+            </button>
+          </div>
+        </div>
 
-                  <p className="text-xs text-neutral-500 mt-1">
-                    Effective Date: 9/20/2026
-                  </p>
+        {/* Curved White Bottom Card (Moved down to the blue line ~48vh, naturally filling bottom with no empty space) */}
+        <div className="bg-white rounded-t-[38px] sm:rounded-t-[42px] px-6 pt-7 pb-8 relative z-10 shadow-[0_-14px_35px_rgba(0,0,0,0.07)] shrink-0 min-h-[52vh] flex flex-col justify-between">
+          {/* Notification Alerts */}
+          {(location.state?.from === '/customer' ||
+            (typeof location.state?.from === 'object' && location.state?.from?.pathname === '/customer')) &&
+            !errorMessage && !successMessage && (
+              <div className="p-3 rounded-2xl text-xs font-semibold mb-3 bg-amber-50 text-amber-900 border border-amber-200/80 flex items-center gap-2">
+                <svg className="w-4 h-4 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span>Please sign in or create an account to complete your seafood order.</span>
+              </div>
+            )}
+
+          {errorMessage && (
+            <div className="p-3 rounded-2xl text-xs font-bold mb-3 bg-red-50 text-red-700 border border-red-200 flex items-center gap-2 animate-[fadeIn_0.15s_ease-out]">
+              <svg className="w-4 h-4 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="p-3 rounded-2xl text-xs font-bold mb-3 bg-emerald-50 text-emerald-800 border border-emerald-200 flex items-center gap-2 animate-[fadeIn_0.15s_ease-out]">
+              <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+              <span>{successMessage}</span>
+            </div>
+          )}
+
+          {/* MOBILE: LOGIN VIEW */}
+          {authMode !== 'signup' ? (
+            <form onSubmit={handleLogin} className="flex-1 flex flex-col justify-between">
+              <div className="space-y-4">
+                {/* Email Address or Username Input */}
+                <div className="text-left">
+                  <label htmlFor="mobile-login-identity" className="block text-xs sm:text-[13px] font-bold text-neutral-800 mb-1.5">
+                    Email Address or Username
+                  </label>
+                  <input
+                    id="mobile-login-identity"
+                    type="text"
+                    autoComplete="username"
+                    placeholder="Enter your email address or username"
+                    required
+                    value={loginInput}
+                    onChange={(e) => setLoginInput(e.target.value)}
+                    className="w-full h-12 px-4 rounded-2xl border border-neutral-200 font-sans text-xs sm:text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-white hover:border-neutral-300 focus:outline-none focus:border-[#FF6900] focus:ring-4 focus:ring-orange-500/10 transition-all box-border"
+                  />
                 </div>
 
+                {/* Password Input with Eye Toggle */}
+                <div className="text-left">
+                  <label htmlFor="mobile-login-password" className="block text-xs sm:text-[13px] font-bold text-neutral-800 mb-1.5">
+                    Password
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="mobile-login-password"
+                      type={showLoginPassword ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      className="w-full h-12 pl-4 pr-11 rounded-2xl border border-neutral-200 font-sans text-xs sm:text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-white hover:border-neutral-300 focus:outline-none focus:border-[#FF6900] focus:ring-4 focus:ring-orange-500/10 transition-all box-border"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword(!showLoginPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 transition-colors p-1 cursor-pointer"
+                      aria-label={showLoginPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showLoginPassword ? (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Forgot Password Link (Right-aligned in orange) */}
+                <div className="flex justify-end pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setForgotError('');
+                      setForgotSuccess('');
+                      setForgotEmail(loginInput.includes('@') ? loginInput : '');
+                      setShowForgotPasswordModal(true);
+                    }}
+                    className="text-xs font-bold text-[#FF6900] hover:text-[#a82c00] transition-colors cursor-pointer"
+                  >
+                    Forgot password
+                  </button>
+                </div>
+
+                {/* User Agreement Checkbox with highlighted links */}
+                <div className="pt-1">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none text-left">
+                    <input
+                      type="checkbox"
+                      checked={mobileTermsAgreed}
+                      onChange={(e) => setMobileTermsAgreed(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-[#FF6900] focus:ring-orange-500/20 cursor-pointer accent-[#FF6900]"
+                    />
+                    <span className="text-[11px] sm:text-xs text-neutral-500 leading-snug">
+                      I read and agreed to{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setTermsActiveTab('terms');
+                          setShowTerms(true);
+                        }}
+                        className="text-[#FF6900] font-bold hover:underline cursor-pointer inline"
+                      >
+                        User Agreement
+                      </button>{' '}
+                      and{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setTermsActiveTab('privacy');
+                          setShowTerms(true);
+                        }}
+                        className="text-[#FF6900] font-bold hover:underline cursor-pointer inline"
+                      >
+                        privacy policy
+                      </button>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Sign In Button & Bottom Switch to Sign Up */}
+              <div className="pt-6 space-y-3.5">
                 <button
-                  type="button"
-                  onClick={() => setShowTerms(false)}
-                  className="text-neutral-400 hover:text-neutral-700 text-2xl font-bold leading-none"
-                  aria-label="Close Terms and Conditions"
+                  type="submit"
+                  disabled={isLoginLoading}
+                  className="w-full h-12 bg-[#FF6900] hover:bg-[#a82c00] active:scale-[0.99] text-white font-bold text-sm sm:text-base rounded-full shadow-md shadow-orange-600/25 transition-all duration-200 flex items-center justify-center cursor-pointer disabled:opacity-60"
                 >
-                  ×
+                  {isLoginLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Signing in...
+                    </span>
+                  ) : (
+                    'Sign in'
+                  )}
                 </button>
+
+                <div className="text-center pt-0.5">
+                  <p className="text-xs text-neutral-400 font-medium">
+                    Don't have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMessage('');
+                        setSuccessMessage('');
+                        setAuthMode('signup');
+                      }}
+                      className="text-[#FF6900] hover:text-[#a82c00] font-bold transition-colors cursor-pointer"
+                    >
+                      Sign Up
+                    </button>
+                  </p>
+                </div>
+              </div>
+            </form>
+          ) : (
+            /* MOBILE: SIGNUP VIEW */
+            <form onSubmit={handleRegister} className="flex-1 flex flex-col justify-between">
+              <div className="space-y-3">
+                <div className="text-left mb-1">
+                  <h2 className="text-base font-bold text-neutral-900">Create Account</h2>
+                  <p className="text-[11px] text-neutral-400 font-medium">Join Seafudz ng Bayan to order fresh seafood</p>
+                </div>
+
+                {/* Name inputs */}
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="First Name"
+                    required
+                    value={firstName}
+                    onChange={(e) => handleFirstNameChange(e.target.value)}
+                    className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Last Name"
+                    required
+                    value={lastName}
+                    onChange={(e) => handleLastNameChange(e.target.value)}
+                    className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                  />
+                </div>
+
+                {/* Username */}
+                <input
+                  type="text"
+                  placeholder="Username (Auto)"
+                  value={username}
+                  readOnly
+                  className="w-full h-10 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-500 bg-neutral-50 cursor-not-allowed box-border"
+                />
+
+                {/* Email */}
+                <input
+                  type="email"
+                  placeholder="Email Address"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                />
+
+                {/* Phone */}
+                <input
+                  type="tel"
+                  placeholder="Phone number (e.g. 09XXXXXXXXX)"
+                  required
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                />
+
+                {/* Passwords */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full h-11 pl-3 pr-8 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 p-1"
+                      aria-label="Toggle password"
+                    >
+                      {showPassword ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      )}
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showConfirmPassword ? 'text' : 'password'}
+                      placeholder="Confirm"
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full h-11 pl-3 pr-8 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 p-1"
+                      aria-label="Toggle password"
+                    >
+                      {showConfirmPassword ? (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Agreement checkbox */}
+                <div>
+                  <label className="flex items-start gap-2 cursor-pointer select-none text-left">
+                    <input
+                      type="checkbox"
+                      checked={termsAccepted}
+                      onChange={(e) => setTermsAccepted(e.target.checked)}
+                      className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-[#FF6900] focus:ring-orange-500/20 cursor-pointer accent-[#FF6900]"
+                      required
+                    />
+                    <span className="text-[11px] text-neutral-500 leading-tight">
+                      I agree to the{' '}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setTermsActiveTab('terms');
+                          setShowTerms(true);
+                        }}
+                        className="text-[#FF6900] font-bold hover:underline cursor-pointer"
+                      >
+                        User Agreement
+                      </button>{' '}
+                      and terms.
+                    </span>
+                  </label>
+                </div>
               </div>
 
-              {/* Modal Content */}
-              <div className="overflow-y-auto px-6 py-6 text-sm text-[#4a5568] leading-relaxed">
-
-                <p className="mb-5">
-                  Welcome to Seafudz ng Bayan. These Terms and Conditions
-                  govern the use of the Seafudz ng Bayan Online Ordering and Delivery System. By
-                  creating an account, logging in, or using the system, the customer agrees to
-                  comply with these terms.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  1. Account Registration
-                </h3>
-
-                <p className="mb-3">
-                  Customers may create an account by providing the required
-                  information.
-                </p>
-
-                <p className="mb-5">
-                  Customers are required to provide accurate and complete
-                  information when creating an account. The information provided should be kept
-                  updated when necessary.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  2. Account Security
-                </h3>
-
-                <p className="mb-3">
-                  Customers are responsible for keeping their username and
-                  password confidential. Customers should not share their login credentials with
-                  other individuals. Any activity performed through the customer's account may be
-                  associated with that account.
-                </p>
-
-                <p className="mb-5">
-                  If a customer believes that their account or password has
-                  been compromised, they should use the available password recovery option or
-                  contact the restaurant for assistance.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  3. Login
-                </h3>
-
-                <p className="mb-3">
-                  Customers may access their account using their registered
-                  username and password.
-                </p>
-
-                <p className="mb-5">
-                  The <strong>Remember Me</strong> option may be used to keep the
-                  customer's login session active on the device, subject to the system's
-                  authentication settings.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  4. Password Recovery
-                </h3>
-
-                <p className="mb-5">
-                  Customers who forget their password may use the{' '}
-                  <strong>Forgot Password</strong> option provided on the login page to recover or
-                  reset their account password.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  5. Account Creation and Terms Agreement
-                </h3>
-
-                <p className="mb-5">
-                  Customers must agree to the <strong>Terms and Conditions</strong>
-                  before creating an account. By selecting the agreement option and clicking{' '}
-                  <strong>Create Account</strong>, the customer confirms that they have read and
-                  accepted these Terms and Conditions.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  6. Proper Use of the Account
-                </h3>
-
-                <p className="mb-5">
-                  Customers are expected to use their accounts only for legitimate
-                  purposes related to the services provided by Seafudz ng Bayan.
-                  Customers must not attempt to access another person's account or use the system
-                  in a way that may interfere with its normal operation.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  7. System Access
-                </h3>
-
-                <p className="mb-5">
-                  Access to the system may depend on the availability of the
-                  internet and the system itself. Temporary interruptions may occur due to
-                  maintenance, technical problems, or other circumstances affecting system
-                  availability.
-                </p>
-
-                <h3 className="font-bold text-[#2d3748] mb-2">
-                  8. Acceptance of Terms
-                </h3>
-
-                <p>
-                  By creating an account and using the Seafudz ng Bayan Online Ordering and Delivery System, the customer acknowledges that they have read, understood, and agreed to these Terms and Conditions.
-                </p>
-
-              </div>
-
-              {/* Modal Footer */}
-              <div className="px-6 py-4 border-t border-neutral-200 flex justify-end">
+              {/* Submit & Switch back */}
+              <div className="pt-4 space-y-3">
                 <button
-                  type="button"
-                  onClick={() => setShowTerms(false)}
-                  className="px-5 py-2.5 bg-[#FF6900] hover:bg-[#a82c00] text-white rounded-xl font-semibold text-sm transition-colors"
+                  type="submit"
+                  disabled={isRegisterLoading}
+                  className="w-full h-12 bg-[#FF6900] hover:bg-[#a82c00] active:scale-[0.99] text-white font-bold text-sm rounded-full shadow-md shadow-orange-600/25 transition-all flex items-center justify-center cursor-pointer disabled:opacity-60"
                 >
-                  Close
+                  {isRegisterLoading ? (
+                    <span className="inline-flex items-center gap-2">
+                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Creating Account...
+                    </span>
+                  ) : (
+                    'Sign Up'
+                  )}
                 </button>
+
+                <div className="text-center pt-0.5">
+                  <p className="text-xs text-neutral-400 font-medium">
+                    Already have an account?{' '}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMessage('');
+                        setSuccessMessage('');
+                        setAuthMode('login');
+                      }}
+                      className="text-[#FF6900] hover:text-[#a82c00] font-bold transition-colors cursor-pointer"
+                    >
+                      Log in
+                    </button>
+                  </p>
+                </div>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+{/* Minimal User Agreement & Privacy Policy Popup Modal */}
+      {showTerms && (
+        <div
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowTerms(false);
+            }
+          }}
+          className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-4 sm:p-6 animate-[fadeIn_0.15s_ease-out]"
+        >
+          <div className="bg-white w-full max-w-md max-h-[85vh] rounded-3xl shadow-2xl border border-neutral-100 flex flex-col overflow-hidden text-left relative animate-[scaleUp_0.18s_ease-out]">
+            {/* Header with 'x' close button */}
+            <div className="flex items-center justify-between px-6 py-4.5 border-b border-neutral-100">
+              <div>
+                <h2 className="text-base sm:text-lg font-bold text-neutral-900 tracking-tight">
+                  {termsActiveTab === 'terms' ? 'User Agreement' : 'Privacy Policy'}
+                </h2>
+                <p className="text-[11px] text-neutral-400 font-medium mt-0.5">
+                  Seafudz ng Bayan • Updated October 2026
+                </p>
               </div>
 
+              <button
+                type="button"
+                onClick={() => setShowTerms(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+                aria-label="Close modal"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Tab Switcher */}
+            <div className="px-6 pt-3 pb-1 flex gap-2 border-b border-neutral-50">
+              <button
+                type="button"
+                onClick={() => setTermsActiveTab('terms')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  termsActiveTab === 'terms'
+                    ? 'bg-orange-50 text-[#FF6900] border border-orange-200/80 font-bold'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                User Agreement
+              </button>
+              <button
+                type="button"
+                onClick={() => setTermsActiveTab('privacy')}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
+                  termsActiveTab === 'privacy'
+                    ? 'bg-orange-50 text-[#FF6900] border border-orange-200/80 font-bold'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                Privacy Policy
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="overflow-y-auto px-6 py-4 text-xs sm:text-[13px] text-neutral-600 space-y-3.5 leading-relaxed">
+              {termsActiveTab === 'terms' ? (
+                <>
+                  <p>
+                    Welcome to <strong>Seafudz ng Bayan</strong>. By accessing our platform, logging in with your email or username, or placing seafood bilao and delivery orders, you agree to comply with and be bound by this User Agreement.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">1. Account Information & Credentials</h3>
+                  <p>
+                    You may sign in using your registered email address or username. You are responsible for preserving the confidentiality of your password and for all activity conducted through your authenticated session.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">2. Ordering & Fresh Seafood Preparation</h3>
+                  <p>
+                    All seafood bilao feasts, Cajun crab buckets, and garlic butter shrimp are freshly cooked to order. Orders submitted through the platform are dispatched based on branch availability and kitchen queues.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">3. Delivery & Dispatch Verification</h3>
+                  <p>
+                    Customers agree to provide accurate delivery addresses and reachable contact numbers. Our delivery riders rely on coordinates and landmark directions to ensure hot and timely deliveries.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">4. Acceptable Conduct</h3>
+                  <p>
+                    Users agree not to disrupt the ordering system, create simulated or false orders, or attempt unauthorized access to administrative or cashier controls.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p>
+                    At <strong>Seafudz ng Bayan</strong>, we respect your privacy and are committed to safeguarding your personal data in accordance with the Data Privacy Act.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">1. Information We Collect</h3>
+                  <p>
+                    We collect your full name, username, email address, mobile number, and delivery landmarks to verify your identity and fulfill food delivery transactions.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">2. Usage of Collected Data</h3>
+                  <p>
+                    Your information is exclusively used for order verification, rider dispatch coordination, invoice generation, and essential account security notifications.
+                  </p>
+                  <h3 className="font-bold text-neutral-900 pt-1 text-xs sm:text-sm">3. Security Safeguards</h3>
+                  <p>
+                    Passwords and session tokens are protected through cryptographic hashing and secure authentication headers. We do not sell or disclose your private information to third-party advertisers.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3 border-t border-neutral-100 flex items-center justify-between bg-neutral-50/60">
+              <span className="text-[10px] text-neutral-400">
+                Tap outside or click close to dismiss
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileTermsAgreed(true);
+                  setTermsAccepted(true);
+                  setShowTerms(false);
+                }}
+                className="px-4 py-2 bg-[#FF6900] hover:bg-[#a82c00] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                Agree & Close
+              </button>
             </div>
           </div>
-        )}
-        {/* Forgot Password Modal */}
+        </div>
+      )}
+
+{/* Forgot Password Modal */}
         {showForgotPasswordModal && (
           <div className="fixed inset-0 z-50 bg-neutral-900/60 backdrop-blur-xs flex justify-center items-center p-4 animate-[fadeIn_0.2s_ease-out]">
             <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl border border-neutral-100 p-7 sm:p-9 relative animate-[scaleUp_0.2s_ease-out] text-center">

@@ -69,21 +69,29 @@ export const AccMan: React.FC = () => {
             // Fetch latest user profile from PostgreSQL DB
             const cleanEmail = active.email || ''
             const cleanId = active.id || ''
+            const role = active.role || ''
             if (cleanEmail || cleanId) {
-                fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(cleanEmail)}&id=${encodeURIComponent(cleanId)}`)
+                fetch(`${API_BASE_URL}/auth/me-profile?email=${encodeURIComponent(cleanEmail)}&id=${encodeURIComponent(cleanId)}&role=${encodeURIComponent(role)}`)
                     .then((res) => res.json())
                     .then((data) => {
                         if (data.success && data.data) {
                             const dbUser = data.data
                             const updatedActive = {
                                 ...active,
+                                id: dbUser.id || active.id,
                                 fullname: dbUser.fullname || dbUser.fullName || active.fullname,
                                 username: dbUser.username || active.username,
                                 phone: dbUser.phone || active.phone,
                                 email: dbUser.email || active.email,
                                 address: dbUser.address || dbUser.delivery_address || active.address,
                             }
-                            if (updatedActive.fullname !== active.fullname || updatedActive.username !== active.username || updatedActive.phone !== active.phone || updatedActive.address !== active.address) {
+                            if (
+                                updatedActive.fullname !== active.fullname ||
+                                updatedActive.username !== active.username ||
+                                updatedActive.phone !== active.phone ||
+                                updatedActive.email !== active.email ||
+                                updatedActive.address !== active.address
+                            ) {
                                 saveActiveUser(updatedActive)
                             }
                             const updated = {
@@ -117,9 +125,27 @@ export const AccMan: React.FC = () => {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
     // Notification states
-    const [emailAlerts, setEmailAlerts] = useState(true)
-    const [smsAlerts, setSmsAlerts] = useState(true)
-    const [promoAlerts, setPromoAlerts] = useState(false)
+    const [emailAlerts, setEmailAlerts] = useState(() => {
+        try {
+            const raw = localStorage.getItem('sfb_user_notifications')
+            if (raw) return JSON.parse(raw).emailAlerts ?? true
+        } catch { }
+        return true
+    })
+    const [smsAlerts, setSmsAlerts] = useState(() => {
+        try {
+            const raw = localStorage.getItem('sfb_user_notifications')
+            if (raw) return JSON.parse(raw).smsAlerts ?? true
+        } catch { }
+        return true
+    })
+    const [promoAlerts, setPromoAlerts] = useState(() => {
+        try {
+            const raw = localStorage.getItem('sfb_user_notifications')
+            if (raw) return JSON.parse(raw).promoAlerts ?? false
+        } catch { }
+        return false
+    })
 
     // Handlers
     const handleProfileChange = (field: keyof UserProfile, value: string) => {
@@ -134,13 +160,10 @@ export const AccMan: React.FC = () => {
         const currentActive = getActiveUser()
 
         try {
-            const token = localStorage.getItem('seafudz_token')
+            const authHeaders = await getAuthHeaders()
             const res = await fetch(`${API_BASE_URL}/auth/profile`, {
                 method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
+                headers: authHeaders,
                 body: JSON.stringify({
                     id: currentActive?.id,
                     originalEmail: currentActive?.email,
@@ -158,13 +181,15 @@ export const AccMan: React.FC = () => {
             if (res.ok && responseData.success) {
                 const dbUser = responseData.data || {}
                 const updatedFullName = dbUser.fullname || editForm.fullName
+                const updatedUsername = dbUser.username || editForm.username
                 const updatedPhone = dbUser.phone || editForm.phone
                 const updatedEmail = dbUser.email || editForm.email
                 const updatedAddress = dbUser.address || dbUser.delivery_address || editForm.address
 
-                const finalProfile = {
+                const finalProfile: UserProfile = {
                     ...editForm,
                     fullName: updatedFullName,
+                    username: updatedUsername,
                     phone: updatedPhone,
                     email: updatedEmail,
                     address: updatedAddress,
@@ -176,46 +201,26 @@ export const AccMan: React.FC = () => {
                 if (currentActive) {
                     saveActiveUser({
                         ...currentActive,
+                        id: dbUser.id || currentActive.id,
                         fullname: updatedFullName,
+                        username: updatedUsername,
                         phone: updatedPhone,
                         email: updatedEmail,
                         address: updatedAddress,
                     })
                 }
                 window.dispatchEvent(new Event('seafudz_profile_updated'))
-
-                setMessage({ type: 'success', text: 'Personal details saved to database successfully!' })
+                setMessage({ type: 'success', text: responseData.message || 'Personal details saved to database successfully!' })
             } else {
-                setProfile({ ...editForm })
-                if (currentActive) {
-                    saveActiveUser({
-                        ...currentActive,
-                        fullname: editForm.fullName,
-                        phone: editForm.phone,
-                        email: editForm.email,
-                        address: editForm.address,
-                    })
-                }
-                window.dispatchEvent(new Event('seafudz_profile_updated'))
-                setMessage({ type: 'success', text: responseData.message || 'Personal details updated successfully!' })
+                const errorMsg = responseData.message || responseData.error || 'Failed to update personal details in database.'
+                setMessage({ type: 'error', text: errorMsg })
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error saving profile to database:', err)
-            setProfile({ ...editForm })
-            if (currentActive) {
-                saveActiveUser({
-                    ...currentActive,
-                    fullname: editForm.fullName,
-                    phone: editForm.phone,
-                    email: editForm.email,
-                    address: editForm.address,
-                })
-            }
-            window.dispatchEvent(new Event('seafudz_profile_updated'))
-            setMessage({ type: 'success', text: 'Personal details saved locally!' })
+            setMessage({ type: 'error', text: err?.message || 'Failed to connect to the server.' })
         } finally {
             setIsSaving(false)
-            setTimeout(() => setMessage(null), 3500)
+            setTimeout(() => setMessage(null), 4000)
         }
     }
 
@@ -275,12 +280,17 @@ export const AccMan: React.FC = () => {
         setIsSaving(true)
         setMessage(null)
 
-        setTimeout(() => {
+        try {
+            const prefs = { emailAlerts, smsAlerts, promoAlerts }
+            localStorage.setItem('sfb_user_notifications', JSON.stringify(prefs))
+            setIsSaving(false)
+            setMessage({ type: 'success', text: 'Notification preferences saved successfully!' })
+        } catch {
             setIsSaving(false)
             setMessage({ type: 'success', text: 'Notification preferences updated!' })
-
+        } finally {
             setTimeout(() => setMessage(null), 3000)
-        }, 500)
+        }
     }
 
     // Determine active role & employee status

@@ -10,7 +10,7 @@ import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
-import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import { reverseGeocodeCoordinates, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
 import {
@@ -479,7 +479,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     // Menu state using client items
-    const { menuItems } = useProductImages()
+    const { menuItems, refresh: refreshMenuItems } = useProductImages()
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
     const outOfStockItems = useMemo(() => getOrderOutOfStockItems(activeOrder), [activeOrder])
 // availableReplacementItems replaced by menu replacement mode
@@ -515,6 +515,61 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const handleRemoveUnavailableItems = () => {
         setCartItems((prev) => prev.filter((ci) => isAvailable(ci.item.id)))
     }
+
+    const deletedCartItems = useMemo(() => {
+        if (!menuItems || menuItems.length === 0) return []
+        const activeItemIds = new Set(menuItems.map((m) => m.id))
+        return storedCartItems.filter((ci) => !activeItemIds.has(ci.item.id))
+    }, [menuItems, storedCartItems])
+    const hasDeletedCartItems = deletedCartItems.length > 0
+    const handleRemoveDeletedItems = () => {
+        const activeItemIds = new Set(menuItems.map((m) => m.id))
+        setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
+    }
+
+    // Real-time catalog subscription: sync added/deleted products instantly without page refresh
+    useEffect(() => {
+        const unsubscribe = subscribeProductCatalogSync((detail) => {
+            void refreshMenuItems()
+
+            // If a product was deleted by admin while customer has it in cart
+            if (detail?.action === 'DELETE' && detail?.productId) {
+                const deletedId = String(detail.productId)
+                setCartItems((prev) => {
+                    const affected = prev.find(
+                        (ci) => ci.item.id === deletedId || ci.item.name.toLowerCase() === (detail.productName || '').toLowerCase()
+                    )
+                    if (affected) {
+                        setIsVerificationModalOpen(false)
+                        setIsWaitingModalOpen(false)
+                        setIsCartDrawerOpen(true)
+                        alert(`⚠️ Notice: "${affected.item.name}" was just removed from the menu by the restaurant and has been removed from your cart. You cannot continue the order with this item.`)
+                        return prev.filter((ci) => ci.item.id !== affected.item.id)
+                    }
+                    return prev
+                })
+            }
+        })
+
+        return () => unsubscribe()
+    }, [refreshMenuItems])
+
+    // Keep cart clean against current menuItems
+    useEffect(() => {
+        if (!menuItems || menuItems.length === 0) return
+        const activeIds = new Set(menuItems.map((m) => m.id))
+        setCartItems((prev) => {
+            const removed = prev.filter((ci) => !activeIds.has(ci.item.id))
+            if (removed.length > 0) {
+                setIsVerificationModalOpen(false)
+                setIsWaitingModalOpen(false)
+                const names = removed.map((ci) => ci.item.name).join(', ')
+                alert(`⚠️ Notice: ${names} is no longer available on the menu and has been removed from your cart.`)
+                return prev.filter((ci) => activeIds.has(ci.item.id))
+            }
+            return prev
+        })
+    }, [menuItems])
     const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
     const [flyingItems, setFlyingItems] = useState<FlyingDeliveryItem[]>([])
     const [isCartBumping, setIsCartBumping] = useState(false)
@@ -894,7 +949,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [activeOrder?.status, activeOrder?.paymentMethod])
 
     const handleProceedToCheckout = () => {
-        if (hasUnavailableCartItems) return
+        if (hasUnavailableCartItems || hasDeletedCartItems) return
         const currentUser = getActiveUser()
         if (!currentUser) {
             setIsAuthModalOpen(true)
@@ -1233,8 +1288,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             const matchesSearch =
                 item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                 item.description.toLowerCase().includes(searchQuery.toLowerCase())
+            const normSelected = selectedCategory.toLowerCase().replace(/[^a-z0-9]/g, '')
+            const normItemCat = (item.category || '').toLowerCase().replace(/[^a-z0-9]/g, '')
             const matchesCategory =
-                selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+                selectedCategory === 'All Menu' || normItemCat === normSelected
             return matchesSearch && matchesCategory
         })
     }, [allEffectiveItems, searchQuery, selectedCategory])
@@ -1315,6 +1372,18 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before placing your order.')
             return
         }
+        if (hasDeletedCartItems) {
+            alert('An item in your cart has been removed from the menu by the store. Remove deleted items before placing your order.')
+            return
+        }
+        const activeIds = new Set(menuItems.map((m) => m.id))
+        const missingItems = cartItems.filter((ci) => !activeIds.has(ci.item.id))
+        if (missingItems.length > 0) {
+            const missingNames = missingItems.map((ci) => ci.item.name).join(', ')
+            alert(`The following item(s) are no longer on the menu: ${missingNames}. They have been removed from your cart.`)
+            setCartItems((prev) => prev.filter((ci) => activeIds.has(ci.item.id)))
+            return
+        }
         if (isSubmittingOrderRef.current) return
 
         let currentUser = getActiveUser()
@@ -1391,6 +1460,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             })
             const responseData: any = await res.json().catch(() => ({}))
             if (!res.ok || responseData.success === false) {
+                if (res.status === 409 || responseData.error === 'ITEM_DELETED' || responseData.error === 'ITEM_OUT_OF_STOCK') {
+                    alert(`Cannot place order: ${responseData.message || 'One or more items in your cart are no longer available or have been deleted from the menu.'}`)
+                    void refreshMenuItems()
+                    setIsWaitingModalOpen(false)
+                    setIsVerificationModalOpen(false)
+                    return
+                }
                 throw new Error(responseData.message || 'The order could not be submitted.')
             }
 
@@ -2001,8 +2077,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 {hasUnavailableCartItems && (
                                     <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
                                         <p className="font-extrabold">An item in your cart was just marked Out of Stock by the kitchen.</p>
-                                        <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700">
+                                        <button type="button" onClick={handleRemoveUnavailableItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700 cursor-pointer">
                                             Remove Unavailable Items
+                                        </button>
+                                    </div>
+                                )}
+                                {hasDeletedCartItems && (
+                                    <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900">
+                                        <p className="font-extrabold">An item in your cart has been removed from the menu by the store.</p>
+                                        <button type="button" onClick={handleRemoveDeletedItems} className="mt-2 rounded-lg bg-rose-600 px-3 py-2 font-bold text-white hover:bg-rose-700 cursor-pointer">
+                                            Remove Deleted Items
                                         </button>
                                     </div>
                                 )}
@@ -2152,7 +2236,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || hasUnavailableCartItems}
+                                        disabled={isSubmittingOrder || hasUnavailableCartItems || hasDeletedCartItems}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder ? 'Submitting Order...' : 'Confirm & Submit Order'}
@@ -3200,6 +3284,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         </button>
                                     </div>
                                 )}
+
+                                {hasDeletedCartItems && (
+                                    <div className="rounded-2xl border border-rose-300 bg-rose-50 p-3.5 text-xs text-rose-900 mt-3">
+                                        <p className="font-extrabold">An item in your cart has been removed from the menu by the store.</p>
+                                        <button
+                                            type="button"
+                                            onClick={handleRemoveDeletedItems}
+                                            className="mt-2 rounded-xl bg-rose-600 px-3.5 py-1.5 font-bold text-white hover:bg-rose-700 text-xs cursor-pointer transition-colors"
+                                        >
+                                            Remove Deleted Items
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             {/* Footer Summary & Checkout */}
@@ -3234,7 +3331,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             setIsCartDrawerOpen(false)
                                             handleProceedToCheckout()
                                         }}
-                                        disabled={hasUnavailableCartItems || cartItems.length === 0}
+                                        disabled={hasUnavailableCartItems || hasDeletedCartItems || cartItems.length === 0}
                                         className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         <span>Proceed to Checkout</span>

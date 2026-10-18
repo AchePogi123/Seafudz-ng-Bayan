@@ -466,7 +466,9 @@ export const KitchenMode: React.FC = () => {
 
   const filteredStockItems = useMemo(() => menuItems.filter((item) => {
     const matchesSearch = `${item.name} ${item.category}`.toLowerCase().includes(stockSearch.toLowerCase())
-    return matchesSearch && (stockCategory === 'All Menu' || item.category.toLowerCase() === stockCategory.toLowerCase())
+    const normStockCat = stockCategory.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const normItemCat = (item.category || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    return matchesSearch && (stockCategory === 'All Menu' || normItemCat === normStockCat)
   }), [menuItems, stockSearch, stockCategory])
 
   const handleSetProductAvailability = async (productId: string, available: boolean) => {

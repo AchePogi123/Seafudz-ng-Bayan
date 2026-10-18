@@ -1,7 +1,9 @@
 import { API_BASE_URL } from './api'
 import { applyProductAvailabilityChange } from './menuAvailability'
+import { refreshProductCatalog } from './useProductImages'
 
 const SYNC_KEY = 'seafudz_order_sync_timestamp'
+const CATALOG_SYNC_KEY = 'seafudz_catalog_sync_timestamp'
 
 let channel: BroadcastChannel | null = null
 let lastNotifyTime = 0
@@ -13,6 +15,34 @@ try {
   }
 } catch {
   // BroadcastChannel not available
+}
+
+/**
+ * Broadcasts product catalog add/delete/update across all tabs, windows, and SSE clients.
+ * Instantly triggers refresh of menu catalog without page reload.
+ */
+export const notifyProductCatalogSync = (detail?: any) => {
+  if (typeof window === 'undefined') return
+
+  // 1. Dispatch custom event for local tab listeners
+  try {
+    window.dispatchEvent(new CustomEvent('seafudz_product_catalog_changed', { detail }))
+  } catch {}
+
+  // 2. Broadcast across tabs/windows via BroadcastChannel
+  if (channel) {
+    try {
+      channel.postMessage({ type: 'CATALOG_SYNC', detail, timestamp: Date.now() })
+    } catch {}
+  }
+
+  // 3. Update localStorage key to trigger 'storage' event across separate windows/tabs
+  try {
+    localStorage.setItem(CATALOG_SYNC_KEY, JSON.stringify({ detail, timestamp: Date.now() }))
+  } catch {}
+
+  // 4. Force re-fetch of menu catalog
+  void refreshProductCatalog().catch(() => {})
 }
 
 /**
@@ -58,6 +88,11 @@ const initSseConnection = () => {
         const data = JSON.parse(event.data)
         if (data?.type === 'PRODUCT_AVAILABILITY_CHANGED' && data.productId != null) {
           applyProductAvailabilityChange(String(data.productId), Boolean(data.isAvailable))
+          notifyProductCatalogSync(data)
+          return
+        }
+        if (data?.type === 'PRODUCT_CATALOG_CHANGED') {
+          notifyProductCatalogSync(data)
           return
         }
         if (data && (data.type === 'ORDER_UPDATE' || data.id || data.status)) {
@@ -84,6 +119,54 @@ const initSseConnection = () => {
 // Auto-initialize SSE on client load
 if (typeof window !== 'undefined') {
   initSseConnection()
+}
+
+/**
+ * Subscribes to real-time product catalog changes (add, delete, photo update).
+ */
+export const subscribeProductCatalogSync = (callback: (detail: any) => void): (() => void) => {
+  if (typeof window === 'undefined') return () => {}
+
+  initSseConnection()
+
+  const handleLocalEvent = (e: Event) => {
+    const custom = e as CustomEvent
+    callback(custom.detail || {})
+  }
+
+  const handleStorageEvent = (e: StorageEvent) => {
+    if (e.key === CATALOG_SYNC_KEY && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue)
+        void refreshProductCatalog().catch(() => {})
+        callback(parsed?.detail || {})
+      } catch {
+        callback({})
+      }
+    }
+  }
+
+  window.addEventListener('seafudz_product_catalog_changed', handleLocalEvent)
+  window.addEventListener('storage', handleStorageEvent)
+
+  let messageHandler: ((e: MessageEvent) => void) | null = null
+  if (channel) {
+    messageHandler = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'CATALOG_SYNC') {
+        void refreshProductCatalog().catch(() => {})
+        callback(e.data.detail || {})
+      }
+    }
+    channel.addEventListener('message', messageHandler)
+  }
+
+  return () => {
+    window.removeEventListener('seafudz_product_catalog_changed', handleLocalEvent)
+    window.removeEventListener('storage', handleStorageEvent)
+    if (channel && messageHandler) {
+      channel.removeEventListener('message', messageHandler)
+    }
+  }
 }
 
 /**
@@ -115,6 +198,9 @@ export const subscribeOrderSync = (callback: () => void): (() => void) => {
     if (e.key === SYNC_KEY || e.key === 'seafudz_order_sync_timestamp' || e.key === 'seafudz_order_created') {
       triggerCallback(0) // Instant 0ms cross-tab response
     }
+    if (e.key === CATALOG_SYNC_KEY && e.newValue) {
+      void refreshProductCatalog().catch(() => {})
+    }
   }
 
   window.addEventListener('seafudz_order_created', handleLocalEvent)
@@ -125,6 +211,9 @@ export const subscribeOrderSync = (callback: () => void): (() => void) => {
     messageHandler = (e: MessageEvent) => {
       if (e.data && e.data.type === 'ORDER_SYNC') {
         triggerCallback(0)
+      }
+      if (e.data && e.data.type === 'CATALOG_SYNC') {
+        void refreshProductCatalog().catch(() => {})
       }
     }
     channel.addEventListener('message', messageHandler)

@@ -39,8 +39,6 @@ export const NavbarCashier: React.FC<NavbarCashierProps> = ({ searchQuery, setSe
                     <BrandLogo
                         to="/"
                         size="md"
-                        badge="CASHIER"
-                        badgeColor="bg-teal-100 text-teal-700 border border-teal-200"
                         subtitle={getCurrentPageName()}
                     />
                 </div>

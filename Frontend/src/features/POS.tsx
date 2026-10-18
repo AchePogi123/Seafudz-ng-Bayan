@@ -8,7 +8,7 @@ import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
-import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { NavbarCashier } from '../components/NavbarCashier'
 import { getActiveUser } from '../cryptography/cryptoSession'
@@ -23,8 +23,24 @@ export const POS: React.FC = () => {
   const { getEffectivePrice, updatePrice } = useMenuPrices()
   const { isAvailable } = useMenuAvailability()
 
-  const { menuItems } = useProductImages()
+  const { menuItems, refresh: refreshMenuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
+
+  // Listen for real-time menu catalog changes (e.g. deletion of a product by admin)
+  useEffect(() => {
+    return subscribeProductCatalogSync((detail) => {
+      if (detail?.action === 'DELETE' && detail.productId) {
+        setCartItems((prev) => {
+          const matched = prev.find((ci) => ci.item.id === detail.productId)
+          if (matched) {
+            alert(`The item "${detail.productName || matched.item.name}" was just removed from the menu by the admin and has been removed from your current order.`)
+            return prev.filter((ci) => ci.item.id !== detail.productId)
+          }
+          return prev
+        })
+      }
+    })
+  }, [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All Menu')
@@ -503,8 +519,10 @@ export const POS: React.FC = () => {
           item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           item.description.toLowerCase().includes(searchQuery.toLowerCase())
 
+        const normSelected = selectedCategory.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const normItemCat = (item.category || '').toLowerCase().replace(/[^a-z0-9]/g, '')
         const matchesCategory =
-          selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+          selectedCategory === 'All Menu' || normItemCat === normSelected
 
         return matchesSearch && matchesCategory
       })
@@ -566,6 +584,15 @@ export const POS: React.FC = () => {
     if (cartItems.length === 0) return
     if (hasUnavailableItems) return
 
+    const activeItemIds = new Set(menuItems.map((m) => m.id))
+    const deletedInCart = cartItems.filter((ci) => !activeItemIds.has(ci.item.id))
+    if (deletedInCart.length > 0) {
+      const names = deletedInCart.map((ci) => ci.item.name).join(', ')
+      alert(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`)
+      setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
+      return
+    }
+
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
     const totalWithVat = Math.round(rawSubtotal * 1.12)
 
@@ -590,6 +617,15 @@ export const POS: React.FC = () => {
   const handleConfirmPayment = async (cashReceived: string, change: number | null, paymentMethod: string) => {
     if (hasUnavailableItems) {
       alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
+      return
+    }
+    const activeItemIds = new Set(menuItems.map((m) => m.id))
+    const deletedInCart = cartItems.filter((ci) => !activeItemIds.has(ci.item.id))
+    if (deletedInCart.length > 0) {
+      const names = deletedInCart.map((ci) => ci.item.name).join(', ')
+      alert(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`)
+      setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
+      setIsSuccessModalOpen(false)
       return
     }
     const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
@@ -628,8 +664,10 @@ export const POS: React.FC = () => {
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) {
-        if (result.error === 'ITEM_OUT_OF_STOCK') {
-          alert(result.message || 'An item in this order is out of stock.')
+        if (response.status === 409 || result.error === 'ITEM_DELETED' || result.error === 'ITEM_OUT_OF_STOCK') {
+          alert(result.message || 'An item in this order is no longer available or was removed from the menu.')
+          void refreshMenuItems()
+          setIsSuccessModalOpen(false)
           return
         }
         throw new Error(result.message || 'Could not create the POS order.')

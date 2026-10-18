@@ -372,11 +372,13 @@ INSERT INTO customers (id, supabase_user_id, fullname, email, phone, delivery_ad
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO categories (id, name, description) VALUES
-(1, 'Seafood Mixes', 'Signature Seafood Bilaos, Trays, Tubs, and Ala Carte Mixes'),
-(2, 'Shrimp Specials', 'Fresh Shrimp Ala Carte, Bowls, and Family Trays'),
-(3, 'Crabs & Shellfish', 'Fresh Crabs, Mud Crabs, and Specialty Shellfish Dishes'),
-(4, 'Beverages & Shakes', 'Refreshing Sodas, Natural Shakes, Coffee, and Pitchers'),
-(5, 'Value Meals & Add-ons', 'Rice Bowls, Siomai, Pastil, Desserts, and Extra Sides')
+(1, 'Seafoods', 'Signature Seafood Bilaos, Trays, Tubs, and Ala Carte Mixes'),
+(2, 'Value Meals', 'Rice Bowls, Pastil, Chao Fan, and Value Meals'),
+(3, 'Siomai', 'Steamed and Fried Dimsum Siomai Specials'),
+(4, 'Add Ons', 'Sweet Corn, Extra Rice, Sauces, and Add-on Toppings'),
+(5, 'Shake & Lemonade', 'Fresh Fruit Shakes and Lemonade Drinks'),
+(6, 'Desserts', 'Sweet Treats, Mango Pudding, and Desserts'),
+(7, 'Drinks', 'Refreshing Sodas, Bottled Water, Coffee, and Iced Tea')
 ON CONFLICT (id) DO UPDATE SET
   name = EXCLUDED.name,
   description = EXCLUDED.description;
@@ -388,36 +390,48 @@ INSERT INTO products (id, category_id, name, description, price, image, is_avail
 ('item-003', 1, 'Mixed Seafoods Alacarte Bowl', 'Signature mixed seafoods serving bowl.', 699.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_Bowl_699 pesos.JPG', true, 20),
 ('item-004', 1, 'Mixed Seafoods Alacarte Tray', 'Signature mixed seafoods feast tray.', 1199.00, '/src/assets/menu/Mixedseafoods_Mixed Seafoods Alacarte_Tray_1199 pesos.png', true, 25),
 -- Shrimp Specials
-('item-005', 2, 'All Shrimp Alacarte', 'Freshly prepared all-shrimp dish.', 199.00, '/src/assets/menu/ALL SHRIMP_Alacarte_199 pesos.JPG', true, 15),
-('item-006', 2, 'All Shrimp Bowl', 'Generous all-shrimp bowl platter.', 699.00, '/src/assets/menu/ALL SHRIMP_Bowl_699 pesos.JPG', true, 20),
-('item-007', 2, 'All Shrimp Tray', 'Family-style all-shrimp tray.', 1099.00, '/src/assets/menu/ALL SHRIMP_Tray_1099 pesos.JPG', true, 25),
+('item-005', 1, 'All Shrimp Alacarte', 'Freshly prepared all-shrimp dish.', 199.00, '/src/assets/menu/ALL SHRIMP_Alacarte_199 pesos.JPG', true, 15),
+('item-006', 1, 'All Shrimp Bowl', 'Generous all-shrimp bowl platter.', 699.00, '/src/assets/menu/ALL SHRIMP_Bowl_699 pesos.JPG', true, 20),
+('item-007', 1, 'All Shrimp Tray', 'Family-style all-shrimp tray.', 1099.00, '/src/assets/menu/ALL SHRIMP_Tray_1099 pesos.JPG', true, 25),
 -- Value Meals & Fried Rice
-('item-008', 5, 'Chao Fan', 'Flavorful fried rice meal.', 35.00, '/src/assets/menu/chao_fan_VALUE MEALS_35 pesos.JPG', true, 10),
-('item-009', 5, 'Chicken Pastil', 'Traditional chicken pastil over rice.', 35.00, '/src/assets/menu/Chicken-Pastil_VALUE MEALS_35 pesos.JPG', true, 10),
-('item-010', 5, 'Fried Noodles', 'Savory stir-fried noodles.', 35.00, '/src/assets/menu/Fried_Noodles_VALUE MEALS_35 pesos.JPG', true, 10),
+('item-008', 2, 'Chao Fan', 'Flavorful fried rice meal.', 35.00, '/src/assets/menu/chao_fan_VALUE MEALS_35 pesos.JPG', true, 10),
+('item-009', 2, 'Chicken Pastil', 'Traditional chicken pastil over rice.', 35.00, '/src/assets/menu/Chicken-Pastil_VALUE MEALS_35 pesos.JPG', true, 10),
+('item-010', 2, 'Fried Noodles', 'Savory stir-fried noodles.', 35.00, '/src/assets/menu/Fried_Noodles_VALUE MEALS_35 pesos.JPG', true, 10),
 -- Siomai
-('item-011', 5, 'Pork Siomai', 'Steamed pork siomai per piece.', 5.00, '/src/assets/menu/pork_siomai_SIOMAI_5 pesos.JPG', true, 5),
-('item-012', 5, 'Beef Siomai', 'Steamed beef siomai per piece.', 5.00, '/src/assets/menu/beef_siomai_SIOMAI_5 pesos.JPG', true, 5),
-('item-013', 5, 'Chicken Siomai', 'Steamed chicken siomai per piece.', 5.00, '/src/assets/menu/chicken_siomai_SIOMAI_5 pesos.JPG', true, 5),
-('item-014', 5, 'Sharksfin Siomai', 'Steamed sharksfin siomai per piece.', 5.00, '/src/assets/menu/sharksfin_siomai_SIOMAI_5 pesos.JPG', true, 5),
-('item-015', 5, 'Japanese Siomai', 'Nori-wrapped Japanese siomai per piece.', 6.00, '/src/assets/menu/japanese_siomai_SIOMAI_6 pesos.JPG', true, 5),
+('item-011', 3, 'Pork Siomai', 'Steamed pork siomai per piece.', 5.00, '/src/assets/menu/pork_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-012', 3, 'Beef Siomai', 'Steamed beef siomai per piece.', 5.00, '/src/assets/menu/beef_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-013', 3, 'Chicken Siomai', 'Steamed chicken siomai per piece.', 5.00, '/src/assets/menu/chicken_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-014', 3, 'Sharksfin Siomai', 'Steamed sharksfin siomai per piece.', 5.00, '/src/assets/menu/sharksfin_siomai_SIOMAI_5 pesos.JPG', true, 5),
+('item-015', 3, 'Japanese Siomai', 'Nori-wrapped Japanese siomai per piece.', 6.00, '/src/assets/menu/japanese_siomai_SIOMAI_6 pesos.JPG', true, 5),
 -- Drinks
-('item-016', 4, 'Mineral Water 500ml', 'Bottled drinking water.', 15.00, '/src/assets/menu/Mineral Wate_500ml_DRINKS_15 pesos.JPG', true, 2),
-('item-017', 4, 'Coke Mismo 250ml', 'Chilled Coke 250ml.', 25.00, '/src/assets/menu/cokemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
-('item-018', 4, 'Sprite Mismo 250ml', 'Chilled Sprite 250ml.', 25.00, '/src/assets/menu/spritemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
-('item-019', 4, 'Royal Mismo 250ml', 'Chilled Royal 250ml.', 25.00, '/src/assets/menu/royalmismo_250ml_DRINKS_25 pesos.JPG', true, 2),
-('item-020', 4, 'Black Coffee', 'Hot black coffee.', 30.00, '/src/assets/menu/blackcoffee_Black Coffee_30 pesos.JPG', true, 5),
-('item-021', 4, 'Coke 1.5L', 'Coke 1.5 Liters bottle.', 110.00, '/src/assets/menu/coke_1.5liters_DRINKS_110 pesos.JPG', true, 2),
-('item-022', 4, 'Sprite 1.5L', 'Sprite 1.5 Liters bottle.', 100.00, '/src/assets/menu/sprite_1.5_DRINKS_100 pesos.JPG', true, 2),
-('item-023', 4, 'Royal 1.5L', 'Royal 1.5 Liters bottle.', 100.00, '/src/assets/menu/royal_1.5_DRINKS_100 pesos.JPG', true, 2),
+('item-016', 7, 'Mineral Water 500ml', 'Bottled drinking water.', 15.00, '/src/assets/menu/Mineral Wate_500ml_DRINKS_15 pesos.JPG', true, 2),
+('item-017', 7, 'Coke Mismo 250ml', 'Chilled Coke 250ml.', 25.00, '/src/assets/menu/cokemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-018', 7, 'Sprite Mismo 250ml', 'Chilled Sprite 250ml.', 25.00, '/src/assets/menu/spritemismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-019', 7, 'Royal Mismo 250ml', 'Chilled Royal 250ml.', 25.00, '/src/assets/menu/royalmismo_250ml_DRINKS_25 pesos.JPG', true, 2),
+('item-020', 7, 'Black Coffee', 'Hot black coffee.', 30.00, '/src/assets/menu/blackcoffee_Black Coffee_30 pesos.JPG', true, 5),
+('item-021', 7, 'Coke 1.5L', 'Coke 1.5 Liters bottle.', 110.00, '/src/assets/menu/coke_1.5liters_DRINKS_110 pesos.JPG', true, 2),
+('item-022', 7, 'Sprite 1.5L', 'Sprite 1.5 Liters bottle.', 100.00, '/src/assets/menu/sprite_1.5_DRINKS_100 pesos.JPG', true, 2),
+('item-023', 7, 'Royal 1.5L', 'Royal 1.5 Liters bottle.', 100.00, '/src/assets/menu/royal_1.5_DRINKS_100 pesos.JPG', true, 2),
 -- Shakes & Lemonade
-('item-024', 4, 'Snakes Small', 'Specialty beverage (Small).', 40.00, '/src/assets/menu/snakes_small_SHAKE&LEMONADE_40 peso.JPG', true, 5),
-('item-025', 4, 'Lemonade Small', 'Fresh lemonade juice (Small).', 40.00, '/src/assets/menu/Lemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
-('item-026', 4, 'Lemonade Big', 'Fresh lemonade juice (Big).', 50.00, '/src/assets/menu/Lemonade_big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
-('item-027', 4, 'Cucumber Lemonade Small', 'Cucumber lemonade blend (Small).', 40.00, '/src/assets/menu/cucumberlemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
-('item-028', 4, 'Cucumber Lemonade Big', 'Cucumber lemonade blend (Big).', 50.00, '/src/assets/menu/cucumberLemonade big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
+('item-024', 5, 'Snakes Small', 'Specialty beverage (Small).', 40.00, '/src/assets/menu/snakes_small_SHAKE&LEMONADE_40 peso.JPG', true, 5),
+('item-025', 5, 'Lemonade Small', 'Fresh lemonade juice (Small).', 40.00, '/src/assets/menu/Lemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
+('item-026', 5, 'Lemonade Big', 'Fresh lemonade juice (Big).', 50.00, '/src/assets/menu/Lemonade_big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
+('item-027', 5, 'Cucumber Lemonade Small', 'Cucumber lemonade blend (Small).', 40.00, '/src/assets/menu/cucumberlemonade_small_SHAKE&LEMONADE_40 pesos.JPG', true, 5),
+('item-028', 5, 'Cucumber Lemonade Big', 'Cucumber lemonade blend (Big).', 50.00, '/src/assets/menu/cucumberLemonade big_SHAKE&LEMONADE_50 pesos.JPG', true, 5),
 -- Desserts
-('item-029', 5, 'Banana Con Yelo', 'Sweetened banana with shaved ice and milk.', 50.00, '/src/assets/menu/bananaconyelo_DESSERTS_50 pesos.JPG', true, 8),
+('item-029', 6, 'Banana Con Yelo', 'Sweetened banana with shaved ice and milk.', 50.00, '/src/assets/menu/bananaconyelo_DESSERTS_50 pesos.JPG', true, 8),
+('item-030', 6, 'Ice Cream', 'Chilled sweet ice cream.', 50.00, '/src/assets/menu/icecream_DESSERTS_50 pesos.JPG', true, 5),
+('item-031', 6, 'Mango Pudding', 'Creamy mango pudding dessert.', 50.00, '/src/assets/menu/Mango Pudding_DESSERTS_50 pesos.JPG', true, 5),
+-- Add-ons & Sides
+('item-032', 4, 'One Cup Rice', 'Freshly steamed cup of white rice.', 20.00, '/src/assets/menu/Rice_one cup_SEAFOODS ADD ONS_20 pesos.JPG', true, 2),
+('item-033', 4, 'Corn Add-on', 'Sweet corn cob segments simmered in garlic butter.', 20.00, '/src/assets/menu/Corn_SEAFOODS ADD ONS_20 pesos.jpeg', true, 5),
+('item-034', 7, 'Iced Tea Glass', 'Refreshing house iced tea (single glass).', 20.00, '/src/assets/menu/icetea_ADD ONS_DRINKS_20 pesos.JPG', true, 2),
+('item-035', 4, 'Shrimp Regular Add-on', 'Extra serving of fresh regular shrimp.', 20.00, '/src/assets/menu/Shrimp Regular_SEAFOODS ADD ONS_20 pesos.JPG', true, 10),
+('item-036', 4, 'Shrimp Jumbo Add-on', 'Extra serving of jumbo prawns.', 30.00, '/src/assets/menu/Shrimp Jumbo_SEAFOODS ADD ONS 30 pesos.JPG', true, 12),
+('item-037', 4, 'Tahong Add-on', 'Extra serving of green mussels.', 30.00, '/src/assets/menu/Tahong_SEAFOODS ADD ONS_30 pesos.JPG', true, 10),
+('item-038', 4, 'Special Sauce', 'Signature cajun garlic butter seafood sauce.', 30.00, '/src/assets/menu/specailsauce_SEAFOODS ADD ONS_30 pesos.JPG', true, 2),
+('item-039', 4, 'Sausage Add-on', 'Sliced savory smoked sausage.', 50.00, '/src/assets/menu/sausage_SEAFOODS ADD ONS_50 pesos.jpeg', true, 8),
+('item-040', 7, 'Iced Tea Pitcher', 'Sharing pitcher of house iced tea.', 100.00, '/src/assets/menu/icetea_SEAFOODS ADD ONS_100 pesos.JPG', true, 5)
 ('item-030', 5, 'Ice Cream', 'Chilled sweet ice cream.', 50.00, '/src/assets/menu/icecream_DESSERTS_50 pesos.JPG', true, 3),
 ('item-031', 5, 'Mango Pudding', 'Creamy mango pudding dessert.', 50.00, '/src/assets/menu/Mango Pudding_DESSERTS_50 pesos.JPG', true, 3),
 -- Seafood Add-ons & Sides

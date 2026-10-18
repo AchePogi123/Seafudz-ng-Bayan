@@ -32,8 +32,6 @@ export const NavbarAssistant: React.FC<NavbarAssistantProps> = ({ searchQuery, s
                     <BrandLogo
                         to="/"
                         size="md"
-                        badge="ASSISTANT"
-                        badgeColor="bg-cyan-100 text-cyan-700 border border-cyan-200"
                         subtitle={location.pathname === '/assistant' ? 'Assistant Order Management' : 'Assistant Panel'}
                     />
                 </div>

@@ -27,8 +27,6 @@ export const NavbarKitchen: React.FC = () => {
                     <BrandLogo
                         to="/"
                         size="md"
-                        badge="KITCHEN"
-                        badgeColor="bg-amber-100 text-amber-700 border border-amber-200"
                         subtitle={location.pathname === '/kitchen' ? 'Kitchen Display System' : 'Kitchen Management'}
                     />
                 </div>

@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
-import { CLIENT_CATEGORIES } from '../components/MenuCard'
+import { CLIENT_CATEGORIES, CLIENT_MENU_ITEMS } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { ProductImage } from '../components/ProductImage'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
-import { subscribeOrderSync } from '../utils/orderSync'
+import { notifyProductCatalogSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { setCachedProductImage, useProductImages } from '../utils/useProductImages'
 
 export interface LiveOrderRecord {
@@ -43,12 +43,25 @@ const parseOrderDate = (dateStr?: string, createdAtRaw?: string): Date => {
         const d = new Date(createdAtRaw)
         if (!isNaN(d.getTime())) return d
     }
-    if (!dateStr) return new Date()
+    if (!dateStr) return new Date(0)
     const d = new Date(dateStr)
     if (!isNaN(d.getTime())) return d
     const parsed = Date.parse(dateStr)
     if (!isNaN(parsed)) return new Date(parsed)
-    return new Date()
+    const match = String(dateStr).match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[,\s]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
+    if (match) {
+        const p1 = parseInt(match[1], 10)
+        const p2 = parseInt(match[2], 10)
+        const year = parseInt(match[3], 10)
+        const hour = match[4] ? parseInt(match[4], 10) : 0
+        const min = match[5] ? parseInt(match[5], 10) : 0
+        const sec = match[6] ? parseInt(match[6], 10) : 0
+        const month = p1 > 12 ? p2 - 1 : p1 - 1
+        const day = p1 > 12 ? p1 : p2
+        const res = new Date(year, month, day, hour, min, sec)
+        if (!isNaN(res.getTime())) return res
+    }
+    return new Date(0)
 }
 
 const generateSmoothSparkline = (values: number[], width = 56, height = 28, padding = 3) => {
@@ -149,11 +162,20 @@ const AdminDashboard: React.FC = () => {
     const [isSavingImage, setIsSavingImage] = useState(false)
     const imagePreviewRef = useRef<string | null>(null)
 
+    // Add Product Modal - Photo Placement State
+    const [newProductImageFile, setNewProductImageFile] = useState<File | null>(null)
+    const [newProductImagePreview, setNewProductImagePreview] = useState<string | null>(null)
+    const [newProductImageError, setNewProductImageError] = useState('')
+    const [isDraggingNewImage, setIsDraggingNewImage] = useState(false)
+    const newProductImagePreviewRef = useRef<string | null>(null)
+    const newProductFileInputRef = useRef<HTMLInputElement | null>(null)
+
     const isFetchingRef = useRef(false)
     const lastFetchRef = useRef(0)
 
     useEffect(() => () => {
         if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current)
+        if (newProductImagePreviewRef.current) URL.revokeObjectURL(newProductImagePreviewRef.current)
     }, [])
 
     // Summary Data state from PostgreSQL aggregation
@@ -176,6 +198,7 @@ const AdminDashboard: React.FC = () => {
             cod: { total: number; count: number }
         }
         topDishes?: Array<{ name: string; quantitySold: number; revenue: number }>
+        categoryBreakdown?: Array<{ category: string; revenue: number; units: number }>
     }>({
         totalOrders: 0,
         grossRevenue: 0,
@@ -195,15 +218,16 @@ const AdminDashboard: React.FC = () => {
             cod: { total: 0, count: 0 },
         },
         topDishes: [],
+        categoryBreakdown: [],
     })
 
     // Fetch Database Sales Summary for exact KPI cards & Best Sellers
     const fetchSummary = useCallback(async () => {
         try {
             const queryParams = new URLSearchParams()
-            if (timeRange === 'CUSTOM' && customStartDate && customEndDate) {
-                queryParams.append('startDate', customStartDate)
-                queryParams.append('endDate', customEndDate)
+            if (timeRange === 'CUSTOM') {
+                if (customStartDate) queryParams.append('startDate', customStartDate)
+                if (customEndDate) queryParams.append('endDate', customEndDate)
             } else {
                 const tabParam =
                     timeRange === '1D'
@@ -242,6 +266,7 @@ const AdminDashboard: React.FC = () => {
                             cod: { total: 0, count: 0 },
                         },
                         topDishes: json.data.topDishes || [],
+                        categoryBreakdown: json.data.categoryBreakdown || [],
                     })
                 }
             }
@@ -312,19 +337,23 @@ const AdminDashboard: React.FC = () => {
 
             // 2. Fetch from Backend Database API with smart limit & time horizon
             try {
-                const tabParam =
-                    timeRange === '1D'
-                        ? 'Today'
-                        : timeRange === '1W'
-                            ? 'This Week'
-                            : timeRange === '1M'
-                                ? 'This Month'
-                                : timeRange === '1Y'
-                                    ? 'This Year'
-                                    : ''
-
                 const queryParams = new URLSearchParams()
-                if (tabParam) queryParams.append('tab', tabParam)
+                if (timeRange === 'CUSTOM') {
+                    if (customStartDate) queryParams.append('startDate', customStartDate)
+                    if (customEndDate) queryParams.append('endDate', customEndDate)
+                } else {
+                    const tabParam =
+                        timeRange === '1D'
+                            ? 'Today'
+                            : timeRange === '1W'
+                                ? 'This Week'
+                                : timeRange === '1M'
+                                    ? 'This Month'
+                                    : timeRange === '1Y'
+                                        ? 'This Year'
+                                        : ''
+                    if (tabParam) queryParams.append('tab', tabParam)
+                }
                 queryParams.append('limit', '10000')
 
                 const authHeaders = await getAuthHeaders()
@@ -332,7 +361,7 @@ const AdminDashboard: React.FC = () => {
                 if (res.ok) {
                     const json = await res.json()
                     const dbOrders = json.data || json || []
-                    if (Array.isArray(dbOrders) && dbOrders.length > 0) {
+                    if (Array.isArray(dbOrders)) {
                         const dbList: LiveOrderRecord[] = dbOrders.map((dbO: any) => {
                             const rawType = dbO.order_type || dbO.type || ''
                             const normalizedType =
@@ -381,7 +410,7 @@ const AdminDashboard: React.FC = () => {
         } finally {
             isFetchingRef.current = false
         }
-    }, [timeRange])
+    }, [timeRange, customStartDate, customEndDate])
 
     useEffect(() => {
         void fetchLiveOrders()
@@ -391,6 +420,10 @@ const AdminDashboard: React.FC = () => {
             void fetchLiveOrders(true)
         })
 
+        const unsubscribeCatalog = subscribeProductCatalogSync(() => {
+            void refreshProductImages()
+        })
+
         const interval = setInterval(() => {
             void fetchSummary()
             void fetchLiveOrders()
@@ -398,35 +431,38 @@ const AdminDashboard: React.FC = () => {
 
         return () => {
             unsubscribe()
+            unsubscribeCatalog()
             clearInterval(interval)
         }
-    }, [fetchLiveOrders, fetchSummary])
+    }, [fetchLiveOrders, fetchSummary, refreshProductImages])
 
     // --- GLOBAL TIME RANGE FILTERED ORDERS ---
     const dateFilteredOrders = useMemo(() => {
         if (timeRange === 'ALL') return orders
 
         const now = new Date()
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime()
+        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime()
 
         return orders.filter((o) => {
             const orderDate = parseOrderDate(o.dateTime, o.created_at)
             const orderTime = orderDate.getTime()
+            if (isNaN(orderTime) || orderTime <= 0) return false
 
             if (timeRange === '1D') {
-                return orderTime >= todayStart
+                return orderTime >= todayStart && orderTime <= todayEnd
             }
             if (timeRange === '1W') {
-                const oneWeekAgo = todayStart - 7 * 24 * 60 * 60 * 1000
-                return orderTime >= oneWeekAgo
+                const oneWeekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0).getTime()
+                return orderTime >= oneWeekAgo && orderTime <= todayEnd
             }
             if (timeRange === '1M') {
-                const oneMonthAgo = todayStart - 30 * 24 * 60 * 60 * 1000
-                return orderTime >= oneMonthAgo
+                const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime()
+                return orderTime >= monthStart && orderTime <= todayEnd
             }
             if (timeRange === '1Y') {
-                const oneYearAgo = todayStart - 365 * 24 * 60 * 60 * 1000
-                return orderTime >= oneYearAgo
+                const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0).getTime()
+                return orderTime >= yearStart && orderTime <= todayEnd
             }
             if (timeRange === 'CUSTOM') {
                 let startOk = true
@@ -436,7 +472,7 @@ const AdminDashboard: React.FC = () => {
                     startOk = orderTime >= s
                 }
                 if (customEndDate) {
-                    const e = new Date(`${customEndDate}T23:59:59`).getTime()
+                    const e = new Date(`${customEndDate}T23:59:59.999`).getTime()
                     endOk = orderTime <= e
                 }
                 return startOk && endOk
@@ -450,9 +486,11 @@ const AdminDashboard: React.FC = () => {
         return menuItems.filter((item) => {
             const matchesSearch =
                 item.name.toLowerCase().includes(searchProductQuery.toLowerCase()) ||
-                item.category.toLowerCase().includes(searchProductQuery.toLowerCase())
+                (item.category || '').toLowerCase().includes(searchProductQuery.toLowerCase())
+            const normSelected = selectedCategory.toLowerCase().replace(/[^a-z0-9]/g, '')
+            const normItemCat = (item.category || '').toLowerCase().replace(/[^a-z0-9]/g, '')
             const matchesCategory =
-                selectedCategory === 'All Menu' || item.category.toLowerCase() === selectedCategory.toLowerCase()
+                selectedCategory === 'All Menu' || normItemCat === normSelected
             return matchesSearch && matchesCategory
         })
     }, [menuItems, searchProductQuery, selectedCategory])
@@ -543,7 +581,9 @@ const AdminDashboard: React.FC = () => {
                 ? 'This Week'
                 : timeRange === '1M'
                     ? 'This Month'
-                    : 'This Year'
+                    : timeRange === '1Y'
+                        ? 'This Year'
+                        : 'All Time'
     }, [timeRange])
 
     // Dynamic Time-Aware Smooth Curve SVG Paths for all 6 KPI Metric Cards
@@ -661,7 +701,7 @@ const AdminDashboard: React.FC = () => {
         return m === 0 ? 1 : m
     }, [topItemPerformers])
 
-    // Category Revenue Distribution Chart Data
+    // Category Revenue Distribution Chart Data (calculated from actual ordered items & category mappings)
     const categoryRevenueData = useMemo(() => {
         const catMap: Record<string, number> = {
             'Seafoods': 0,
@@ -673,51 +713,117 @@ const AdminDashboard: React.FC = () => {
             'Drinks': 0,
         }
 
-        dateFilteredOrders.forEach((ord) => {
-            const tot = Number(ord.total || 0)
-            const itemsStr = (ord.items || '').toLowerCase()
-
-            if (itemsStr.includes('shrimp') || itemsStr.includes('seafood') || itemsStr.includes('tahong') || itemsStr.includes('crab')) {
-                catMap['Seafoods'] += tot * 0.55
-            }
-            if (itemsStr.includes('pastil') || itemsStr.includes('noodles') || itemsStr.includes('fan')) {
-                catMap['Value Meals'] += tot * 0.15
-            }
-            if (itemsStr.includes('siomai')) {
-                catMap['Siomai'] += tot * 0.10
-            }
-            if (itemsStr.includes('lemonade') || itemsStr.includes('shake')) {
-                catMap['Shake & Lemonade'] += tot * 0.10
-            }
-            if (itemsStr.includes('coke') || itemsStr.includes('water') || itemsStr.includes('royal') || itemsStr.includes('sprite')) {
-                catMap['Drinks'] += tot * 0.05
-            }
-            if (itemsStr.includes('corn') || itemsStr.includes('sauce') || itemsStr.includes('sausage')) {
-                catMap['Add Ons'] += tot * 0.03
-            }
-            if (itemsStr.includes('pudding') || itemsStr.includes('icecream') || itemsStr.includes('yelo')) {
-                catMap['Desserts'] += tot * 0.02
-            }
+        // Build item to category & price lookup from menu catalog
+        const itemCatLookup = new Map<string, { category: string; price: number }>()
+        CLIENT_MENU_ITEMS.forEach((item) => {
+            const clean = item.name.toLowerCase().trim()
+            itemCatLookup.set(clean, { category: item.category, price: item.price })
+            if (item.id) itemCatLookup.set(item.id.toLowerCase().trim(), { category: item.category, price: item.price })
         })
 
-        if (totalLiveRevenue > 0) {
-            let assignedSum = Object.values(catMap).reduce((a, b) => a + b, 0)
-            if (assignedSum === 0) {
-                catMap['Seafoods'] = totalLiveRevenue * 0.6
-                catMap['Value Meals'] = totalLiveRevenue * 0.2
-                catMap['Drinks'] = totalLiveRevenue * 0.2
-            }
+        const detectCategory = (nameStr: string): string => {
+            const s = (nameStr || '').toLowerCase().trim()
+            if (itemCatLookup.has(s)) return itemCatLookup.get(s)!.category
+            if (s.includes('siomai')) return 'Siomai'
+            if (s.includes('pastil') || s.includes('noodle') || s.includes('chao fan') || s.includes('fan')) return 'Value Meals'
+            if (s.includes('lemonade') || s.includes('shake')) return 'Shake & Lemonade'
+            if (s.includes('coke') || s.includes('sprite') || s.includes('royal') || s.includes('water') || s.includes('coffee') || s.includes('tea')) return 'Drinks'
+            if (s.includes('pudding') || s.includes('ice cream') || s.includes('yelo')) return 'Desserts'
+            if (s.includes('corn') || s.includes('rice') || s.includes('sauce') || s.includes('sausage') || s.includes('add-on') || s.includes('addon')) return 'Add Ons'
+            return 'Seafoods'
         }
 
+        dateFilteredOrders.forEach((ord) => {
+            const ordTotal = Number(ord.total || 0)
+            if (ordTotal <= 0) return
+
+            // Case A: Order has detailed structured cart items
+            if (ord.cartItems && Array.isArray(ord.cartItems) && ord.cartItems.length > 0) {
+                let orderItemsSum = 0
+                const orderCatTotals: Record<string, number> = {}
+
+                ord.cartItems.forEach((ci: any) => {
+                    const itemName = String(ci.name || ci.item?.name || ci.id || 'Seafood')
+                    const cat = ci.category || ci.item?.category || detectCategory(itemName)
+                    const qty = Number(ci.quantity) || 1
+                    const unitP = Number(ci.price || ci.item?.price) || itemCatLookup.get(itemName.toLowerCase().trim())?.price || 0
+                    const lineSubtotal = Number(ci.subtotal) || (unitP > 0 ? unitP * qty : 0)
+
+                    orderCatTotals[cat] = (orderCatTotals[cat] || 0) + lineSubtotal
+                    orderItemsSum += lineSubtotal
+                })
+
+                if (orderItemsSum > 0) {
+                    Object.entries(orderCatTotals).forEach(([cat, sum]) => {
+                        if (catMap[cat] !== undefined) {
+                            catMap[cat] += (sum / orderItemsSum) * ordTotal
+                        } else {
+                            catMap['Seafoods'] += (sum / orderItemsSum) * ordTotal
+                        }
+                    })
+                    return
+                }
+            }
+
+            // Case B: Order has string description (e.g. "All Shrimp Bowl x6, Fresh Lemonade (Small) x2")
+            const itemsStr = (ord.items || '').trim()
+            if (itemsStr) {
+                const parts = itemsStr.split(',')
+                let orderItemsSum = 0
+                const orderCatTotals: Record<string, number> = {}
+
+                parts.forEach((part) => {
+                    const match = part.trim().match(/^(.*?)(?:\s*x\s*(\d+))?$/)
+                    if (!match) return
+                    const name = match[1].trim()
+                    const qty = match[2] ? parseInt(match[2], 10) : 1
+                    const cat = detectCategory(name)
+                    const unitP = itemCatLookup.get(name.toLowerCase().trim())?.price || (cat === 'Seafoods' ? 300 : 50)
+                    const lineSubtotal = unitP * qty
+
+                    orderCatTotals[cat] = (orderCatTotals[cat] || 0) + lineSubtotal
+                    orderItemsSum += lineSubtotal
+                })
+
+                if (orderItemsSum > 0) {
+                    Object.entries(orderCatTotals).forEach(([cat, sum]) => {
+                        if (catMap[cat] !== undefined) {
+                            catMap[cat] += (sum / orderItemsSum) * ordTotal
+                        } else {
+                            catMap['Seafoods'] += (sum / orderItemsSum) * ordTotal
+                        }
+                    })
+                    return
+                }
+            }
+
+            // Case C: Fallback to detecting from order notes or summary (default Seafoods)
+            const fallbackCat = detectCategory(itemsStr || ord.type || '')
+            catMap[fallbackCat] = (catMap[fallbackCat] || 0) + ordTotal
+        })
+
+        // If no orders in filtered list, fallback to backend database category breakdown
+        const totalCategorizedRevenue = Object.values(catMap).reduce((a, b) => a + b, 0)
+        if (totalCategorizedRevenue === 0 && summaryData.categoryBreakdown && summaryData.categoryBreakdown.length > 0) {
+            summaryData.categoryBreakdown.forEach((cb) => {
+                if (catMap[cb.category] !== undefined) {
+                    catMap[cb.category] += Number(cb.revenue || 0)
+                } else {
+                    catMap['Seafoods'] += Number(cb.revenue || 0)
+                }
+            })
+        }
+
+        const effectiveTotal = Object.values(catMap).reduce((a, b) => a + b, 0) || totalLiveRevenue || 1
         const maxCat = Math.max(...Object.values(catMap), 1)
 
         return Object.entries(catMap).map(([cat, rev]) => ({
             category: cat,
             revenue: Math.round(rev),
-            percentage: totalLiveRevenue > 0 ? Math.round((rev / totalLiveRevenue) * 100) : 0,
+            percentage: effectiveTotal > 0 ? Math.round((rev / effectiveTotal) * 100) : 0,
             barRatio: Math.max(Math.round((rev / maxCat) * 100), rev > 0 ? 6 : 0),
         })).sort((a, b) => b.revenue - a.revenue)
-    }, [dateFilteredOrders, totalLiveRevenue])
+    }, [dateFilteredOrders, totalLiveRevenue, summaryData.categoryBreakdown])
 
     // Dynamic Time-Aware Sales Trend Bar Chart Buckets
     const salesTrendBuckets = useMemo(() => {
@@ -752,10 +858,52 @@ const AdminDashboard: React.FC = () => {
             return slots
         }
 
-        filtered.forEach((ord, idx) => {
-            const slotIdx = idx % slots.length
-            slots[slotIdx].revenue += Number(ord.total || 0)
-            slots[slotIdx].ordersCount += 1
+        let minTime = Infinity
+        let maxTime = -Infinity
+        filtered.forEach((ord) => {
+            const t = parseOrderDate(ord.dateTime, ord.created_at).getTime()
+            if (t > 0) {
+                if (t < minTime) minTime = t
+                if (t > maxTime) maxTime = t
+            }
+        })
+
+        filtered.forEach((ord) => {
+            const orderDate = parseOrderDate(ord.dateTime, ord.created_at)
+            const orderTime = orderDate.getTime()
+            let slotIdx = 0
+
+            if (timeRange === '1D') {
+                const hour = orderDate.getHours()
+                if (hour < 10) slotIdx = 0
+                else if (hour < 12) slotIdx = 1
+                else if (hour < 14) slotIdx = 2
+                else if (hour < 16) slotIdx = 3
+                else if (hour < 18) slotIdx = 4
+                else if (hour < 20) slotIdx = 5
+                else slotIdx = 6
+            } else if (timeRange === '1W') {
+                const day = orderDate.getDay() // 0 = Sun, 1 = Mon ... 6 = Sat
+                slotIdx = (day + 6) % 7 // Mon = 0 ... Sun = 6
+            } else if (timeRange === '1M') {
+                const d = orderDate.getDate()
+                slotIdx = Math.min(Math.floor((d - 1) / 7), 4)
+            } else if (timeRange === '1Y') {
+                const m = orderDate.getMonth()
+                slotIdx = Math.min(Math.floor(m / 2), 5)
+            } else {
+                if (minTime < maxTime) {
+                    const ratio = (orderTime - minTime) / (maxTime - minTime)
+                    slotIdx = Math.min(Math.max(Math.floor(ratio * slots.length), 0), slots.length - 1)
+                } else {
+                    slotIdx = 3
+                }
+            }
+
+            if (slotIdx >= 0 && slotIdx < slots.length) {
+                slots[slotIdx].revenue += Number(ord.total || 0)
+                slots[slotIdx].ordersCount += 1
+            }
         })
 
         const maxRev = Math.max(...slots.map((s) => s.revenue), 1)
@@ -766,41 +914,69 @@ const AdminDashboard: React.FC = () => {
         }))
     }, [dateFilteredOrders, trendViewMode, timeRange])
 
-    // Payment Methods Distribution
+    // Payment Methods Distribution (accurately distinguishes GCash, POS Cash, and Online COD)
     const paymentStats = useMemo(() => {
-        const bd = summaryData.breakdown
-        const bdTotal =
-            (bd?.cash?.total || 0) +
-            (bd?.gcash?.total || 0) +
-            (bd?.maya?.total || 0) +
-            (bd?.hybrid?.total || 0) +
-            (bd?.cod?.total || 0)
-
-        if (bdTotal > 0) {
-            const list = [
-                { name: 'Cash (POS Store)', amount: bd.cash.total, pct: Math.round((bd.cash.total / bdTotal) * 100), color: 'bg-amber-500', border: 'border-amber-500' },
-                { name: 'GCash Online', amount: bd.gcash.total, pct: Math.round((bd.gcash.total / bdTotal) * 100), color: 'bg-blue-500', border: 'border-blue-500' },
-                { name: 'Maya / Split', amount: (bd.maya?.total || 0) + (bd.hybrid?.total || 0), pct: Math.round(((bd.maya?.total || 0) + (bd.hybrid?.total || 0)) / bdTotal * 100), color: 'bg-purple-500', border: 'border-purple-500' },
-            ]
-            return list.filter((p) => p.amount > 0 || p.name.includes('Cash') || p.name.includes('GCash'))
-        }
-
         let gcash = 0
-        let cash = 0
+        let posCash = 0
+        let onlineCod = 0
+        let other = 0
 
         dateFilteredOrders.forEach((o) => {
             const pm = (o.paymentMethod || '').toLowerCase()
+            const isOnline = isOnlineOrder(o.type)
             const amt = Number(o.total || 0)
-            if (pm.includes('gcash')) gcash += amt
-            else cash += amt
+
+            if (pm.includes('gcash')) {
+                gcash += amt
+            } else if (pm.includes('maya') || pm.includes('card') || pm.includes('split') || pm.includes('hybrid')) {
+                other += amt
+            } else if (isOnline) {
+                onlineCod += amt
+            } else {
+                posCash += amt
+            }
         })
 
-        const total = gcash + cash || 1
-        return [
-            { name: 'Cash (POS Store)', amount: cash, pct: Math.round((cash / total) * 100), color: 'bg-amber-500', border: 'border-amber-500' },
-            { name: 'GCash Online', amount: gcash, pct: Math.round((gcash / total) * 100), color: 'bg-blue-500', border: 'border-blue-500' },
-        ]
-    }, [summaryData.breakdown, dateFilteredOrders])
+        const total = gcash + posCash + onlineCod + other || 1
+        const list = []
+
+        if (posCash > 0 || (gcash === 0 && onlineCod === 0 && other === 0)) {
+            list.push({
+                name: 'Cash (POS Store)',
+                amount: posCash,
+                pct: Math.round((posCash / total) * 100),
+                color: 'bg-amber-500',
+                border: 'border-amber-500',
+            })
+        }
+        if (onlineCod > 0) {
+            list.push({
+                name: 'Cash on Delivery (COD)',
+                amount: onlineCod,
+                pct: Math.round((onlineCod / total) * 100),
+                color: 'bg-emerald-500',
+                border: 'border-emerald-500',
+            })
+        }
+        list.push({
+            name: 'GCash Online',
+            amount: gcash,
+            pct: Math.round((gcash / total) * 100),
+            color: 'bg-blue-500',
+            border: 'border-blue-500',
+        })
+        if (other > 0) {
+            list.push({
+                name: 'Maya / Cards',
+                amount: other,
+                pct: Math.round((other / total) * 100),
+                color: 'bg-purple-500',
+                border: 'border-purple-500',
+            })
+        }
+
+        return list
+    }, [dateFilteredOrders])
 
     const clearProductImageSelection = () => {
         if (imagePreviewRef.current) URL.revokeObjectURL(imagePreviewRef.current)
@@ -821,6 +997,56 @@ const AdminDashboard: React.FC = () => {
         setNewPriceInput(getEffectivePrice(item.id, item.price))
         setIsPriceEditOpen(true)
         setPriceUpdateSuccess(false)
+    }
+
+    const clearNewProductImage = () => {
+        if (newProductImagePreviewRef.current) {
+            URL.revokeObjectURL(newProductImagePreviewRef.current)
+        }
+        newProductImagePreviewRef.current = null
+        setNewProductImagePreview(null)
+        setNewProductImageFile(null)
+        setNewProductImageError('')
+        if (newProductFileInputRef.current) {
+            newProductFileInputRef.current.value = ''
+        }
+    }
+
+    const handleSelectNewProductFile = (file: File | null) => {
+        setNewProductImageError('')
+        if (!file) return
+
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+            setNewProductImageError('Please select a JPEG, PNG, or WebP image.')
+            return
+        }
+        if (file.size > 5 * 1024 * 1024) {
+            setNewProductImageError('Image must be 5 MB or smaller.')
+            return
+        }
+
+        if (newProductImagePreviewRef.current) {
+            URL.revokeObjectURL(newProductImagePreviewRef.current)
+        }
+        const url = URL.createObjectURL(file)
+        newProductImagePreviewRef.current = url
+        setNewProductImagePreview(url)
+        setNewProductImageFile(file)
+    }
+
+    const resetAddProductForm = () => {
+        setNewProductName('')
+        setNewProductDescription('')
+        setNewProductPrice('')
+        setNewProductCategory('Seafoods')
+        setProductFormError('')
+        clearNewProductImage()
+    }
+
+    const handleCloseAddProduct = () => {
+        if (isSavingProduct) return
+        resetAddProductForm()
+        setIsAddProductOpen(false)
     }
 
     const handleCreateProduct = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -848,14 +1074,50 @@ const AdminDashboard: React.FC = () => {
             const payload = await response.json()
             if (!response.ok) throw new Error(payload?.message || 'Could not add this product.')
 
+            const createdProduct = payload?.data
+            let photoUploaded = false
+
+            // If a photo was selected, upload it immediately
+            if (newProductImageFile && createdProduct?.id) {
+                try {
+                    const headers = await getAuthHeaders({}, { jsonContentType: false })
+                    const body = new FormData()
+                    body.append('image', newProductImageFile)
+                    const imgResponse = await fetch(
+                        `${API_BASE_URL}/menu/${encodeURIComponent(createdProduct.id)}/image`,
+                        {
+                            method: 'POST',
+                            headers,
+                            body,
+                        }
+                    )
+                    const imgPayload = await imgResponse.json()
+                    if (imgResponse.ok && imgPayload?.data?.image) {
+                        setCachedProductImage(createdProduct.id, imgPayload.data.image)
+                        photoUploaded = true
+                    }
+                } catch (imgError) {
+                    console.error('Failed to upload product image on creation:', imgError)
+                }
+            }
+
             await refreshProductImages()
+            notifyProductCatalogSync({
+                action: 'CREATE',
+                product: createdProduct,
+                productId: createdProduct?.id,
+                productName: name,
+            })
             setSearchProductQuery('')
             setSelectedCategory(newProductCategory)
-            setNewProductName('')
-            setNewProductDescription('')
-            setNewProductPrice('')
+            resetAddProductForm()
             setIsAddProductOpen(false)
-            setCatalogFeedback({ type: 'success', message: `${name} was added to the menu.` })
+            setCatalogFeedback({
+                type: 'success',
+                message: photoUploaded
+                    ? `"${name}" was added to the menu with photo.`
+                    : `"${name}" was added to the menu.`,
+            })
         } catch (error) {
             setProductFormError(error instanceof Error ? error.message : 'Could not add this product.')
         } finally {
@@ -880,6 +1142,11 @@ const AdminDashboard: React.FC = () => {
 
             resetPrice(item.id)
             await refreshProductImages()
+            notifyProductCatalogSync({
+                action: 'DELETE',
+                productId: item.id,
+                productName: item.name,
+            })
             setCatalogFeedback({ type: 'success', message: `${item.name} was removed from the menu.` })
         } catch (error) {
             setCatalogFeedback({
@@ -1043,15 +1310,7 @@ const AdminDashboard: React.FC = () => {
                             Sync Orders
                         </button>
 
-                        <Link
-                            to="/pos"
-                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-500 to-amber-600 hover:from-orange-600 hover:to-amber-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-orange-500/20 active:scale-98"
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 100 4 2 2 0 000-4z" />
-                            </svg>
-                            Open Cashier POS
-                        </Link>
+
                     </div>
                 </div>
 
@@ -1523,7 +1782,7 @@ const AdminDashboard: React.FC = () => {
                                     <button
                                         type="button"
                                         onClick={() => {
-                                            setProductFormError('')
+                                            resetAddProductForm()
                                             setIsAddProductOpen(true)
                                         }}
                                         className="inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-3 py-2 text-[10px] font-extrabold text-white shadow-sm shadow-orange-500/20 transition-all duration-200 hover:-translate-y-0.5 hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 motion-reduce:transition-none"
@@ -1533,16 +1792,7 @@ const AdminDashboard: React.FC = () => {
                                         </svg>
                                         Add product
                                     </button>
-                                    <Link
-                                        to="/pos"
-                                        aria-label="Open POS"
-                                        title="Open POS"
-                                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-orange-200 bg-white text-orange-700 transition-colors hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2"
-                                    >
-                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M5.25 4.5h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25V6.75A2.25 2.25 0 015.25 4.5zM8 12h3m-3 3h8" />
-                                        </svg>
-                                    </Link>
+
                                 </div>
                             </div>
                         </div>
@@ -1870,13 +2120,13 @@ const AdminDashboard: React.FC = () => {
             {isAddProductOpen && (
                 <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-                    onClick={() => !isSavingProduct && setIsAddProductOpen(false)}
+                    onClick={handleCloseAddProduct}
                 >
                     <div
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="add-product-title"
-                        className="w-full max-w-lg space-y-5 rounded-3xl border border-orange-100 bg-white p-6 shadow-2xl"
+                        className="w-full max-w-lg space-y-5 rounded-3xl border border-orange-100 bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
@@ -1893,7 +2143,7 @@ const AdminDashboard: React.FC = () => {
                             </div>
                             <button
                                 type="button"
-                                onClick={() => setIsAddProductOpen(false)}
+                                onClick={handleCloseAddProduct}
                                 disabled={isSavingProduct}
                                 aria-label="Close add product form"
                                 className="rounded-lg p-1 text-xl font-bold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
@@ -1952,6 +2202,134 @@ const AdminDashboard: React.FC = () => {
                                 </div>
                             </div>
 
+                            {/* Product Photo Placement */}
+                            <div>
+                                <div className="mb-1.5 flex items-center justify-between">
+                                    <label className="text-xs font-bold text-slate-700">
+                                        Product photo <span className="font-medium text-slate-400">(optional)</span>
+                                    </label>
+                                    <span className="text-[11px] font-medium text-slate-400">
+                                        JPEG, PNG, WebP • Max 5 MB
+                                    </span>
+                                </div>
+
+                                <input
+                                    ref={newProductFileInputRef}
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    onChange={(event) => {
+                                        const file = event.target.files?.[0] || null
+                                        handleSelectNewProductFile(file)
+                                    }}
+                                    className="hidden"
+                                    disabled={isSavingProduct}
+                                />
+
+                                {!newProductImagePreview ? (
+                                    <div
+                                        onClick={() => !isSavingProduct && newProductFileInputRef.current?.click()}
+                                        onDragOver={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            setIsDraggingNewImage(true)
+                                        }}
+                                        onDragLeave={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            setIsDraggingNewImage(false)
+                                        }}
+                                        onDrop={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            setIsDraggingNewImage(false)
+                                            const file = e.dataTransfer.files?.[0] || null
+                                            if (file) handleSelectNewProductFile(file)
+                                        }}
+                                        className={`group flex cursor-pointer items-center gap-3.5 rounded-2xl border-2 border-dashed p-3.5 transition-all duration-200 ${
+                                            isDraggingNewImage
+                                                ? 'border-orange-500 bg-orange-50/80 ring-4 ring-orange-500/10 scale-[1.01]'
+                                                : 'border-slate-200 bg-slate-50/60 hover:border-orange-400 hover:bg-orange-50/30'
+                                        }`}
+                                    >
+                                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-orange-200 bg-orange-100/70 text-orange-600 transition-transform duration-200 group-hover:scale-105">
+                                            <svg className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.75" viewBox="0 0 24 24" aria-hidden="true">
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                            </svg>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-xs font-bold text-slate-800 transition-colors group-hover:text-orange-600">
+                                                Click to upload photo <span className="font-normal text-slate-400">or drag & drop</span>
+                                            </p>
+                                            <p className="mt-0.5 text-[11px] text-slate-400">
+                                                This photo will be displayed on POS, customer menu, and KDS.
+                                            </p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                newProductFileInputRef.current?.click()
+                                            }}
+                                            disabled={isSavingProduct}
+                                            className="shrink-0 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 shadow-2xs transition-colors hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600"
+                                        >
+                                            Browse
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-3.5 rounded-2xl border border-orange-200 bg-orange-50/40 p-3 shadow-2xs">
+                                        <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-orange-200 bg-white shadow-2xs">
+                                            <img
+                                                src={newProductImagePreview}
+                                                alt="New product preview"
+                                                className="h-full w-full object-cover"
+                                            />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-emerald-700">
+                                                <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                </svg>
+                                                Ready for menu
+                                            </span>
+                                            <p className="mt-1 truncate text-xs font-bold text-slate-800">
+                                                {newProductImageFile?.name}
+                                            </p>
+                                            <p className="text-[11px] text-slate-400">
+                                                {newProductImageFile ? (newProductImageFile.size / (1024 * 1024)).toFixed(2) : '0'} MB
+                                            </p>
+                                        </div>
+                                        <div className="flex shrink-0 items-center gap-1.5">
+                                            <button
+                                                type="button"
+                                                onClick={() => newProductFileInputRef.current?.click()}
+                                                disabled={isSavingProduct}
+                                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-slate-700 transition-colors hover:border-orange-300 hover:text-orange-600"
+                                            >
+                                                Change
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={clearNewProductImage}
+                                                disabled={isSavingProduct}
+                                                aria-label="Remove selected photo"
+                                                className="rounded-lg border border-rose-200 bg-white p-1.5 text-rose-600 transition-colors hover:bg-rose-50 hover:text-rose-700"
+                                            >
+                                                <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {newProductImageError && (
+                                    <p role="alert" className="mt-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                                        {newProductImageError}
+                                    </p>
+                                )}
+                            </div>
+
                             <div>
                                 <label htmlFor="new-product-description" className="mb-1.5 block text-xs font-bold text-slate-700">
                                     Description <span className="font-medium text-slate-400">(optional)</span>
@@ -1967,10 +2345,6 @@ const AdminDashboard: React.FC = () => {
                                 />
                             </div>
 
-                            <p className="rounded-xl bg-orange-50 px-3.5 py-2.5 text-[11px] leading-relaxed text-orange-800">
-                                After adding the product, select it in the catalog to upload a product photo.
-                            </p>
-
                             {productFormError && (
                                 <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-700">
                                     {productFormError}
@@ -1980,7 +2354,7 @@ const AdminDashboard: React.FC = () => {
                             <div className="flex gap-2 border-t border-slate-100 pt-4">
                                 <button
                                     type="button"
-                                    onClick={() => setIsAddProductOpen(false)}
+                                    onClick={handleCloseAddProduct}
                                     disabled={isSavingProduct}
                                     className="flex-1 rounded-xl bg-slate-100 px-4 py-2.5 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
@@ -1991,7 +2365,9 @@ const AdminDashboard: React.FC = () => {
                                     disabled={isSavingProduct}
                                     className="flex-1 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-orange-500/20 transition-all hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                    {isSavingProduct ? 'Adding product…' : 'Add product'}
+                                    {isSavingProduct
+                                        ? (newProductImageFile ? 'Adding product & photo…' : 'Adding product…')
+                                        : 'Add product'}
                                 </button>
                             </div>
                         </form>

@@ -122,13 +122,27 @@ test('order availability validation locks products and rejects missing or unavai
 test('order availability validation accepts only confirmed available catalog rows', async () => {
   const client = {
     async query() {
-      return { rows: [{ id: 'shrimp', name: 'Shrimp', is_available: true }] };
+      return { rows: [{ id: 'shrimp', name: 'Shrimp', is_available: true, is_active: true }] };
     },
   };
   await assert.doesNotReject(() => assertItemsAvailable(client, [{ productId: 'shrimp', name: 'Shrimp' }]));
   await assert.rejects(
     () => assertItemsAvailable(client, [{ productId: 'missing', name: 'Missing Dish' }]),
     (error) => error.code === 'ITEM_OUT_OF_STOCK' && error.statusCode === 409
+  );
+});
+
+test('order availability validation rejects deleted products with ITEM_DELETED 409', async () => {
+  const client = {
+    async query() {
+      return { rows: [{ id: 'shrimp', name: 'Shrimp', is_available: false, is_active: false }] };
+    },
+  };
+  await assert.rejects(
+    () => assertItemsAvailable(client, [{ productId: 'shrimp', name: 'Shrimp' }]),
+    (error) => error.code === 'ITEM_DELETED'
+      && error.statusCode === 409
+      && error.message === 'Item "Shrimp" has been removed from the menu and can no longer be ordered.'
   );
 });
 

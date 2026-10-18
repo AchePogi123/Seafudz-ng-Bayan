@@ -43,7 +43,7 @@ function mergeImages(items: MenuItem[] = catalogItems): MenuItem[] {
 function publishCatalog(items: MenuItem[]) {
   catalogItems = items
   catalogFetchedAt = Date.now()
-  window.dispatchEvent(new Event(CATALOG_EVENT))
+  window.dispatchEvent(new CustomEvent(CATALOG_EVENT, { detail: items }))
 }
 
 function publishImages(images: Record<string, string>) {
@@ -62,6 +62,52 @@ export function setCachedProductImage(productId: string, image: string | null) {
   if (image) next[productId] = image
   else delete next[productId]
   publishImages(next)
+}
+
+export async function refreshProductCatalog(): Promise<MenuItem[]> {
+  return fetchProductCatalog(true)
+}
+
+export function getCurrentCatalogItems(): MenuItem[] {
+  return catalogItems
+}
+
+export function normalizeCategory(rawCategory: unknown, fallback: string = 'Other'): string {
+  if (typeof rawCategory !== 'string' || !rawCategory.trim()) return fallback
+  const c = rawCategory.trim()
+  const lower = c.toLowerCase()
+  if (lower === 'all menu' || lower === 'all') return 'All Menu'
+  if (lower === 'seafoods' || lower === 'seafood' || lower.includes('seafood') || lower.includes('shrimp specials') || lower.includes('crabs & shellfish')) {
+    return 'Seafoods'
+  }
+  if (lower === 'value meals' || lower === 'value meal' || lower === 'value meals & add-ons' || lower === 'value meals & addons') {
+    return 'Value Meals'
+  }
+  if (lower === 'siomai') {
+    return 'Siomai'
+  }
+  if (lower === 'add ons' || lower === 'add-ons' || lower === 'addons' || lower === 'sides') {
+    return 'Add Ons'
+  }
+  if (lower === 'shake & lemonade' || lower === 'shakes & lemonade' || lower === 'shake and lemonade' || lower === 'shakes' || lower === 'lemonade') {
+    return 'Shake & Lemonade'
+  }
+  if (lower === 'desserts' || lower === 'dessert') {
+    return 'Desserts'
+  }
+  if (lower === 'drinks' || lower === 'drink' || lower === 'beverages' || lower === 'beverages & shakes') {
+    return 'Drinks'
+  }
+  return c
+}
+
+export function resolveStandardCategory(dbCategory: unknown, canonicalCategory: string): string {
+  if (typeof dbCategory !== 'string' || !dbCategory.trim()) return canonicalCategory
+  const norm = normalizeCategory(dbCategory, canonicalCategory)
+  if (dbCategory.includes('&') && !canonicalCategory.includes('&')) {
+    return canonicalCategory
+  }
+  return norm
 }
 
 async function fetchProductCatalog(force: boolean): Promise<MenuItem[]> {
@@ -88,24 +134,33 @@ async function fetchProductCatalog(force: boolean): Promise<MenuItem[]> {
       if (typeof product.image === 'string' && product.image) nextImages[product.id] = product.image
     }
 
+    const standardProductIds = new Set(CLIENT_MENU_ITEMS.map((item) => item.id))
     const customProducts = products
-      .filter((product: Record<string, unknown>) => typeof product.id === 'string' && product.id.startsWith('custom-'))
+      .filter((product: Record<string, unknown>) => {
+        const id = String(product?.id || '')
+        return id.startsWith('custom-') || (!standardProductIds.has(id) && !/^item-\d+$/i.test(id))
+      })
       .map((product: Record<string, unknown>): MenuItem => ({
         id: String(product.id),
         name: String(product.name || 'New product'),
         description: String(product.description || ''),
         price: Number(product.price) || 0,
-        category: String(product.category || 'Other'),
+        category: normalizeCategory(product.category, 'Other'),
         image: typeof product.image === 'string' ? product.image : '',
       }))
 
-    const standardProducts = CLIENT_MENU_ITEMS.filter((item) => productsById.has(item.id)).map((item) => {
-      const product = productsById.get(item.id)
-      return {
-        ...item,
-        price: product?.price !== undefined ? Number(product.price) : item.price,
-      }
-    })
+    const standardProducts = CLIENT_MENU_ITEMS
+      .filter((item) => productsById.has(item.id))
+      .map((item) => {
+        const product = productsById.get(item.id)
+        return {
+          ...item,
+          name: typeof product?.name === 'string' ? product.name : item.name,
+          description: typeof product?.description === 'string' ? product.description : item.description,
+          category: resolveStandardCategory(product?.category, item.category),
+          price: product?.price !== undefined ? Number(product.price) : item.price,
+        }
+      })
 
     publishImages(nextImages)
     const updatedItems = mergeImages([...standardProducts, ...customProducts])

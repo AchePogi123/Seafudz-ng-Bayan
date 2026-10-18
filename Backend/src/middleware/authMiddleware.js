@@ -13,7 +13,7 @@ export async function requireAuth(req, res, next) {
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       if (process.env.NODE_ENV !== 'production') {
         req.authIsSynthetic = true;
-        req.user = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', fullname: 'System Admin', email: 'admin@seafudz.com', role: 'admin', type: 'employee' };
+        req.user = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55', fullname: 'Admin Manager', username: 'admin1', email: 'admin@seafudz.ph', role: 'admin', type: 'employee' };
         return next();
       }
       return res.status(401).json({

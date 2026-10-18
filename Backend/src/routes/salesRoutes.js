@@ -8,18 +8,30 @@ const router = Router();
 // GET /api/sales/summary - Get sales summary analytics from database
 router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), async (req, res) => {
   try {
-    const { tab, period } = req.query;
-    const selectedPeriod = (tab || period || '').toLowerCase();
+    const { tab, period, startDate, endDate } = req.query;
+    const selectedPeriod = (tab || period || '').toLowerCase().trim();
 
     let dateFilter = '';
-    if (selectedPeriod === 'today') {
-      dateFilter = ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date`;
-    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week') {
-      dateFilter = ` AND o.created_at >= (NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'`;
-    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month') {
-      dateFilter = ` AND o.created_at >= DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila')`;
-    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year') {
-      dateFilter = ` AND o.created_at >= DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila')`;
+    const dateParams = [];
+    let pIdx = 1;
+
+    if (selectedPeriod === 'today' || selectedPeriod === '1d') {
+      dateFilter = ` AND o.created_at >= (((NOW() AT TIME ZONE 'Asia/Manila')::date)::timestamp AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this week' || selectedPeriod === 'week' || selectedPeriod === '1w') {
+      dateFilter = ` AND o.created_at >= ((((NOW() AT TIME ZONE 'Asia/Manila')::date - INTERVAL '6 days'))::timestamp AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this month' || selectedPeriod === 'month' || selectedPeriod === '1m') {
+      dateFilter = ` AND o.created_at >= (DATE_TRUNC('month', NOW() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else if (selectedPeriod === 'this year' || selectedPeriod === 'year' || selectedPeriod === '1y') {
+      dateFilter = ` AND o.created_at >= (DATE_TRUNC('year', NOW() AT TIME ZONE 'Asia/Manila') AT TIME ZONE 'Asia/Manila') AND o.created_at < ((((NOW() AT TIME ZONE 'Asia/Manila')::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+    } else {
+      if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(String(startDate).trim())) {
+        dateFilter += ` AND o.created_at >= (($${pIdx++}::date)::timestamp AT TIME ZONE 'Asia/Manila')`;
+        dateParams.push(String(startDate).trim());
+      }
+      if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(String(endDate).trim())) {
+        dateFilter += ` AND o.created_at < ((($${pIdx++}::date + 1))::timestamp AT TIME ZONE 'Asia/Manila')`;
+        dateParams.push(String(endDate).trim());
+      }
     }
 
     const summarySql = `
@@ -38,7 +50,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       LEFT JOIN customers c ON o.customer_id = c.id
       WHERE UPPER(o.status) != 'CANCELLED' ${dateFilter}
     `;
-    const summaryRes = await query(summarySql);
+    const summaryRes = await query(summarySql, dateParams);
     const summary = summaryRes.rows[0] || {};
 
     // Check DB order IDs to merge in-memory orders if any exist
@@ -48,11 +60,37 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
     let memDeliveryRevenue = 0;
 
     try {
-      const dbOrderIdsRes = await query(`SELECT id FROM orders WHERE UPPER(status) != 'CANCELLED' ${dateFilter}`);
+      const dbOrderIdsRes = await query(`SELECT o.id FROM orders o WHERE UPPER(o.status) != 'CANCELLED' ${dateFilter}`, dateParams);
       const dbOrderIds = new Set(dbOrderIdsRes.rows.map(r => String(r.id)));
+
+      // Calculate Manila time boundary helpers for inMemoryOrders
+      const nowManilaStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+      const nowManila = new Date(nowManilaStr);
+      const todayStart = new Date(nowManila.getFullYear(), nowManila.getMonth(), nowManila.getDate(), 0, 0, 0, 0).getTime();
+      const todayEnd = new Date(nowManila.getFullYear(), nowManila.getMonth(), nowManila.getDate(), 23, 59, 59, 999).getTime();
 
       inMemoryOrders.forEach((ord, id) => {
         if (!dbOrderIds.has(String(id)) && String(ord.status || '').toUpperCase() !== 'CANCELLED') {
+          // Date matching check
+          const ordTime = ord.created_at ? new Date(ord.created_at).getTime() : (ord.dateTime ? new Date(ord.dateTime).getTime() : 0);
+          if (ordTime > 0) {
+            if (selectedPeriod === 'today' || selectedPeriod === '1d') {
+              if (ordTime < todayStart || ordTime > todayEnd) return;
+            } else if (selectedPeriod === 'this week' || selectedPeriod === 'week' || selectedPeriod === '1w') {
+              const weekStart = new Date(nowManila.getFullYear(), nowManila.getMonth(), nowManila.getDate() - 6, 0, 0, 0, 0).getTime();
+              if (ordTime < weekStart || ordTime > todayEnd) return;
+            } else if (selectedPeriod === 'this month' || selectedPeriod === 'month' || selectedPeriod === '1m') {
+              const monthStart = new Date(nowManila.getFullYear(), nowManila.getMonth(), 1, 0, 0, 0, 0).getTime();
+              if (ordTime < monthStart || ordTime > todayEnd) return;
+            } else if (selectedPeriod === 'this year' || selectedPeriod === 'year' || selectedPeriod === '1y') {
+              const yearStart = new Date(nowManila.getFullYear(), 0, 1, 0, 0, 0, 0).getTime();
+              if (ordTime < yearStart || ordTime > todayEnd) return;
+            } else if (startDate || endDate) {
+              if (startDate && ordTime < new Date(`${startDate}T00:00:00+08:00`).getTime()) return;
+              if (endDate && ordTime > new Date(`${endDate}T23:59:59.999+08:00`).getTime()) return;
+            }
+          }
+
           const type = String(ord.order_type || ord.type || 'ONLINE').toUpperCase();
           const tot = parseFloat(ord.total || 0);
           if (type.includes('ON_SITE') || type.includes('POS') || type.includes('WALK')) {
@@ -91,7 +129,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       WHERE UPPER(o.status) != 'CANCELLED' ${dateFilter}
       GROUP BY LOWER(COALESCE(p.payment_method, 'cash'))
     `;
-    const paymentRes = await query(paymentSql);
+    const paymentRes = await query(paymentSql, dateParams);
     const breakdown = {
       cash: { total: 0, count: 0 },
       gcash: { total: 0, count: 0 },
@@ -130,7 +168,33 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       ORDER BY "quantitySold" DESC
       LIMIT 5
     `;
-    const topDishesRes = await query(topDishesSql);
+    const topDishesRes = await query(topDishesSql, dateParams);
+
+    const categoriesSql = `
+      SELECT 
+        CASE 
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%shrimp%' OR LOWER(oi.product_name_snapshot) LIKE '%seafood%' OR LOWER(oi.product_name_snapshot) LIKE '%tahong%' OR LOWER(oi.product_name_snapshot) LIKE '%crab%' OR LOWER(COALESCE(c.name, '')) IN ('seafood mixes', 'shrimp specials', 'crabs & shellfish', 'seafoods') THEN 'Seafoods'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%siomai%' THEN 'Siomai'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%pastil%' OR LOWER(oi.product_name_snapshot) LIKE '%noodles%' OR LOWER(oi.product_name_snapshot) LIKE '%chao fan%' THEN 'Value Meals'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%lemonade%' OR LOWER(oi.product_name_snapshot) LIKE '%shake%' THEN 'Shake & Lemonade'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%coke%' OR LOWER(oi.product_name_snapshot) LIKE '%sprite%' OR LOWER(oi.product_name_snapshot) LIKE '%royal%' OR LOWER(oi.product_name_snapshot) LIKE '%water%' OR LOWER(oi.product_name_snapshot) LIKE '%coffee%' OR LOWER(oi.product_name_snapshot) LIKE '%tea%' THEN 'Drinks'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%pudding%' OR LOWER(oi.product_name_snapshot) LIKE '%ice cream%' OR LOWER(oi.product_name_snapshot) LIKE '%yelo%' THEN 'Desserts'
+          WHEN LOWER(oi.product_name_snapshot) LIKE '%corn%' OR LOWER(oi.product_name_snapshot) LIKE '%rice%' OR LOWER(oi.product_name_snapshot) LIKE '%sauce%' OR LOWER(oi.product_name_snapshot) LIKE '%sausage%' OR LOWER(oi.product_name_snapshot) LIKE '%add-on%' THEN 'Add Ons'
+          ELSE 'Seafoods'
+        END AS category,
+        COALESCE(SUM(oi.subtotal), 0)::float AS revenue,
+        COALESCE(SUM(oi.quantity), 0)::int AS units
+      FROM order_items oi
+      JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (LOWER(TRIM(name))) id, name, category_id FROM products ORDER BY LOWER(TRIM(name)), category_id
+      ) p ON (oi.product_id = p.id OR LOWER(TRIM(oi.product_name_snapshot)) = LOWER(TRIM(p.name)))
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE UPPER(o.status) != 'CANCELLED' ${dateFilter}
+      GROUP BY 1
+      ORDER BY revenue DESC
+    `;
+    const categoriesRes = await query(categoriesSql, dateParams);
 
     return res.status(200).json({
       success: true,
@@ -154,6 +218,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
           COD: breakdown.cod.total,
         },
         topDishes: topDishesRes.rows,
+        categoryBreakdown: categoriesRes.rows,
       },
     });
   } catch (error) {

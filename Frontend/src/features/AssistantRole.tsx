@@ -881,17 +881,17 @@ export const AssistantRole: React.FC = () => {
                       <div className="space-y-1 border-t border-neutral-100 pt-2 text-[11px] text-neutral-500">
                         <div className="flex justify-between">
                           <span>Food price + VAT</span>
-                          <span>₱{priceBeforeDelivery.toLocaleString()}</span>
+                          <span>₱{priceBeforeDelivery.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Delivery fee</span>
-                          <span>₱{deliveryFee.toLocaleString()}</span>
+                          <span>₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
+                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('cod')
                             ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                             : 'bg-blue-100 text-blue-800 border border-blue-200'
@@ -967,19 +967,19 @@ export const AssistantRole: React.FC = () => {
                 <div className="pb-4 border-b border-slate-100 space-y-2.5">
                   <div className="flex justify-between items-center text-xs">
                     <span className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Payment Details</span>
-                    <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
+                    <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
 
                   <div className="space-y-1 text-[11px]">
                     <div className="flex justify-between">
                       <span className="text-slate-500 font-medium">Food price + VAT:</span>
                       <span className="font-semibold text-slate-800">
-                        ₱{Math.max(0, selectedOrder.total - Number(selectedOrder.deliveryFee ?? 0)).toLocaleString()}
+                        ₱{Math.max(0, selectedOrder.total - Number(selectedOrder.deliveryFee ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-500 font-medium">Delivery fee:</span>
-                      <span className="font-semibold text-slate-800">₱{Number(selectedOrder.deliveryFee ?? 0).toLocaleString()}</span>
+                      <span className="font-semibold text-slate-800">₱{Number(selectedOrder.deliveryFee ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                     </div>
                   </div>
 
@@ -1039,7 +1039,7 @@ export const AssistantRole: React.FC = () => {
                           </p>
                           <p className="text-[10px] text-slate-400">
                             {selectedOrder.completedRefundAmount
-                              ? `₱${Number(selectedOrder.completedRefundAmount).toLocaleString()} refunded`
+                              ? `₱${Number(selectedOrder.completedRefundAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} refunded`
                               : 'Attached proof screenshot'}
                           </p>
                         </div>
@@ -1169,7 +1169,7 @@ export const AssistantRole: React.FC = () => {
                               {oosItems.map((item: any, idx: number) => (
                                 <div key={idx} className="flex justify-between items-center text-rose-900 font-bold text-[11px]">
                                   <span>{item.name || item.product_name_snapshot} (x{item.quantity || 1})</span>
-                                  <span>₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                                  <span>₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                 </div>
                               ))}
                             </div>
@@ -1179,7 +1179,7 @@ export const AssistantRole: React.FC = () => {
                             <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs text-rose-900 space-y-2">
                               <div className="flex justify-between items-center">
                                 <span className="font-bold text-neutral-700">Refund Amount:</span>
-                                <span className="font-black text-rose-700 text-sm">₱{selectedOrder.total.toLocaleString()}</span>
+                                <span className="font-black text-rose-700 text-sm">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                               {selectedOrder.refundReceipt ? (
                                 <button
@@ -1219,7 +1219,7 @@ export const AssistantRole: React.FC = () => {
                                   <div className="pt-2 border-t border-rose-100 space-y-1">
                                     <div className="flex justify-between items-center">
                                       <span className="font-bold text-neutral-700">Cashback Difference:</span>
-                                      <span className="font-black text-emerald-700 text-sm">₱{cashbackDifference.toLocaleString()}</span>
+                                      <span className="font-black text-emerald-700 text-sm">₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                     {selectedOrder.refundReceipt ? (
                                       <button
@@ -1480,7 +1480,7 @@ export const AssistantRole: React.FC = () => {
                         Refund Amount ({selectedOrder.paymentMethod || 'GCash'})
                       </span>
                       <div className="text-2xl font-black text-rose-700 tracking-tight mt-0.5">
-                        ₱{selectedOrder.total.toLocaleString()}
+                        ₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <p className="text-[11px] text-rose-900/80 font-medium mt-1">
                         Unavailable: <span className="font-bold">{oosItems.map((i: any) => `${i.name || i.product_name_snapshot} (x${i.quantity || 1})`).join(', ') || 'Item out of stock'}</span>
@@ -1567,7 +1567,7 @@ export const AssistantRole: React.FC = () => {
                       {oosItems.map((item: any, idx: number) => (
                         <div key={idx} className="py-1 flex justify-between items-center text-rose-950 font-semibold">
                           <span>{item.name || item.product_name_snapshot} × {item.quantity || 1}</span>
-                          <span className="font-bold">₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString()}</span>
+                          <span className="font-bold">₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       ))}
                     </div>
@@ -1581,7 +1581,7 @@ export const AssistantRole: React.FC = () => {
                       {customerReplacements.map((replacement: any, index: number) => (
                         <div key={`${replacement.oldItemId}-${index}`} className="py-1 flex justify-between items-center text-emerald-950 font-semibold">
                           <span>{replacement.oldItemName} → <span className="font-bold text-emerald-900">{replacement.newName}</span> × {replacement.quantity || 1}</span>
-                          <span className="font-bold">₱{((Number(replacement.newPrice || 0)) * (replacement.quantity || 1)).toLocaleString()}</span>
+                          <span className="font-bold">₱{((Number(replacement.newPrice || 0)) * (replacement.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       ))}
                     </div>
@@ -1609,16 +1609,16 @@ export const AssistantRole: React.FC = () => {
                           <div className="space-y-1">
                             <div className="flex justify-between text-neutral-600">
                               <span>Original Amount Paid:</span>
-                              <span className="font-bold text-emerald-700">₱{originalPaid.toLocaleString()}</span>
+                              <span className="font-bold text-emerald-700">₱{originalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             <div className="flex justify-between text-neutral-600">
                               <span>Updated Order Total:</span>
-                              <span className="font-bold text-neutral-900">₱{updatedTotal.toLocaleString()}</span>
+                              <span className="font-bold text-neutral-900">₱{updatedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             </div>
                             {cashbackDifference > 0 && (
                               <div className="flex justify-between text-emerald-900 font-extrabold pt-1.5 border-t border-neutral-200">
                                 <span>💰 Cashback Difference Due:</span>
-                                <span className="font-black text-sm text-emerald-700">₱{cashbackDifference.toLocaleString()}</span>
+                                <span className="font-black text-sm text-emerald-700">₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                             )}
                           </div>
@@ -1632,7 +1632,7 @@ export const AssistantRole: React.FC = () => {
                                     Cashback Reference Photo
                                   </span>
                                   <span className="text-xs text-emerald-950 font-medium block">
-                                    Screenshot showing cashback of ₱{cashbackDifference.toLocaleString()} sent to customer ({selectedOrder.phone})
+                                    Screenshot showing cashback of ₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sent to customer ({selectedOrder.phone})
                                   </span>
                                 </div>
                                 <button
@@ -1690,7 +1690,7 @@ export const AssistantRole: React.FC = () => {
                       <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
                         <div className="flex justify-between items-center">
                           <span className="font-black text-amber-900">⚠️ Additional Payment Required:</span>
-                          <span className="font-black text-sm text-amber-700">₱{Number(selectedOrder.additionalRequired).toLocaleString()}</span>
+                          <span className="font-black text-sm text-amber-700">₱{Number(selectedOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
 
                         {selectedOrder.additionalPaymentReceipt ? (
@@ -1724,7 +1724,7 @@ export const AssistantRole: React.FC = () => {
                           </div>
                         ) : (
                           <p className="text-[10px] text-amber-800 font-medium">
-                            Awaiting customer upload of additional ₱{Number(selectedOrder.additionalRequired).toLocaleString()} payment screenshot.
+                            Awaiting customer upload of additional ₱{Number(selectedOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} payment screenshot.
                           </p>
                         )}
                       </div>
@@ -1733,7 +1733,7 @@ export const AssistantRole: React.FC = () => {
                     {/* COD Order Note */}
                     {String(selectedOrder.paymentMethod || '').toUpperCase().includes('COD') && (
                       <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] text-slate-800">
-                        <span className="font-black">💵 Cash on Delivery:</span> Rider will collect updated total of ₱{selectedOrder.total.toLocaleString()} upon delivery.
+                        <span className="font-black">💵 Cash on Delivery:</span> Rider will collect updated total of ₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} upon delivery.
                       </div>
                     )}
                   </div>
@@ -1774,7 +1774,7 @@ export const AssistantRole: React.FC = () => {
                     {isSubmittingResolution
                       ? 'Processing...'
                       : isRefund
-                        ? `Process full refund ₱${selectedOrder.total.toLocaleString()}`
+                        ? `Process full refund ₱${selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                         : 'Confirm replacement and resume kitchen'}
                   </button>
                 </div>

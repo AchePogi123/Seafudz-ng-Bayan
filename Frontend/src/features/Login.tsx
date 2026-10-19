@@ -83,7 +83,6 @@ return () => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [mobileTermsAgreed, setMobileTermsAgreed] = useState(false);
   const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'privacy'>('terms');
 
   // Terms and Conditions modal
@@ -1303,45 +1302,6 @@ return () => {
                   </button>
                 </div>
 
-                {/* User Agreement Checkbox with highlighted links */}
-                <div className="pt-1">
-                  <label className="flex items-start gap-2.5 cursor-pointer select-none text-left">
-                    <input
-                      type="checkbox"
-                      checked={mobileTermsAgreed}
-                      onChange={(e) => setMobileTermsAgreed(e.target.checked)}
-                      className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-[#FF6900] focus:ring-orange-500/20 cursor-pointer accent-[#FF6900]"
-                    />
-                    <span className="text-[11px] sm:text-xs text-neutral-500 leading-snug">
-                      I read and agreed to{' '}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setTermsActiveTab('terms');
-                          setShowTerms(true);
-                        }}
-                        className="text-[#FF6900] font-bold hover:underline cursor-pointer inline"
-                      >
-                        User Agreement
-                      </button>{' '}
-                      and{' '}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setTermsActiveTab('privacy');
-                          setShowTerms(true);
-                        }}
-                        className="text-[#FF6900] font-bold hover:underline cursor-pointer inline"
-                      >
-                        privacy policy
-                      </button>
-                    </span>
-                  </label>
-                </div>
               </div>
 
               {/* Sign In Button & Bottom Switch to Sign Up */}
@@ -1567,7 +1527,7 @@ return () => {
               setShowTerms(false);
             }
           }}
-          className="fixed inset-0 z-50 bg-black/45 backdrop-blur-[2px] flex items-center justify-center p-4 sm:p-6 animate-[fadeIn_0.15s_ease-out]"
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 sm:p-6 animate-[fadeIn_0.15s_ease-out]"
         >
           <div className="bg-white w-full max-w-md max-h-[85vh] rounded-3xl shadow-2xl border border-neutral-100 flex flex-col overflow-hidden text-left relative animate-[scaleUp_0.18s_ease-out]">
             {/* Header with 'x' close button */}
@@ -1672,7 +1632,6 @@ return () => {
               <button
                 type="button"
                 onClick={() => {
-                  setMobileTermsAgreed(true);
                   setTermsAccepted(true);
                   setShowTerms(false);
                 }}

@@ -21,9 +21,59 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
   cartButtonRef,
 }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [isScrolled, setIsScrolled] = useState(() => typeof window !== 'undefined' && window.scrollY > 60)
   const location = useLocation()
   const [, setActiveUser] = useState(() => getActiveUser())
   const fetchedProfileRef = useRef(false)
+  const headerCartRef = useRef<HTMLButtonElement | null>(null)
+  const floatingCartRef = useRef<HTMLButtonElement | null>(null)
+
+  const updateCartButtonRef = (node: HTMLButtonElement | null, isFloating: boolean) => {
+    if (isFloating) {
+      floatingCartRef.current = node
+    } else {
+      headerCartRef.current = node
+    }
+
+    if (!cartButtonRef) return
+    const shouldTargetThis = isFloating ? isScrolled : !isScrolled
+    if (shouldTargetThis && node) {
+      if (typeof cartButtonRef === 'function') {
+        ;(cartButtonRef as (target: HTMLButtonElement | null) => void)(node)
+      } else if ('current' in cartButtonRef) {
+        ;(cartButtonRef as React.MutableRefObject<HTMLButtonElement | null>).current = node
+      }
+    }
+  }
+
+  useEffect(() => {
+    let ticking = false
+    const handleScroll = () => {
+      if (!ticking) {
+        window.requestAnimationFrame(() => {
+          setIsScrolled(window.scrollY > 60)
+          ticking = false
+        })
+        ticking = true
+      }
+    }
+
+    handleScroll()
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  useEffect(() => {
+    if (!cartButtonRef) return
+    const activeNode = isScrolled ? floatingCartRef.current : headerCartRef.current
+    if (activeNode) {
+      if (typeof cartButtonRef === 'function') {
+        ;(cartButtonRef as (target: HTMLButtonElement | null) => void)(activeNode)
+      } else if ('current' in cartButtonRef) {
+        ;(cartButtonRef as React.MutableRefObject<HTMLButtonElement | null>).current = activeNode
+      }
+    }
+  }, [isScrolled, cartButtonRef])
 
   useEffect(() => {
     const user = getActiveUser()
@@ -91,19 +141,19 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
           />
         </div>
 
-        {/* Shopping Cart Button */}
+        {/* Shopping Cart Button in Header */}
         {onOpenCart && (
           <button
-            ref={cartButtonRef}
+            ref={(node) => updateCartButtonRef(node, false)}
             type="button"
             onClick={onOpenCart}
             aria-label={`Open Cart with ${cartItemCount} items`}
             title={cartItemCount > 0 ? `Cart (${cartItemCount} items)` : 'Cart'}
-            className={`relative flex items-center justify-center p-2.5 sm:p-2.5 rounded-xl cursor-pointer transition-all duration-200 select-none shrink-0 ${
-              cartItemCount > 0
-                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/25 active:scale-95'
-                : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-            } ${isCartBumping ? 'animate-cart-bump ring-4 ring-amber-400/40' : ''}`}
+            className={`relative flex items-center justify-center p-2.5 sm:p-2.5 rounded-xl cursor-pointer select-none shrink-0 transition-all duration-300 ${
+              isScrolled ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'
+            } bg-orange-500 hover:bg-orange-600 text-white border border-orange-400/50 shadow-sm shadow-orange-500/30 active:scale-95 ${
+              isCartBumping && !isScrolled ? 'animate-cart-bump ring-4 ring-orange-400/60' : ''
+            }`}
           >
             <div className="relative flex items-center justify-center">
               <svg className="w-5.5 h-5.5 text-current" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
@@ -118,6 +168,53 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
           </button>
         )}
       </header>
+
+      {/* Floating Animated Cart Button (Brings down to lower right when scrolled) */}
+      {onOpenCart && (
+        <button
+          ref={(node) => updateCartButtonRef(node, true)}
+          type="button"
+          onClick={onOpenCart}
+          aria-label={`Open Cart with ${cartItemCount} items`}
+          title={cartItemCount > 0 ? `Cart (${cartItemCount} items)` : 'Cart'}
+          className={`fixed z-50 flex items-center justify-center rounded-full cursor-pointer select-none bg-orange-500 hover:bg-orange-600 text-white border-2 border-orange-300/80 shadow-2xl shadow-orange-500/50 hover:shadow-orange-500/70 active:scale-95 w-16 h-16 sm:w-18 sm:h-18 lg:bottom-8 ${
+            cartItemCount > 0 ? 'bottom-24' : 'bottom-6'
+          } right-4 sm:right-8 ${
+            isCartBumping && isScrolled ? 'animate-cart-bump ring-4 ring-orange-400/70' : ''
+          }`}
+          style={{
+            transform: isScrolled
+              ? 'translateY(0) scale(1)'
+              : 'translateY(calc(-100vh + 110px)) scale(0.65)',
+            opacity: isScrolled ? 1 : 0,
+            pointerEvents: isScrolled ? 'auto' : 'none',
+            transitionProperty: 'transform, opacity, bottom',
+            transitionDuration: '550ms',
+            transitionTimingFunction: 'cubic-bezier(0.34, 1.35, 0.64, 1)',
+          }}
+        >
+          <div className="relative flex items-center justify-center">
+            <svg
+              className="w-8 h-8 sm:w-9 sm:h-9 text-white drop-shadow-xs"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
+              />
+            </svg>
+            {cartItemCount > 0 && (
+              <span className="absolute -top-3 -right-3 bg-rose-600 text-white text-xs font-black min-w-[26px] h-[26px] px-1.5 rounded-full flex items-center justify-center border-2 border-white shadow-md animate-in zoom-in-75">
+                {cartItemCount > 99 ? '99+' : cartItemCount}
+              </span>
+            )}
+          </div>
+        </button>
+      )}
 
       {/* Global Sidebar Drawer */}
       <SidebarDrawer

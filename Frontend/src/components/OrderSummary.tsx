@@ -33,10 +33,13 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
   isItemAvailable = () => true,
   onRemoveUnavailable,
 }) => {
-  // Calculations
-  const rawSubtotal = cartItems.reduce((acc, item) => acc + item.item.price * item.quantity, 0)
+  // Calculations: Base Subtotal + 12% VAT = Total (Tax included in display prices)
+  const rawSubtotal = cartItems.reduce((acc, item) => {
+    const basePrice = item.item.basePrice || Math.round((item.item.price / 1.12) * 100) / 100
+    return acc + basePrice * item.quantity
+  }, 0)
   const vatAmount = rawSubtotal * 0.12 // 12% VAT
-  const total = rawSubtotal + vatAmount
+  const total = Math.round(rawSubtotal + vatAmount)
   const unavailableCount = cartItems.filter((item) => !isItemAvailable(item.item.id)).length
 
   return (
@@ -152,15 +155,15 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
         <div className="space-y-1.5 text-xs font-medium text-neutral-500">
           <div className="flex items-center justify-between">
             <span>Subtotal</span>
-            <span className="font-semibold text-neutral-700">₱{rawSubtotal.toLocaleString()}</span>
+            <span className="font-semibold text-neutral-700">₱{rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
           <div className="flex items-center justify-between">
             <span>VAT (12%)</span>
-            <span className="font-semibold text-neutral-700">₱{Math.round(vatAmount).toLocaleString()}</span>
+            <span className="font-semibold text-neutral-700">₱{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
           <div className="flex items-center justify-between font-bold text-neutral-900 text-base pt-2 border-t border-neutral-100">
             <span>Total</span>
-            <span className="text-lg text-orange-600">₱{Math.round(total).toLocaleString()}</span>
+            <span className="text-lg text-orange-600">₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
         </div>
 

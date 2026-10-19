@@ -388,10 +388,27 @@ export const LandingPage: React.FC = () => {
                   Order Now
                 </button>
 
+                {/* Mobile View: Login Button */}
+                <Link
+                  to={
+                    activeUser
+                      ? activeUser.role === 'admin'
+                        ? '/admin-dashboard'
+                        : activeUser.role === 'cashier'
+                          ? '/pos'
+                          : '/account'
+                      : '/login'
+                  }
+                  className="lg:hidden bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer inline-flex items-center justify-center shadow-xs"
+                >
+                  {activeUser ? (activeUser.role === 'customer' ? 'My Account' : 'Dashboard') : 'Login'}
+                </Link>
+
+                {/* Windows / Desktop View: View Specialties (Unchanged) */}
                 <a
                   href="#specialties"
                   onClick={(e) => handleNavClick(e, 'specialties')}
-                  className="bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-5 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer"
+                  className="hidden lg:inline-flex bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-5 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer items-center justify-center"
                 >
                   View Specialties
                 </a>

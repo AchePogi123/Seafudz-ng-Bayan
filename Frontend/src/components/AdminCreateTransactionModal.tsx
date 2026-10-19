@@ -257,7 +257,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
               >
                 {CLIENT_MENU_ITEMS.map((item) => (
                   <option key={item.id} value={item.name}>
-                    {item.name} — ₱{item.price}
+                    {item.name} — ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </option>
                 ))}
               </select>
@@ -293,7 +293,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
                     </span>
                     <div className="flex items-center gap-3">
                       <span className="font-bold text-neutral-800">
-                        ₱{(item.price * item.quantity).toLocaleString()}
+                        ₱{(item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                       <button
                         type="button"
@@ -324,15 +324,15 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
           {/* Total Breakdown */}
           <div className="bg-orange-50 p-4 rounded-2xl border border-orange-200 flex items-center justify-between">
             <div className="text-xs text-neutral-600 font-medium space-y-0.5">
-              <div>Subtotal: ₱{subtotal.toLocaleString()}</div>
-              <div>VAT (12%): ₱{vat.toLocaleString()} | Fee: ₱{deliveryFee}</div>
+              <div>Subtotal: ₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div>VAT (12%): ₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} | Fee: ₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
             </div>
             <div className="text-right">
               <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600 block">
                 Total Transaction
               </span>
               <span className="text-xl font-black text-neutral-900">
-                ₱{total.toLocaleString()}
+                ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           </div>

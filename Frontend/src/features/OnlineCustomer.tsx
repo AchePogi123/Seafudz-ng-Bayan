@@ -334,7 +334,7 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
                     <button
                         type="button"
                         onClick={() => handleScroll('left')}
-                        className="hidden md:flex absolute left-2 lg:left-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 lg:w-10 lg:h-10 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 backdrop-blur-xs"
+                        className="hidden md:flex absolute left-2 lg:left-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 lg:w-12 lg:h-12 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500"
                         title="Scroll left"
                         aria-label="Scroll left"
                     >
@@ -349,7 +349,7 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
                     <button
                         type="button"
                         onClick={() => handleScroll('right')}
-                        className="hidden md:flex absolute right-2 lg:right-3 top-1/2 -translate-y-1/2 z-20 w-9 h-9 lg:w-10 lg:h-10 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500 backdrop-blur-xs"
+                        className="hidden md:flex absolute right-2 lg:right-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 lg:w-12 lg:h-12 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500"
                         title="Scroll right"
                         aria-label="Scroll right"
                     >
@@ -571,6 +571,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         })
     }, [menuItems])
     const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
+
+    useEffect(() => {
+        if (isCartDrawerOpen) {
+            const originalOverflow = document.body.style.overflow
+            document.body.style.overflow = "hidden"
+            return () => {
+                document.body.style.overflow = originalOverflow
+            }
+        }
+    }, [isCartDrawerOpen])
     const [flyingItems, setFlyingItems] = useState<FlyingDeliveryItem[]>([])
     const [isCartBumping, setIsCartBumping] = useState(false)
     const cartIconRef = useRef<HTMLButtonElement | null>(null)
@@ -1678,13 +1688,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         return (
             <div
                 key={item.id}
-                className={`w-[calc(50vw-22px)] min-w-[150px] max-w-[185px] sm:w-[260px] sm:max-w-none shrink-0 snap-start bg-white rounded-2xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${
+                className={`w-[290px] sm:w-[360px] md:w-[400px] lg:w-[420px] shrink-0 snap-start bg-white rounded-3xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${
                     !available
                         ? 'border-rose-200 bg-neutral-50/70 opacity-80'
-                        : 'border-neutral-100 shadow-2xs hover:shadow-md'
+                        : 'border-neutral-200/80 shadow-xs hover:shadow-xl'
                 }`}
             >
-                <div className="relative aspect-square sm:aspect-4/3 w-full overflow-hidden bg-neutral-50">
+                <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-50">
                     <ProductImage
                         src={item.image}
                         fallbackSrc={item.bundledImage}
@@ -1693,43 +1703,43 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
                         }`}
                     />
-                    <span className="absolute top-2 right-2 sm:top-3 sm:right-3 bg-white/95 backdrop-blur-xs text-neutral-800 text-[10px] sm:text-xs font-bold px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                    <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-white/95 text-neutral-800 text-xs sm:text-sm font-bold px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full border border-neutral-200/60 shadow-xs">
                         {item.category}
                     </span>
 
                     {!available && (
-                        <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
-                            <span className="bg-rose-600 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-2.5 py-1 sm:px-3.5 sm:py-1.5 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
+                        <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">
+                            <span className="bg-rose-600 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-lg border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
                                 Sold Out
                             </span>
                         </div>
                     )}
                 </div>
 
-                <div className="p-3 sm:p-5 flex-grow flex flex-col justify-between gap-2 sm:gap-3">
+                <div className="p-3.5 sm:p-5 flex-grow flex flex-col justify-between gap-2.5 sm:gap-3">
                     <div>
                         <h3
-                            className={`font-bold text-xs sm:text-base leading-snug transition-colors line-clamp-1 ${
-                                !available ? 'text-neutral-500 line-through' : 'text-neutral-800'
+                            className={`font-black text-base sm:text-xl leading-snug transition-colors line-clamp-1 ${
+                                !available ? 'text-neutral-500 line-through' : 'text-neutral-900'
                             }`}
                             title={item.name}
                         >
                             {item.name}
                         </h3>
-                        <p className="text-[10px] sm:text-xs text-neutral-400 mt-0.5 sm:mt-1 line-clamp-1 sm:line-clamp-2 min-h-0 sm:min-h-[32px]">
+                        <p className="text-xs sm:text-sm text-neutral-500 mt-1 sm:mt-1.5 line-clamp-2 min-h-[32px] sm:min-h-[40px] leading-relaxed">
                             {item.description}
                         </p>
                     </div>
 
-                    <div className="flex items-center justify-between mt-auto pt-2 border-t border-neutral-100/70 gap-1">
+                    <div className="flex items-center justify-between mt-auto pt-3 border-t border-neutral-100 gap-2">
                         <div>
-                            <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider text-neutral-400 block leading-tight">Price</span>
+                            <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-400 block leading-tight">Price</span>
                             <span
-                                className={`font-extrabold text-xs sm:text-lg leading-tight ${
+                                className={`font-black text-base sm:text-2xl leading-tight ${
                                     !available ? 'text-neutral-400' : 'text-orange-600'
                                 }`}
                             >
-                                ₱{item.price.toLocaleString()}
+                                ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                         </div>
 
@@ -1753,27 +1763,27 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         setReplacementTargetItem(null)
                                         setActiveTab('tracking')
                                     }}
-                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-[10px] sm:text-xs font-black flex items-center gap-1 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
                                 >
                                     <span>✓</span> Select
                                 </button>
                             ) : cartItem ? (
-                                <div className="flex items-center bg-neutral-100 rounded-lg p-0.5 border border-neutral-200/60 shrink-0">
+                                <div className="flex items-center bg-neutral-100 rounded-xl p-1 border border-neutral-200/60 shrink-0">
                                     <button
                                         type="button"
                                         onClick={() => handleDecrement(item.id)}
-                                        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
                                         title="Decrease quantity"
                                     >
                                         -
                                     </button>
-                                    <span className="w-5 sm:w-6 text-center text-xs font-bold text-neutral-900 select-none">
+                                    <span className="w-7 sm:w-9 text-center text-xs sm:text-sm font-black text-neutral-900 select-none">
                                         {cartItem.quantity}
                                     </span>
                                     <button
                                         type="button"
                                         onClick={(e) => handleIncrement(item.id, e)}
-                                        className="w-5 h-5 rounded flex items-center justify-center text-neutral-600 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-xs"
+                                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
                                         title="Increase quantity"
                                     >
                                         +
@@ -1783,7 +1793,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <button
                                     type="button"
                                     onClick={(e) => handleAddToCart(item, e)}
-                                    className="p-1 sm:p-1.5 text-neutral-400 hover:text-neutral-700 active:scale-90 transition-all cursor-pointer flex items-center justify-center shrink-0 select-none"
+                                    className="p-2 sm:p-2.5 rounded-xl bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white border border-orange-200/80 active:scale-90 transition-all cursor-pointer flex items-center justify-center shrink-0 select-none shadow-2xs hover:shadow-md"
                                     title={`Add ${item.name} to cart`}
                                     aria-label={`Add ${item.name} to cart`}
                                 >
@@ -1791,7 +1801,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         className="w-5 h-5 sm:w-6 sm:h-6 stroke-current"
                                         viewBox="0 0 24 24"
                                         fill="none"
-                                        strokeWidth="1.75"
+                                        strokeWidth="2.2"
                                         strokeLinecap="round"
                                         strokeLinejoin="round"
                                     >
@@ -1801,7 +1811,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </button>
                             )
                         ) : (
-                            <span className="bg-neutral-100 text-neutral-400 text-[10px] sm:text-xs font-bold px-2 py-1 sm:px-3 sm:py-1.5 rounded-xl cursor-not-allowed select-none border border-neutral-200">
+                            <span className="bg-neutral-100 text-neutral-400 text-xs sm:text-sm font-bold px-3 py-1.5 rounded-xl cursor-not-allowed select-none border border-neutral-200">
                                 Sold Out
                             </span>
                         )}
@@ -1841,7 +1851,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         <h4 className="text-base sm:text-lg font-black tracking-tight">
                                             Replacing: <span className="underline decoration-amber-300 font-extrabold">{replacementTargetItem.name || replacementTargetItem.product_name_snapshot}</span>
                                             <span className="text-amber-200 font-bold text-sm ml-2">
-                                                (₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString()})
+                                                (₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                             </span>
                                         </h4>
                                     </div>
@@ -2265,7 +2275,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
                                                 </span>
                                                 <span className="font-bold text-neutral-800">
-                                                    ₱{(ci.item.price * ci.quantity).toLocaleString()}
+                                                    ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                 </span>
                                             </div>
                                             {!isAvailable(ci.item.id) && (
@@ -2288,7 +2298,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="border-t border-neutral-100 pt-4 space-y-2">
                                     <div className="flex justify-between text-xs text-neutral-500">
                                         <span>Subtotal</span>
-                                        <span>₱{subtotal.toLocaleString()}</span>
+                                        <span>₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                     <div className="flex justify-between text-xs text-neutral-500">
                                         <span>VAT (12%)</span>
@@ -2296,7 +2306,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
                                     <div className="flex justify-between text-xs text-neutral-500">
                                         <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
+                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
                                     </div>
                                     {deliveryDistanceMessage && (
                                         <p role="status" className="text-[11px] text-amber-700">
@@ -2305,7 +2315,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     )}
                                     <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
                                         <span>Total Amount</span>
-                                        <span className="text-orange-600 text-lg">₱{total.toLocaleString()}</span>
+                                        <span className="text-orange-600 text-lg">₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                 </div>
                             </div>
@@ -2389,7 +2399,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             <span className="text-xs font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full">Authorized</span>
                                         </div>
                                         <p className="text-xs text-emerald-700 leading-relaxed">
-                                            Staff has authorized your payment. Please transfer <strong className="text-emerald-950 font-black">₱{activeOrder.total.toLocaleString()}</strong> to GCash <strong className="text-emerald-950 font-black">0917-888-7323</strong> and upload your payment screenshot below.
+                                            Staff has authorized your payment. Please transfer <strong className="text-emerald-950 font-black">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> to GCash <strong className="text-emerald-950 font-black">0917-888-7323</strong> and upload your payment screenshot below.
                                         </p>
 
                                         {/* Upload Screenshot Input */}
@@ -2571,7 +2581,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 {activeOrder.customerReplacements.map((r: any, idx: number) => (
                                                     <div key={idx} className="flex justify-between text-neutral-700">
                                                         <span>{r.oldItemName} → <span className="font-bold">{r.newName}</span> (x{r.quantity || 1})</span>
-                                                        <span className="font-bold">₱{(Number(r.newPrice || 0) * Number(r.quantity || 1)).toLocaleString()}</span>
+                                                        <span className="font-bold">₱{(Number(r.newPrice || 0) * Number(r.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -2579,13 +2589,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         {activeOrder.excessAmount ? (
                                             <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg text-emerald-900 text-xs flex justify-between items-center">
                                                 <span className="font-bold">Excess Refund Due:</span>
-                                                <span className="font-black">₱{Number(activeOrder.excessAmount).toLocaleString()}</span>
+                                                <span className="font-black">₱{Number(activeOrder.excessAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
                                         ) : null}
                                         {activeOrder.additionalRequired ? (
                                             <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-900 text-xs flex justify-between items-center">
                                                 <span className="font-bold">Additional Required:</span>
-                                                <span className="font-black">₱{Number(activeOrder.additionalRequired).toLocaleString()}</span>
+                                                <span className="font-black">₱{Number(activeOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
                                         ) : null}
                                     </div>
@@ -2638,7 +2648,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                         {item.name || item.product_name_snapshot} × {qty}
                                                                     </span>
                                                                     <p className="text-[11px] text-neutral-500">
-                                                                        Original Subtotal: ₱{(originalUnitPrice * qty).toLocaleString()}
+                                                                        Original Subtotal: ₱{(originalUnitPrice * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                     </p>
                                                                 </div>
                                                                 <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
@@ -2656,12 +2666,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                             </span>
                                                                         </div>
                                                                         <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                                                                            ₱{(selected.price * qty).toLocaleString()}
+                                                                            ₱{(selected.price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                             {selected.price !== originalUnitPrice && (
                                                                                 <span className="ml-1.5 font-bold">
                                                                                     ({selected.price > originalUnitPrice
-                                                                                        ? `+₱${((selected.price - originalUnitPrice) * qty).toLocaleString()} difference`
-                                                                                        : `-₱${((originalUnitPrice - selected.price) * qty).toLocaleString()} savings`})
+                                                                                        ? `+₱${((selected.price - originalUnitPrice) * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} difference`
+                                                                                        : `-₱${((originalUnitPrice - selected.price) * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} savings`})
                                                                                 </span>
                                                                             )}
                                                                         </p>
@@ -2711,16 +2721,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     <div className="space-y-1.5 text-xs">
                                                         <div className="flex justify-between text-neutral-600">
                                                             <span>Original Order Total:</span>
-                                                            <span className="font-semibold text-neutral-800">₱{activeOrder.total.toLocaleString()}</span>
+                                                            <span className="font-semibold text-neutral-800">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                         <div className="flex justify-between text-neutral-600">
                                                             <span>Recalculated Order Total:</span>
-                                                            <span className="font-black text-neutral-900 text-sm">₱{projectedTotal.toLocaleString()}</span>
+                                                            <span className="font-black text-neutral-900 text-sm">₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                         {!isCOD && (
                                                             <div className="flex justify-between text-neutral-600">
                                                                 <span>Amount Already Paid (GCash):</span>
-                                                                <span className="font-semibold text-emerald-700">₱{confirmedPaid.toLocaleString()}</span>
+                                                                <span className="font-semibold text-emerald-700">₱{confirmedPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                         )}
                                                     </div>
@@ -2728,29 +2738,29 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     {/* Financial Scenario Handling */}
                                                     {isCOD ? (
                                                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 space-y-1">
-                                                            <p className="font-black text-sm">Cash on Delivery Balance: ₱{projectedTotal.toLocaleString()}</p>
+                                                            <p className="font-black text-sm">Cash on Delivery Balance: ₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                                             <p className="text-[11px] text-slate-600">
-                                                                No advance online payment or refund required. Your delivery rider will collect the updated amount of ₱{projectedTotal.toLocaleString()} in cash upon delivery.
+                                                                No advance online payment or refund required. Your delivery rider will collect the updated amount of ₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in cash upon delivery.
                                                             </p>
                                                         </div>
                                                     ) : excessAmount > 0 ? (
                                                         <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1.5">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="font-black text-emerald-900 text-xs sm:text-sm">Excess Refund Due:</span>
-                                                                <span className="font-black text-lg text-emerald-700">₱{excessAmount.toLocaleString()}</span>
+                                                                <span className="font-black text-lg text-emerald-700">₱{excessAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                             <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
-                                                                Your replacement selection is ₱{excessAmount.toLocaleString()} lower than your original payment. Our assistant will transfer this excess back to your GCash with official screenshot proof upon confirming your replacements.
+                                                                Your replacement selection is ₱{excessAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lower than your original payment. Our assistant will transfer this excess back to your GCash with official screenshot proof upon confirming your replacements.
                                                             </p>
                                                         </div>
                                                     ) : additionalRequired > 0 ? (
                                                         <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-xs text-amber-950 space-y-3">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="font-black text-amber-900 text-xs sm:text-sm">Additional Payment Required:</span>
-                                                                <span className="font-black text-lg text-amber-700">₱{additionalRequired.toLocaleString()}</span>
+                                                                <span className="font-black text-lg text-amber-700">₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                             <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
-                                                                Your replacement dishes total ₱{additionalRequired.toLocaleString()} more than the amount originally paid. Please send ₱{additionalRequired.toLocaleString()} to our official GCash account and upload proof below.
+                                                                Your replacement dishes total ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more than the amount originally paid. Please send ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to our official GCash account and upload proof below.
                                                             </p>
                                                             <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs font-mono space-y-0.5">
                                                                 <p className="font-black text-neutral-800">GCash Account: 0917-123-4567</p>
@@ -2780,7 +2790,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </div>
                                                     ) : (
                                                         <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-3 text-xs text-neutral-700">
-                                                            <p className="font-bold">✓ Equal exchange (₱0 Difference). No extra payment or refund needed.</p>
+                                                            <p className="font-bold">✓ Equal exchange (₱0.00 Difference). No extra payment or refund needed.</p>
                                                         </div>
                                                     )}
 
@@ -2805,7 +2815,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     </div>
                                                     {!isCOD && additionalRequired > 0 && !additionalReceiptFile && (
                                                         <p className="text-[11px] text-rose-600 text-center font-bold">
-                                                            * Please attach proof of the additional ₱{additionalRequired.toLocaleString()} payment above.
+                                                            * Please attach proof of the additional ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} payment above.
                                                         </p>
                                                     )}
                                                 </div>
@@ -3079,24 +3089,24 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         <div className="flex justify-between">
                                             <span>Subtotal:</span>
                                             <span className="font-semibold text-neutral-700">
-                                                ₱{(activeOrder.subtotal || Math.round(activeOrder.total / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString()}
+                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(activeOrder.total / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                         <div className="flex justify-between text-orange-600 font-medium">
                                             <span>VAT (12%):</span>
                                             <span className="font-bold">
-                                                ₱{(activeOrder.vat || Math.round((activeOrder.subtotal || (activeOrder.total - (activeOrder.deliveryFee || 50)) / 1.12) * 0.12)).toLocaleString()}
+                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (activeOrder.total - (activeOrder.deliveryFee || 50)) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span>Delivery Fee:</span>
-                                            <span className="font-semibold text-neutral-700">₱{(activeOrder.deliveryFee ?? 50).toLocaleString()}</span>
+                                            <span className="font-semibold text-neutral-700">₱{(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
 
                                     <p className="font-bold text-neutral-800 border-t border-dashed border-neutral-200 pt-1.5 flex justify-between">
                                         <span>Paid Total:</span>
-                                        <span className="text-orange-600">₱{activeOrder.total.toLocaleString()}</span>
+                                        <span className="text-orange-600">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </p>
                                 </div>
                             </div>
@@ -3106,13 +3116,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                 {/* Mobile Floating Cart Bar */}
                 {activeTab === 'menu' && cartItems.length > 0 && (
-                    <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-white text-neutral-900 rounded-2xl shadow-2xl p-4 flex items-center justify-between border border-neutral-200/90 backdrop-blur-md">
+                    <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-white text-neutral-900 rounded-2xl shadow-2xl p-4 flex items-center justify-between border border-neutral-200/90">
                         <div className="flex flex-col">
                             <span className="text-xs text-neutral-500 font-bold uppercase tracking-wide">
                                 {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)} Items Added
                             </span>
                             <span className="text-lg font-extrabold text-orange-600">
-                                ₱{total.toLocaleString()}
+                                ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                         </div>
                         <button
@@ -3129,13 +3139,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
                         {/* Backdrop */}
                         <div
-                            className="fixed inset-0 bg-neutral-950/60 backdrop-blur-xs transition-opacity"
+                            className="fixed inset-0 bg-neutral-950/60 transition-opacity"
                             onClick={() => setIsCartDrawerOpen(false)}
                             aria-hidden="true"
                         />
 
                         {/* Centered Modal Card */}
-                        <div className="relative w-full max-w-lg md:max-w-xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden animate-in zoom-in-95 duration-200 border border-neutral-100 z-10">
+                        <div className="relative w-full max-w-lg md:max-w-xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[88vh] overflow-hidden transform-gpu animate-in zoom-in-95 duration-200 border border-neutral-100 z-10">
                             {/* Header */}
                             <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-white z-10 shrink-0">
                                 <div>
@@ -3223,7 +3233,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         )}
                                                         <div className="flex items-center justify-between mt-2.5">
                                                             <p className="text-sm text-orange-600 font-extrabold">
-                                                                ₱{(ci.item.price * ci.quantity).toLocaleString()}
+                                                                ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </p>
                                                             <CartQuantityControl
                                                                 quantity={ci.quantity}
@@ -3305,15 +3315,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between text-xs text-neutral-500">
                                             <span>Subtotal</span>
-                                            <span className="font-semibold text-neutral-800">₱{subtotal.toLocaleString()}</span>
+                                            <span className="font-semibold text-neutral-800">₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                         <div className="flex justify-between text-xs text-neutral-500">
                                             <span>VAT (12%)</span>
-                                            <span className="font-semibold text-neutral-800">₱{vat.toLocaleString()}</span>
+                                            <span className="font-semibold text-neutral-800">₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                         <div className="flex justify-between text-xs text-neutral-500">
                                             <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                            <span className="font-semibold text-neutral-800">{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString()}`}</span>
+                                            <span className="font-semibold text-neutral-800">{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
                                         </div>
                                         {deliveryDistanceMessage && (
                                             <p role="status" className="text-[11px] text-amber-700">
@@ -3322,7 +3332,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         )}
                                         <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
                                             <span>Total Amount</span>
-                                            <span className="text-orange-600 font-black">₱{total.toLocaleString()}</span>
+                                            <span className="text-orange-600 font-black">₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
 
@@ -3348,7 +3358,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             {/* 1. WAITING FOR ASSISTANT AUTHORIZATION POPUP MODAL */}
             {isWaitingModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
-                <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
                         <button
                             onClick={() => setIsWaitingModalOpen(false)}
@@ -3393,7 +3403,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (
-                <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
                         {/* Close button */}
                         <button
@@ -3434,7 +3444,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <div className="space-y-1 text-xs text-blue-950">
                                         <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
                                         <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
-                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString()}</strong></p>
+                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
                                     </div>
                                 </div>
 
@@ -3600,7 +3610,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             {/* Account Required for Checkout Modal */}
             {isAuthModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200">
                     <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-neutral-100 relative text-center">
                         <h3 className="text-xl font-extrabold text-neutral-900 mb-2">
                             Account Required for Checkout
@@ -3631,7 +3641,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             {/* Refund Transaction Proof Fullscreen Modal */}
             {previewScreenshotUrl && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs animate-in fade-in"
+                    className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 animate-in fade-in"
                     onClick={() => setPreviewScreenshotUrl(null)}
                 >
                     <div

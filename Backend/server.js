@@ -11,7 +11,10 @@ import salesRoutes from './src/routes/salesRoutes.js';
 import authRoutes from './src/routes/authRoutes.js';
 import userFlowRoutes from './src/routes/userFlowRoutes.js';
 import tableRoutes from './src/routes/tableRoutes.js';
+import backupRoutes from './src/routes/backupRoutes.js';
+import exportRoutes from './src/routes/exportRoutes.js';
 import { runMigrations } from './src/migrations/migrate.js';
+import { initBackupScheduler } from './src/services/backupService.js';
 import { apiLimiter, authLimiter, orderLimiter } from './src/middleware/rateLimiter.js';
 
 dotenv.config();
@@ -102,7 +105,9 @@ app.get('/api/health', (req, res) => {
       'Rider Delivery Service',
       'Assistant Floor Calls',
       'Sales Reports & Analytics',
-      'User Authentication'
+      'User Authentication',
+      'Automated Database Backups',
+      'Historical Transactions Excel Export'
     ]
   });
 });
@@ -117,6 +122,8 @@ app.use('/api', salesRoutes);
 app.use('/api', authRoutes);
 app.use('/api', tableRoutes);
 app.use('/api', userFlowRoutes);
+app.use('/api', backupRoutes);
+app.use('/api', exportRoutes);
 
 // Fallback route for unknown requests
 app.use((req, res) => {
@@ -138,6 +145,13 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     runMigrations().catch((mErr) => {
       console.warn('[WARN] Auto-migration startup note:', mErr.message);
     });
+
+    // Initialize automated 30-day rolling database backup scheduler
+    try {
+      initBackupScheduler();
+    } catch (schedErr) {
+      console.error('[ERROR] Failed to initialize backup scheduler:', schedErr.message);
+    }
   });
 });
 

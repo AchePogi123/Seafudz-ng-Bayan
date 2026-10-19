@@ -1,6 +1,9 @@
 # Use Node 22 Alpine to satisfy engine requirements for @supabase and @google-cloud/cloud-sql-connector
 FROM node:22-alpine
 
+# Install postgresql-client for pg_dump database backup tools
+RUN apk add --no-cache postgresql-client
+
 # Set working directory
 WORKDIR /app
 

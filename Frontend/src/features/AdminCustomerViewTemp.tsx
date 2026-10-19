@@ -162,7 +162,7 @@ export const AdminCustomerView: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="p-4 font-extrabold text-orange-600">
-                                                ₱{customer.totalSpent.toLocaleString()}
+                                                ₱{customer.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </td>
                                             <td className="p-4">
                                                 <span
@@ -251,7 +251,7 @@ export const AdminCustomerView: React.FC = () => {
                                     <div className="bg-neutral-50 p-3 rounded-2xl border border-neutral-100">
                                         <p className="text-[10px] font-bold text-slate-400 uppercase">Total Lifetime Spent</p>
                                         <p className="text-base font-black text-orange-600 mt-1">
-                                            ₱{selectedCustomer.totalSpent.toLocaleString()}
+                                            ₱{selectedCustomer.totalSpent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </p>
                                     </div>
                                 </div>

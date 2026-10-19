@@ -1552,7 +1552,7 @@ const AdminDashboard: React.FC = () => {
                                                 {/* Tooltip */}
                                                 {isHovered && (
                                                     <div className="absolute -top-12 bg-slate-900 text-white text-[11px] font-extrabold px-3 py-1.5 rounded-xl shadow-lg z-20 whitespace-nowrap animate-in fade-in">
-                                                        ₱{bucket.revenue.toLocaleString()} ({bucket.ordersCount} {bucket.ordersCount === 1 ? 'order' : 'orders'})
+                                                        ₱{bucket.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({bucket.ordersCount} {bucket.ordersCount === 1 ? 'order' : 'orders'})
                                                     </div>
                                                 )}
 
@@ -1575,7 +1575,7 @@ const AdminDashboard: React.FC = () => {
 
                         <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
                             <span className="font-semibold text-slate-600">
-                                Period Total: <strong className="text-orange-600 font-extrabold">₱{totalLiveRevenue.toLocaleString()} Revenue</strong>
+                                Period Total: <strong className="text-orange-600 font-extrabold">₱{totalLiveRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Revenue</strong>
                             </span>
                             <span className="text-[11px] text-slate-400">Interactive Hover Activated</span>
                         </div>
@@ -1599,22 +1599,22 @@ const AdminDashboard: React.FC = () => {
                                     <div
                                         className="bg-amber-500 h-full rounded-l-full transition-all duration-500"
                                         style={{ width: `${posRevenuePercent}%` }}
-                                        title={`POS Revenue: ₱${posRevenue.toLocaleString()}`}
+                                        title={`POS Revenue: ₱${posRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                     ></div>
                                     <div
                                         className="bg-emerald-500 h-full rounded-r-full transition-all duration-500"
                                         style={{ width: `${deliveryRevenuePercent}%` }}
-                                        title={`Delivery Revenue: ₱${deliveryRevenue.toLocaleString()}`}
+                                        title={`Delivery Revenue: ₱${deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                     ></div>
                                 </div>
                                 <div className="flex justify-between text-[11px] font-semibold text-slate-500">
                                     <span className="flex items-center gap-1.5">
                                         <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                                        POS Store (₱{posRevenue.toLocaleString()})
+                                        POS Store (₱{posRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                     </span>
                                     <span className="flex items-center gap-1.5">
                                         <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                        Delivery (₱{deliveryRevenue.toLocaleString()})
+                                        Delivery (₱{deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                     </span>
                                 </div>
                             </div>
@@ -1629,7 +1629,7 @@ const AdminDashboard: React.FC = () => {
                                             <span className="font-bold text-slate-700">{pm.name}</span>
                                         </div>
                                         <div className="text-right font-extrabold">
-                                            <span className="text-slate-900 block">₱{pm.amount.toLocaleString()}</span>
+                                            <span className="text-slate-900 block">₱{pm.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             <span className="text-[10px] text-slate-400 font-semibold">{pm.pct}% share</span>
                                         </div>
                                     </div>
@@ -1667,7 +1667,7 @@ const AdminDashboard: React.FC = () => {
                                             <span>{cat.category}</span>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-slate-400 text-[11px] font-normal">{cat.percentage}%</span>
-                                                <span className="text-orange-600 font-extrabold">₱{cat.revenue.toLocaleString()}</span>
+                                                <span className="text-orange-600 font-extrabold">₱{cat.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                             </div>
                                         </div>
                                         <div className="bg-slate-100 rounded-full h-2.5 overflow-hidden">
@@ -1903,10 +1903,10 @@ const AdminDashboard: React.FC = () => {
                                                         </div>
                                                         <div className="shrink-0 text-right">
                                                             <span className="inline-flex rounded-xl border border-orange-100 bg-orange-50 px-2.5 py-1.5 text-sm font-extrabold tabular-nums text-orange-700">
-                                                                ₱{currentPrice.toLocaleString()}
+                                                                ₱{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </span>
                                                             <p className={`mt-1 text-[10px] font-semibold ${isCustom ? 'text-amber-700' : 'text-slate-400'}`}>
-                                                                {isCustom ? `Base ₱${item.price.toLocaleString()}` : 'Edit price'}
+                                                                {isCustom ? `Base ₱${item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Edit price'}
                                                             </p>
                                                         </div>
                                                         <svg className="ml-1 h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-orange-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
@@ -2088,7 +2088,7 @@ const AdminDashboard: React.FC = () => {
                                                             </span>
                                                         </td>
                                                         <td className="whitespace-nowrap px-4 py-3.5 text-right font-extrabold tabular-nums text-orange-700">
-                                                            ₱{Number(tx.total || 0).toLocaleString()}
+                                                            ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                         </td>
                                                         <td className="px-4 py-3.5 text-center">
                                                             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-extrabold text-emerald-700">
@@ -2493,7 +2493,7 @@ const AdminDashboard: React.FC = () => {
                                     <input
                                         type="number"
                                         min="1"
-                                        step="1"
+                                        step="0.01"
                                         value={newPriceInput}
                                         onChange={(e) => setNewPriceInput(e.target.value)}
                                         className="w-full pl-8 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white font-extrabold text-slate-800 text-sm focus:outline-none focus:border-orange-500"
@@ -2501,7 +2501,7 @@ const AdminDashboard: React.FC = () => {
                                     />
                                 </div>
                                 <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
-                                    <span>Default Base Price: ₱{selectedProduct.price}</span>
+                                    <span>Default Base Price: ₱{Number(selectedProduct.price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     {getEffectivePrice(selectedProduct.id, selectedProduct.price) !== selectedProduct.price && (
                                         <button
                                             type="button"

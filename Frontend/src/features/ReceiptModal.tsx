@@ -53,9 +53,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
 
   const rawSubtotal = typeof subtotal === 'number'
     ? subtotal
-    : cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
+    : cartItems.reduce((acc, ci) => {
+        const basePrice = (ci.item as any).basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+        return acc + basePrice * ci.quantity
+      }, 0)
   const vatAmount = typeof vat === 'number' ? vat : rawSubtotal * 0.12
-  const formattedTotal = Math.round(total)
   const dateStr = new Date().toLocaleString()
 
   const handlePrint = () => {
@@ -128,7 +130,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
                   <tr>
                     <td>${ci.item.name}</td>
                     <td class="text-center">x${ci.quantity}</td>
-                    <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString()}</td>
+                    <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 `
           )
@@ -139,10 +141,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
             <div class="divider"></div>
 
             <div>
-              <div class="flex-row"><span>Subtotal:</span><span>₱${Math.round(rawSubtotal).toLocaleString()}</span></div>
-              <div class="flex-row"><span>VAT (12%):</span><span>₱${Math.round(vatAmount).toLocaleString()}</span></div>
-              ${deliveryFee > 0 ? `<div class="flex-row"><span>Delivery Fee:</span><span>₱${Math.round(deliveryFee).toLocaleString()}</span></div>` : ''}
-              <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${formattedTotal.toLocaleString()}</span></div>
+              <div class="flex-row"><span>Subtotal:</span><span>₱${rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+              <div class="flex-row"><span>VAT (12%):</span><span>₱${vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+              ${deliveryFee > 0 ? `<div class="flex-row"><span>Delivery Fee:</span><span>₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
+              <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
             </div>
 
             <div class="divider"></div>
@@ -151,8 +153,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
               <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
               ${paymentMethod === 'Cash' && cashReceived
           ? `
-                <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString()}</span></div>
-                <div class="flex-row font-bold"><span>Change Due:</span><span>₱${change ? Math.round(change).toLocaleString() : '0'}</span></div>
+                <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                <div class="flex-row font-bold"><span>Change Due:</span><span>₱${(change !== null && change !== undefined ? Number(change) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
               `
           : ''
         }
@@ -276,7 +278,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
                   <span className="w-[55%] truncate">{item.item.name}</span>
                   <span className="w-[15%] text-center text-neutral-400">x{item.quantity}</span>
                   <span className="w-[30%] text-right text-neutral-800">
-                    ₱{(item.item.price * item.quantity).toLocaleString()}
+                    ₱{(item.item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               ))}
@@ -288,21 +290,21 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
             <div className="space-y-1 text-[11px] font-bold text-neutral-600">
               <div className="flex justify-between">
                 <span>Subtotal</span>
-                <span className="text-neutral-800">₱{Math.round(rawSubtotal).toLocaleString()}</span>
+                <span className="text-neutral-800">₱{rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               <div className="flex justify-between">
                 <span>VAT (12%)</span>
-                <span className="text-neutral-800">₱{Math.round(vatAmount).toLocaleString()}</span>
+                <span className="text-neutral-800">₱{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               {deliveryFee > 0 && (
                 <div className="flex justify-between">
                   <span>Delivery Fee</span>
-                  <span className="text-neutral-800">₱{Math.round(deliveryFee).toLocaleString()}</span>
+                  <span className="text-neutral-800">₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="flex justify-between text-sm font-black text-[#ff7a00] pt-1">
                 <span>TOTAL DUE</span>
-                <span>₱{formattedTotal.toLocaleString()}</span>
+                <span>₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
             </div>
 
@@ -318,11 +320,11 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
                 <>
                   <div className="flex justify-between">
                     <span>Cash Received:</span>
-                    <span className="text-neutral-800">₱{parseFloat(cashReceived).toLocaleString()}</span>
+                    <span className="text-neutral-800">₱{parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-[12px] font-black text-emerald-600">
                     <span>Change Due:</span>
-                    <span>₱{change ? Math.round(change).toLocaleString() : '0'}</span>
+                    <span>₱{(change !== null && change !== undefined ? Number(change) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </>
               )}

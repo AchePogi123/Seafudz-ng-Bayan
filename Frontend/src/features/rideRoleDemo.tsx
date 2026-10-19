@@ -657,7 +657,7 @@ export const RideRoleDemo: React.FC = () => {
                             <span>
                               {ord.deliveryFee === null
                                 ? 'Outside 8 km delivery limit'
-                                : `Delivery fee ₱${ord.deliveryFee?.toLocaleString()}`}
+                                : `Delivery fee ₱${ord.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </span>
                           </div>
                         </div>
@@ -668,7 +668,7 @@ export const RideRoleDemo: React.FC = () => {
                         </div>
 
                         <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString()}</span>
+                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                           <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                         </div>
                       </div>
@@ -763,7 +763,7 @@ export const RideRoleDemo: React.FC = () => {
                   <p className="mt-0.5 font-bold text-orange-700">
                     {activeCustomerDetailsOrder.deliveryFee === null
                       ? 'Outside delivery range'
-                      : `₱${activeCustomerDetailsOrder.deliveryFee?.toLocaleString()}`}
+                      : `₱${activeCustomerDetailsOrder.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </p>
                 </div>
               </div>
@@ -780,7 +780,7 @@ export const RideRoleDemo: React.FC = () => {
               </div>
               <div className="flex justify-between border-t border-neutral-100 pt-3 font-bold">
                 <span>Order total</span>
-                <span>₱{activeCustomerDetailsOrder.total.toLocaleString()}</span>
+                <span>₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
               {activeCustomerDetailsOrder.status === 'Ready' && (
                 <button

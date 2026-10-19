@@ -82,7 +82,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
             </span>
           )}
           <p className="text-[11px] text-neutral-400 font-medium mt-0.5">
-            ₱{item.price.toLocaleString()}
+            ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
       </div>
@@ -122,7 +122,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
 
         {/* Total Calculated Price */}
         <span className="font-bold text-neutral-900 text-xs sm:text-sm text-right whitespace-nowrap min-w-[50px]">
-          ₱{(item.price * quantity).toLocaleString()}
+          ₱{(item.price * quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
 
         {/* Remove Button */}

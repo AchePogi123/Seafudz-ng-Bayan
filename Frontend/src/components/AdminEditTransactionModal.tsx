@@ -206,6 +206,7 @@ export const AdminEditTransactionModal: React.FC<AdminEditTransactionModalProps>
               <label className="block font-bold text-neutral-700 mb-1">Total Price (₱)</label>
               <input
                 type="number"
+                step="0.01"
                 value={total}
                 onChange={(e) => setTotal(Number(e.target.value) || 0)}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-orange-500 font-bold text-orange-600"

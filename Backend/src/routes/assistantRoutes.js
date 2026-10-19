@@ -919,7 +919,7 @@ router.patch('/assistant/orders/:id/verify-additional-payment', optionalAuth, as
 
     return res.status(200).json({
       success: true,
-      message: `Additional payment of ₱${parseFloat(rows[0].amount).toLocaleString()} verified for order #${id}.`,
+      message: `Additional payment of ₱${parseFloat(rows[0].amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} verified for order #${id}.`,
       data: formatted,
     });
   } catch (error) {

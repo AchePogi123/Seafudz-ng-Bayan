@@ -118,7 +118,7 @@ export const Platter3DCard: React.FC<Platter3DCardProps> = ({
           >
             <div className="flex items-baseline gap-2">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Starting</span>
-              <span className="text-lg font-black text-slate-900">₱{price.toLocaleString()}</span>
+              <span className="text-lg font-black text-slate-900">₱{price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               <span className="text-[11px] font-semibold text-orange-600">• {serves}</span>
             </div>
           </div>

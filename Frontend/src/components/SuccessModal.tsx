@@ -76,7 +76,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   const handleConfirm = () => {
     if (hasUnavailableItems) return
     if (paymentMethod === 'Hybrid') {
-      const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString()} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString()})`
+      const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
       onConfirm(parsedHybridCash.toString(), 0, hybridLabel)
     } else {
       onConfirm(cashReceived, change, paymentMethod)
@@ -153,7 +153,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                 HYBRID SPLIT PAYMENT
               </h3>
               <span className="text-[11px] font-bold text-neutral-500">
-                Target: <strong className="text-purple-700 font-black">₱{totalAmount.toLocaleString()}</strong>
+                Target: <strong className="text-purple-700 font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
               </span>
             </div>
 
@@ -207,7 +207,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             {/* Split Status indicator */}
             <div className="pt-2 border-t border-purple-100 flex items-center justify-between text-xs">
               <span className="text-[11px] font-bold text-neutral-600">
-                Split Total: <strong>₱{hybridTotalEntered.toLocaleString()}</strong> / ₱{totalAmount.toLocaleString()}
+                Split Total: <strong>₱{hybridTotalEntered.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> / ₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               {isHybridComplete ? (
                 <span className="text-[11px] font-black text-emerald-600 flex items-center gap-1">
@@ -216,8 +216,8 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
               ) : (
                 <span className="text-[11px] font-black text-rose-600">
                   {hybridTotalEntered < totalAmount
-                    ? `Remaining: ₱${hybridBalanceRemaining.toLocaleString()}`
-                    : `Over by: ₱${(hybridTotalEntered - totalAmount).toLocaleString()}`}
+                    ? `Remaining: ₱${hybridBalanceRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : `Over by: ₱${(hybridTotalEntered - totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </span>
               )}
             </div>
@@ -255,7 +255,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                 <div className="bg-white border border-amber-200 rounded-xl px-3 py-2 flex items-center justify-between">
                   <span className="text-xs font-bold text-neutral-400">₱</span>
                   <span className="text-sm font-black text-emerald-600">
-                    {change !== null ? `₱${Math.round(change).toLocaleString()}` : '₱0'}
+                    {change !== null ? Number(change).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
                   </span>
                 </div>
               </div>
@@ -282,7 +282,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                     onClick={() => handlePresetClick(amt)}
                     className="px-3 py-1.5 bg-white border border-neutral-200 hover:border-orange-500 rounded-xl text-xs font-bold text-neutral-700 transition-all hover:bg-orange-50/30 active:scale-95 cursor-pointer shadow-2xs"
                   >
-                    ₱{amt}
+                    ₱{amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </button>
                 ))}
               </div>
@@ -290,7 +290,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             {/* Alert for Insufficient cash */}
             {cashReceived && change === null && parseFloat(cashReceived) < totalAmount && (
               <p className="text-[11px] font-bold text-red-600 flex items-center gap-1 pt-1">
-                Cash received is less than total amount (₱{totalAmount.toLocaleString()})
+                Cash received is less than total amount (₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
               </p>
             )}
           </div>
@@ -310,7 +310,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           </div>
           <div className="pt-2.5 border-t border-neutral-200/60 flex justify-between items-center font-bold text-emerald-600">
             <span className="text-xs font-bold">Amount Paid</span>
-            <span className="text-base font-black">₱{totalAmount.toLocaleString()}</span>
+            <span className="text-base font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
         </div>
 
@@ -325,7 +325,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                 )}
               </span>
               <span className="font-bold text-neutral-900">
-                ₱{(cartItem.item.price * cartItem.quantity).toLocaleString()}
+                ₱{(cartItem.item.price * cartItem.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
           ))}

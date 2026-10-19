@@ -7,6 +7,7 @@ export interface MenuItem {
   name: string
   description: string
   price: number
+  basePrice?: number
   category: string
   image: string
   bundledImage?: string
@@ -476,7 +477,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
               <input
                 type="number"
                 min="0"
-                step="1"
+                step="0.01"
                 autoFocus
                 value={tempPrice}
                 onChange={(e) => setTempPrice(e.target.value)}
@@ -506,7 +507,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
                 className={`font-extrabold text-base sm:text-lg shrink-0 ${!isAvailable ? 'text-neutral-400' : 'text-neutral-900'
                   }`}
               >
-                ₱{item.price.toLocaleString()}
+                ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
               {allowPriceEdit && canEditPrice && (
                 <button

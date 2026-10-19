@@ -712,7 +712,7 @@ export const AccMan: React.FC = () => {
                                                         {order.status}
                                                     </span>
                                                     <span className="font-extrabold text-orange-600 text-sm">
-                                                        ₱{order.total.toLocaleString()}
+                                                        ₱{Number(order.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                 </div>
                                             </div>

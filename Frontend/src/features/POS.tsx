@@ -504,16 +504,24 @@ export const POS: React.FC = () => {
   }, [cartItems])
 
   const totalCartPrice = useMemo(() => {
-    const rawSubtotal = cartItems.reduce((acc, item) => acc + item.item.price * item.quantity, 0)
+    const rawSubtotal = cartItems.reduce((acc, item) => {
+      const basePrice = item.item.basePrice || Math.round((item.item.price / 1.12) * 100) / 100
+      return acc + basePrice * item.quantity
+    }, 0)
     return Math.round(rawSubtotal * 1.12)
   }, [cartItems])
 
+  // Filters: Menu Display Price = Base Price + 12% VAT (same as customer side, e.g. 199 + 12% VAT = ₱223)
   const filteredItems = useMemo(() => {
     return menuItems
-      .map((item) => ({
-        ...item,
-        price: getEffectivePrice(item.id, item.price),
-      }))
+      .map((item) => {
+        const basePrice = getEffectivePrice(item.id, item.price)
+        return {
+          ...item,
+          basePrice,
+          price: Math.round(basePrice * 1.12),
+        }
+      })
       .filter((item) => {
         const matchesSearch =
           item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -529,24 +537,33 @@ export const POS: React.FC = () => {
   }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
 
   const handlePriceUpdate = (item: MenuItem, newPrice: number) => {
-    updatePrice(item.id, newPrice)
+    const basePrice = Math.round((newPrice / 1.12) * 100) / 100
+    updatePrice(item.id, basePrice)
     setCartItems((prev) =>
       prev.map((ci) =>
-        ci.item.id === item.id ? { ...ci, item: { ...ci.item, price: newPrice } } : ci
+        ci.item.id === item.id ? { ...ci, item: { ...ci.item, basePrice, price: newPrice } } : ci
       )
     )
   }
 
   const handleAddToCart = (item: MenuItem) => {
     if (!isAvailable(item.id)) return
+    const basePrice = item.basePrice || getEffectivePrice(item.id, item.price)
+    const effectiveItem: MenuItem = {
+      ...item,
+      basePrice,
+      price: typeof item.basePrice === 'number' && item.price !== basePrice
+        ? item.price
+        : Math.round(basePrice * 1.12),
+    }
     setCartItems((prevItems) => {
       const existing = prevItems.find((ci) => ci.item.id === item.id)
       if (existing) {
         return prevItems.map((ci) =>
-          ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci
+          ci.item.id === item.id ? { ...ci, item: effectiveItem, quantity: ci.quantity + 1 } : ci
         )
       }
-      return [...prevItems, { item, quantity: 1 }]
+      return [...prevItems, { item: effectiveItem, quantity: 1 }]
     })
   }
 
@@ -593,12 +610,18 @@ export const POS: React.FC = () => {
       return
     }
 
-    const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
-    const totalWithVat = Math.round(rawSubtotal * 1.12)
+    const rawSubtotal = cartItems.reduce((acc, ci) => {
+      const basePrice = ci.item.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+      return acc + basePrice * ci.quantity
+    }, 0)
+    const vat = rawSubtotal * 0.12
+    const totalWithVat = Math.round(rawSubtotal + vat)
 
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
+      subtotal: rawSubtotal,
+      vat,
       total: totalWithVat,
       cartItems: [...cartItems],
       notes: orderNotes,
@@ -628,7 +651,10 @@ export const POS: React.FC = () => {
       setIsSuccessModalOpen(false)
       return
     }
-    const rawSubtotal = cartItems.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
+    const rawSubtotal = cartItems.reduce((acc, ci) => {
+      const basePrice = ci.item.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+      return acc + basePrice * ci.quantity
+    }, 0)
     const vat = rawSubtotal * 0.12
     const total = Math.round(rawSubtotal + vat)
     const orderId = `POS-${Date.now().toString().slice(-4)}`
@@ -643,7 +669,7 @@ export const POS: React.FC = () => {
       paymentMethod,
       notes: orderNotes,
       subtotal: rawSubtotal,
-      vat: Math.round(vat),
+      vat: Math.round(vat * 100) / 100,
       deliveryFee: 0,
       total,
       cartItems: cartItems.map((ci) => ({
@@ -706,6 +732,8 @@ export const POS: React.FC = () => {
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
+      subtotal: rawSubtotal,
+      vat,
       total,
       cartItems: [...cartItems],
       notes: orderNotes,
@@ -961,7 +989,7 @@ export const POS: React.FC = () => {
                             ord.cartItems.map((ci: any, idx: number) => (
                               <div key={idx} className="flex justify-between items-center text-xs">
                                 <span>{ci.item?.name || ci.name} <strong className="text-neutral-900">x{ci.quantity}</strong></span>
-                                <span className="font-bold text-neutral-500">₱{((ci.item?.price || ci.price || 0) * ci.quantity).toLocaleString()}</span>
+                                <span className="font-bold text-neutral-500">₱{((ci.item?.price || ci.price || 0) * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                             ))
                           ) : (
@@ -978,7 +1006,7 @@ export const POS: React.FC = () => {
                         {/* Total & Payment mode */}
                         <div className="flex justify-between items-center text-xs pt-1">
                           <span className="text-neutral-500 font-semibold">Payment: <strong className="text-neutral-800">{ord.paymentMethod || 'Paid (POS)'}</strong></span>
-                          <span className="text-base font-black text-orange-600">₱{Number(ord.total || 0).toLocaleString()}</span>
+                          <span className="text-base font-black text-orange-600">₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                       </div>
 
@@ -1236,7 +1264,7 @@ export const POS: React.FC = () => {
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-bold text-neutral-500">Total Amount:</span>
                           <span className="text-base font-black text-neutral-900 font-mono">
-                            ₱{Math.round(ord.total || 0).toLocaleString()}
+                            ₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
 
@@ -1284,7 +1312,7 @@ export const POS: React.FC = () => {
               <span className="text-sm font-medium">View Order</span>
             </div>
             <span className="text-sm font-bold">
-              ₱{totalCartPrice.toLocaleString()}
+              ₱{totalCartPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </button>
         </div>

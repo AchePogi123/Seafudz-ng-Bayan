@@ -19,6 +19,58 @@ import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability } from '../utils/menuAvailability'
 
+interface ParsedDishItem {
+  name: string
+  quantity: number
+  price: number
+}
+
+export const parseOrderDishes = (ord: any): ParsedDishItem[] => {
+  if (!ord) return []
+
+  // 1. Array of cartItems
+  if (Array.isArray(ord.cartItems) && ord.cartItems.length > 0) {
+    return ord.cartItems.map((ci: any) => ({
+      name: String(ci.item?.name || ci.name || ci.product_name_snapshot || 'Menu Dish'),
+      quantity: Math.max(1, Number(ci.quantity || 1)),
+      price: Number(ci.item?.price || ci.unit_price || ci.price || 0),
+    }))
+  }
+
+  // 2. Array of items (from DB or state)
+  if (Array.isArray(ord.items) && ord.items.length > 0) {
+    return ord.items.map((it: any) => {
+      if (typeof it === 'string') {
+        const match = it.match(/^(.*?)(?:\s+x(\d+))?$/)
+        return {
+          name: match ? match[1].trim() : it.trim(),
+          quantity: match && match[2] ? parseInt(match[2], 10) : 1,
+          price: 0,
+        }
+      }
+      return {
+        name: String(it.name || it.product_name_snapshot || it.item?.name || 'Menu Dish'),
+        quantity: Math.max(1, Number(it.quantity || 1)),
+        price: Number(it.unit_price || it.price || 0),
+      }
+    })
+  }
+
+  // 3. Comma-separated string format e.g. "Mixed Seafoods x2, Rice x1"
+  if (typeof ord.items === 'string' && ord.items.trim()) {
+    return ord.items.split(',').map((part: string) => {
+      const match = part.trim().match(/^(.*?)(?:\s+x(\d+))?$/)
+      return {
+        name: match ? match[1].trim() : part.trim(),
+        quantity: match && match[2] ? parseInt(match[2], 10) : 1,
+        price: 0,
+      }
+    })
+  }
+
+  return []
+}
+
 export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
@@ -136,19 +188,51 @@ export const POS: React.FC = () => {
   }
 
   // Fetch On-Site POS Orders for Cashier Sub-Module
-  const fetchPosOrders = useCallback(() => {
+  const fetchPosOrders = useCallback(async () => {
     try {
-      const stored = localStorage.getItem('seafudz_orders')
-      if (!stored) {
-        setPosOrders([])
-        return
-      }
-      const parsed = JSON.parse(stored)
-      if (!Array.isArray(parsed)) return
+      // 1. Read local storage
+      let localOrders: any[] = []
+      try {
+        const stored = localStorage.getItem('seafudz_orders')
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          if (Array.isArray(parsed)) localOrders = parsed
+        }
+      } catch {}
+
+      // 2. Fetch from backend API for production synchronization
+      let apiOrders: any[] = []
+      try {
+        const authHeaders = await getAuthHeaders()
+        const res = await fetch(`${API_BASE_URL}/orders?limit=100`, { headers: authHeaders }).catch(() => null)
+        if (res && res.ok) {
+          const json = await res.json()
+          if (json.success && Array.isArray(json.data)) {
+            apiOrders = json.data
+          }
+        }
+      } catch {}
+
+      // 3. Merge by ID
+      const orderMap = new Map<string, any>()
+      apiOrders.forEach((o: any) => {
+        const id = String(o.id || o.ref || '')
+        if (id) orderMap.set(id, o)
+      })
+      localOrders.forEach((o: any) => {
+        const id = String(o.id || o.ref || '')
+        if (id) {
+          const existing = orderMap.get(id) || {}
+          orderMap.set(id, { ...existing, ...o })
+        }
+      })
 
       // STRICT FILTER: Only On-Site POS orders (Dine In & Take Out / isPosOrder / Walk-In)
-      const onSiteOrders = parsed.filter((o: any) => {
+      const onSiteOrders = Array.from(orderMap.values()).filter((o: any) => {
         const rawType = (o.type || o.order_type || '').toLowerCase()
+        const isDelivery = rawType.includes('delivery') || Boolean(o.deliveryAddress && o.customer !== 'Walk-In')
+        if (isDelivery) return false
+
         const isPos = Boolean(
           o.isPosOrder ||
           o.is_pos_order ||
@@ -528,10 +612,10 @@ export const POS: React.FC = () => {
       if (!posSearchQuery.trim()) return true
       const q = posSearchQuery.toLowerCase()
       const ref = (o.ref || o.id || '').toLowerCase()
-      const items = String(o.items || '').toLowerCase()
+      const dishesStr = parseOrderDishes(o).map((d) => d.name).join(' ').toLowerCase()
       const notes = (o.notes || '').toLowerCase()
       const type = (o.type || '').toLowerCase()
-      return ref.includes(q) || items.includes(q) || notes.includes(q) || type.includes(q)
+      return ref.includes(q) || dishesStr.includes(q) || notes.includes(q) || type.includes(q)
     })
   }, [posOrders, posStatusFilter, posSearchQuery])
 
@@ -1002,12 +1086,12 @@ export const POS: React.FC = () => {
                         <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
                           <div>
                             <span className="text-xs font-black uppercase text-orange-600 tracking-wider">
-                              REF: {ord.ref || ord.id}
+                              REF: {String(ord.ref || ord.id || 'N/A')}
                             </span>
                             <h4 className="font-extrabold text-neutral-900 text-base mt-0.5">
-                              {ord.type || 'On-Site Order'}
+                              {String(ord.type || 'On-Site Order')}
                             </h4>
-                            <p className="text-[11px] text-neutral-400 font-medium">Placed {ord.dateTime || 'Just now'}</p>
+                            <p className="text-[11px] text-neutral-400 font-medium">Placed {String(ord.dateTime || 'Just now')}</p>
                           </div>
 
                           {/* Status Badge */}
@@ -1031,28 +1115,41 @@ export const POS: React.FC = () => {
                         {/* Items Breakdown */}
                         <div className="space-y-1 text-xs text-neutral-700 font-medium bg-neutral-50 p-3 rounded-2xl border border-neutral-100">
                           <p className="font-bold text-neutral-400 uppercase text-[10px] tracking-wider mb-1">Ordered Dishes:</p>
-                          {Array.isArray(ord.cartItems) ? (
-                            ord.cartItems.map((ci: any, idx: number) => (
+                          {(() => {
+                            const dishes = parseOrderDishes(ord)
+                            if (dishes.length === 0) {
+                              return <p className="text-neutral-400 italic text-[11px]">No item details recorded</p>
+                            }
+                            return dishes.map((d, idx) => (
                               <div key={idx} className="flex justify-between items-center text-xs">
-                                <span>{ci.item?.name || ci.name} <strong className="text-neutral-900">x{ci.quantity}</strong></span>
-                                <span className="font-bold text-neutral-500">₱{((ci.item?.price || ci.price || 0) * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                <span>{d.name} <strong className="text-neutral-900">x{d.quantity}</strong></span>
+                                {d.price > 0 ? (
+                                  <span className="font-bold text-neutral-500">
+                                    ₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                ) : (
+                                  <span className="text-neutral-400 text-[11px]">-</span>
+                                )}
                               </div>
                             ))
-                          ) : (
-                            <p>{ord.items}</p>
-                          )}
+                          })()}
 
                           {ord.notes && (
                             <p className="text-orange-600 text-[11px] font-semibold pt-1 border-t border-neutral-200 mt-1">
-                              Note: "{ord.notes}"
+                              Note: "{String(ord.notes)}"
                             </p>
                           )}
                         </div>
 
                         {/* Total & Payment mode */}
                         <div className="flex justify-between items-center text-xs pt-1">
-                          <span className="text-neutral-500 font-semibold">Payment: <strong className="text-neutral-800">{ord.paymentMethod || 'Paid (POS)'}</strong></span>
-                          <span className="text-base font-black text-orange-600">₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <span className="text-neutral-500 font-semibold">Payment: <strong className="text-neutral-800">{String(ord.paymentMethod || 'Paid (POS)')}</strong></span>
+                          <span className="text-base font-black text-orange-600">
+                            ₱{(() => {
+                              const t = typeof ord.total === 'number' ? ord.total : parseFloat(String(ord.total || 0).replace(/[^0-9.-]+/g, '')) || 0
+                              return t.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                            })()}
+                          </span>
                         </div>
                       </div>
 

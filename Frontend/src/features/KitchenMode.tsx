@@ -123,6 +123,34 @@ export const KitchenMode: React.FC = () => {
 
           const calcTotal = parseFloat(o.total || 0)
 
+          let parsedItems: OrderItem[] = []
+          if (Array.isArray(o.cartItems) && o.cartItems.length > 0) {
+            parsedItems = o.cartItems.map((ci: any) => ({
+              id: ci.id,
+              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
+              name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Food Item',
+              quantity: Number(ci.quantity || 1),
+              price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
+            }))
+          } else if (Array.isArray(o.items) && o.items.length > 0) {
+            parsedItems = o.items.map((ci: any) => ({
+              id: ci.id,
+              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
+              name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Food Item',
+              quantity: Number(ci.quantity || 1),
+              price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
+            }))
+          } else if (typeof o.items === 'string' && o.items.trim()) {
+            parsedItems = o.items.split(',').map((part: string, idx: number) => {
+              const match = part.trim().match(/^(.*?)(?:\s+x(\d+))?$/)
+              return {
+                id: idx + 1,
+                name: match ? match[1].trim() : part.trim(),
+                quantity: match && match[2] ? parseInt(match[2], 10) : 1,
+              }
+            })
+          }
+
           return {
             id: o.id || o.ref || `ORD-${Math.floor(Math.random() * 1000)}`,
             queue: o.id || o.ref || 'POS',
@@ -131,12 +159,7 @@ export const KitchenMode: React.FC = () => {
             status: mappedStatus,
             customer: customerName,
             total: calcTotal,
-            items: (o.cartItems || o.items || []).map((ci: any) => ({
-              id: ci.id,
-              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
-              name: ci.item?.name || ci.name || 'Food Item',
-              quantity: ci.quantity || 1,
-            })),
+            items: parsedItems,
             notes: o.notes || '',
             createdAt: o.dateTime || o.createdAt || new Date().toISOString(),
           }
@@ -233,18 +256,36 @@ export const KitchenMode: React.FC = () => {
       const fetchedLocalOrders = getLocalOrders()
       const mergedMap = new Map<string, KitchenOrder>()
 
-      // 1. Priority to API orders (Authoritative server truth)
+      // 1. Load server tickets
       fetchedApiOrders.forEach((apiItem) => {
         mergedMap.set(apiItem.id, apiItem)
       })
 
-      // 2. Merge local orders only for orders not yet returned by backend API
-      fetchedLocalOrders.forEach((item) => {
-        const exists = Array.from(mergedMap.values()).some(
-          (api) => api.id === item.id || api.queue === item.queue || api.queue === item.id || api.id === item.queue
+      // 2. Merge local orders: ensure newly modified orders reflect their latest dishes & notes in kitchen
+      fetchedLocalOrders.forEach((localItem) => {
+        const existingApi = Array.from(mergedMap.values()).find(
+          (api) =>
+            api.id === localItem.id ||
+            api.queue === localItem.queue ||
+            api.queue === localItem.id ||
+            api.id === localItem.queue
         )
-        if (!exists) {
-          mergedMap.set(item.id, item)
+        if (!existingApi) {
+          mergedMap.set(localItem.id, localItem)
+        } else {
+          // If local order has modified dishes or notes, update the kitchen ticket
+          if (Array.isArray(localItem.items) && localItem.items.length > 0) {
+            existingApi.items = localItem.items
+          }
+          if (localItem.notes !== undefined) {
+            existingApi.notes = localItem.notes
+          }
+          if (localItem.total !== undefined && localItem.total > 0) {
+            existingApi.total = localItem.total
+          }
+          if (localItem.category) {
+            existingApi.category = localItem.category
+          }
         }
       })
 

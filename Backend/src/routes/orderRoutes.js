@@ -64,7 +64,12 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
              d.rider_id,
              r_emp.fullname AS rider_name,
              t.name AS table_name,
-             p_pay.payment_method,
+             COALESCE(o.payment_method, p_pay.payment_method, 'CASH') AS payment_method,
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS payment_reference,
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS reference_number,
+             COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS payment_receipt,
+             COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS "paymentReceipt",
+             COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
              p_pay.status AS payment_status,
              COUNT(*) OVER() AS full_count,
              COALESCE(
@@ -86,7 +91,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
         FROM deliveries
         ORDER BY order_id, created_at DESC
       ) d ON o.id = d.order_id
@@ -94,7 +99,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products pr ON oi.product_id = pr.id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, payment_method, status
+        SELECT DISTINCT ON (order_id) order_id, payment_method, status, reference_number, payment_receipt
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
@@ -154,7 +159,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       }
     }
 
-    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status ORDER BY o.created_at DESC`;
+    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
 
     const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;
@@ -203,7 +208,13 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
              t.name AS table_name,
-             p_pay.payment_method,
+             COALESCE(o.payment_method, p_pay.payment_method, 'CASH') AS payment_method,
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS payment_reference,
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS reference_number,
+             COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS payment_receipt,
+             COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS "paymentReceipt",
+             COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
+             r_emp.fullname AS rider_name,
              p_pay.status AS payment_status,
              COALESCE(
                json_agg(
@@ -222,15 +233,21 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
              ) AS "items"
       FROM orders o
       LEFT JOIN tables t ON o.table_id = t.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
+        FROM deliveries
+        ORDER BY order_id, created_at DESC
+      ) d ON o.id = d.order_id
+      LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products pr ON oi.product_id = pr.id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, payment_method, status
+        SELECT DISTINCT ON (order_id) order_id, payment_method, status, reference_number, payment_receipt
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
       WHERE o.id = $1
-      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status
+      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, d.rider_cash_received, r_emp.fullname
     `;
     const { rows } = await query(sql, [id]);
 
@@ -261,7 +278,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
   const client = await pool.connect();
 
   try {
-    const { tableId, type, orderType, paymentMethod, notes, customerId, cashierId, assistantId, deliveryAddress } = req.body;
+    const { tableId, type, orderType, paymentMethod, notes, customerId, cashierId, assistantId, deliveryAddress, paymentReference, referenceNumber } = req.body;
+    const finalPaymentRef = paymentReference || referenceNumber || null;
     const cartItems = req.body.cartItems || req.body.items || [];
 
     if (!cartItems || cartItems.length === 0) {
@@ -286,11 +304,18 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
 
     const normalizedOrderType = (type === 'ONLINE' || type === 'Delivery' || orderType === 'ONLINE') ? 'ONLINE' : 'ON_SITE';
 
+    const posStatus = req.body.status ? req.body.status.toUpperCase() : 'CONFIRMED';
     const orderSql = `
       INSERT INTO orders (
         id, customer_id, cashier_id, assistant_id, table_id,
-        order_type, status, subtotal, tax, delivery_fee, total, notes
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        order_type, status, subtotal, tax, delivery_fee, total, notes,
+        payment_reference, payment_method
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      ON CONFLICT (id) DO UPDATE SET
+        payment_reference = COALESCE(EXCLUDED.payment_reference, orders.payment_reference),
+        payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
+        status = EXCLUDED.status,
+        updated_at = NOW()
       RETURNING *
     `;
 
@@ -301,12 +326,14 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       assistantId || null,
       tableId || null,
       normalizedOrderType,
-      'PENDING',
+      posStatus,
       subtotal,
       tax,
       deliveryFee,
       totalAmount,
       notes || null,
+      finalPaymentRef,
+      paymentMethod || 'CASH',
     ]);
 
     const createdOrder = orderRes.rows[0];
@@ -336,19 +363,18 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     }
 
     // Insert payment record
-    const normalizedPaymentMethod = (paymentMethod || 'CASH').toUpperCase();
-    const validPaymentMethods = ['CASH', 'GCASH', 'CARD', 'ONLINE'];
-    const finalPaymentMethod = validPaymentMethods.includes(normalizedPaymentMethod) ? normalizedPaymentMethod : 'CASH';
+    const finalPaymentMethod = paymentMethod || 'CASH';
 
     const paymentSql = `
-      INSERT INTO payments (order_id, payment_method, amount, status, paid_at)
-      VALUES ($1, $2, $3, $4, NOW())
+      INSERT INTO payments (order_id, payment_method, amount, status, reference_number, paid_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
     `;
     await client.query(paymentSql, [
       createdOrder.id,
       finalPaymentMethod,
       totalAmount,
       'PAID',
+      finalPaymentRef,
     ]);
 
     // Create kitchen order ticket for POS and on-site orders
@@ -373,6 +399,24 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         deliveryAddress || 'Standard Delivery Address',
       ]);
     }
+
+    inMemoryOrders.set(createdOrder.id, {
+      id: createdOrder.id,
+      ref: createdOrder.id,
+      customerName: 'Walk-In Customer',
+      customer: 'Walk-In Customer',
+      type: createdOrder.order_type === 'ONLINE' ? 'Delivery' : 'POS Order',
+      orderType: createdOrder.order_type,
+      status: createdOrder.status || 'CONFIRMED',
+      total: totalAmount,
+      subtotal,
+      vat: tax,
+      paymentMethod: finalPaymentMethod,
+      paymentReference: finalPaymentRef,
+      referenceNumber: finalPaymentRef,
+      created_at: createdOrder.created_at || new Date().toISOString(),
+      updated_at: createdOrder.updated_at || new Date().toISOString(),
+    });
 
     await client.query('COMMIT');
     client.release();
@@ -447,7 +491,43 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       total,
       type,
       table,
+      paymentReference,
+      referenceNumber,
+      paymentReceipt,
+      adminOverride,
     } = req.body;
+    const finalRef = (paymentReference || referenceNumber || '').toString().trim() || null;
+    const finalReceipt = paymentReceipt !== undefined ? paymentReceipt : undefined;
+
+    // Check if order is already being processed or prepared in the kitchen
+    const nonModifiableKitchenStatuses = [
+      'PREPARING', 'COOKING', 'IN_PROCESS', 'IN_PREPARATION',
+      'READY', 'PREPARED', 'READY TO SERVE',
+      'COMPLETED', 'SERVED', 'DELIVERED', 'CANCELLED'
+    ];
+    let currentStatus = inMemoryOrders.get(id)?.status;
+    if (!currentStatus) {
+      try {
+        const checkRes = await query('SELECT status FROM orders WHERE id = $1', [id]);
+        if (checkRes.rows.length > 0) {
+          currentStatus = checkRes.rows[0].status;
+        }
+      } catch (err) {
+        console.warn('Status lookup note in orderRoutes PUT:', err.message);
+      }
+    }
+    const normCurrent = (currentStatus || '').toUpperCase();
+    const isAdmin = req.user?.role?.toLowerCase() === 'admin';
+    const isOverride = Boolean(adminOverride);
+    if (!isAdmin || !isOverride) {
+      if (nonModifiableKitchenStatuses.includes(normCurrent)) {
+        return res.status(400).json({
+          success: false,
+          error: 'ORDER_PROCESSING',
+          message: 'This order is already being processed or prepared in the kitchen and can no longer be edited or modified.',
+        });
+      }
+    }
 
     // 1. Update inMemoryOrders if present
     let existingInMemory = inMemoryOrders.get(id) || {};
@@ -465,6 +545,9 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       total: total !== undefined ? total : existingInMemory.total,
       type: type || existingInMemory.type,
       table: table || existingInMemory.table,
+      paymentReference: finalRef || existingInMemory.paymentReference,
+      referenceNumber: finalRef || existingInMemory.referenceNumber || existingInMemory.paymentReference,
+      paymentReceipt: finalReceipt !== undefined ? finalReceipt : existingInMemory.paymentReceipt,
       updated_at: new Date().toISOString(),
     };
     inMemoryOrders.set(id, updatedInMemory);
@@ -473,28 +556,61 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
     try {
       const calcTotal = total !== undefined ? total : (subtotal || 0) + (vat || 0) + (deliveryFee || 0);
 
-      await query(
-        `UPDATE orders
-         SET status = COALESCE($1, status),
-             subtotal = COALESCE($2, subtotal),
-             tax = COALESCE($3, tax),
-             delivery_fee = COALESCE($4, delivery_fee),
-             total = COALESCE($5, total),
-             notes = COALESCE($6, notes),
-             order_type = COALESCE($7, order_type),
-             updated_at = NOW()
-         WHERE id = $8`,
-        [
-          status ? status.toUpperCase() : null,
-          subtotal || null,
-          vat || null,
-          deliveryFee || null,
-          calcTotal || null,
-          notes || null,
-          type || null,
-          id,
-        ]
-      );
+      const checkExists = await query('SELECT id FROM orders WHERE id = $1', [id]);
+      if (checkExists.rows.length === 0) {
+        await query(
+          `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, payment_reference, payment_method, payment_receipt, updated_at)
+           VALUES ($1, COALESCE($2, 'ON_SITE'), COALESCE($3, 'CONFIRMED'), $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+          [
+            id,
+            type || 'ON_SITE',
+            status ? status.toUpperCase() : 'CONFIRMED',
+            subtotal !== undefined && subtotal !== null ? subtotal : 0,
+            vat !== undefined && vat !== null ? vat : 0,
+            deliveryFee !== undefined && deliveryFee !== null ? deliveryFee : 0,
+            calcTotal !== undefined && calcTotal !== null ? calcTotal : 0,
+            notes || null,
+            finalRef,
+            paymentMethod || null,
+            finalReceipt || null,
+          ]
+        );
+        await query(
+          `INSERT INTO kitchen_orders (order_id, status, updated_at)
+           VALUES ($1, 'PENDING', NOW())
+           ON CONFLICT (order_id) DO NOTHING`,
+          [id]
+        );
+      } else {
+        await query(
+          `UPDATE orders
+           SET status = COALESCE($1, status),
+               subtotal = COALESCE($2, subtotal),
+               tax = COALESCE($3, tax),
+               delivery_fee = COALESCE($4, delivery_fee),
+               total = COALESCE($5, total),
+               notes = COALESCE($6, notes),
+               order_type = COALESCE($7, order_type),
+               payment_reference = COALESCE($9, payment_reference),
+               payment_method = COALESCE($10, payment_method),
+               payment_receipt = COALESCE($11, payment_receipt),
+               updated_at = NOW()
+           WHERE id = $8`,
+          [
+            status ? status.toUpperCase() : null,
+            subtotal || null,
+            vat || null,
+            deliveryFee || null,
+            calcTotal || null,
+            notes || null,
+            type || null,
+            id,
+            finalRef,
+            paymentMethod || null,
+            finalReceipt || null,
+          ]
+        );
+      }
 
       // If items provided, recreate order_items in DB
       if (Array.isArray(items) && items.length > 0) {
@@ -503,31 +619,37 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
           const itemName = item.name || item.product_name_snapshot || 'Item';
           const qty = item.quantity || 1;
           const price = item.price || item.unit_price || 0;
+          const prodId = item.productId || item.product_id || null;
           await query(
-            `INSERT INTO order_items (order_id, product_name_snapshot, quantity, unit_price, subtotal)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [id, itemName, qty, price, qty * price]
+            `INSERT INTO order_items (order_id, product_id, product_name_snapshot, quantity, unit_price, subtotal)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [id, prodId, itemName, qty, price, qty * price]
           );
         }
       }
 
-      // Update payment record if payment method/status supplied
-      if (paymentMethod || paymentStatus) {
+      // Update payment record if payment method/status/ref/receipt supplied
+      if (paymentMethod || paymentStatus || finalRef || finalReceipt) {
         await query(
-          `INSERT INTO payments (order_id, payment_method, amount, status, updated_at)
-           VALUES ($1, $2, $3, $4, NOW())
+          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())
            ON CONFLICT (order_id) DO UPDATE SET
              payment_method = EXCLUDED.payment_method,
              status = EXCLUDED.status,
+             reference_number = COALESCE(EXCLUDED.reference_number, payments.reference_number),
+             payment_receipt = COALESCE(EXCLUDED.payment_receipt, payments.payment_receipt),
              updated_at = NOW()`,
-          [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED']
+          [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED', finalRef, finalReceipt || null]
         ).catch(() => { });
       }
     } catch (dbErr) {
       console.warn('DB update order note:', dbErr.message);
     }
 
-    console.log(`[UPDATE] Admin updated order ${id} in DB and memory`);
+    console.log(`[UPDATE] Order ${id} updated in DB and memory`);
+    try {
+      emitOrderUpdate(updatedInMemory);
+    } catch (e) {}
 
     return res.status(200).json({
       success: true,
@@ -688,6 +810,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       delivery_longitude: deliveryLongitude,
       payment_method: initialPaymentMethod,
       paymentMethod: initialPaymentMethod,
+      payment_reference: req.body.paymentReference || req.body.referenceNumber || undefined,
+      paymentReference: req.body.paymentReference || req.body.referenceNumber || undefined,
+      referenceNumber: req.body.referenceNumber || req.body.paymentReference || undefined,
       payment_receipt: req.body.paymentReceipt || undefined,
       paymentReceipt: req.body.paymentReceipt || undefined,
       gcash_authorized: false,
@@ -721,20 +846,105 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       let persistedItems = [];
       try {
         await client.query('BEGIN');
-        await assertItemsAvailable(client, normalizedItems);
+
+        // 1. Verify availability of order items inside transaction
+        try {
+          await assertItemsAvailable(client, normalizedItems);
+        } catch (itemErr) {
+          await client.query('ROLLBACK');
+          if (itemErr.code === 'ITEM_OUT_OF_STOCK' || itemErr.code === 'ITEM_DELETED') {
+            return res.status(409).json({ success: false, error: itemErr.code, message: itemErr.message });
+          }
+          console.error('Could not validate item availability:', itemErr.message);
+          return res.status(503).json({
+            success: false,
+            error: 'INVENTORY_VALIDATION_UNAVAILABLE',
+            message: 'Could not verify item availability. Please try again.',
+          });
+        }
+
+        // 2. Resolve customer_id safely
+        // NOTE: If req.user is an employee (e.g. staff testing online ordering while logged in),
+        // their employee ID must not be used as customer_id because of foreign key constraint orders_customer_id_fkey.
+        let validCustomerId = null;
+        const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+        const candidateUserId = req.user?.id;
+        const isEmployee = req.user?.type === 'employee' || ['admin', 'cashier', 'kitchen', 'rider', 'assistant'].includes(req.user?.role?.toLowerCase());
+
+        if (!isEmployee && isUuid(candidateUserId)) {
+          const custCheck = await client.query('SELECT id FROM customers WHERE id = $1 LIMIT 1', [candidateUserId]);
+          if (custCheck.rows.length > 0) {
+            validCustomerId = custCheck.rows[0].id;
+          }
+        }
+
+        if (!validCustomerId) {
+          const candidateEmail = (!isEmployee && req.user?.email ? req.user.email : req.body.email || '').trim().toLowerCase();
+          const candidatePhone = (cleanPhone || '').trim();
+          const candidateName = (cleanCustomer || '').trim();
+
+          if (candidateEmail) {
+            const custRes = await client.query('SELECT id FROM customers WHERE LOWER(email) = LOWER($1) LIMIT 1', [candidateEmail]);
+            if (custRes.rows.length > 0) {
+              validCustomerId = custRes.rows[0].id;
+            }
+          }
+
+          if (!validCustomerId && candidatePhone && candidatePhone !== '0917-000-0000') {
+            const custRes = await client.query('SELECT id FROM customers WHERE phone = $1 LIMIT 1', [candidatePhone]);
+            if (custRes.rows.length > 0) {
+              validCustomerId = custRes.rows[0].id;
+            }
+          }
+
+          if (!validCustomerId && candidateName && candidateName !== 'Online Customer') {
+            const custRes = await client.query('SELECT id FROM customers WHERE LOWER(fullname) = LOWER($1) LIMIT 1', [candidateName]);
+            if (custRes.rows.length > 0) {
+              validCustomerId = custRes.rows[0].id;
+            }
+          }
+
+          if (!validCustomerId && candidateName && candidateName !== 'Online Customer') {
+            try {
+              const safeEmail = candidateEmail || `${candidateName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'customer'}_${Date.now()}@guest.seafudz.ph`;
+              const insertCustRes = await client.query(
+                `INSERT INTO customers (fullname, email, phone, delivery_address)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (email) DO UPDATE SET
+                   fullname = EXCLUDED.fullname,
+                   phone = COALESCE(EXCLUDED.phone, customers.phone),
+                   delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address),
+                   updated_at = NOW()
+                 RETURNING id`,
+                [candidateName, safeEmail, candidatePhone || null, cleanAddress || null]
+              );
+              if (insertCustRes.rows.length > 0) {
+                validCustomerId = insertCustRes.rows[0].id;
+              }
+            } catch (custErr) {
+              console.warn('Could not auto-provision customer record:', custErr.message);
+            }
+          }
+        }
+
+        orderRecord.customer_id = validCustomerId;
+
         await client.query(
           `INSERT INTO orders (
              id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes,
-             created_at, delivery_latitude, delivery_longitude
+             created_at, delivery_latitude, delivery_longitude, payment_method, payment_reference, payment_receipt
            )
-           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW(), $9, $10)
+           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13)
            ON CONFLICT (id) DO UPDATE SET
              status = EXCLUDED.status,
              delivery_latitude = COALESCE(EXCLUDED.delivery_latitude, orders.delivery_latitude),
-             delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, orders.delivery_longitude)`,
+             delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, orders.delivery_longitude),
+             payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
+             payment_reference = COALESCE(EXCLUDED.payment_reference, orders.payment_reference),
+             payment_receipt = COALESCE(EXCLUDED.payment_receipt, orders.payment_receipt)`,
           [
             orderId,
-            customerId,
+            validCustomerId,
             calcSubtotal,
             calcVat,
             calcFee,
@@ -743,6 +953,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             initialStatus,
             deliveryLatitude,
             deliveryLongitude,
+            initialPaymentMethod,
+            orderRecord.paymentReference || null,
+            orderRecord.paymentReceipt || null,
           ]
         );
         await client.query(
@@ -765,7 +978,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           for (const item of normalizedItems) {
             const { rows } = await client.query(
               `INSERT INTO order_items (order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, notes)
-               VALUES ($1, (SELECT id FROM products WHERE id = $2), $3, $4, $5, $6, $7)
+               VALUES ($1, (SELECT id FROM products WHERE id = $2 OR LOWER(name) = LOWER($3) LIMIT 1), $3, $4, $5, $6, $7)
                RETURNING id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes`,
               [orderId, item.product_id, item.name, item.price, item.quantity, item.subtotal, item.specialNote || null]
             );
@@ -776,16 +989,30 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         const existingPayments = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [orderId]);
         if (existingPayments.rows.length === 0) {
           await client.query(
-            `INSERT INTO payments (order_id, payment_method, amount, status)
-             VALUES ($1, $2, $3, 'PENDING')`,
-            [orderId, initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH', calcTotal]
+            `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
+             VALUES ($1, $2, $3, 'PENDING', $4, $5, NOW())`,
+            [orderId, initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH', calcTotal, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
+          );
+        } else {
+          await client.query(
+            `UPDATE payments 
+             SET reference_number = COALESCE($2, reference_number), 
+                 payment_receipt = COALESCE($3, payment_receipt),
+                 updated_at = NOW()
+             WHERE order_id = $1`,
+            [orderId, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
           );
         }
 
         await client.query('COMMIT');
       } catch (dbErr) {
         try { await client.query('ROLLBACK'); } catch {}
-        throw dbErr;
+        console.error('Could not persist order:', dbErr.message);
+        return res.status(500).json({
+          success: false,
+          error: 'ORDER_PERSISTENCE_FAILED',
+          message: 'Failed to create and record your order. Please try again.',
+        });
       } finally {
         client.release();
       }
@@ -802,15 +1029,12 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         }));
       }
       inMemoryOrders.set(orderId, orderRecord);
-    } catch (dbErr) {
-      if (dbErr.code === 'ITEM_OUT_OF_STOCK' || dbErr.code === 'ITEM_DELETED') {
-        return res.status(409).json({ success: false, error: dbErr.code, message: dbErr.message });
-      }
-      console.error('Could not validate or persist order availability:', dbErr.message);
+    } catch (poolErr) {
+      console.error('Database connection unavailable:', poolErr.message);
       return res.status(503).json({
         success: false,
-        error: 'INVENTORY_VALIDATION_UNAVAILABLE',
-        message: 'Could not verify item availability. Please try again.',
+        error: 'DATABASE_UNAVAILABLE',
+        message: 'Order service is temporarily unavailable. Please try again.',
       });
     }
 
@@ -919,7 +1143,9 @@ export async function handleGetCustomerFlowOrder(req, res) {
 
 /**
  * GET /api/cashier/online-receipts
-, async (req, res) => {
+ * Fetch online orders formatted as printable receipts for the cashier
+ */
+router.get('/cashier/online-receipts', async (req, res) => {
   try {
     const { receiptStatus, search } = req.query;
 
@@ -931,7 +1157,10 @@ export async function handleGetCustomerFlowOrder(req, res) {
                COALESCE(c.fullname, 'Online Customer') AS customer_name,
                c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
-               p_pay.payment_method,
+               COALESCE(o.payment_method, p_pay.payment_method, 'ONLINE') AS payment_method,
+               COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS payment_reference,
+               COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS reference_number,
+               COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
                COALESCE(
                  json_agg(
                    json_build_object(
@@ -945,18 +1174,19 @@ export async function handleGetCustomerFlowOrder(req, res) {
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
         LEFT JOIN (
-          SELECT DISTINCT ON (order_id) order_id, delivery_address
+          SELECT DISTINCT ON (order_id) order_id, delivery_address, rider_cash_received
           FROM deliveries
           ORDER BY order_id, created_at DESC
         ) d ON o.id = d.order_id
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN (
-          SELECT DISTINCT ON (order_id) order_id, payment_method
+          SELECT DISTINCT ON (order_id) order_id, payment_method, reference_number
           FROM payments
           ORDER BY order_id, created_at DESC
         ) p_pay ON o.id = p_pay.order_id
-        WHERE UPPER(COALESCE(o.order_type, 'ONLINE')) = 'ONLINE'
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, p_pay.payment_method
+        WHERE UPPER(COALESCE(o.order_type, '')) = 'ONLINE'
+          AND o.id NOT LIKE 'POS-%'
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, p_pay.payment_method, p_pay.reference_number
         ORDER BY o.created_at ASC
       `);
       dbOrders = rows;
@@ -967,14 +1197,31 @@ export async function handleGetCustomerFlowOrder(req, res) {
     const mergedMap = new Map();
 
     inMemoryOrders.forEach((val, key) => {
-      const formatted = formatOrderResponse(val);
-      const normType = (val.orderType || val.order_type || val.type || 'ONLINE').toUpperCase();
-      if (normType.includes('ONLINE') || val.deliveryAddress || val.address || val.phone) {
-        mergedMap.set(key, formatted);
+      const keyStr = String(key || val.id || val.ref || '');
+      const normType = String(val.orderType || val.order_type || val.type || '').toUpperCase();
+      const isPos = Boolean(
+        val.isPosOrder ||
+        val.is_pos_order ||
+        keyStr.startsWith('POS-') ||
+        normType.includes('ON_SITE') ||
+        normType.includes('DINE') ||
+        normType.includes('TAKE') ||
+        (val.customer === 'Walk-In' && !val.deliveryAddress)
+      );
+
+      // STRICT CHECK: Exclude all on-site POS transactions
+      if (isPos) return;
+
+      const isOnline = normType.includes('ONLINE') || normType.includes('DELIVERY') || keyStr.startsWith('SFB-');
+      if (isOnline) {
+        mergedMap.set(key, formatOrderResponse(val));
       }
     });
 
     dbOrders.forEach(row => {
+      const idStr = String(row.id || '');
+      if (idStr.startsWith('POS-')) return;
+
       if (!mergedMap.has(row.id)) {
         mergedMap.set(row.id, formatOrderResponse(row));
       } else {
@@ -990,7 +1237,22 @@ export async function handleGetCustomerFlowOrder(req, res) {
     let result = Array.from(mergedMap.values());
 
     const confirmedStatuses = ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
-    result = result.filter(o => confirmedStatuses.includes((o.status || '').toUpperCase()));
+    result = result.filter(o => {
+      const idStr = String(o.id || o.ref || '');
+      const typeStr = String(o.type || o.order_type || o.orderType || '').toUpperCase();
+      const isPos = Boolean(
+        o.isPosOrder ||
+        o.is_pos_order ||
+        idStr.startsWith('POS-') ||
+        typeStr.includes('DINE') ||
+        typeStr.includes('TAKE') ||
+        typeStr.includes('ON_SITE') ||
+        (o.customer === 'Walk-In' && !o.deliveryAddress)
+      );
+      if (isPos) return false;
+
+      return confirmedStatuses.includes((o.status || '').toUpperCase());
+    });
 
     if (receiptStatus) {
       const target = receiptStatus.toUpperCase();

@@ -57,6 +57,12 @@ router.get('/user-flow/orders', async (req, res) => {
                o.created_at, o.updated_at,
                c.fullname AS customer_name, c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+               COALESCE(o.payment_method, 'ONLINE') AS payment_method,
+               COALESCE(NULLIF(o.payment_reference, ''), (SELECT p.reference_number FROM payments p WHERE p.order_id = o.id AND p.reference_number IS NOT NULL AND p.reference_number != '' ORDER BY p.created_at DESC LIMIT 1), '') AS payment_reference,
+               COALESCE(NULLIF(o.payment_receipt, ''), (SELECT p.payment_receipt FROM payments p WHERE p.order_id = o.id AND p.payment_receipt IS NOT NULL AND p.payment_receipt != '' ORDER BY p.created_at DESC LIMIT 1), '') AS payment_receipt,
+               COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
+               d.rider_id,
+               r_emp.fullname AS rider_name,
                COALESCE(
                  json_agg(
                    json_build_object(
@@ -76,9 +82,14 @@ router.get('/user-flow/orders', async (req, res) => {
                ) AS refunds
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
-        LEFT JOIN deliveries d ON d.order_id = o.id
+        LEFT JOIN (
+          SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
+          FROM deliveries
+          ORDER BY order_id, created_at DESC
+        ) d ON o.id = d.order_id
+        LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname
         ORDER BY o.created_at DESC
       `);
       dbOrders = rows;
@@ -125,6 +136,9 @@ router.get('/user-flow/orders', async (req, res) => {
             : existing.customerReplacements || [],
           refundReceipt: existing.refundReceipt || dbOrder.refundReceipt || undefined,
           refundReference: existing.refundReference || dbOrder.refundReference || undefined,
+          paymentReceipt: existing.paymentReceipt || dbOrder.paymentReceipt || undefined,
+          paymentReference: existing.paymentReference || dbOrder.paymentReference || existing.referenceNumber || dbOrder.referenceNumber || undefined,
+          referenceNumber: existing.referenceNumber || dbOrder.referenceNumber || existing.paymentReference || dbOrder.paymentReference || undefined,
           financialStatus: mergedLedger.financialStatus,
           netConfirmedPaid: mergedLedger.netConfirmedPaid,
           grossConfirmedPaid: mergedLedger.grossConfirmedPaid,

@@ -184,6 +184,10 @@ export function formatOrderResponse(row) {
     || refunds.slice().reverse().find(r => r.refund_receipt || r.refundReceipt)?.refundReceipt;
   const refundReferenceFromRefunds = refunds.slice().reverse().find(r => r.reference_number || r.referenceNumber)?.reference_number
     || refunds.slice().reverse().find(r => r.reference_number || r.referenceNumber)?.referenceNumber;
+  const paymentReferenceFromPayments = payments.slice().reverse().find(p => p.reference_number || p.referenceNumber)?.reference_number
+    || payments.slice().reverse().find(p => p.reference_number || p.referenceNumber)?.referenceNumber;
+  const paymentReceiptFromPayments = payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.payment_receipt
+    || payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.paymentReceipt;
 
   return {
     id: row.id,
@@ -196,7 +200,12 @@ export function formatOrderResponse(row) {
     deliveryLatitude: row.delivery_latitude ?? row.deliveryLatitude ?? null,
     deliveryLongitude: row.delivery_longitude ?? row.deliveryLongitude ?? null,
     paymentMethod: row.payment_method || row.paymentMethod || 'GCash',
-    paymentReceipt: row.payment_receipt || row.paymentReceipt || undefined,
+    paymentReference: row.payment_reference || row.paymentReference || row.reference_number || row.referenceNumber || paymentReferenceFromPayments || undefined,
+    referenceNumber: row.payment_reference || row.paymentReference || row.reference_number || row.referenceNumber || paymentReferenceFromPayments || undefined,
+    riderCashReceived: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
+    rider_cash_received: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
+    riderName: row.rider_name || row.riderName || undefined,
+    paymentReceipt: row.payment_receipt || row.paymentReceipt || paymentReceiptFromPayments || undefined,
     refundReceipt: row.refund_receipt || row.refundReceipt || refundReceiptFromRefunds || undefined,
     refundReference: row.refund_reference || row.refundReference || refundReferenceFromRefunds || undefined,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),

@@ -22,6 +22,7 @@ export interface OnlineOrder {
   address: string
   paymentMethod: string
   paymentReference?: string
+  referenceNumber?: string
   paymentReceipt?: string
   refundReceipt?: string
   refundReference?: string
@@ -455,17 +456,28 @@ export const AssistantRole: React.FC = () => {
   }
 
   const handleVerifyReceipt = async (orderId: string) => {
+    const refToPass = (selectedOrder?.paymentReference || selectedOrder?.referenceNumber || '').trim() || undefined;
     try {
       await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/verify-receipt`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentReference: refToPass,
+          referenceNumber: refToPass,
+        }),
       })
     } catch { }
 
     try {
       const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
       const updatedGlobal = globalOrders.map((o: any) =>
-        o.id === orderId || o.ref === orderId ? { ...o, status: 'CONFIRMED', receiptStatus: 'APPROVED' } : o
+        o.id === orderId || o.ref === orderId ? {
+          ...o,
+          status: 'CONFIRMED',
+          receiptStatus: 'APPROVED',
+          paymentReference: refToPass || o.paymentReference,
+          referenceNumber: refToPass || o.referenceNumber,
+        } : o
       )
       localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
 
@@ -473,7 +485,12 @@ export const AssistantRole: React.FC = () => {
       if (activeOrderStr) {
         const activeObj = JSON.parse(activeOrderStr)
         if (activeObj.id === orderId || activeObj.ref === orderId) {
-          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
+          localStorage.setItem('seafudz_active_online_order', JSON.stringify({
+            ...activeObj,
+            status: 'CONFIRMED',
+            paymentReference: refToPass || activeObj.paymentReference,
+            referenceNumber: refToPass || activeObj.referenceNumber,
+          }))
         }
       }
       notifyOrderSync()
@@ -1284,8 +1301,33 @@ export const AssistantRole: React.FC = () => {
                     // 2. GCash Order WITH Reference Screenshot Submitted (Customer sent receipt)
                     if (hasReceipt) {
                       return (
-                        <div className="space-y-2 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
+                        <div className="space-y-3 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
                           <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
+
+                          {/* GCash Reference Input for Assistant Inspection */}
+                          <div className="bg-white p-2.5 rounded-xl border border-emerald-200 space-y-1">
+                            <div className="flex justify-between items-center text-[10px] font-bold text-neutral-500 uppercase">
+                              <span>GCash Reference Number</span>
+                              <span className="text-emerald-700 font-extrabold">Customer Reference #</span>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="e.g. 1002 984 1234 (From customer receipt)"
+                              value={selectedOrder.paymentReference || selectedOrder.referenceNumber || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setOrders((prev) =>
+                                  prev.map((o) =>
+                                    o.id === selectedOrder.id || o.ref === selectedOrder.id
+                                      ? { ...o, paymentReference: val, referenceNumber: val }
+                                      : o
+                                  )
+                                );
+                              }}
+                              className="w-full text-xs font-mono font-bold px-2.5 py-1.5 border border-emerald-300 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
+                            />
+                          </div>
+
                           <div className="flex gap-2">
                             <button
                               onClick={() => handleVerifyReceipt(selectedOrder.id)}

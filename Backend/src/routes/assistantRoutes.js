@@ -275,10 +275,15 @@ router.patch('/assistant/orders/:id/authorize-gcash', optionalAuth, async (req, 
 router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
   try {
     const { id } = req.params;
-    const { paymentReceipt } = req.body;
+    const { paymentReceipt, paymentReference, referenceNumber } = req.body;
+    const refNum = (paymentReference || referenceNumber || '').toString().trim() || undefined;
     let order = inMemoryOrders.get(id) || { id };
 
-    order.paymentReceipt = paymentReceipt;
+    if (paymentReceipt) order.paymentReceipt = paymentReceipt;
+    if (refNum) {
+      order.paymentReference = refNum;
+      order.referenceNumber = refNum;
+    }
     order.status = 'RECEIPT_SUBMITTED';
     order.receiptStatus = 'PENDING_VERIFICATION';
     order.rejectionReason = '';
@@ -287,7 +292,32 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
     inMemoryOrders.set(id, order);
 
     try {
-      await query(`UPDATE orders SET status = 'RECEIPT_SUBMITTED', updated_at = NOW() WHERE id = $1`, [id]);
+      await query(
+        `UPDATE orders 
+         SET status = 'RECEIPT_SUBMITTED', 
+             payment_reference = COALESCE(NULLIF($2, ''), payment_reference), 
+             payment_receipt = COALESCE($3, payment_receipt),
+             updated_at = NOW() 
+         WHERE id = $1`,
+        [id, refNum || null, paymentReceipt || null]
+      );
+
+      const payUpdate = await query(
+        `UPDATE payments 
+         SET reference_number = COALESCE(NULLIF($2, ''), reference_number), 
+             payment_receipt = COALESCE($3, payment_receipt), 
+             updated_at = NOW() 
+         WHERE order_id = $1 RETURNING id`,
+        [id, refNum || null, paymentReceipt || null]
+      );
+
+      if (payUpdate.rows.length === 0) {
+        await query(
+          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
+           VALUES ($1, 'GCASH', (SELECT COALESCE(total, 0) FROM orders WHERE id = $1), 'PENDING', $2, $3, NOW())`,
+          [id, refNum || null, paymentReceipt || null]
+        );
+      }
     } catch (err) {
       console.warn('DB update note (Upload Receipt):', err.message);
     }
@@ -341,10 +371,22 @@ router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res
     inMemoryOrders.set(id, order);
 
     try {
-      if (paymentReference) {
+      if (paymentReference !== undefined || paymentReceipt !== undefined) {
         await query(
-          `UPDATE payments SET reference_number = $2 WHERE order_id = $1`,
-          [id, paymentReference]
+          `UPDATE orders 
+           SET payment_reference = COALESCE(NULLIF($2, ''), payment_reference), 
+               payment_receipt = COALESCE($3, payment_receipt),
+               updated_at = NOW() 
+           WHERE id = $1`,
+          [id, paymentReference || null, paymentReceipt || null]
+        );
+        await query(
+          `UPDATE payments 
+           SET reference_number = COALESCE(NULLIF($2, ''), reference_number), 
+               payment_receipt = COALESCE($3, payment_receipt),
+               updated_at = NOW() 
+           WHERE order_id = $1`,
+          [id, paymentReference || null, paymentReceipt || null]
         );
       }
       if (refundReceipt !== undefined || refundReference !== undefined) {
@@ -407,38 +449,49 @@ router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, r
       });
     }
 
-    if (req.body?.paymentReference) {
-      order.paymentReference = req.body.paymentReference;
+    const paymentRef = (req.body?.paymentReference || req.body?.referenceNumber || order.paymentReference || order.referenceNumber || '').toString().trim() || null;
+    const paymentRec = (req.body?.paymentReceipt || order.paymentReceipt || '').toString().trim() || null;
+    if (paymentRef) {
+      order.paymentReference = paymentRef;
+      order.referenceNumber = paymentRef;
+    }
+    if (paymentRec) {
+      order.paymentReceipt = paymentRec;
     }
 
     inMemoryOrders.set(id, order);
 
     try {
       await query(
-        `INSERT INTO orders (id, order_type, status, created_at)
-         VALUES ($1, 'ONLINE', 'CONFIRMED', NOW())
-         ON CONFLICT (id) DO UPDATE SET status = 'CONFIRMED', updated_at = NOW()`,
-        [id]
+        `INSERT INTO orders (id, order_type, status, created_at, payment_reference, payment_receipt)
+         VALUES ($1, 'ONLINE', 'CONFIRMED', NOW(), $2, $3)
+         ON CONFLICT (id) DO UPDATE SET 
+           status = 'CONFIRMED', 
+           payment_reference = COALESCE(NULLIF($2, ''), orders.payment_reference), 
+           payment_receipt = COALESCE($3, orders.payment_receipt),
+           updated_at = NOW()`,
+        [id, paymentRef, paymentRec]
       );
       await query(
         `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
          ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
         [id]
       );
-      const paymentRef = req.body?.paymentReference || order.paymentReference || null;
       await query(
         `UPDATE payments
          SET status = 'PAID', paid_at = NOW(),
-             reference_number = COALESCE($2, reference_number)
+             reference_number = COALESCE(NULLIF($2, ''), reference_number),
+             payment_receipt = COALESCE($3, payment_receipt),
+             updated_at = NOW()
          WHERE order_id = $1`,
-        [id, paymentRef]
+        [id, paymentRef, paymentRec]
       );
       const payCheck = await query(`SELECT id FROM payments WHERE order_id = $1`, [id]);
       if (payCheck.rows.length === 0) {
         await query(
-          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, paid_at)
-           VALUES ($1, 'GCASH', (SELECT total FROM orders WHERE id = $1), 'PAID', $2, NOW())`,
-          [id, paymentRef]
+          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, paid_at, updated_at)
+           VALUES ($1, 'GCASH', (SELECT COALESCE(total, 0) FROM orders WHERE id = $1), 'PAID', $2, $3, NOW(), NOW())`,
+          [id, paymentRef, paymentRec]
         );
       }
     } catch (err) {

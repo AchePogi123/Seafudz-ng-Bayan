@@ -140,7 +140,10 @@ router.patch('/rider/deliveries/:id/status', optionalAuth, async (req, res) => {
 export async function handleRiderStatusUpdate(req, res) {
   try {
     const { id } = req.params;
-    const { status, riderName } = req.body;
+    const { status, riderName, riderCashReceived, moneyReceived } = req.body;
+    const finalRiderMoney = riderCashReceived !== undefined && riderCashReceived !== null && riderCashReceived !== ''
+      ? Number(riderCashReceived)
+      : (moneyReceived !== undefined && moneyReceived !== null && moneyReceived !== '' ? Number(moneyReceived) : undefined);
 
     const nextStatus = normalizeFlowStatus(status);
     let updatedOrder = null;
@@ -150,28 +153,46 @@ export async function handleRiderStatusUpdate(req, res) {
       existing.status = nextStatus;
       existing.updated_at = new Date().toISOString();
       if (riderName) existing.riderName = riderName;
+      if (finalRiderMoney !== undefined) existing.riderCashReceived = finalRiderMoney;
       inMemoryOrders.set(id, existing);
       updatedOrder = formatOrderResponse(existing);
     }
 
     // Update PostgreSQL Database
     try {
-      const { rows } = await query(
-        `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-        [nextStatus, id]
-      );
+      let rows;
+      if (finalRiderMoney !== undefined) {
+        const res = await query(
+          `UPDATE orders SET status = $1, rider_cash_received = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
+          [nextStatus, finalRiderMoney, id]
+        );
+        rows = res.rows;
+      } else {
+        const res = await query(
+          `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+          [nextStatus, id]
+        );
+        rows = res.rows;
+      }
       
       // Update deliveries status in DB
       let dbDeliveryStatus = 'PENDING';
       if (nextStatus === 'OUT_FOR_DELIVERY') dbDeliveryStatus = 'IN_TRANSIT';
       else if (nextStatus === 'COMPLETED') dbDeliveryStatus = 'DELIVERED';
 
-      await query(
-        `UPDATE deliveries SET status = $1, updated_at = NOW() WHERE order_id = $2`,
-        [dbDeliveryStatus, id]
-      );
+      if (finalRiderMoney !== undefined) {
+        await query(
+          `UPDATE deliveries SET status = $1, rider_cash_received = $2, updated_at = NOW() WHERE order_id = $3`,
+          [dbDeliveryStatus, finalRiderMoney, id]
+        );
+      } else {
+        await query(
+          `UPDATE deliveries SET status = $1, updated_at = NOW() WHERE order_id = $2`,
+          [dbDeliveryStatus, id]
+        );
+      }
 
-      if (rows.length > 0 && !updatedOrder) {
+      if (rows && rows.length > 0 && !updatedOrder) {
         updatedOrder = formatOrderResponse(rows[0]);
       }
     } catch (dbErr) {

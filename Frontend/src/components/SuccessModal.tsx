@@ -4,7 +4,7 @@ import type { CartItem } from './OrderItemRow'
 interface SuccessModalProps {
   isOpen: boolean
   onClose: () => void
-  onConfirm: (cashReceived: string, change: number | null, paymentMethod: string) => void
+  onConfirm: (cashReceived: string, change: number | null, paymentMethod: string, paymentReference?: string) => void
   orderDetails: {
     table?: string
     type: string
@@ -28,6 +28,10 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'Hybrid'>('Cash')
   const [cashReceived, setCashReceived] = useState<string>('')
   
+  // GCash & Hybrid Reference Numbers
+  const [gcashRefNumber, setGcashRefNumber] = useState<string>('')
+  const [hybridRefNumber, setHybridRefNumber] = useState<string>('')
+
   // Hybrid split inputs
   const [hybridCash, setHybridCash] = useState<string>('')
   const [hybridEwallet, setHybridEwallet] = useState<string>('')
@@ -43,6 +47,8 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
         setHybridCash('')
         setHybridEwallet('')
         setHybridWalletType('GCash')
+        setGcashRefNumber('')
+        setHybridRefNumber('')
         setPaymentMethod('Cash')
       }, 0)
       return () => clearTimeout(timer)
@@ -77,7 +83,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
     if (hasUnavailableItems) return
     if (paymentMethod === 'Hybrid') {
       const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-      onConfirm(parsedHybridCash.toString(), 0, hybridLabel)
+      onConfirm(parsedHybridCash.toString(), 0, hybridLabel, hybridRefNumber.trim() || undefined)
+    } else if (paymentMethod === 'GCash') {
+      onConfirm('', null, 'GCash', gcashRefNumber.trim() || undefined)
     } else {
       onConfirm(cashReceived, change, paymentMethod)
     }
@@ -145,6 +153,39 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           ))}
         </div>
 
+        {/* GCash Payment Box */}
+        {paymentMethod === 'GCash' && (
+          <div className="bg-blue-50/50 border border-blue-200/80 rounded-2xl p-4 sm:p-4.5 mb-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-[11px] font-black text-blue-900 tracking-wider uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                GCASH PAYMENT
+              </h3>
+              <span className="text-[11px] font-bold text-neutral-500">
+                Amount Due: <strong className="text-blue-700 font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-blue-900/70 uppercase tracking-wider mb-1.5">
+                GCASH REFERENCE NUMBER
+              </label>
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  value={gcashRefNumber}
+                  onChange={(e) => setGcashRefNumber(e.target.value)}
+                  placeholder="e.g. 1002 4859 1234"
+                  className="w-full px-3 py-2 text-xs font-bold text-neutral-900 bg-white border border-blue-200 rounded-xl focus:outline-none focus:border-blue-500 transition-all placeholder-neutral-300"
+                />
+              </div>
+              <p className="text-[10px] text-neutral-400 font-medium mt-1">
+                Enter the reference number from the customer's GCash transaction.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Hybrid Split Payment Box */}
         {paymentMethod === 'Hybrid' && (
           <div className="bg-purple-50/50 border border-purple-200/80 rounded-2xl p-4 mb-5 space-y-3">
@@ -202,6 +243,20 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                   />
                 </div>
               </div>
+            </div>
+
+            {/* E-Wallet Reference Number */}
+            <div>
+              <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider mb-1">
+                {hybridWalletType} Reference Number (Optional)
+              </label>
+              <input
+                type="text"
+                value={hybridRefNumber}
+                onChange={(e) => setHybridRefNumber(e.target.value)}
+                placeholder={`e.g. Enter ${hybridWalletType} reference #`}
+                className="w-full px-3 py-2 text-xs font-semibold text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
+              />
             </div>
 
             {/* Split Status indicator */}

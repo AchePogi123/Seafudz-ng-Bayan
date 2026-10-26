@@ -34,6 +34,7 @@ interface OnlineOrderState {
     deliveryLongitude?: number | null
     paymentMethod: string
     paymentReference?: string
+    referenceNumber?: string
     paymentReceipt?: string // Base64 or image data URL
     refundReceipt?: string
     refundReference?: string
@@ -632,6 +633,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [deliveryDistanceMessage, setDeliveryDistanceMessage] = useState('')
     const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
+    const [gcashRefNumber, setGcashRefNumber] = useState<string>('')
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
     const [isWaitingModalOpen, setIsWaitingModalOpen] = useState(false)
@@ -844,21 +846,43 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         syncUserProfileFromDB()
     }, [activeTab])
 
+    useEffect(() => {
+        if (activeOrder?.paymentReference && !gcashRefNumber) {
+            setGcashRefNumber(activeOrder.paymentReference)
+        }
+    }, [activeOrder?.paymentReference])
+
     const handleSubmitReceipt = async () => {
-        if (!activeOrder || !selectedReceiptPreview || isSubmittingReceipt) return
+        if (!activeOrder || isSubmittingReceipt) return
+        const refToSubmit = gcashRefNumber.trim()
+        const receiptToSubmit = selectedReceiptPreview || activeOrder.paymentReceipt || undefined
+        if (!refToSubmit && !receiptToSubmit) {
+            alert('Please enter your GCash reference number or upload your payment receipt.')
+            return
+        }
         setIsSubmittingReceipt(true)
         try {
             await fetch(`${API_BASE_URL}/assistant/orders/${activeOrder.id}/upload-receipt`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ paymentReceipt: selectedReceiptPreview }),
+                body: JSON.stringify({
+                    paymentReceipt: receiptToSubmit,
+                    paymentReference: refToSubmit || undefined,
+                    referenceNumber: refToSubmit || undefined,
+                }),
             })
 
             try {
                 const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
                 const updatedGlobal = globalOrders.map((o: any) =>
                     o.id === activeOrder.id || o.ref === activeOrder.id
-                        ? { ...o, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' }
+                        ? {
+                            ...o,
+                            paymentReceipt: receiptToSubmit,
+                            paymentReference: refToSubmit || o.paymentReference,
+                            referenceNumber: refToSubmit || o.referenceNumber,
+                            status: 'RECEIPT_SUBMITTED'
+                        }
                         : o
                 )
                 localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
@@ -870,14 +894,22 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     const activeObj = JSON.parse(activeObjStr)
                     localStorage.setItem(userOrderKey, JSON.stringify({
                         ...activeObj,
-                        paymentReceipt: selectedReceiptPreview,
+                        paymentReceipt: receiptToSubmit,
+                        paymentReference: refToSubmit || activeObj.paymentReference,
+                        referenceNumber: refToSubmit || activeObj.referenceNumber,
                         status: 'RECEIPT_SUBMITTED'
                     }))
                 }
                 notifyOrderSync()
             } catch { }
 
-            setActiveOrder((prev) => prev ? { ...prev, paymentReceipt: selectedReceiptPreview, status: 'RECEIPT_SUBMITTED' } : null)
+            setActiveOrder((prev) => prev ? {
+                ...prev,
+                paymentReceipt: receiptToSubmit,
+                paymentReference: refToSubmit || prev.paymentReference,
+                referenceNumber: refToSubmit || prev.referenceNumber,
+                status: 'RECEIPT_SUBMITTED'
+            } : null)
             setSelectedReceiptPreview(null)
             setIsVerificationModalOpen(false)
             setActiveTab('tracking')
@@ -1436,6 +1468,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryLongitude: addressCoordinates?.lng,
                 paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
+                paymentReference: gcashRefNumber.trim() || undefined,
+                referenceNumber: gcashRefNumber.trim() || undefined,
                 notes: orderNotes,
                 subtotal,
                 vat,
@@ -2241,6 +2275,23 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </p>
                                         </button>
                                     </div>
+                                    {paymentMethod === 'GCash' && (
+                                        <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-1.5 animate-in fade-in duration-200">
+                                            <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider">
+                                                GCash Reference Number <span className="text-[10px] text-blue-600 font-medium lowercase">(optional now, or enter in verification popup)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. 1002 984 1234"
+                                                value={gcashRefNumber}
+                                                onChange={(e) => setGcashRefNumber(e.target.value)}
+                                                className="w-full text-xs font-mono font-bold px-3 py-2 bg-white border border-blue-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                                            />
+                                            <p className="text-[10px] text-blue-700/80">
+                                                If you already sent GCash payment, you can input your reference number here. Otherwise, you can submit it along with your proof screenshot upon payment authorization.
+                                            </p>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
@@ -2403,7 +2454,20 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         </p>
 
                                         {/* Upload Screenshot Input */}
-                                        <div className="pt-2">
+                                        <div className="pt-2 space-y-2">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
+                                                    <span>GCash Reference Number</span>
+                                                    <span className="text-[10px] text-emerald-700 font-extrabold uppercase">From Receipt</span>
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Enter GCash Ref No. (e.g. 1002 984 1234)"
+                                                    value={gcashRefNumber}
+                                                    onChange={(e) => setGcashRefNumber(e.target.value)}
+                                                    className="w-full text-xs font-mono font-bold px-3 py-2 bg-white border border-emerald-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-200"
+                                                />
+                                            </div>
                                             {selectedReceiptPreview ? (
                                                 <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 space-y-3 text-left">
                                                     <div className="flex items-center justify-between">
@@ -3448,6 +3512,26 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
                                 </div>
 
+                                {/* GCash Reference Number Input in Verification Modal */}
+                                <div className="space-y-1.5 pt-1">
+                                    <label className="text-xs font-bold text-neutral-800 flex items-center justify-between">
+                                        <span>GCash Reference Number</span>
+                                        <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                                            Required Reference #
+                                        </span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="Enter GCash Ref No. (e.g. 1002 984 1234)"
+                                        value={gcashRefNumber}
+                                        onChange={(e) => setGcashRefNumber(e.target.value)}
+                                        className="w-full text-xs font-mono font-bold px-3 py-2.5 border-2 border-blue-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-white shadow-2xs"
+                                    />
+                                    <p className="text-[10px] text-neutral-500">
+                                        Enter the reference number from your completed GCash transaction screen.
+                                    </p>
+                                </div>
+
                                 {/* Reference Screenshot Selection Input */}
                                 <div className="space-y-2 pt-1">
                                     <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
@@ -3467,8 +3551,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
                                                 Payment Screenshot Submitted
                                             </div>
+                                            {(activeOrder.paymentReference || gcashRefNumber) && (
+                                                <div className="bg-white border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
+                                                    <span className="text-blue-700 font-bold">GCash Reference No:</span>
+                                                    <span className="font-mono font-black text-blue-950">{activeOrder.paymentReference || gcashRefNumber}</span>
+                                                </div>
+                                            )}
                                             <p className="text-xs text-blue-800 leading-relaxed">
-                                                Your reference screenshot was received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                                Your reference screenshot and reference number were received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
                                             </p>
                                         </div>
                                     )}
@@ -3563,6 +3653,33 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     }}
                                                 />
                                             </label>
+                                        </div>
+                                    )}
+
+                                    {/* Primary Action Button to submit Reference Number and/or Receipt */}
+                                    {!selectedReceiptPreview && (
+                                        <div className="pt-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleSubmitReceipt}
+                                                disabled={isSubmittingReceipt || (!gcashRefNumber.trim() && !activeOrder.paymentReceipt)}
+                                                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-blue-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                            >
+                                                {isSubmittingReceipt ? (
+                                                    <span>Submitting to Database & Staff...</span>
+                                                ) : gcashRefNumber.trim() && activeOrder.paymentReceipt ? (
+                                                    <span>✓ Update GCash Reference & Receipt</span>
+                                                ) : gcashRefNumber.trim() ? (
+                                                    <span>✓ Submit GCash Reference Number</span>
+                                                ) : (
+                                                    <span>Submit Payment Verification</span>
+                                                )}
+                                            </button>
+                                            {gcashRefNumber.trim() && !activeOrder.paymentReceipt && (
+                                                <p className="text-[10px] text-center text-neutral-500 mt-1.5 font-medium">
+                                                    You can submit your Reference Number now. Attaching a screenshot is optional but recommended.
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>

@@ -18,6 +18,7 @@ export interface DeliveryJob {
   paymentMethod?: string
   coord: GeoCoordinate
   roadDistanceKm?: number
+  riderCashReceived?: number
 }
 
 // Store location: Barangay 176, Bagong Silang, Caloocan

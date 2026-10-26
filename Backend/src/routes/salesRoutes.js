@@ -239,15 +239,24 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
              o.id AS "transactionId", 
              o.created_at AS "date", 
              o.order_type AS "type", 
-             COALESCE(p.payment_method, 'CASH') AS "paymentMethod", 
+             COALESCE(o.payment_method, p.payment_method, 'CASH') AS "paymentMethod", 
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p.reference_number, '')) AS "paymentReference",
+             COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p.reference_number, '')) AS "referenceNumber",
+             COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p.payment_receipt, '')) AS "paymentReceipt",
+             COALESCE(o.rider_cash_received, d.rider_cash_received) AS "riderCashReceived",
              o.total AS "totalAmount",
              o.status AS "status"
       FROM orders o
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, payment_method
+        SELECT DISTINCT ON (order_id) order_id, payment_method, reference_number, payment_receipt
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p ON o.id = p.order_id
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, rider_cash_received
+        FROM deliveries
+        ORDER BY order_id, created_at DESC
+      ) d ON o.id = d.order_id
       ORDER BY o.created_at DESC
     `;
     const { rows } = await query(sql);

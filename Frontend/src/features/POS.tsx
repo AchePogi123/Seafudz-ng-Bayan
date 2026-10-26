@@ -14,6 +14,8 @@ import { NavbarCashier } from '../components/NavbarCashier'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
+import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability } from '../utils/menuAvailability'
 
@@ -73,9 +75,12 @@ export const POS: React.FC = () => {
   const [onlineSearchQuery, setOnlineSearchQuery] = useState('')
   const [onlineFilter, setOnlineFilter] = useState<'all' | 'unprinted' | 'printed'>('unprinted')
 
-  // Admin CRUD Modal states
+  // Order Modification & Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingPosOrder, setEditingPosOrder] = useState<any | null>(null)
+  const [modifyingPosOrder, setModifyingPosOrder] = useState<any | null>(null)
+  const [orderToCancel, setOrderToCancel] = useState<any | null>(null)
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false)
 
   const handleDeletePosOrder = async (orderId: string) => {
     const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete POS Order #${orderId}? This will remove it from PostgreSQL DB and all role views.`)
@@ -112,6 +117,7 @@ export const POS: React.FC = () => {
     cashReceived?: string
     change?: number | null
     paymentMethod?: string
+    paymentReference?: string
     customerName?: string
     phone?: string
     address?: string
@@ -176,8 +182,21 @@ export const POS: React.FC = () => {
       const localParsed = localStr ? JSON.parse(localStr) : []
       const onlineLocal = Array.isArray(localParsed)
         ? localParsed.filter((o: any) => {
+            const idStr = String(o.id || o.ref || '')
             const typeStr = (o.type || o.order_type || '').toLowerCase()
-            const isOnline = typeStr.includes('online') || typeStr.includes('delivery') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
+            const isPos = Boolean(
+              o.isPosOrder ||
+              o.is_pos_order ||
+              idStr.startsWith('POS-') ||
+              typeStr.includes('dine') ||
+              typeStr.includes('take') ||
+              typeStr.includes('on_site') ||
+              (o.customer === 'Walk-In' && !o.deliveryAddress)
+            )
+            // STRICT: Online receipts are exclusive ONLY to online delivery orders, not on-site POS
+            if (isPos) return false
+
+            const isOnline = typeStr.includes('online') || typeStr.includes('delivery') || idStr.startsWith('SFB-')
             const s = (o.status || '').toUpperCase()
             const isConfirmedOrLater = ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
             return isOnline && isConfirmedOrLater
@@ -186,7 +205,18 @@ export const POS: React.FC = () => {
 
       const mergedMap = new Map<string, any>()
       apiData.forEach((o) => {
-        if (o.id) mergedMap.set(String(o.id), o)
+        const idStr = String(o.id || o.ref || '')
+        const typeStr = (o.type || o.order_type || o.orderType || '').toLowerCase()
+        const isPos = Boolean(
+          o.isPosOrder ||
+          o.is_pos_order ||
+          idStr.startsWith('POS-') ||
+          typeStr.includes('dine') ||
+          typeStr.includes('take') ||
+          typeStr.includes('on_site') ||
+          (o.customer === 'Walk-In' && !o.deliveryAddress)
+        )
+        if (o.id && !isPos) mergedMap.set(String(o.id), o)
       })
 
       onlineLocal.forEach((o) => {
@@ -254,20 +284,22 @@ export const POS: React.FC = () => {
     }
   }, [fetchPosOrders, fetchOnlineReceipts])
 
-  // Action: Cashier cancels an on-site processing order (ONLY eligible when still in queue, not cooking)
-  const handleCancelPosOrder = async (orderId: string) => {
-    const targetOrder = posOrders.find((o) => o.id === orderId || o.ref === orderId)
-    if (targetOrder) {
-      const s = (targetOrder.status || '').toUpperCase()
-      const isCookingOrLater = ['PREPARING', 'COOKING', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
-      if (isCookingOrLater) {
-        alert('This order is already being prepared/cooked in the kitchen and can no longer be cancelled.')
-        return
-      }
+  // Prompt cashier with modern confirmation pop-up to cancel an order
+  const promptCancelPosOrder = (ord: any) => {
+    const s = (ord.status || '').toUpperCase()
+    const isCookingOrLater = ['PREPARING', 'COOKING', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
+    if (isCookingOrLater) {
+      alert('This order is already being prepared/cooked in the kitchen and can no longer be cancelled.')
+      return
     }
+    setOrderToCancel(ord)
+  }
 
-    const confirmCancel = window.confirm(`Are you sure you want to cancel POS Order #${orderId}?`)
-    if (!confirmCancel) return
+  // Action: Cashier confirms cancelling an on-site processing order
+  const handleConfirmCancel = async () => {
+    if (!orderToCancel) return
+    const orderId = orderToCancel.id || orderToCancel.ref
+    setIsCancellingOrder(true)
 
     try {
       const res = await fetch(`${API_BASE_URL}/user-flow/orders/${orderId}/cancel`, {
@@ -280,6 +312,8 @@ export const POS: React.FC = () => {
       if (!res.ok && resData.message) {
         alert(resData.message)
         fetchPosOrders()
+        setIsCancellingOrder(false)
+        setOrderToCancel(null)
         return
       }
     } catch {}
@@ -298,6 +332,8 @@ export const POS: React.FC = () => {
 
     fetchPosOrders()
     setPosNotification(`POS Order #${orderId} has been cancelled successfully.`)
+    setIsCancellingOrder(false)
+    setOrderToCancel(null)
   }
 
   // Action: Cashier marks a ready on-site order as completed/served (ONLY enabled when kitchen marks it ready)
@@ -637,7 +673,12 @@ export const POS: React.FC = () => {
     setLastOrderDetails(null)
   }
 
-  const handleConfirmPayment = async (cashReceived: string, change: number | null, paymentMethod: string) => {
+  const handleConfirmPayment = async (
+    cashReceived: string,
+    change: number | null,
+    paymentMethod: string,
+    paymentReference?: string
+  ) => {
     if (hasUnavailableItems) {
       alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
       return
@@ -667,6 +708,8 @@ export const POS: React.FC = () => {
       orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
       type: orderType,
       paymentMethod,
+      paymentReference: paymentReference || null,
+      referenceNumber: paymentReference || null,
       notes: orderNotes,
       subtotal: rawSubtotal,
       vat: Math.round(vat * 100) / 100,
@@ -718,6 +761,8 @@ export const POS: React.FC = () => {
       notes: orderNotes,
       total,
       paymentMethod,
+      paymentReference: paymentReference || null,
+      referenceNumber: paymentReference || null,
       cartItems: [...cartItems],
     }
 
@@ -740,6 +785,7 @@ export const POS: React.FC = () => {
       cashReceived,
       change,
       paymentMethod,
+      paymentReference,
     })
 
     setIsSuccessModalOpen(false)
@@ -1013,34 +1059,58 @@ export const POS: React.FC = () => {
                       {/* Cashier Controls */}
                       <div className="pt-2 border-t border-neutral-100 flex flex-col gap-2">
                         {!isCancelled && !isCompleted && (
-                          <div className="flex gap-2 w-full">
-                            {!isCooking && !isReady ? (
-                              <button
-                                type="button"
-                                onClick={() => handleCancelPosOrder(ord.id)}
-                                className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1"
-                              >
-                                <span>❌</span> Cancel Order
-                              </button>
-                            ) : (
-                              <div className="flex-1 bg-neutral-100 text-neutral-500 font-bold py-2 rounded-xl text-[11px] text-center border border-neutral-200 flex items-center justify-center gap-1">
-                                <span>🍳</span> Cooking in Kitchen
-                              </div>
-                            )}
+                          <div className="flex flex-col gap-2 w-full">
+                            {/* Action Row: Modify & Cancel / Kitchen Processing State */}
+                            <div className="flex gap-2 w-full">
+                              {!isCooking && !isReady ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => setModifyingPosOrder(ord)}
+                                    className="flex-1 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs"
+                                    title="Modify dishes, quantities, dining type, or kitchen notes"
+                                  >
+                                    <span>✏️</span> Modify Order
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => promptCancelPosOrder(ord)}
+                                    className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                                  >
+                                    <span>❌</span> Cancel
+                                  </button>
+                                </>
+                              ) : isCooking ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="flex-1 bg-neutral-100 text-neutral-400 border border-neutral-200/80 font-bold py-2 rounded-xl text-[11px] flex items-center justify-center gap-1 cursor-not-allowed opacity-75"
+                                    title="Order is already being prepared in the kitchen and can no longer be modified or edited."
+                                  >
+                                    <span>🔒</span> Kitchen Processing (Locked)
+                                  </button>
+                                  <div className="flex-1 bg-blue-50 text-blue-700 border border-blue-200 font-extrabold py-2 rounded-xl text-[11px] text-center flex items-center justify-center gap-1">
+                                    <span>🍳</span> Cooking in Kitchen
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
 
+                            {/* Status Progression Row: Mark Served */}
                             {isReady ? (
                               <button
                                 type="button"
                                 onClick={() => handleCompletePosOrder(ord.id)}
-                                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center gap-1"
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center gap-1.5"
                               >
-                                <span>✅</span> Mark Served
+                                <span>✅</span> Mark Served & Complete
                               </button>
                             ) : (
                               <button
                                 type="button"
                                 disabled
-                                className="flex-1 bg-neutral-100 text-neutral-400 font-extrabold py-2.5 rounded-xl text-xs cursor-not-allowed border border-neutral-200 opacity-70 flex items-center justify-center gap-1"
+                                className="w-full bg-neutral-100 text-neutral-400 font-extrabold py-2 rounded-xl text-xs cursor-not-allowed border border-neutral-200 opacity-70 flex items-center justify-center gap-1"
                                 title="Kitchen has not marked this order as Done yet"
                               >
                                 <span>🔒</span> Mark Served
@@ -1368,6 +1438,30 @@ export const POS: React.FC = () => {
         transaction={editingPosOrder}
         onClose={() => setEditingPosOrder(null)}
         onSave={() => fetchPosOrders()}
+      />
+
+      {/* CASHIER MINIMAL MODIFY ORDER POPUP */}
+      <PosModifyOrderModal
+        isOpen={Boolean(modifyingPosOrder)}
+        order={modifyingPosOrder}
+        onClose={() => setModifyingPosOrder(null)}
+        onSave={(updated) => {
+          fetchPosOrders()
+          setPosNotification(`Order #${updated.ref || updated.id} modified successfully!`)
+        }}
+        menuItems={menuItems}
+        isItemAvailable={isAvailable}
+      />
+
+      {/* CASHIER CANCEL CONFIRMATION POPUP MODAL (NO BLUR, ZERO LAG) */}
+      <CancelConfirmModal
+        isOpen={Boolean(orderToCancel)}
+        orderId={orderToCancel ? (orderToCancel.ref || orderToCancel.id) : null}
+        orderType={orderToCancel?.type || 'On-Site Order'}
+        total={orderToCancel?.total}
+        onClose={() => setOrderToCancel(null)}
+        onConfirm={handleConfirmCancel}
+        isCancelling={isCancellingOrder}
       />
     </div>
   )

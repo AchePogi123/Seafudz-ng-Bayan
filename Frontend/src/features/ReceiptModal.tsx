@@ -25,6 +25,7 @@ interface ReceiptModalProps {
     cashReceived?: string
     change?: number | null
     paymentMethod?: string
+    paymentReference?: string
     customerName?: string
     phone?: string
     address?: string
@@ -46,6 +47,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
     cashReceived,
     change,
     paymentMethod = 'Cash',
+    paymentReference,
     customerName,
     phone,
     address,
@@ -151,6 +153,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
 
             <div>
               <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
+              ${paymentReference ? `<div class="flex-row"><span>Reference No:</span><span class="font-bold" style="font-family: monospace;">${paymentReference}</span></div>` : ''}
               ${paymentMethod === 'Cash' && cashReceived
           ? `
                 <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
@@ -316,6 +319,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
                 <span>Payment Mode:</span>
                 <span className="text-neutral-800">{paymentMethod}</span>
               </div>
+              {paymentReference && (
+                <div className="flex justify-between">
+                  <span>Reference No:</span>
+                  <span className="font-mono text-neutral-800 font-bold">{paymentReference}</span>
+                </div>
+              )}
               {paymentMethod === 'Cash' && cashReceived && (
                 <>
                   <div className="flex justify-between">

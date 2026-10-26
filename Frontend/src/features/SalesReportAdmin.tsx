@@ -26,6 +26,9 @@ export interface LiveTransaction {
     total: number
     type: string
     paymentMethod?: string
+    paymentReference?: string
+    referenceNumber?: string
+    paymentReceipt?: string
     status?: string
   itemsList?: OrderItemDetail[]
   customerPhone?: string
@@ -33,6 +36,8 @@ export interface LiveTransaction {
   subtotal?: number
   tax?: number
   deliveryFee?: number
+  riderCashReceived?: number
+  riderName?: string
 }
 
 interface SummaryData {
@@ -54,6 +59,28 @@ type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
 
 const PAGE_SIZE = 10
 
+const readString = (...values: unknown[]): string | undefined => {
+    for (const val of values) {
+        if (typeof val === 'string' && val.trim().length > 0) return val.trim()
+        if (typeof val === 'number') return String(val)
+    }
+    return undefined
+}
+
+const readReferenceString = (...values: unknown[]): string | undefined => {
+    const invalid = new Set(['', 'none', 'none recorded', 'null', 'undefined', 'n/a', 'na', 'none  recorded'])
+    for (const candidate of values) {
+        if (typeof candidate === 'number') return String(candidate)
+        if (typeof candidate === 'string') {
+            const trimmed = candidate.trim()
+            if (trimmed && !invalid.has(trimmed.toLowerCase().replace(/\s+/g, ' '))) {
+                return trimmed
+            }
+        }
+    }
+    return undefined
+}
+
 const SalesReportAdmin: React.FC = () => {
     const navigate = useNavigate()
     const currentUser = getActiveUser()
@@ -67,6 +94,59 @@ const SalesReportAdmin: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('')
     const [debouncedSearch, setDebouncedSearch] = useState('')
     const [selectedTransaction, setSelectedTransaction] = useState<LiveTransaction | null>(null)
+    const [copiedRef, setCopiedRef] = useState(false)
+    const [isEditingRef, setIsEditingRef] = useState(false)
+    const [newRefInput, setNewRefInput] = useState('')
+    const [isSavingRef, setIsSavingRef] = useState(false)
+    const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
+
+    useEffect(() => {
+        setIsEditingRef(false)
+        setNewRefInput(selectedTransaction?.paymentReference || selectedTransaction?.referenceNumber || '')
+    }, [selectedTransaction?.id])
+
+    const handleSaveInlineRef = async () => {
+        if (!selectedTransaction) return
+        const trimmed = newRefInput.trim()
+        setIsSavingRef(true)
+        try {
+            const authHeaders = await getAuthHeaders()
+            await fetch(`${API_BASE_URL}/orders/${selectedTransaction.id}`, {
+                method: 'PUT',
+                headers: { ...authHeaders, 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...selectedTransaction,
+                    paymentReference: trimmed || undefined,
+                    referenceNumber: trimmed || undefined,
+                }),
+            }).catch(() => {})
+
+            try {
+                const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const updatedGlobal = globalOrders.map((o: any) =>
+                    o.id === selectedTransaction.id || o.ref === selectedTransaction.id
+                        ? { ...o, paymentReference: trimmed || undefined, referenceNumber: trimmed || undefined }
+                        : o
+                )
+                localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
+            } catch {}
+
+            const updatedTx = {
+                ...selectedTransaction,
+                paymentReference: trimmed || undefined,
+                referenceNumber: trimmed || undefined,
+            }
+            setSelectedTransaction(updatedTx)
+            setTransactions((prev) =>
+                prev.map((t) => (t.id === selectedTransaction.id ? updatedTx : t))
+            )
+            setIsEditingRef(false)
+        } catch (err) {
+            console.warn('Error saving reference number:', err)
+        } finally {
+            setIsSavingRef(false)
+        }
+    }
 
     const [paymentFilter, setPaymentFilter] = useState<string>(navState?.payment || 'All')
     const [channelFilter, setChannelFilter] = useState<string>(navState?.channel || 'All')
@@ -180,8 +260,40 @@ const SalesReportAdmin: React.FC = () => {
             subtotal: dbO.subtotal !== undefined && dbO.subtotal !== null ? Number(dbO.subtotal) : undefined,
             tax: dbO.tax !== undefined && dbO.tax !== null ? Number(dbO.tax) : (dbO.vat !== undefined ? Number(dbO.vat) : undefined),
             deliveryFee: dbO.delivery_fee !== undefined && dbO.delivery_fee !== null ? Number(dbO.delivery_fee) : undefined,
+            riderCashReceived: dbO.rider_cash_received !== undefined && dbO.rider_cash_received !== null
+                ? Number(dbO.rider_cash_received)
+                : (dbO.riderCashReceived !== undefined && dbO.riderCashReceived !== null ? Number(dbO.riderCashReceived) : undefined),
+            riderName: dbO.rider_name || dbO.riderName || undefined,
             type: normalizedType,
             paymentMethod: dbO.payment_method || 'Cash',
+            paymentReference: readReferenceString(
+                dbO.payment_reference,
+                dbO.paymentReference,
+                dbO.reference_number,
+                dbO.referenceNumber,
+                dbO.ref_number,
+                dbO.gcash_reference,
+                dbO.gcashReference,
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.reference_number),
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.referenceNumber)
+            ),
+            referenceNumber: readReferenceString(
+                dbO.payment_reference,
+                dbO.paymentReference,
+                dbO.reference_number,
+                dbO.referenceNumber,
+                dbO.ref_number,
+                dbO.gcash_reference,
+                dbO.gcashReference,
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.reference_number),
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.referenceNumber)
+            ),
+            paymentReceipt: readString(
+                dbO.payment_receipt,
+                dbO.paymentReceipt,
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.payment_receipt || p.paymentReceipt)?.payment_receipt),
+                (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.payment_receipt || p.paymentReceipt)?.paymentReceipt)
+            ),
             status: dbO.status || 'Completed',
         }
     }, [])
@@ -408,9 +520,41 @@ const SalesReportAdmin: React.FC = () => {
                                     type: o.type || 'POS Order',
                                     status: o.status || 'Completed',
                                     customer: o.customerName || o.customer || 'Walk-In',
+                                    customerPhone: o.phone || o.customerPhone || undefined,
+                                    customerAddress: o.deliveryAddress || o.address || o.customerAddress || undefined,
                                     items: itemsStr,
                                     total: Number(o.total || 0),
+                                    subtotal: o.subtotal !== undefined ? Number(o.subtotal) : undefined,
+                                    tax: o.tax !== undefined ? Number(o.tax) : (o.vat !== undefined ? Number(o.vat) : undefined),
+                                    deliveryFee: o.deliveryFee !== undefined ? Number(o.deliveryFee) : undefined,
                                     paymentMethod: o.paymentMethod || 'Cash',
+                                    paymentReference: readReferenceString(
+                                        o.payment_reference,
+                                        o.paymentReference,
+                                        o.reference_number,
+                                        o.referenceNumber,
+                                        o.ref_number,
+                                        o.gcash_reference,
+                                        o.gcashReference,
+                                        (o.payments && Array.isArray(o.payments) && o.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.reference_number),
+                                        (o.payments && Array.isArray(o.payments) && o.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.referenceNumber)
+                                    ),
+                                    referenceNumber: readReferenceString(
+                                        o.payment_reference,
+                                        o.paymentReference,
+                                        o.reference_number,
+                                        o.referenceNumber,
+                                        o.ref_number,
+                                        o.gcash_reference,
+                                        o.gcashReference,
+                                        (o.payments && Array.isArray(o.payments) && o.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.reference_number),
+                                        (o.payments && Array.isArray(o.payments) && o.payments.slice().reverse().find((p: any) => p.reference_number || p.referenceNumber)?.referenceNumber)
+                                    ),
+                                    riderCashReceived: o.riderCashReceived !== undefined && o.riderCashReceived !== null
+                                        ? Number(o.riderCashReceived)
+                                        : (o.rider_cash_received !== undefined && o.rider_cash_received !== null ? Number(o.rider_cash_received) : undefined),
+                                    riderName: o.riderName || o.rider_name || undefined,
+                                    paymentReceipt: readString(o.paymentReceipt, o.payment_receipt) || undefined,
                                 }
                                 orderMap.set(tx.id, tx)
                             }
@@ -428,14 +572,24 @@ const SalesReportAdmin: React.FC = () => {
                     limit: '10000',
                     tab: activeTab,
                 })
-                const res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`, { headers: authHeaders })
+                let res = await fetch(`${API_BASE_URL}/orders?${params.toString()}`, { headers: authHeaders })
+                if (!res.ok) {
+                    res = await fetch(`${API_BASE_URL}/user-flow/orders?limit=10000`).catch(() => res)
+                }
                 if (res.ok) {
                     const json = await res.json()
                     const list = json.data || []
                     const formatted = list.map(formatOrderRow)
                     formatted.forEach((dbO: LiveTransaction) => {
                         if (checkIsInSelectedPeriod(dbO, activeTab)) {
-                            orderMap.set(dbO.id, dbO)
+                            const existing = orderMap.get(dbO.id)
+                            orderMap.set(dbO.id, {
+                                ...existing,
+                                ...dbO,
+                                paymentReference: dbO.paymentReference || existing?.paymentReference,
+                                referenceNumber: dbO.referenceNumber || existing?.referenceNumber || dbO.paymentReference || existing?.paymentReference,
+                                paymentReceipt: dbO.paymentReceipt || existing?.paymentReceipt,
+                            })
                         }
                     })
                 }
@@ -518,7 +672,9 @@ const SalesReportAdmin: React.FC = () => {
                     (o) =>
                         (o.ref || '').toLowerCase().includes(q) ||
                         (o.customer || '').toLowerCase().includes(q) ||
-                        (o.items || '').toLowerCase().includes(q)
+                        (o.items || '').toLowerCase().includes(q) ||
+                        (o.paymentReference || '').toLowerCase().includes(q) ||
+                        (o.referenceNumber || '').toLowerCase().includes(q)
                 )
             }
 
@@ -980,6 +1136,15 @@ const SalesReportAdmin: React.FC = () => {
                                                         ></span>
                                                         {tx.paymentMethod || 'Cash'}
                                                     </span>
+                                                    {((tx.paymentMethod || '').toLowerCase().includes('gcash') ||
+                                                        (tx.paymentMethod || '').toLowerCase().includes('hybrid')) && (tx.paymentReference || tx.referenceNumber) && (
+                                                        <span
+                                                            className="block font-mono text-[10px] text-blue-700 font-bold mt-0.5 truncate max-w-[130px]"
+                                                            title={`Ref: ${tx.paymentReference || tx.referenceNumber}`}
+                                                        >
+                                                            Ref: {tx.paymentReference || tx.referenceNumber}
+                                                        </span>
+                                                    )}
                                                 </td>
                                                 <td className="py-3 px-4 text-right font-semibold text-slate-900">
                                                     ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -994,7 +1159,11 @@ const SalesReportAdmin: React.FC = () => {
                                                         type="button"
                                                         onClick={() => setSelectedTransaction(tx)}
                                                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                                        title="View details"
+                                                        title={
+                                                            tx.paymentReference || tx.referenceNumber
+                                                                ? `View details (Ref: ${tx.paymentReference || tx.referenceNumber})`
+                                                                : "View details"
+                                                        }
                                                     >
                                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                                             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -1165,6 +1334,15 @@ const SalesReportAdmin: React.FC = () => {
                                             {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : 'In-Store / On-Site')}
                                         </span>
                                     </div>
+
+                                    {selectedTransaction.riderName && (
+                                        <div className="sm:col-span-2">
+                                            <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Assigned Delivery Rider</span>
+                                            <span className="font-semibold text-slate-800 mt-0.5 block">
+                                                {selectedTransaction.riderName}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -1183,6 +1361,137 @@ const SalesReportAdmin: React.FC = () => {
                                     <span className="font-medium text-slate-700 mt-0.5 block text-[11px]">{selectedTransaction.dateTime}</span>
                                 </div>
                             </div>
+
+                            {/* Reference Number for GCash or Hybrid in View Details */}
+                            {((selectedTransaction.paymentMethod || '').toLowerCase().includes('gcash') ||
+                                (selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                Boolean(selectedTransaction.paymentReference || selectedTransaction.referenceNumber)) && (
+                                <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3.5 flex flex-col gap-2.5 text-xs shadow-2xs">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div className="flex items-center gap-2.5 min-w-0">
+                                            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                </svg>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 block">
+                                                    {(selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid')
+                                                        ? 'Hybrid Payment Reference'
+                                                        : 'GCash Reference Number'}
+                                                </span>
+                                                {!isEditingRef ? (
+                                                    <span className="font-mono font-black text-blue-950 text-xs sm:text-sm tracking-wide block truncate">
+                                                        {selectedTransaction.paymentReference || selectedTransaction.referenceNumber || 'None recorded'}
+                                                    </span>
+                                                ) : null}
+                                            </div>
+                                        </div>
+
+                                        {!isEditingRef && (
+                                            <div className="flex items-center gap-1.5 shrink-0">
+                                                {(selectedTransaction.paymentReference || selectedTransaction.referenceNumber) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const ref = selectedTransaction.paymentReference || selectedTransaction.referenceNumber || ''
+                                                            navigator.clipboard?.writeText(ref)
+                                                            setCopiedRef(true)
+                                                            setTimeout(() => setCopiedRef(false), 2000)
+                                                        }}
+                                                        className="px-2.5 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 font-bold text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                                                        title="Copy Reference Number"
+                                                    >
+                                                        {copiedRef ? (
+                                                            <>
+                                                                <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                                <span className="text-emerald-700">Copied!</span>
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                                </svg>
+                                                                <span>Copy</span>
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setNewRefInput(selectedTransaction.paymentReference || selectedTransaction.referenceNumber || '')
+                                                        setIsEditingRef(true)
+                                                    }}
+                                                    className="px-2.5 py-1.5 rounded-lg bg-blue-100/80 hover:bg-blue-200/80 border border-blue-300 text-blue-900 font-bold text-[11px] transition-colors cursor-pointer"
+                                                >
+                                                    {selectedTransaction.paymentReference || selectedTransaction.referenceNumber ? 'Edit' : 'Add Ref #'}
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {isEditingRef && (
+                                        <div className="flex items-center gap-2 pt-1 border-t border-blue-200/80">
+                                            <input
+                                                type="text"
+                                                value={newRefInput}
+                                                onChange={(e) => setNewRefInput(e.target.value)}
+                                                placeholder="Enter GCash / Hybrid Ref #"
+                                                className="flex-1 px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-xs font-mono font-bold text-blue-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                autoFocus
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={handleSaveInlineRef}
+                                                disabled={isSavingRef}
+                                                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer shadow-2xs"
+                                            >
+                                                {isSavingRef ? 'Saving...' : 'Save'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsEditingRef(false)}
+                                                className="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs cursor-pointer"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Payment Proof Receipt Screenshot Card */}
+                            {selectedTransaction.paymentReceipt && (
+                                <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-left">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                        <img
+                                            src={selectedTransaction.paymentReceipt}
+                                            alt="GCash Payment Proof"
+                                            onClick={() => setPreviewReceiptUrl(selectedTransaction.paymentReceipt || null)}
+                                            className="w-12 h-12 object-cover rounded-xl border border-emerald-300 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                                        />
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-bold text-emerald-950">Payment Proof Screenshot</span>
+                                                <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                                                    Attached
+                                                </span>
+                                            </div>
+                                            <p className="text-[11px] text-emerald-700/90 truncate">Customer submitted GCash confirmation screenshot</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreviewReceiptUrl(selectedTransaction.paymentReceipt || null)}
+                                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-2xs shrink-0 transition-colors"
+                                    >
+                                        View Picture
+                                    </button>
+                                </div>
+                            )}
 
                             {/* Ordered Items List */}
                             <div className="space-y-2">
@@ -1280,6 +1589,56 @@ const SalesReportAdmin: React.FC = () => {
                                         ₱{Number(selectedTransaction.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                 </div>
+
+                                {((selectedTransaction.paymentMethod || '').toLowerCase().includes('gcash') ||
+                                    (selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                                    Boolean(selectedTransaction.paymentReference || selectedTransaction.referenceNumber)) && (
+                                    <div className="flex justify-between items-center text-blue-900 pt-2 border-t border-slate-200/80 font-semibold">
+                                        <span className="flex items-center gap-1.5">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                            <span>
+                                                {(selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid')
+                                                    ? 'Hybrid Payment Reference:'
+                                                    : 'GCash Reference Number:'}
+                                            </span>
+                                        </span>
+                                        <span className="font-mono font-bold text-blue-950 text-xs">
+                                            {selectedTransaction.paymentReference || selectedTransaction.referenceNumber || 'None recorded'}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {selectedTransaction.riderCashReceived !== undefined && selectedTransaction.riderCashReceived !== null && (
+                                    <div className="mt-3 pt-3 border-t border-dashed border-emerald-300 bg-emerald-50/70 -mx-4 -mb-4 p-4 rounded-b-2xl space-y-1.5">
+                                        <div className="flex items-center justify-between text-xs font-bold text-emerald-950">
+                                            <span className="flex items-center gap-1.5">
+                                                <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                </svg>
+                                                <span>Rider Payment Received Upon Delivery:</span>
+                                            </span>
+                                            <span className="text-sm font-black text-emerald-700 font-mono">
+                                                ₱{Number(selectedTransaction.riderCashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        {Number(selectedTransaction.riderCashReceived) > Number(selectedTransaction.total || 0) && (
+                                            <div className="flex items-center justify-between text-[11px] text-emerald-800/90 font-semibold pl-5">
+                                                <span>Change Given to Customer:</span>
+                                                <span className="font-mono text-emerald-950">
+                                                    ₱{(Number(selectedTransaction.riderCashReceived) - Number(selectedTransaction.total || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                        )}
+                                        {Number(selectedTransaction.riderCashReceived) < Number(selectedTransaction.total || 0) && (
+                                            <div className="flex items-center justify-between text-[11px] text-amber-800 font-semibold pl-5">
+                                                <span>Short Payment Balance:</span>
+                                                <span className="font-mono text-amber-950">
+                                                    ₱{(Number(selectedTransaction.total || 0) - Number(selectedTransaction.riderCashReceived)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -1293,6 +1652,42 @@ const SalesReportAdmin: React.FC = () => {
                                 Close
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Proof Screenshot Full View Modal */}
+            {previewReceiptUrl && (
+                <div
+                    className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-150"
+                    onClick={() => setPreviewReceiptUrl(null)}
+                >
+                    <div
+                        className="relative max-w-xl max-h-[90vh] bg-white rounded-3xl p-4 shadow-2xl flex flex-col items-center gap-3 overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="w-full flex items-center justify-between pb-2 border-b border-slate-100">
+                            <span className="text-xs font-black text-slate-800 uppercase tracking-wider">GCash Transaction Proof Screenshot</span>
+                            <button
+                                type="button"
+                                onClick={() => setPreviewReceiptUrl(null)}
+                                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer font-bold"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <img
+                            src={previewReceiptUrl}
+                            alt="Payment Proof Full"
+                            className="max-h-[72vh] w-auto object-contain rounded-2xl border border-slate-200 shadow-sm"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setPreviewReceiptUrl(null)}
+                            className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                        >
+                            Close
+                        </button>
                     </div>
                 </div>
             )}

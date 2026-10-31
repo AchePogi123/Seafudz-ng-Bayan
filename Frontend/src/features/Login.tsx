@@ -235,7 +235,10 @@ return () => {
           if (errData?.code === 'STAFF_PENDING_ACTIVATION' || errData?.code === 'STAFF_ACCOUNT_INACTIVE') {
             blockedStaffMessage = errData.message || 'This staff account cannot sign in yet.';
           }
-          if (errData?.message && !supabaseUser) {
+          if (errData?.code === 'ACCOUNT_LOCKED') {
+            blockedStaffMessage = errData.message || 'Too many failed login attempts. Account is locked for 10 minutes. Please try again later.';
+          }
+          if (errData?.message) {
             supabaseAuthErr = errData.message;
           }
         }

@@ -759,6 +759,145 @@ router.post('/auth/cleanup-user', requireAuth, requireActiveAdmin, async (req, r
   }
 });
 
+// Rate limiting / Account Lockout Store for failed login attempts
+// Map: identifier (lowercase) -> { attempts: number, lockedUntil: number | null, lastAttempt: number }
+const loginAttemptStore = new Map();
+const MAX_LOGIN_ATTEMPTS = 8;
+const LOCKOUT_DURATION_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Helper: Formats remaining milliseconds into human-readable minutes and seconds
+ */
+function formatLockoutTime(remainingMs) {
+  const totalSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) {
+    return `${minutes} minute${minutes > 1 ? 's' : ''}${seconds > 0 ? ` and ${seconds} second${seconds > 1 ? 's' : ''}` : ''}`;
+  }
+  return `${seconds} second${seconds > 1 ? 's' : ''}`;
+}
+
+/**
+ * Helper: Checks if an identifier (email or username) is currently locked out
+ */
+async function checkLoginLockout(identifier) {
+  if (!identifier) return null;
+  const key = identifier.trim().toLowerCase();
+  const now = Date.now();
+
+  // 1. Check in-memory store
+  const record = loginAttemptStore.get(key);
+  if (record && record.lockedUntil && record.lockedUntil > now) {
+    const remainingMs = record.lockedUntil - now;
+    return {
+      locked: true,
+      lockedUntil: record.lockedUntil,
+      remainingMs,
+      remainingTimeFormatted: formatLockoutTime(remainingMs),
+    };
+  }
+
+  // 2. Check persistent DB store (password_resets table fallback for multi-instance Cloud Run)
+  try {
+    const dbRes = await query(
+      `SELECT token, expires_at FROM password_resets WHERE email = $1 LIMIT 1`,
+      [`login_lockout:${key}`]
+    );
+    if (dbRes.rows.length > 0) {
+      const expiresAtMs = new Date(dbRes.rows[0].expires_at).getTime();
+      if (expiresAtMs > now) {
+        const remainingMs = expiresAtMs - now;
+        loginAttemptStore.set(key, {
+          attempts: MAX_LOGIN_ATTEMPTS,
+          lockedUntil: expiresAtMs,
+          lastAttempt: now,
+        });
+        return {
+          locked: true,
+          lockedUntil: expiresAtMs,
+          remainingMs,
+          remainingTimeFormatted: formatLockoutTime(remainingMs),
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[AUTH LOCKOUT] DB check notice:', err.message);
+  }
+
+  return null;
+}
+
+/**
+ * Helper: Records a failed login attempt for an identifier
+ */
+async function recordFailedLoginAttempt(identifier) {
+  if (!identifier) return { locked: false, attempts: 1, remainingAttempts: MAX_LOGIN_ATTEMPTS - 1 };
+  const key = identifier.trim().toLowerCase();
+  const now = Date.now();
+
+  let record = loginAttemptStore.get(key);
+  if (!record || (record.lockedUntil && record.lockedUntil <= now)) {
+    record = { attempts: 0, lockedUntil: null, lastAttempt: now };
+  }
+
+  record.attempts = (record.attempts || 0) + 1;
+  record.lastAttempt = now;
+
+  if (record.attempts >= MAX_LOGIN_ATTEMPTS) {
+    record.lockedUntil = now + LOCKOUT_DURATION_MS;
+    loginAttemptStore.set(key, record);
+
+    // Persist in DB for multi-instance Cloud Run support
+    try {
+      const dbExpiresAt = new Date(record.lockedUntil).toISOString();
+      await query(
+        `INSERT INTO password_resets (email, token, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (email) DO UPDATE
+         SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
+        [`login_lockout:${key}`, `locked:${record.attempts}`, dbExpiresAt]
+      );
+    } catch (err) {
+      console.warn('[AUTH LOCKOUT] DB record error:', err.message);
+    }
+
+    const remainingMs = record.lockedUntil - now;
+    return {
+      locked: true,
+      attempts: record.attempts,
+      remainingAttempts: 0,
+      lockedUntil: record.lockedUntil,
+      remainingTimeFormatted: formatLockoutTime(remainingMs),
+    };
+  }
+
+  loginAttemptStore.set(key, record);
+  return {
+    locked: false,
+    attempts: record.attempts,
+    remainingAttempts: MAX_LOGIN_ATTEMPTS - record.attempts,
+    lockedUntil: null,
+    remainingTimeFormatted: null,
+  };
+}
+
+/**
+ * Helper: Clears failed attempts upon successful login
+ */
+async function clearLoginAttempts(identifier) {
+  if (!identifier) return;
+  const key = identifier.trim().toLowerCase();
+  loginAttemptStore.delete(key);
+
+  try {
+    await query(
+      `DELETE FROM password_resets WHERE email = $1`,
+      [`login_lockout:${key}`]
+    );
+  } catch {}
+}
+
 /**
  * POST /api/auth/login
  * Authenticates user credentials and returns an HMAC session token and user profile
@@ -767,6 +906,20 @@ router.post('/auth/login', async (req, res) => {
   try {
     const { username, email, password, pinCode, loginInput } = req.body;
     const searchValue = (loginInput || email || username || '').trim();
+
+    // Check if account is currently locked out from too many failed attempts
+    if (searchValue) {
+      const lockoutState = await checkLoginLockout(searchValue);
+      if (lockoutState?.locked) {
+        return res.status(429).json({
+          success: false,
+          code: 'ACCOUNT_LOCKED',
+          message: `Too many failed login attempts. Account is locked. Please try again in ${lockoutState.remainingTimeFormatted}.`,
+          lockedUntil: lockoutState.lockedUntil,
+          remainingMs: lockoutState.remainingMs,
+        });
+      }
+    }
 
     let verifiedSupabaseUserId = null;
 
@@ -889,9 +1042,19 @@ router.post('/auth/login', async (req, res) => {
 
     // 3. Reject if no employee or customer account exists for the given username/email
     if (!emp && !cust) {
+      const failState = await recordFailedLoginAttempt(searchValue);
+      if (failState.locked) {
+        return res.status(429).json({
+          success: false,
+          code: 'ACCOUNT_LOCKED',
+          message: `Maximum 8 failed login attempts reached. Your account has been locked for 10 minutes to protect your security.`,
+          lockedUntil: failState.lockedUntil,
+        });
+      }
       return res.status(401).json({
         success: false,
-        message: 'Invalid email/username or password. Please try again.',
+        message: `Invalid email/username or password. ${failState.remainingAttempts} attempt${failState.remainingAttempts === 1 ? '' : 's'} remaining before a 10-minute lockout.`,
+        remainingAttempts: failState.remainingAttempts,
       });
     }
 
@@ -960,11 +1123,34 @@ router.post('/auth/login', async (req, res) => {
 
       // STRICT SECURITY ENFORCEMENT: If neither PIN nor password verified, block login!
       if (!isVerified) {
+        const failIdentifier = userRecord.email || userRecord.username || searchValue;
+        const failState = await recordFailedLoginAttempt(failIdentifier);
+        if (searchValue && searchValue.toLowerCase() !== failIdentifier.toLowerCase()) {
+          await recordFailedLoginAttempt(searchValue);
+        }
+
+        if (failState.locked) {
+          return res.status(429).json({
+            success: false,
+            code: 'ACCOUNT_LOCKED',
+            message: `Maximum 8 failed login attempts reached. Your account has been locked for 10 minutes to protect your security.`,
+            lockedUntil: failState.lockedUntil,
+          });
+        }
+
         return res.status(401).json({
           success: false,
-          message: 'Invalid email/username or password. Please try again.',
+          message: `Invalid email/username or password. ${failState.remainingAttempts} attempt${failState.remainingAttempts === 1 ? '' : 's'} remaining before a 10-minute lockout.`,
+          remainingAttempts: failState.remainingAttempts,
         });
       }
+    }
+
+    // Clear failed login attempts upon successful login
+    const successIdentifier = userRecord.email || userRecord.username || searchValue;
+    clearLoginAttempts(successIdentifier);
+    if (searchValue && searchValue.toLowerCase() !== successIdentifier.toLowerCase()) {
+      clearLoginAttempts(searchValue);
     }
 
     // 5. Generate HMAC session token and return authenticated profile

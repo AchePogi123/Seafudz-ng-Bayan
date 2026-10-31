@@ -640,6 +640,9 @@ export const RideRoleDemo: React.FC = () => {
       } catch {}
     }
 
+    const riderName = currentUser?.fullname || currentUser?.username || 'Kuya Mark Reyes'
+    const riderPhone = currentUser?.phone || '0917-888-9999'
+
     // Update in LocalStorage
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -650,6 +653,10 @@ export const RideRoleDemo: React.FC = () => {
           return {
             ...o,
             status: apiStatus,
+            riderName,
+            riderPhone,
+            rider_name: riderName,
+            rider_phone: riderPhone,
             riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : o.riderCashReceived,
             rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : o.rider_cash_received,
           }
@@ -669,6 +676,10 @@ export const RideRoleDemo: React.FC = () => {
             JSON.stringify({
               ...activeObj,
               status: apiStatus,
+              riderName,
+              riderPhone,
+              rider_name: riderName,
+              rider_phone: riderPhone,
               riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : activeObj.riderCashReceived,
             })
           )
@@ -707,6 +718,10 @@ export const RideRoleDemo: React.FC = () => {
                 localStorage.setItem(key, JSON.stringify({
                   ...parsed,
                   status: apiStatus,
+                  riderName,
+                  riderPhone,
+                  rider_name: riderName,
+                  rider_phone: riderPhone,
                   riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : parsed.riderCashReceived,
                   rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : parsed.rider_cash_received,
                 }))
@@ -721,7 +736,6 @@ export const RideRoleDemo: React.FC = () => {
     } catch {}
 
     // Update in Backend API in parallel
-    const riderName = currentUser?.fullname || currentUser?.username || 'Rider'
     await Promise.all(
       updates.map(async (u) => {
         const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
@@ -733,6 +747,7 @@ export const RideRoleDemo: React.FC = () => {
               status: apiStatus,
               riderCashReceived: u.moneyReceived,
               riderName,
+              riderPhone,
             }),
           })
         } catch {}

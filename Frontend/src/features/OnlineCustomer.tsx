@@ -45,6 +45,8 @@ interface OnlineOrderState {
     deliveryFee: number
     total: number
     status: 'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR_DELIVERY' | 'COMPLETED' | 'OUT_OF_STOCK' | 'CANCELLED' | string
+    riderName?: string
+    riderPhone?: string
     outOfStockItems?: any[]
     customerResolution?: 'REPLACE' | 'REFUND' | null
     customerResolutionStatus?: string
@@ -3415,50 +3417,129 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-                            <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
-                                <div>
-                                    <h4 className="font-bold text-neutral-800 text-sm mb-2">Delivery Info</h4>
-                                    <div className="text-xs space-y-1.5 text-neutral-600">
-                                        <p>
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
-                                            {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
-                                        </p>
-                                        <p>
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Phone:</span>{' '}
-                                            {activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}
-                                        </p>
-                                        <p className="leading-relaxed">
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
-                                            {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}
-                                        </p>
-                                        {activeOrder.notes && (
-                                            <p className="leading-relaxed text-orange-600">
-                                                <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
-                                                {activeOrder.notes}
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
+                        {(() => {
+                            const rawStatus = (activeOrder.status || '').toUpperCase()
+                            const norm = normalizeStatus(rawStatus)
+                            const isOutForDelivery = ['OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(norm)
+                            const isEnRoute = norm === 'OUT_FOR_DELIVERY'
 
-                                {/* Itemized Dishes Ordered */}
-                                <div className="border-t border-neutral-200/60 pt-3">
-                                    <h5 className="font-bold text-neutral-800 text-xs mb-2">Dishes in this Order</h5>
-                                    <div className="divide-y divide-neutral-200/50 text-xs">
-                                        {(activeOrder.items || []).map((ci: any, idx: number) => {
-                                            const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
-                                            const qty = ci.quantity || 1
-                                            const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
-                                            return (
-                                                <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
-                                                    <span className="font-medium text-neutral-800">{qty}× {name}</span>
-                                                    <span className="font-bold text-neutral-900">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                </div>
-                                            )
-                                        })}
+                            const riderName = activeOrder.riderName || (activeOrder as any).rider_name || (activeOrder as any).assignedRiderName || 'Kuya Mark Reyes'
+                            const riderPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone || '0917-888-9999'
+
+                            return (
+                                <div className={`grid grid-cols-1 ${isOutForDelivery ? 'lg:grid-cols-3 md:grid-cols-2' : 'md:grid-cols-2'} gap-6 pt-4`}>
+                                    <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
+                                        <div>
+                                            <h4 className="font-bold text-neutral-800 text-sm mb-2">Delivery Info</h4>
+                                            <div className="text-xs space-y-1.5 text-neutral-600">
+                                                <p>
+                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
+                                                    {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
+                                                </p>
+                                                <p>
+                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Phone:</span>{' '}
+                                                    {activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}
+                                                </p>
+                                                <p className="leading-relaxed">
+                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
+                                                    {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}
+                                                </p>
+                                                {activeOrder.notes && (
+                                                    <p className="leading-relaxed text-orange-600">
+                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
+                                                        {activeOrder.notes}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Itemized Dishes Ordered */}
+                                        <div className="border-t border-neutral-200/60 pt-3">
+                                            <h5 className="font-bold text-neutral-800 text-xs mb-2">Dishes in this Order</h5>
+                                            <div className="divide-y divide-neutral-200/50 text-xs">
+                                                {(activeOrder.items || []).map((ci: any, idx: number) => {
+                                                    const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
+                                                    const qty = ci.quantity || 1
+                                                    const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
+                                                    return (
+                                                        <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
+                                                            <span className="font-medium text-neutral-800">{qty}× {name}</span>
+                                                            <span className="font-bold text-neutral-900">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            </div>
+
+                                    {/* Delivery Rider Details (Visible when Out for Delivery or Completed) */}
+                                    {isOutForDelivery && (
+                                        <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <h4 className="font-bold text-neutral-800 text-sm">Delivery Rider Details</h4>
+                                                    {isEnRoute ? (
+                                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-100 text-orange-700 border border-orange-200 shadow-2xs">
+                                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping"></span>
+                                                            En Route
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
+                                                            ✓ Delivered
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                <div className="bg-white rounded-xl p-3.5 border border-neutral-200/80 shadow-2xs flex items-center gap-3.5 mt-2">
+                                                    <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200 text-orange-600 flex items-center justify-center text-2xl shrink-0 shadow-2xs">
+                                                        🛵
+                                                    </div>
+                                                    <div className="min-w-0 flex-1">
+                                                        <span className="text-[10px] font-bold text-orange-600 uppercase tracking-wider block">Assigned Rider</span>
+                                                        <h5 className="font-extrabold text-neutral-900 text-sm truncate">{riderName}</h5>
+                                                        <p className="text-xs text-neutral-500 font-medium flex items-center gap-1 mt-0.5">
+                                                            <span>📞</span>
+                                                            <span className="font-mono text-neutral-700 font-semibold">{riderPhone}</span>
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <div className="text-xs space-y-2 text-neutral-600 mt-3 pt-2 border-t border-neutral-200/60">
+                                                    <p className="flex justify-between items-center">
+                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Service Mode:</span>
+                                                        <span className="font-semibold text-neutral-800">Motorcycle Express Dispatch</span>
+                                                    </p>
+                                                    <p className="flex justify-between items-center">
+                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Current Status:</span>
+                                                        <span className={`font-bold ${isEnRoute ? 'text-orange-600' : 'text-emerald-600'}`}>
+                                                            {isEnRoute ? 'On the way to your address' : 'Delivered & Completed'}
+                                                        </span>
+                                                    </p>
+                                                    {isEnRoute && (
+                                                        <p className="flex justify-between items-center">
+                                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Estimated Arrival:</span>
+                                                            <span className="font-extrabold text-neutral-900">15 – 25 mins</span>
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            {/* Direct Call Button & Note */}
+                                            <div className="border-t border-neutral-200/60 pt-3 space-y-2">
+                                                <a
+                                                    href={`tel:${riderPhone.replace(/\D/g, '')}`}
+                                                    className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-extrabold text-xs py-2.5 px-3 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                                >
+                                                    <span>📞 Call Rider ({riderPhone})</span>
+                                                </a>
+                                                <p className="text-[11px] text-neutral-500 leading-relaxed text-center">
+                                                    {isEnRoute
+                                                        ? 'Your rider has dispatched from the store. Please ensure your contact number is reachable for a smooth handover.'
+                                                        : 'This delivery has been successfully received. Thank you for dining with Seafudz ng Bayan!'}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    )}
 
                             <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
                                 <h4 className="font-bold text-neutral-800 text-sm">Billing & Payment Details</h4>
@@ -3545,6 +3626,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </div>
                             </div>
                         </div>
+                    )
+                })()}
                     </div>
                 )}
 

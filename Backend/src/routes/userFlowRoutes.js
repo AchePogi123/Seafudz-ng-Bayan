@@ -63,6 +63,7 @@ router.get('/user-flow/orders', async (req, res) => {
                COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
                d.rider_id,
                r_emp.fullname AS rider_name,
+               r_emp.phone AS rider_phone,
                COALESCE(
                  json_agg(
                    json_build_object(
@@ -89,7 +90,7 @@ router.get('/user-flow/orders', async (req, res) => {
         ) d ON o.id = d.order_id
         LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname
+        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname, r_emp.phone
         ORDER BY o.created_at DESC
       `);
       dbOrders = rows;

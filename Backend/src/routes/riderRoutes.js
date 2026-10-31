@@ -140,7 +140,7 @@ router.patch('/rider/deliveries/:id/status', optionalAuth, async (req, res) => {
 export async function handleRiderStatusUpdate(req, res) {
   try {
     const { id } = req.params;
-    const { status, riderName, riderCashReceived, moneyReceived } = req.body;
+    const { status, riderName, riderPhone, riderCashReceived, moneyReceived } = req.body;
     const finalRiderMoney = riderCashReceived !== undefined && riderCashReceived !== null && riderCashReceived !== ''
       ? Number(riderCashReceived)
       : (moneyReceived !== undefined && moneyReceived !== null && moneyReceived !== '' ? Number(moneyReceived) : undefined);
@@ -153,9 +153,21 @@ export async function handleRiderStatusUpdate(req, res) {
       existing.status = nextStatus;
       existing.updated_at = new Date().toISOString();
       if (riderName) existing.riderName = riderName;
+      if (riderPhone) existing.riderPhone = riderPhone;
       if (finalRiderMoney !== undefined) existing.riderCashReceived = finalRiderMoney;
       inMemoryOrders.set(id, existing);
       updatedOrder = formatOrderResponse(existing);
+    } else {
+      const newEntry = {
+        id,
+        status: nextStatus,
+        riderName: riderName || (nextStatus === 'OUT_FOR_DELIVERY' ? 'Kuya Mark Reyes' : undefined),
+        riderPhone: riderPhone || (nextStatus === 'OUT_FOR_DELIVERY' ? '0917-888-9999' : undefined),
+        riderCashReceived: finalRiderMoney,
+        updated_at: new Date().toISOString()
+      };
+      inMemoryOrders.set(id, newEntry);
+      updatedOrder = formatOrderResponse(newEntry);
     }
 
     // Update PostgreSQL Database

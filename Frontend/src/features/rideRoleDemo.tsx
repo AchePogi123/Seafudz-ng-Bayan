@@ -57,6 +57,36 @@ const RIDER_DEMO_ORDERS: DeliveryJob[] = [
   },
 ]
 
+export const isCodOrder = (order?: { paymentMethod?: string; [key: string]: any } | null): boolean => {
+  if (!order) return false
+  const method = String(order.paymentMethod || order.payment_method || '').toUpperCase().trim()
+  return method.includes('COD') || method === 'CASH' || method.includes('DELIVERY')
+}
+
+export const getPaymentMethodDisplay = (paymentMethod?: string) => {
+  const norm = String(paymentMethod || '').toUpperCase().trim()
+  if (norm.includes('COD') || norm === 'CASH' || norm.includes('DELIVERY')) {
+    return {
+      type: 'COD' as const,
+      label: 'Cash on Delivery (COD)',
+      shortLabel: 'COD',
+      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+      pillClass: 'bg-amber-500 text-white',
+      tagText: 'Collect Cash',
+      icon: '💵',
+    }
+  }
+  return {
+    type: 'GCASH' as const,
+    label: 'GCash (Paid Online)',
+    shortLabel: 'GCash',
+    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+    pillClass: 'bg-emerald-600 text-white',
+    tagText: 'Paid Online',
+    icon: '📱',
+  }
+}
+
 export const RideRoleDemo: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
@@ -209,7 +239,7 @@ export const RideRoleDemo: React.FC = () => {
                   : Number(o.deliveryFee ?? o.delivery_fee),
                 status: displayStatus,
                 createdAt: o.createdAt || new Date().toISOString(),
-                paymentMethod: o.paymentMethod || 'GCash',
+                paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
               })
@@ -292,7 +322,7 @@ export const RideRoleDemo: React.FC = () => {
                   : Number(o.deliveryFee ?? o.delivery_fee),
                 status: displayStatus,
                 createdAt: o.dateTime || 'Just now',
-                paymentMethod: o.paymentMethod || 'GCash',
+                paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
               })
@@ -515,7 +545,8 @@ export const RideRoleDemo: React.FC = () => {
         (d.ref || '').toLowerCase().includes(q) ||
         (d.customer || '').toLowerCase().includes(q) ||
         (d.phone || '').toLowerCase().includes(q) ||
-        (d.address || '').toLowerCase().includes(q)
+        (d.address || '').toLowerCase().includes(q) ||
+        (d.paymentMethod || '').toLowerCase().includes(q)
       )
     })
 
@@ -671,6 +702,8 @@ export const RideRoleDemo: React.FC = () => {
                   </div>
                 ) : (
                   paginatedDeliveries.map((ord) => {
+                    const isCod = isCodOrder(ord)
+                    const payInfo = getPaymentMethodDisplay(ord.paymentMethod)
                     return (
                       <div
                         key={ord.id}
@@ -679,8 +712,14 @@ export const RideRoleDemo: React.FC = () => {
                       >
                         <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
                           <div>
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
-                            <h4 className="text-base font-black leading-tight mt-0.5 text-neutral-800">{ord.customer}</h4>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${payInfo.badgeClass}`}>
+                                <span>{payInfo.icon}</span>
+                                <span>{payInfo.shortLabel}</span>
+                              </span>
+                            </div>
+                            <h4 className="text-base font-black leading-tight mt-1 text-neutral-800">{ord.customer}</h4>
                             <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -727,7 +766,18 @@ export const RideRoleDemo: React.FC = () => {
                         </div>
 
                         <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            {isCod ? (
+                              <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold">
+                                Collect Cash
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
+                                Paid Online
+                              </span>
+                            )}
+                          </div>
                           <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                         </div>
                       </div>
@@ -767,253 +817,368 @@ export const RideRoleDemo: React.FC = () => {
         </div>
       </div>
 
-      {activeCustomerDetailsOrder && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setCustomerDetailsOrder(null)}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rider-customer-details-title"
-            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
+      {activeCustomerDetailsOrder && (() => {
+        const modalIsCod = isCodOrder(activeCustomerDetailsOrder)
+        const modalPayInfo = getPaymentMethodDisplay(activeCustomerDetailsOrder.paymentMethod)
+
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setCustomerDetailsOrder(null)}
           >
-            <div className="mb-4 flex items-start justify-between gap-4 border-b border-neutral-100 pb-3">
-              <div>
-                <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900">
-                  {activeCustomerDetailsOrder.customer}
-                </h2>
-                <p className="mt-1 text-xs text-neutral-500">Order {activeCustomerDetailsOrder.ref}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCustomerDetailsOrder(null)}
-                className="rounded-lg px-2 py-1 text-sm font-bold text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
-                aria-label="Close customer details"
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="space-y-3 text-sm">
-              <div>
-                <p className="text-xs font-bold uppercase text-neutral-400">Phone</p>
-                <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.phone}</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase text-neutral-400">Delivery address</p>
-                <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.address}</p>
-              </div>
-              <p className="text-xs font-bold uppercase text-neutral-400">
-                Status: <span className="text-neutral-700">{activeCustomerDetailsOrder.status}</span>
-              </p>
-              <div className="grid grid-cols-2 gap-3 rounded-xl bg-orange-50 p-3">
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rider-customer-details-title"
+              className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-4 flex items-start justify-between gap-4 border-b border-neutral-100 pb-3">
                 <div>
-                  <p className="text-xs font-bold uppercase text-neutral-500">Road distance</p>
-                  <p className="mt-0.5 font-bold text-neutral-900">
-                    {activeCustomerDetailsOrder.roadDistanceKm === undefined
-                      ? 'Unavailable'
-                      : `${activeCustomerDetailsOrder.roadDistanceKm.toFixed(1)} km`}
-                  </p>
+                  <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900">
+                    {activeCustomerDetailsOrder.customer}
+                  </h2>
+                  <p className="mt-1 text-xs text-neutral-500">Order {activeCustomerDetailsOrder.ref}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerDetailsOrder(null)}
+                  className="rounded-lg px-2 py-1 text-sm font-bold text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 cursor-pointer"
+                  aria-label="Close customer details"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="space-y-3 text-sm">
+                <div>
+                  <p className="text-xs font-bold uppercase text-neutral-400">Phone</p>
+                  <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.phone}</p>
                 </div>
                 <div>
-                  <p className="text-xs font-bold uppercase text-neutral-500">Total rider fee</p>
-                  <p className="mt-0.5 font-bold text-orange-700">
-                    {activeCustomerDetailsOrder.deliveryFee === null
-                      ? 'Outside delivery range'
-                      : `₱${activeCustomerDetailsOrder.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                  </p>
+                  <p className="text-xs font-bold uppercase text-neutral-400">Delivery address</p>
+                  <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.address}</p>
                 </div>
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase text-neutral-400">Items</p>
-                <ul className="mt-1 space-y-1 text-neutral-800">
-                  {activeCustomerDetailsOrder.items.map((item, index) => (
-                    <li key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                      <span>{item.name}</span>
-                      <span className="font-semibold">x{item.quantity}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="flex justify-between border-t border-neutral-100 pt-3 font-bold">
-                <span>Order total</span>
-                <span className="font-mono text-base">₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              </div>
-              {/* Ready status note & actions: Rider has not started delivery yet */}
-              {activeCustomerDetailsOrder.status === 'Ready' && (
-                <div className="space-y-3 pt-1">
-                  <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900 flex items-center gap-2.5">
-                    <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>This order is ready for pickup at the store. Click <strong>Start Delivery</strong> to begin transit. Payment will be collected from the customer upon final arrival.</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentError(null)
-                      void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Out for Delivery')
-                    }}
-                    className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span>Start Delivery</span>
-                  </button>
-                </div>
-              )}
 
-              {/* Out for Delivery status: Item is in transit / being delivered. Rider collects payment upon handover before marking as delivered */}
-              {activeCustomerDetailsOrder.status === 'Out for Delivery' && (
-                <div className="space-y-3 pt-1">
-                  <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-900 flex items-center gap-2.5">
-                    <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <span>Order is out for delivery. Once handed over to the customer, enter the amount received below before marking as delivered.</span>
+                <div className="flex items-center justify-between border-y border-neutral-100 py-2.5">
+                  <div>
+                    <p className="text-xs font-bold uppercase text-neutral-400">Status</p>
+                    <p className="mt-0.5 font-bold text-neutral-800">{activeCustomerDetailsOrder.status}</p>
                   </div>
-
-                  <div className={`rounded-2xl border ${paymentError ? 'border-red-400 bg-red-50/50' : 'border-emerald-300 bg-emerald-50/80'} p-3.5 space-y-2.5 shadow-xs transition-colors`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs font-bold uppercase tracking-wider text-emerald-950">
-                          Payment Received Upon Delivery
-                        </label>
-                        <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-600 text-white shadow-2xs">
-                          {activeCustomerDetailsOrder.paymentMethod || 'COD'}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRiderReceivedAmount(String(activeCustomerDetailsOrder.total))
-                          setPaymentError(null)
-                        }}
-                        className="text-[10px] font-bold text-emerald-800 bg-white border border-emerald-300 px-2.5 py-1 rounded-lg hover:bg-emerald-100 transition-colors cursor-pointer shadow-2xs"
-                      >
-                        Exact (₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                      </button>
-                    </div>
-                    <div className="relative flex items-center">
-                      <span className="absolute left-3 text-neutral-500 font-bold text-sm">₱</span>
-                      <input
-                        type="number"
-                        step="any"
-                        value={riderReceivedAmount}
-                        onChange={(e) => {
-                          setRiderReceivedAmount(e.target.value)
-                          if (paymentError) setPaymentError(null)
-                        }}
-                        placeholder={String(activeCustomerDetailsOrder.total)}
-                        className={`w-full pl-8 pr-3 py-2.5 text-sm font-black text-neutral-900 bg-white border ${paymentError ? 'border-red-500 focus:border-red-600 ring-2 ring-red-200' : 'border-emerald-300 focus:border-emerald-600'} rounded-xl focus:outline-none transition-all placeholder-neutral-300 shadow-2xs`}
-                      />
-                    </div>
-                    {paymentError && (
-                      <p className="text-xs font-bold text-red-600 flex items-center gap-1.5 pt-0.5">
-                        <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                        <span>{paymentError}</span>
-                      </p>
-                    )}
-                    {riderReceivedAmount !== '' && !isNaN(parseFloat(riderReceivedAmount)) && (
-                      <div className="flex items-center justify-between text-xs pt-1.5 border-t border-emerald-200 font-semibold">
-                        <span className="text-neutral-600">
-                          {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'Change due to customer:' : 'Short payment balance:'}
-                        </span>
-                        <span className={`font-mono font-black ${parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'text-emerald-700 text-sm' : 'text-amber-600 text-sm'}`}>
-                          {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total
-                            ? `₱${(parseFloat(riderReceivedAmount) - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                            : `Short by ₱${(activeCustomerDetailsOrder.total - parseFloat(riderReceivedAmount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
-                        setPaymentError('Please enter the payment amount received from customer (or tap "Exact").')
-                        return
-                      }
-                      const parsed = parseFloat(riderReceivedAmount)
-                      if (parsed < 0) {
-                        setPaymentError('Payment amount cannot be negative.')
-                        return
-                      }
-                      setPaymentError(null)
-                      void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Completed', parsed)
-                    }}
-                    className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>Mark Delivered & Paid</span>
-                  </button>
-                </div>
-              )}
-
-              {activeCustomerDetailsOrder.status === 'Completed' && (
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-1.5 text-xs">
-                  <div className="flex justify-between items-center font-bold text-neutral-800">
-                    <span>Payment Received by Rider:</span>
-                    <span className="font-mono text-emerald-700 text-sm font-black">
-                      ₱{Number(activeCustomerDetailsOrder.riderCashReceived ?? activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  {activeCustomerDetailsOrder.riderCashReceived !== undefined && activeCustomerDetailsOrder.riderCashReceived > activeCustomerDetailsOrder.total && (
-                    <div className="flex justify-between items-center text-[11px] text-neutral-500 font-semibold">
-                      <span>Change Given to Customer:</span>
-                      <span className="font-mono text-neutral-700">
-                        ₱{(activeCustomerDetailsOrder.riderCashReceived - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="text-right">
+                    <p className="text-xs font-bold uppercase text-neutral-400">Customer Payment</p>
+                    <div className="mt-0.5 flex items-center gap-1.5 justify-end">
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black border ${modalPayInfo.badgeClass}`}>
+                        <span>{modalPayInfo.icon}</span>
+                        <span>{modalPayInfo.label}</span>
                       </span>
                     </div>
-                  )}
-                  <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
-                    <span>Delivery Status:</span>
-                    <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
                   </div>
                 </div>
-              )}
-              {activeCustomerDetailsOrder.status !== 'Ready'
-                && activeCustomerDetailsOrder.status !== 'Out for Delivery'
-                && activeCustomerDetailsOrder.status !== 'Completed' && (
-                  <button
-                    type="button"
-                    disabled
-                    className="w-full cursor-not-allowed rounded-xl bg-neutral-200 px-4 py-3 text-sm font-bold text-neutral-500"
-                  >
-                    Waiting for Kitchen
-                  </button>
-                )}
-              {isAdmin && !activeCustomerDetailsOrder.id.startsWith('DEMO-RIDER-') && (
-                <div className="flex gap-2 border-t border-neutral-100 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setEditingRiderOrder(activeCustomerDetailsOrder)}
-                    className="flex-1 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600"
-                  >
-                    Edit Order
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteRiderOrder(activeCustomerDetailsOrder.id)}
-                    className="rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700"
-                  >
-                    Delete Order
-                  </button>
+
+                <div className="grid grid-cols-2 gap-3 rounded-xl bg-orange-50 p-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase text-neutral-500">Road distance</p>
+                    <p className="mt-0.5 font-bold text-neutral-900">
+                      {activeCustomerDetailsOrder.roadDistanceKm === undefined
+                        ? 'Unavailable'
+                        : `${activeCustomerDetailsOrder.roadDistanceKm.toFixed(1)} km`}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase text-neutral-500">Total rider fee</p>
+                    <p className="mt-0.5 font-bold text-orange-700">
+                      {activeCustomerDetailsOrder.deliveryFee === null
+                        ? 'Outside delivery range'
+                        : `₱${activeCustomerDetailsOrder.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </p>
+                  </div>
                 </div>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
+
+                <div>
+                  <p className="text-xs font-bold uppercase text-neutral-400">Items</p>
+                  <ul className="mt-1 space-y-1 text-neutral-800">
+                    {activeCustomerDetailsOrder.items.map((item, index) => (
+                      <li key={`${item.name}-${index}`} className="flex justify-between gap-3">
+                        <span>{item.name}</span>
+                        <span className="font-semibold">x{item.quantity}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="border-t border-neutral-100 pt-3">
+                  <div className="flex justify-between font-bold">
+                    <span>Order total</span>
+                    <span className="font-mono text-base text-neutral-900">₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <p className={`text-[11px] font-semibold mt-0.5 text-right ${modalIsCod ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {modalIsCod
+                      ? '• Collect in cash from customer upon handover'
+                      : '• Fully paid online via GCash (₱0.00 cash to collect)'}
+                  </p>
+                </div>
+
+                {/* Ready status note & actions: Rider has not started delivery yet */}
+                {activeCustomerDetailsOrder.status === 'Ready' && (
+                  <div className="space-y-3 pt-1">
+                    <div className={`rounded-xl border p-3 text-xs flex items-center gap-2.5 ${
+                      modalIsCod ? 'border-amber-200 bg-amber-50/80 text-amber-900' : 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
+                    }`}>
+                      <svg className={`w-5 h-5 shrink-0 ${modalIsCod ? 'text-amber-600' : 'text-emerald-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>
+                        This order is ready for pickup at the store. Click <strong>Start Delivery</strong> to begin transit.{' '}
+                        {modalIsCod
+                          ? `Payment of ₱${activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} will be collected in cash upon arrival.`
+                          : 'Customer already paid via GCash (no cash collection required).'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentError(null)
+                        void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Out for Delivery')
+                      }}
+                      className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      <span>Start Delivery</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Out for Delivery status: Item is in transit / being delivered */}
+                {activeCustomerDetailsOrder.status === 'Out for Delivery' && (
+                  <div className="space-y-3 pt-1">
+                    {modalIsCod ? (
+                      <>
+                        {/* Cash on Delivery: Rider enters cash received */}
+                        <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-900 flex items-center gap-2.5">
+                          <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <span>Order is out for delivery. Once handed over to the customer, collect cash payment and enter the amount received below before marking as delivered.</span>
+                        </div>
+
+                        <div className={`rounded-2xl border ${paymentError ? 'border-red-400 bg-red-50/50' : 'border-amber-300 bg-amber-50/80'} p-3.5 space-y-2.5 shadow-xs transition-colors`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                                Payment Received Upon Delivery
+                              </label>
+                              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-600 text-white shadow-2xs">
+                                COD
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setRiderReceivedAmount(String(activeCustomerDetailsOrder.total))
+                                setPaymentError(null)
+                              }}
+                              className="text-[10px] font-bold text-amber-800 bg-white border border-amber-300 px-2.5 py-1 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
+                            >
+                              Exact (₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                            </button>
+                          </div>
+                          <div className="relative flex items-center">
+                            <span className="absolute left-3 text-neutral-500 font-bold text-sm">₱</span>
+                            <input
+                              type="number"
+                              step="any"
+                              value={riderReceivedAmount}
+                              onChange={(e) => {
+                                setRiderReceivedAmount(e.target.value)
+                                if (paymentError) setPaymentError(null)
+                              }}
+                              placeholder={String(activeCustomerDetailsOrder.total)}
+                              className={`w-full pl-8 pr-3 py-2.5 text-sm font-black text-neutral-900 bg-white border ${paymentError ? 'border-red-500 focus:border-red-600 ring-2 ring-red-200' : 'border-amber-300 focus:border-amber-600'} rounded-xl focus:outline-none transition-all placeholder-neutral-300 shadow-2xs`}
+                            />
+                          </div>
+                          {paymentError && (
+                            <p className="text-xs font-bold text-red-600 flex items-center gap-1.5 pt-0.5">
+                              <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              <span>{paymentError}</span>
+                            </p>
+                          )}
+                          {riderReceivedAmount !== '' && !isNaN(parseFloat(riderReceivedAmount)) && (
+                            <div className="flex items-center justify-between text-xs pt-1.5 border-t border-amber-200 font-semibold">
+                              <span className="text-neutral-600">
+                                {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'Change due to customer:' : 'Short payment balance:'}
+                              </span>
+                              <span className={`font-mono font-black ${parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'text-emerald-700 text-sm' : 'text-amber-600 text-sm'}`}>
+                                {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total
+                                  ? `₱${(parseFloat(riderReceivedAmount) - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `Short by ₱${(activeCustomerDetailsOrder.total - parseFloat(riderReceivedAmount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
+                              setPaymentError('Please enter the payment amount received from customer (or tap "Exact").')
+                              return
+                            }
+                            const parsed = parseFloat(riderReceivedAmount)
+                            if (parsed < 0) {
+                              setPaymentError('Payment amount cannot be negative.')
+                              return
+                            }
+                            setPaymentError(null)
+                            void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Completed', parsed)
+                          }}
+                          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Mark Delivered & Paid</span>
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
+                          <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <div>
+                            <p className="font-bold">Customer paid online via GCash</p>
+                            <p className="text-emerald-800 mt-0.5">Order is out for delivery. Hand over the items to customer. No cash collection is needed.</p>
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-neutral-600">Payment Method:</span>
+                            <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
+                              <span>📱</span> GCash (Paid Online)
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold text-neutral-600">Total Order Amount:</span>
+                            <span className="font-mono font-bold text-neutral-800">
+                              ₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
+                            <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
+                            <span className="font-mono font-black text-emerald-700 text-sm">
+                              ₱0.00 (Prepaid Online)
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPaymentError(null)
+                            void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Completed')
+                          }}
+                          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Mark Delivered</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {activeCustomerDetailsOrder.status === 'Completed' && (
+                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-2 text-xs">
+                    <div className="flex justify-between items-center font-bold text-neutral-800">
+                      <span>Payment Method:</span>
+                      <span className={`inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full text-[11px] border ${modalPayInfo.badgeClass}`}>
+                        <span>{modalPayInfo.icon}</span>
+                        <span>{modalPayInfo.label}</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-neutral-600">
+                      <span>Total Order Amount:</span>
+                      <span className="font-mono font-bold text-neutral-800">
+                        ₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    {modalIsCod ? (
+                      <>
+                        <div className="flex justify-between items-center font-bold text-neutral-800">
+                          <span>Payment Received by Rider:</span>
+                          <span className="font-mono text-emerald-700 text-sm font-black">
+                            ₱{Number(activeCustomerDetailsOrder.riderCashReceived ?? activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        {activeCustomerDetailsOrder.riderCashReceived !== undefined && activeCustomerDetailsOrder.riderCashReceived > activeCustomerDetailsOrder.total && (
+                          <div className="flex justify-between items-center text-[11px] text-neutral-500 font-semibold">
+                            <span>Change Given to Customer:</span>
+                            <span className="font-mono text-neutral-700">
+                              ₱{(activeCustomerDetailsOrder.riderCashReceived - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex justify-between items-center text-neutral-600">
+                        <span>Cash Collected by Rider:</span>
+                        <span className="font-mono font-bold text-emerald-700">
+                          ₱0.00 (Prepaid Online)
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
+                      <span>Delivery Status:</span>
+                      <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
+                    </div>
+                  </div>
+                )}
+
+                {activeCustomerDetailsOrder.status !== 'Ready'
+                  && activeCustomerDetailsOrder.status !== 'Out for Delivery'
+                  && activeCustomerDetailsOrder.status !== 'Completed' && (
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full cursor-not-allowed rounded-xl bg-neutral-200 px-4 py-3 text-sm font-bold text-neutral-500"
+                    >
+                      Waiting for Kitchen
+                    </button>
+                  )}
+
+                {isAdmin && !activeCustomerDetailsOrder.id.startsWith('DEMO-RIDER-') && (
+                  <div className="flex gap-2 border-t border-neutral-100 pt-3">
+                    <button
+                      type="button"
+                      onClick={() => setEditingRiderOrder(activeCustomerDetailsOrder)}
+                      className="flex-1 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600 cursor-pointer"
+                    >
+                      Edit Order
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteRiderOrder(activeCustomerDetailsOrder.id)}
+                      className="rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 cursor-pointer"
+                    >
+                      Delete Order
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        )
+      })()}
 
       {/* ADMIN CRUD MODALS */}
       <AdminEditTransactionModal

@@ -1,7 +1,7 @@
 import { HeroBoat } from '../components/HeroBoat'
 import { DrawnWaves } from '../components/DrawnWaves'
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
@@ -9,7 +9,7 @@ import { ProductImage } from '../components/ProductImage'
 import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
-import { getActiveUser, saveActiveUser } from '../cryptography/cryptoSession'
+import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import { reverseGeocodeCoordinates, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
@@ -99,17 +99,29 @@ const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
     if (!order) return []
     if (Array.isArray(order.outOfStockItems) && order.outOfStockItems.length > 0) return order.outOfStockItems
 
-    return (order.items || []).map((entry: any, index) => {
+    const items = (order.items || []).map((entry: any, index) => {
         const item = entry.item || entry
         return {
             ...entry,
             id: entry.id ?? item.id ?? index,
+            productId: entry.productId || entry.product_id || item.productId || item.product_id || item.id,
             name: entry.name || entry.product_name_snapshot || item.name || 'Seafood Dish',
             price: entry.price ?? entry.unit_price ?? item.price ?? 0,
             quantity: entry.quantity || 1,
             item_status: entry.item_status || entry.itemStatus,
         }
-    }).filter((item: any) => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+    })
+
+    const flagged = items.filter((item: any) => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+    if (flagged.length > 0) return flagged
+
+    if (normalizeStatus(order.status) === 'OUT_OF_STOCK') {
+        const unresolved = items.filter((item: any) =>
+            !['REPLACED', 'REFUNDED'].includes(String(item.item_status || '').toUpperCase())
+        )
+        return unresolved.length > 0 ? unresolved : items
+    }
+    return []
 }
 
 export function normalizeStatus(rawStatus?: string): string {
@@ -407,6 +419,7 @@ const getCategoryPillData = (cat: string) => {
 
 export const OnlineCustomer: React.FC = () => {
     const navigate = useNavigate()
+    const location = useLocation()
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
     const currentUser = getActiveUser()
     const userProfileName = currentUser?.fullname || currentUser?.username || 'Guest'
@@ -430,23 +443,49 @@ export const OnlineCustomer: React.FC = () => {
 
 const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() => {
         try {
-            const user = getActiveUser()
-            if (!user) return 'menu'
-            const saved = localStorage.getItem(getActiveOrderKey(user))
-            if (saved) {
-                const parsed = JSON.parse(saved)
-                if (parsed && parsed.id && parsed.status !== 'COMPLETED' && parsed.status !== 'CANCELLED') {
-                    return 'tracking'
-                }
+            const params = new URLSearchParams(window.location.search)
+            if (params.get('tab') === 'billing') {
+                return 'billing'
+            }
+            if (params.get('tab') === 'tracking' || params.get('orderId')) {
+                return 'tracking'
             }
         } catch { }
         return 'menu'
     })
 
-    // Submitted Order tracking state initialized from localStorage (only for logged in user)
-    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(() => {
+    // All customer orders list (for multi-order transaction tracking)
+    const [customerOrders, setCustomerOrders] = useState<any[]>(() => {
         try {
             const user = getActiveUser()
+            const key = getOrdersKey(user)
+            const saved = localStorage.getItem(key)
+            return saved ? JSON.parse(saved) : []
+        } catch {
+            return []
+        }
+    })
+
+    const activeOrders = useMemo(() => {
+                return customerOrders.filter((o: any) => !['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(o.status)))
+    }, [customerOrders])
+
+    // Submitted Order tracking state initialized from URL param, localStorage, or user active order
+    const [activeOrder, setActiveOrder] = useState<OnlineOrderState | null>(() => {
+        try {
+            const params = new URLSearchParams(window.location.search)
+            const targetOrderId = params.get('orderId')
+            const user = getActiveUser()
+
+            if (targetOrderId) {
+                const userOrdersKey = getOrdersKey(user)
+                const localList = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+                const globalList = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const found = localList.find((o: any) => String(o.id) === String(targetOrderId) || String(o.ref) === String(targetOrderId)) ||
+                             globalList.find((o: any) => String(o.id) === String(targetOrderId) || String(o.ref) === String(targetOrderId))
+                if (found) return found
+            }
+
             if (!user) return null
             const saved = localStorage.getItem(getActiveOrderKey(user))
             return saved ? JSON.parse(saved) : null
@@ -459,6 +498,184 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     useEffect(() => {
         activeOrderRef.current = activeOrder
     }, [activeOrder])
+
+    // Select a specific order transaction to track
+    const handleSelectActiveOrder = (order: any) => {
+        if (!order) return
+                setSelectedReceiptPreview(null)
+        setGcashRefNumber('')
+        setReplacementSelections({})
+        setReplacementTargetItem(null)
+        setIsVerificationModalOpen(false)
+        setIsWaitingModalOpen(false)
+
+        setActiveOrder(order)
+        const currentUser = getActiveUser()
+        try {
+            localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(order))
+            localStorage.setItem('seafudz_active_online_order', JSON.stringify(order))
+        } catch { }
+
+        const currentOrderIdParam = new URLSearchParams(window.location.search).get('orderId')
+        if (currentOrderIdParam !== String(order.id)) {
+            navigate(`/customer?orderId=${encodeURIComponent(order.id)}&tab=tracking`, { replace: true })
+        }
+        setActiveTab('tracking')
+    }
+    void activeOrders;
+    void handleSelectActiveOrder;
+
+    // Refresh all orders for this customer from LocalStorage and Backend API
+    const refreshCustomerOrders = async (currentUserArg?: ReturnType<typeof getActiveUser>) => {
+        const user = currentUserArg !== undefined ? currentUserArg : getActiveUser()
+        const userOrdersKey = getOrdersKey(user)
+        const orderMap = new Map<string, any>()
+
+        try {
+            const localList = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+            if (Array.isArray(localList)) {
+                localList.forEach((o: any) => {
+                    if (o && (o.id || o.ref)) orderMap.set(String(o.id || o.ref), o)
+                })
+            }
+        } catch { }
+
+        try {
+            const globalList = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+            if (Array.isArray(globalList)) {
+                globalList.forEach((o: any) => {
+                    if (!o || (!o.id && !o.ref)) return
+                    const key = String(o.id || o.ref)
+                    const nameMatch = user?.fullname && (
+                        String(o.customerName || o.customer || '').toLowerCase() === user.fullname.toLowerCase()
+                    )
+                    const phoneMatch = user?.phone && (
+                        String(o.phone || o.customer_phone || '').trim() === user.phone.trim()
+                    )
+                    if (nameMatch || phoneMatch || !user) {
+                        const existing = orderMap.get(key) || {}
+                        orderMap.set(key, { ...existing, ...o })
+                    }
+                })
+            }
+        } catch { }
+
+        try {
+            const queryParams = new URLSearchParams()
+            if (user?.fullname && !isUuidString(user.fullname)) {
+                queryParams.set('customerName', user.fullname)
+            }
+            if (user?.id) {
+                queryParams.set('customerId', user.id)
+            }
+            if (user?.phone) {
+                queryParams.set('phone', user.phone)
+            }
+
+            const res = await fetch(`${API_BASE_URL}/user-flow/orders?${queryParams.toString()}`)
+            if (res.ok) {
+                const json = await res.json()
+                const backendList = json.data || json
+                if (Array.isArray(backendList)) {
+                    backendList.forEach((order: any) => {
+                        if (!order || (!order.id && !order.ref)) return
+                        const key = String(order.id || order.ref)
+                        const existing = orderMap.get(key) || {}
+                        orderMap.set(key, {
+                            ...existing,
+                            ...order,
+                            id: order.id || existing.id,
+                            status: order.status || existing.status || 'PENDING',
+                        })
+                    })
+                }
+            }
+        } catch { }
+
+        const merged = Array.from(orderMap.values())
+        merged.sort((a: any, b: any) => {
+            const tA = new Date(a.createdAt || a.created_at || 0).getTime()
+            const tB = new Date(b.createdAt || b.created_at || 0).getTime()
+            return tB - tA
+        })
+
+        setCustomerOrders(merged)
+        try {
+            localStorage.setItem(userOrdersKey, JSON.stringify(merged))
+        } catch { }
+
+        return merged
+    }
+
+    // Detect orderId or tab=tracking/billing from URL (e.g., coming from Your Purchases)
+    useEffect(() => {
+        const params = new URLSearchParams(location.search)
+        const targetOrderId = params.get('orderId')
+        const targetTab = params.get('tab')
+
+        if (targetTab === 'billing') {
+            try {
+                const user = getActiveUser()
+                const saved = localStorage.getItem(getCartKey(user))
+                if (saved) {
+                    setCartItems(JSON.parse(saved))
+                }
+                const savedOrder = localStorage.getItem(getActiveOrderKey(user))
+                if (savedOrder) {
+                    const parsed = JSON.parse(savedOrder)
+                    if (['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(parsed.status))) {
+                        setActiveOrder(null)
+                        localStorage.removeItem(getActiveOrderKey(user))
+                    }
+                }
+            } catch { }
+            setActiveTab('billing')
+        } else if (targetOrderId) {
+            // If already viewing this order, ensure tab is tracking and return
+            if (activeOrderRef.current && (String(activeOrderRef.current.id) === String(targetOrderId) || String((activeOrderRef.current as any).ref) === String(targetOrderId))) {
+                setActiveTab('tracking')
+                return
+            }
+
+            const user = getActiveUser()
+            const userOrdersKey = getOrdersKey(user)
+            let foundOrder: any = null
+            try {
+                const localList = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+                const globalList = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                foundOrder = localList.find((o: any) => String(o.id) === String(targetOrderId) || String(o.ref) === String(targetOrderId)) ||
+                             globalList.find((o: any) => String(o.id) === String(targetOrderId) || String(o.ref) === String(targetOrderId))
+            } catch { }
+
+            if (foundOrder) {
+                setActiveOrder(foundOrder)
+                try {
+                    localStorage.setItem(getActiveOrderKey(user), JSON.stringify(foundOrder))
+                    localStorage.setItem('seafudz_active_online_order', JSON.stringify(foundOrder))
+                } catch { }
+                setActiveTab('tracking')
+            } else {
+                fetch(`${API_BASE_URL}/user-flow/orders/${encodeURIComponent(targetOrderId)}`)
+                    .then((res) => res.json())
+                    .then((data) => {
+                        const ord = data.data || data
+                        if (ord && (ord.id || ord.ref)) {
+                            setActiveOrder(ord)
+                            try {
+                                localStorage.setItem(getActiveOrderKey(user), JSON.stringify(ord))
+                                localStorage.setItem('seafudz_active_online_order', JSON.stringify(ord))
+                            } catch { }
+                            setActiveTab('tracking')
+                        }
+                    })
+                    .catch((err) => {
+                        console.warn('Could not fetch target order:', err)
+                    })
+            }
+        } else if (targetTab === 'tracking') {
+            setActiveTab('tracking')
+        }
+    }, [location.search])
 
     const dismissVerificationModal = () => {
         const ids = [
@@ -637,6 +854,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
     const [isWaitingModalOpen, setIsWaitingModalOpen] = useState(false)
+    const [isConfirmOrderModalOpen, setIsConfirmOrderModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
     const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null)
     const [isSubmittingReceipt, setIsSubmittingReceipt] = useState(false)
@@ -648,6 +866,21 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [replacementSelections, setReplacementSelections] = useState<Record<string, any>>({})
     const [replacementTargetItem, setReplacementTargetItem] = useState<any | null>(null)
     const [additionalReceiptFile, setAdditionalReceiptFile] = useState<string | null>(null)
+
+    useEffect(() => {
+        if (
+            activeTab === 'menu' &&
+            activeOrder &&
+            normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' &&
+            !replacementTargetItem &&
+            outOfStockItems.length > 0
+        ) {
+            const firstUnselected = outOfStockItems.find((it: any, idx: number) => !replacementSelections[String(it.id ?? idx)]) || outOfStockItems[0]
+            if (firstUnselected) {
+                setReplacementTargetItem(firstUnselected)
+            }
+        }
+    }, [activeTab, activeOrder, replacementTargetItem, outOfStockItems, replacementSelections])
     const [additionalRefNumber, setAdditionalRefNumber] = useState<string>('')
     const [isSubmittingOosChoice, setIsSubmittingOosChoice] = useState(false)
 
@@ -796,31 +1029,27 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 }
             } catch { }
 
-            // Hydrate user active order from local storage or backend DB
+            // Hydrate customer orders and active transaction
             try {
-                const savedOrder = localStorage.getItem(getActiveOrderKey(currentUser))
-                if (savedOrder) {
-                    const parsed = JSON.parse(savedOrder)
-                    setActiveOrder(parsed)
-                } else {
-                    fetch(`${API_BASE_URL}/user-flow/orders?customerName=${encodeURIComponent(currentUser.fullname || '')}`)
-                        .then((res) => res.json())
-                        .then((data) => {
-                            const list = data.data || data
-                            if (Array.isArray(list) && list.length > 0) {
-                                const active = list.find((o: any) => {
-                                    const s = normalizeStatus(o.status)
-                                    return s !== 'COMPLETED' && s !== 'CANCELLED'
-                                })
-                                if (active) {
-                                    const normActive = { ...active, status: normalizeStatus(active.status) }
-                                    setActiveOrder(normActive)
-                                    localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(normActive))
-                                }
-                            }
-                        })
-                        .catch(() => { })
-                }
+                void refreshCustomerOrders(currentUser).then((list) => {
+                    const savedOrder = localStorage.getItem(getActiveOrderKey(currentUser))
+                    if (savedOrder) {
+                        try {
+                            const parsed = JSON.parse(savedOrder)
+                            const latest = list.find((o: any) => o.id === parsed.id || o.ref === parsed.id) || parsed
+                            setActiveOrder(latest)
+                        } catch { }
+                    } else if (list.length > 0) {
+                        const active = list.find((o: any) => {
+                            const s = normalizeStatus(o.status)
+                            return s !== 'COMPLETED' && s !== 'CANCELLED'
+                        }) || list[0]
+                        setActiveOrder(active)
+                        try {
+                            localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(active))
+                        } catch { }
+                    }
+                })
             } catch { }
         } else {
             setActiveOrder(null)
@@ -952,6 +1181,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
         const updatedOrder = { ...activeOrder, status: 'CANCELLED' }
         setActiveOrder(updatedOrder)
+        setCustomerOrders((prev) =>
+            prev.map((o: any) => (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o)
+        )
 
         try {
             const currentUser = getActiveUser()
@@ -976,19 +1208,18 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setIsCancellingOrder(false)
     }
 
-    // Auto-navigate customer to Order Status tracking
+    // Dismiss verification/waiting modal once confirmed or cancelled, but DO NOT hijack or force customer tab
     useEffect(() => {
         if (!activeOrder?.status) return
         const s = (activeOrder.status || '').toUpperCase()
         const norm = normalizeStatus(s)
         const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(norm)
-        const isCOD = activeOrder.paymentMethod === 'COD' || s === 'PENDING_COD'
 
-        if (isConfirmedOrLater || s === 'RECEIPT_SUBMITTED' || isCOD) {
+        if (isConfirmedOrLater) {
             dismissVerificationModal()
-            setActiveTab('tracking')
+            // Do NOT call setActiveTab('tracking') here: allows customer to freely browse menu, cart, or purchases without being interrupted
         }
-    }, [activeOrder?.status, activeOrder?.paymentMethod])
+    }, [activeOrder?.status])
 
     const handleProceedToCheckout = () => {
         if (hasUnavailableCartItems || hasDeletedCartItems) return
@@ -1004,10 +1235,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }
 
-    // Real-time synchronization for customer order tracking
+    // Real-time synchronization for customer order tracking & separated transactions
     useEffect(() => {
-        if (!activeOrder?.id) return
         const currentUser = getActiveUser()
+        if (!activeOrder?.id && (!currentUser || customerOrders.length === 0)) return
 
         const checkOrderStatus = async (force?: boolean | unknown) => {
             if (isFetchingOrderRef.current) return
@@ -1019,12 +1250,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             lastFetchTimeRef.current = now
 
             try {
+                // 1. Refresh all customer transactions in the background
+                await refreshCustomerOrders(currentUser)
+
                 const currentOrderId = activeOrderRef.current?.id
                 if (!currentOrderId) return
 
                 let backendSuccess = false
 
-                // 1. Poll Backend API FIRST (Authoritative Server Truth)
+                // 2. Poll Backend API for currently tracked transaction
                 try {
                     const res = await fetch(`${API_BASE_URL}/user-flow/orders/${currentOrderId}`)
                     if (res.ok) {
@@ -1070,45 +1304,47 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             }
 
                             if (orderChanged) {
-                                setActiveOrder((prev) => {
-                                    if (!prev) return null
-                                    const updated = {
-                                        ...prev,
-                                        status: rawStatus,
-                                        gcashAuthorized,
-                                        outOfStockItems: latestOutOfStockItems,
-                                        customerResolution,
-                                        customerResolutionStatus,
-                                        customerReplacements,
-                                        ...(orderData.refundReceipt ? { refundReceipt: orderData.refundReceipt } : {}),
-                                        ...(orderData.refundReference ? { refundReference: orderData.refundReference } : {}),
-                                        subtotal: Number(orderData.subtotal ?? prev.subtotal),
-                                        vat: Number(orderData.vat ?? prev.vat),
-                                        deliveryFee: Number(orderData.deliveryFee ?? prev.deliveryFee),
-                                        total: Number(orderData.total ?? prev.total),
-                                    }
-                                    try {
-                                        localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
-                                        localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
+                                const updated = {
+                                    ...previousOrder,
+                                    status: rawStatus,
+                                    gcashAuthorized,
+                                    outOfStockItems: latestOutOfStockItems,
+                                    customerResolution,
+                                    customerResolutionStatus,
+                                    customerReplacements,
+                                    ...(orderData.refundReceipt ? { refundReceipt: orderData.refundReceipt } : {}),
+                                    ...(orderData.refundReference ? { refundReference: orderData.refundReference } : {}),
+                                    subtotal: Number(orderData.subtotal ?? previousOrder?.subtotal ?? 0),
+                                    vat: Number(orderData.vat ?? previousOrder?.vat ?? 0),
+                                    deliveryFee: Number(orderData.deliveryFee ?? previousOrder?.deliveryFee ?? 0),
+                                    total: Number(orderData.total ?? previousOrder?.total ?? 0),
+                                } as OnlineOrderState
 
-                                        const updateListInStorage = (key: string) => {
-                                            const raw = localStorage.getItem(key)
-                                            if (!raw) return
-                                            try {
-                                                const list = JSON.parse(raw)
-                                                if (Array.isArray(list)) {
-                                                    const updatedList = list.map((o: any) =>
-                                                        (o.id === currentOrderId || o.ref === currentOrderId) ? { ...o, ...updated } : o
-                                                    )
-                                                    localStorage.setItem(key, JSON.stringify(updatedList))
-                                                }
-                                            } catch { }
-                                        }
-                                        updateListInStorage(getOrdersKey(currentUser))
-                                        updateListInStorage('seafudz_orders')
-                                    } catch { }
-                                    return updated
-                                })
+                                setActiveOrder(updated)
+                                setCustomerOrders((prev) =>
+                                    prev.map((o: any) => (o.id === currentOrderId || o.ref === currentOrderId) ? { ...o, ...updated } : o)
+                                )
+
+                                try {
+                                    localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
+                                    localStorage.setItem('seafudz_active_online_order', JSON.stringify(updated))
+
+                                    const updateListInStorage = (key: string) => {
+                                        const raw = localStorage.getItem(key)
+                                        if (!raw) return
+                                        try {
+                                            const list = JSON.parse(raw)
+                                            if (Array.isArray(list)) {
+                                                const updatedList = list.map((o: any) =>
+                                                    (o.id === currentOrderId || o.ref === currentOrderId) ? { ...o, ...updated } : o
+                                                )
+                                                localStorage.setItem(key, JSON.stringify(updatedList))
+                                            }
+                                        } catch { }
+                                    }
+                                    updateListInStorage(getOrdersKey(currentUser))
+                                    updateListInStorage('seafudz_orders')
+                                } catch { }
                             }
                         }
                     }
@@ -1116,7 +1352,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     // Backend offline / unreachable
                 }
 
-                // 2. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank or changed sub-status)
+                // 3. LocalStorage Sync Fallback (Only advance status if local storage has a STRICTLY HIGHER rank or changed sub-status)
                 if (!backendSuccess) {
                     try {
                         const userOrdersKey = getOrdersKey(currentUser)
@@ -1156,7 +1392,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const normStatus = normalizeStatus(rawStatus)
                             const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
 
-                            // Advance status only if local rank is strictly higher OR raw sub-status legitimately advanced without rank decrease
                             const shouldAdvance = localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)
 
                             if (shouldAdvance) {
@@ -1170,23 +1405,25 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     setIsVerificationModalOpen(false)
                                 }
 
-                                setActiveOrder((prev) => {
-                                    if (!prev) return null
-                                    const updated = {
-                                        ...prev,
-                                        status: rawStatus,
-                                        gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED'),
-                                        ...(current.paymentReceipt ? { paymentReceipt: current.paymentReceipt } : {}),
-                                        ...(current.refundReceipt ? { refundReceipt: current.refundReceipt } : {}),
-                                        ...(current.refundReference ? { refundReference: current.refundReference } : {}),
-                                        ...(current.customerResolution ? { customerResolution: current.customerResolution } : {}),
-                                        ...(current.customerResolutionStatus ? { customerResolutionStatus: current.customerResolutionStatus } : {}),
-                                    }
-                                    try {
-                                        localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
-                                    } catch { }
-                                    return updated
-                                })
+                                const updated = {
+                                    ...activeOrderRef.current,
+                                    status: rawStatus,
+                                    gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED'),
+                                    ...(current.paymentReceipt ? { paymentReceipt: current.paymentReceipt } : {}),
+                                    ...(current.refundReceipt ? { refundReceipt: current.refundReceipt } : {}),
+                                    ...(current.refundReference ? { refundReference: current.refundReference } : {}),
+                                    ...(current.customerResolution ? { customerResolution: current.customerResolution } : {}),
+                                    ...(current.customerResolutionStatus ? { customerResolutionStatus: current.customerResolutionStatus } : {}),
+                                } as OnlineOrderState
+
+                                setActiveOrder(updated)
+                                setCustomerOrders((prev) =>
+                                    prev.map((o: any) => (o.id === currentOrderId || o.ref === currentOrderId) ? { ...o, ...updated } : o)
+                                )
+
+                                try {
+                                    localStorage.setItem(getActiveOrderKey(currentUser), JSON.stringify(updated))
+                                } catch { }
                             }
                         }
                     } catch (storageErr) {
@@ -1211,7 +1448,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             unsubscribe()
             clearInterval(interval)
         }
-    }, [activeOrder?.id])
+    }, [activeOrder?.id, customerOrders.length])
 
     // Calculations: Base Subtotal + 12% VAT + Detailed Delivery/Shipping Fee
     const subtotal = useMemo(() => {
@@ -1404,7 +1641,42 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setTempNote(currentNote)
     }
 
-    const handlePlaceOrder = async (e: React.FormEvent) => {
+    const handleInitiateOrder = (e: React.FormEvent) => {
+        if (e && e.preventDefault) e.preventDefault()
+        if (isFindingAddress || isCalculatingDeliveryFee) {
+            alert('Please wait while your location and delivery fee are calculated.')
+            return
+        }
+        if (hasUnavailableCartItems) {
+            alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before placing your order.')
+            return
+        }
+        if (hasDeletedCartItems) {
+            alert('An item in your cart has been removed from the menu by the store. Remove deleted items before placing your order.')
+            return
+        }
+        const activeIds = new Set(menuItems.map((m) => m.id))
+        const missingItems = cartItems.filter((ci) => !activeIds.has(ci.item.id))
+        if (missingItems.length > 0) {
+            const missingNames = missingItems.map((ci) => ci.item.name).join(', ')
+            alert(`The following item(s) are no longer on the menu: ${missingNames}. They have been removed from your cart.`)
+            setCartItems((prev) => prev.filter((ci) => activeIds.has(ci.item.id)))
+            return
+        }
+        if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
+            alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
+            return
+        }
+        if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
+            alert(deliveryDistanceKm === null
+                ? 'The road distance could not be verified. Please try again before ordering.'
+                : 'Delivery is available only within 8 km of the store.')
+            return
+        }
+        setIsConfirmOrderModalOpen(true)
+    }
+
+    const handlePlaceOrder = async (e?: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
         if (isFindingAddress || isCalculatingDeliveryFee) {
             alert('Please wait while your location and delivery fee are calculated.')
@@ -1545,6 +1817,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             pendingOrderSubmissionRef.current = null
             setActiveOrder(newOrder)
+            setCustomerOrders((prev) => {
+                const filtered = prev.filter((o: any) => o.id !== newOrderId && o.ref !== newOrderId)
+                return [newOrder, ...filtered]
+            })
             try {
                 const userOrderKey = getActiveOrderKey(currentUser)
                 const userOrdersKey = getOrdersKey(currentUser)
@@ -1784,8 +2060,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     onClick={() => {
                                         const itemKey = String(replacementTargetItem.id ?? 0)
                                         const effectivePrice = getEffectivePrice(item.id, item.price)
-                                        setReplacementSelections((prev) => ({
-                                            ...prev,
+                                        const nextSelections = {
+                                            ...replacementSelections,
                                             [itemKey]: {
                                                 productId: item.id,
                                                 name: item.name,
@@ -1793,13 +2069,21 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 image: item.image,
                                                 category: item.category,
                                             },
-                                        }))
-                                        setReplacementTargetItem(null)
-                                        setActiveTab('tracking')
+                                        }
+                                        setReplacementSelections(nextSelections)
+                                        const nextTarget = outOfStockItems.find(
+                                            (it: any, idx: number) => String(it.id ?? idx) !== itemKey && !nextSelections[String(it.id ?? idx)]
+                                        )
+                                        if (nextTarget) {
+                                            setReplacementTargetItem(nextTarget)
+                                        } else {
+                                            setReplacementTargetItem(null)
+                                            setActiveTab('tracking')
+                                        }
                                     }}
                                     className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
                                 >
-                                    <span>✓</span> Select
+                                    <span>✓</span> Select as Replacement
                                 </button>
                             ) : cartItem ? (
                                 <div className="flex items-center bg-neutral-100 rounded-xl p-1 border border-neutral-200/60 shrink-0">
@@ -1911,7 +2195,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         “Fresh catch crafted with authentic coastal passion —<br />
                                         bringing the true taste of the ocean to Seafudz ng Bayan.”
                                     </p>
-                                    {activeOrder && (
+                                    {activeOrder && !['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
                                         <div className="pt-1 sm:pt-2 flex items-center gap-3">
                                             <button
                                                 type="button"
@@ -2068,7 +2352,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 {activeTab === 'billing' && (
                     <div className="flex flex-col gap-6">
                         {/* Active Verification Banner */}
-                        {activeOrder && (
+                        {activeOrder && !['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
                             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-2xl p-4.5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
                                 <div>
                                     <div className="flex items-center gap-2">
@@ -2112,7 +2396,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                             {/* Customer Details Form */}
                             <form
-                                onSubmit={handlePlaceOrder}
+                                onSubmit={handleInitiateOrder}
                                 className="lg:col-span-2 bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 space-y-6"
                             >
                                 <h3 className="font-bold text-neutral-800 text-lg border-b border-neutral-100 pb-3">
@@ -2238,60 +2522,48 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
                                         Select Payment Method
                                     </label>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                    <div className="flex flex-wrap items-center gap-3">
                                         {/* GCash Option */}
                                         <button
                                             type="button"
                                             onClick={() => setPaymentMethod('GCash')}
-                                            className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'GCash'
-                                                ? 'border-blue-500 bg-blue-50/60 ring-2 ring-blue-500/20 shadow-sm'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                            className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[150px] sm:w-44 ${paymentMethod === 'GCash'
+                                                ? 'border-blue-600 bg-blue-600 text-white shadow-md shadow-blue-500/25 active:scale-95'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
                                                 }`}
                                         >
-                                            <div className="flex items-center justify-between w-full">
-                                                <span className="font-black text-neutral-900 text-sm">GCash</span>
-                                                <span className="text-[10px] font-extrabold bg-blue-500 text-white px-2 py-0.5 rounded-full">E-Wallet</span>
-                                            </div>
-                                            <p className="text-[11px] font-semibold text-blue-900/80 mt-2 leading-tight">
-                                                Pay via GCash: Transfer payment and submit your receipt reference photo for assistant verification.
-                                            </p>
+                                            <span className={`font-black text-sm ${paymentMethod === 'GCash' ? 'text-white' : 'text-neutral-900'}`}>
+                                                GCash
+                                            </span>
+                                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'GCash'
+                                                ? 'bg-white text-blue-600 shadow-2xs'
+                                                : 'bg-blue-50 text-blue-600 border border-blue-200'
+                                                }`}>
+                                                E-Wallet
+                                            </span>
                                         </button>
 
                                         {/* COD Option */}
                                         <button
                                             type="button"
                                             onClick={() => setPaymentMethod('COD')}
-                                            className={`p-3.5 rounded-2xl border-2 text-left transition-all duration-200 cursor-pointer flex flex-col justify-between ${paymentMethod === 'COD'
-                                                ? 'border-emerald-500 bg-emerald-50/60 ring-2 ring-emerald-500/20 shadow-sm'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white'
+                                            className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'COD'
+                                                ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
+                                                : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
                                                 }`}
                                         >
-                                            <div className="flex items-center justify-between w-full">
-                                                <span className="font-black text-neutral-900 text-sm">Cash on Delivery</span>
-                                                <span className="text-[10px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full">COD</span>
-                                            </div>
-                                            <p className="text-[11px] font-semibold text-emerald-900/80 mt-2 leading-tight">
-                                                Cash on Delivery requires staff product availability verification before order confirmation.
-                                            </p>
+                                            <span className={`font-black text-sm ${paymentMethod === 'COD' ? 'text-white' : 'text-neutral-900'}`}>
+                                                Cash on Delivery
+                                            </span>
+                                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'COD'
+                                                ? 'bg-white text-emerald-700 shadow-2xs'
+                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                }`}>
+                                                COD
+                                            </span>
                                         </button>
                                     </div>
-                                    {paymentMethod === 'GCash' && (
-                                        <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 space-y-1.5 animate-in fade-in duration-200">
-                                            <label className="block text-xs font-bold text-blue-900 uppercase tracking-wider">
-                                                GCash Reference Number <span className="text-[10px] text-blue-600 font-medium lowercase">(optional now, or enter in verification popup)</span>
-                                            </label>
-                                            <input
-                                                type="text"
-                                                placeholder="e.g. 1002 984 1234"
-                                                value={gcashRefNumber}
-                                                onChange={(e) => setGcashRefNumber(e.target.value)}
-                                                className="w-full text-xs font-mono font-bold px-3 py-2 bg-white border border-blue-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                                            />
-                                            <p className="text-[10px] text-blue-700/80">
-                                                If you already sent GCash payment, you can input your reference number here. Otherwise, you can submit it along with your proof screenshot upon payment authorization.
-                                            </p>
-                                        </div>
-                                    )}
+
                                 </div>
 
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
@@ -2374,9 +2646,68 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     </div>
                 )}
 
+                {/* Empty State for Tracking view when no active order is selected */}
+                {activeTab === 'tracking' && !activeOrder && (
+                    <div className="max-w-md mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-8 text-center space-y-4 my-12">
+                        <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto text-3xl font-black">
+                            📦
+                        </div>
+                        <h3 className="font-extrabold text-neutral-800 text-xl">No Order Selected</h3>
+                        <p className="text-xs text-neutral-500 leading-relaxed">
+                            You do not have an order currently open for tracking. Browse our fresh seafood menu to place an order or select an order from your purchases!
+                        </p>
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab('menu')}
+                                className="w-full sm:w-auto bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer shadow-xs"
+                            >
+                                Browse Menu
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => navigate('/customer/purchases')}
+                                className="w-full sm:w-auto bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold text-xs px-5 py-2.5 rounded-xl transition-all cursor-pointer"
+                            >
+                                Your Purchases
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
                     <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
+                        {/* Navigation: Back to Menu & Your Purchases */}
+                        <div className="flex items-center justify-between gap-4 pb-3 border-b border-neutral-100">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setActiveTab('menu')
+                                    navigate('/customer', { replace: true })
+                                }}
+                                className="inline-flex items-center gap-2 text-xs sm:text-sm font-bold text-neutral-600 hover:text-orange-600 transition-colors cursor-pointer group"
+                            >
+                                <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                                </svg>
+                                <span>Back to Menu</span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => navigate('/customer/purchases')}
+                                className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-neutral-600 hover:text-orange-600 transition-colors cursor-pointer"
+                            >
+                                <span>Your Purchases</span>
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                                </svg>
+                            </button>
+                        </div>
+
+
+
                         <div className="border-b border-neutral-100 pb-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                             <div>
                                 <p className="text-xs font-bold text-orange-600 uppercase tracking-widest">
@@ -2385,7 +2716,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <h3 className="font-extrabold text-neutral-800 text-2xl mt-1">
                                     Order ID: {activeOrder.id}
                                 </h3>
-                                <p className="text-xs text-neutral-400 mt-1">Placed at {activeOrder.createdAt}</p>
+                                <p className="text-xs text-neutral-400 mt-1">Placed at {(() => {
+                                    if (!activeOrder.createdAt) return 'Recently'
+                                    const d = new Date(activeOrder.createdAt)
+                                    return !isNaN(d.getTime()) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : String(activeOrder.createdAt)
+                                })()}</p>
                             </div>
 
                             {/* CANCEL ORDER BUTTON (Eligible only when still in queue in kitchen, before PREPARING) */}
@@ -2450,24 +2785,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             <span className="text-xs font-black bg-emerald-600 text-white px-2.5 py-0.5 rounded-full">Authorized</span>
                                         </div>
                                         <p className="text-xs text-emerald-700 leading-relaxed">
-                                            Staff has authorized your payment. Please transfer <strong className="text-emerald-950 font-black">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> to GCash <strong className="text-emerald-950 font-black">0917-888-7323</strong> and upload your payment screenshot below.
+                                            Staff has authorized your payment. Please transfer <strong className="text-emerald-950 font-black">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> to GCash <strong className="text-emerald-950 font-black">0917-888-7323</strong> and upload your payment screenshot below.
                                         </p>
 
                                         {/* Upload Screenshot Input */}
                                         <div className="pt-2 space-y-2">
-                                            <div className="space-y-1">
-                                                <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
-                                                    <span>GCash Reference Number</span>
-                                                    <span className="text-[10px] text-emerald-700 font-extrabold uppercase">From Receipt</span>
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Enter GCash Ref No. (e.g. 1002 984 1234)"
-                                                    value={gcashRefNumber}
-                                                    onChange={(e) => setGcashRefNumber(e.target.value)}
-                                                    className="w-full text-xs font-mono font-bold px-3 py-2 bg-white border border-emerald-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-200"
-                                                />
-                                            </div>
+
                                             {selectedReceiptPreview ? (
                                                 <div className="bg-emerald-50 border-2 border-emerald-400 rounded-2xl p-4 space-y-3 text-left">
                                                     <div className="flex items-center justify-between">
@@ -2515,9 +2838,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     </div>
                                                 </div>
                                             ) : !activeOrder.paymentReceipt ? (
-                                                <label className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-white rounded-xl p-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-all">
-                                                    <span className="text-xs font-bold text-emerald-900">Click to select GCash Payment Screenshot</span>
-                                                    <span className="text-[10px] text-emerald-600">Attach receipt photo for Assistant review</span>
+                                                <label className="border border-neutral-300 bg-neutral-100 hover:bg-neutral-200/80 rounded-2xl py-6 px-4 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all shadow-2xs">
+                                                    <svg className="w-9 h-9 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                        <rect x="3" y="3" width="15" height="15" rx="2" stroke="currentColor" />
+                                                        <path d="M7 14l3-3 4 4 2-2 2 2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                                                        <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+                                                        <path d="M21 8v11a2 2 0 01-2 2H8" stroke="currentColor" strokeLinecap="round" />
+                                                    </svg>
+                                                    <span className="text-xs font-semibold text-neutral-700 underline decoration-neutral-400 hover:decoration-neutral-700">Choose your media library</span>
                                                     <input
                                                         type="file"
                                                         accept="image/*"
@@ -2664,9 +2992,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         ) : null}
                                     </div>
                                 ) : (() => {
-                                    const activeItems = (activeOrder.items || []).filter((i: any) =>
-                                        !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase())
-                                    )
+                                    const activeItems = (activeOrder.items || []).filter((i: any) => {
+                                        const st = String(i.item_status || i.itemStatus || '').toUpperCase()
+                                        if (['OUT_OF_STOCK', 'REPLACED', 'REFUNDED'].includes(st)) return false
+                                        return !outOfStockItems.some((oos: any) => String(oos.id) === String(i.id))
+                                    })
                                     const activeSubtotal = activeItems.reduce((acc: number, i: any) =>
                                         acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0
                                     )
@@ -2785,7 +3115,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     <div className="space-y-1.5 text-xs">
                                                         <div className="flex justify-between text-neutral-600">
                                                             <span>Original Order Total:</span>
-                                                            <span className="font-semibold text-neutral-800">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                            <span className="font-semibold text-neutral-800">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                         <div className="flex justify-between text-neutral-600">
                                                             <span>Recalculated Order Total:</span>
@@ -2886,12 +3216,32 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             )}
 
                                             {!allReplacementsSelected && (
-                                                <div className="pt-2">
+                                                <div className="pt-2 flex flex-col sm:flex-row gap-2.5">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const target = outOfStockItems.find((it: any, idx: number) => !replacementSelections[String(it.id ?? idx)]) || outOfStockItems[0] || (activeOrder.items && activeOrder.items[0])
+                                                            if (target) {
+                                                                setReplacementTargetItem(target)
+                                                            } else {
+                                                                setReplacementTargetItem({
+                                                                    id: 'all',
+                                                                    name: 'Order Dishes',
+                                                                    price: Number(activeOrder.subtotal || 0),
+                                                                    quantity: 1,
+                                                                })
+                                                            }
+                                                            setActiveTab('menu')
+                                                        }}
+                                                        className="flex-1 py-3 bg-orange-600 hover:bg-orange-700 text-white font-black text-xs sm:text-sm rounded-xl transition-all shadow-md active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+                                                    >
+                                                        <span>🔄</span> Replace Order
+                                                    </button>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleSubmitOutOfStockChoice('REFUND')}
                                                         disabled={isSubmittingOosChoice}
-                                                        className="w-full py-2.5 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer"
+                                                        className="sm:w-auto px-5 py-3 bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 font-extrabold text-xs sm:text-sm rounded-xl transition-colors disabled:opacity-50 cursor-pointer text-center"
                                                     >
                                                         Request Full Refund for Order
                                                     </button>
@@ -3066,27 +3416,47 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-                            <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">Delivery Info</h4>
-                                <div className="text-xs space-y-1.5 text-neutral-600">
-                                    <p>
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
-                                        {activeOrder.customerName}
-                                    </p>
-                                    <p>
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Phone:</span>{' '}
-                                        {activeOrder.phone}
-                                    </p>
-                                    <p className="leading-relaxed">
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
-                                        {activeOrder.address}
-                                    </p>
-                                    {activeOrder.notes && (
-                                        <p className="leading-relaxed text-orange-600">
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
-                                            {activeOrder.notes}
+                            <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
+                                <div>
+                                    <h4 className="font-bold text-neutral-800 text-sm mb-2">Delivery Info</h4>
+                                    <div className="text-xs space-y-1.5 text-neutral-600">
+                                        <p>
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
+                                            {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
                                         </p>
-                                    )}
+                                        <p>
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Phone:</span>{' '}
+                                            {activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}
+                                        </p>
+                                        <p className="leading-relaxed">
+                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
+                                            {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}
+                                        </p>
+                                        {activeOrder.notes && (
+                                            <p className="leading-relaxed text-orange-600">
+                                                <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
+                                                {activeOrder.notes}
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Itemized Dishes Ordered */}
+                                <div className="border-t border-neutral-200/60 pt-3">
+                                    <h5 className="font-bold text-neutral-800 text-xs mb-2">Dishes in this Order</h5>
+                                    <div className="divide-y divide-neutral-200/50 text-xs">
+                                        {(activeOrder.items || []).map((ci: any, idx: number) => {
+                                            const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
+                                            const qty = ci.quantity || 1
+                                            const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
+                                            return (
+                                                <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
+                                                    <span className="font-medium text-neutral-800">{qty}× {name}</span>
+                                                    <span className="font-bold text-neutral-900">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
                                 </div>
                             </div>
 
@@ -3145,7 +3515,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     )}
                                     <p className="pt-1">
                                         <span className="font-bold text-neutral-400 uppercase text-[10px]">Items ordered:</span>{' '}
-                                        {activeOrder.items.reduce((acc, ci) => acc + ci.quantity, 0)} items
+                                        {(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items
                                     </p>
 
                                     {/* Itemized Price & VAT Breakdown */}
@@ -3153,13 +3523,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         <div className="flex justify-between">
                                             <span>Subtotal:</span>
                                             <span className="font-semibold text-neutral-700">
-                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(activeOrder.total / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                         <div className="flex justify-between text-orange-600 font-medium">
                                             <span>VAT (12%):</span>
                                             <span className="font-bold">
-                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (activeOrder.total - (activeOrder.deliveryFee || 50)) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (Number(activeOrder.deliveryFee || 50))) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                         <div className="flex justify-between">
@@ -3170,7 +3540,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                                     <p className="font-bold text-neutral-800 border-t border-dashed border-neutral-200 pt-1.5 flex justify-between">
                                         <span>Paid Total:</span>
-                                        <span className="text-orange-600">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        <span className="text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </p>
                                 </div>
                             </div>
@@ -3508,29 +3878,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <div className="space-y-1 text-xs text-blue-950">
                                         <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
                                         <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
-                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{activeOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
+                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
                                     </div>
                                 </div>
 
-                                {/* GCash Reference Number Input in Verification Modal */}
-                                <div className="space-y-1.5 pt-1">
-                                    <label className="text-xs font-bold text-neutral-800 flex items-center justify-between">
-                                        <span>GCash Reference Number</span>
-                                        <span className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
-                                            Required Reference #
-                                        </span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="Enter GCash Ref No. (e.g. 1002 984 1234)"
-                                        value={gcashRefNumber}
-                                        onChange={(e) => setGcashRefNumber(e.target.value)}
-                                        className="w-full text-xs font-mono font-bold px-3 py-2.5 border-2 border-blue-200 rounded-xl outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 bg-white shadow-2xs"
-                                    />
-                                    <p className="text-[10px] text-neutral-500">
-                                        Enter the reference number from your completed GCash transaction screen.
-                                    </p>
-                                </div>
+
 
                                 {/* Reference Screenshot Selection Input */}
                                 <div className="space-y-2 pt-1">
@@ -3610,10 +3962,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </div>
                                         </div>
                                     ) : !activeOrder.paymentReceipt ? (
-                                        <label className="border-2 border-dashed border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/80 rounded-2xl p-5 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all">
-                                            
-                                            <span className="text-xs font-bold text-neutral-800">Select & Place Payment Receipt Screenshot</span>
-                                            <span className="text-[10px] text-neutral-500">Attach screenshot of your completed GCash transaction</span>
+                                        <label className="border border-neutral-300 bg-neutral-100 hover:bg-neutral-200/80 rounded-2xl py-8 px-4 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all shadow-2xs">
+                                            <svg className="w-10 h-10 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                                <rect x="3" y="3" width="15" height="15" rx="2" stroke="currentColor" />
+                                                <path d="M7 14l3-3 4 4 2-2 2 2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+                                                <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+                                                <path d="M21 8v11a2 2 0 01-2 2H8" stroke="currentColor" strokeLinecap="round" />
+                                            </svg>
+                                            <span className="text-xs font-semibold text-neutral-700 underline decoration-neutral-400 hover:decoration-neutral-700">Choose your media library</span>
                                             <input
                                                 type="file"
                                                 accept="image/*"
@@ -3657,29 +4013,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     )}
 
                                     {/* Primary Action Button to submit Reference Number and/or Receipt */}
-                                    {!selectedReceiptPreview && (
+                                    {!selectedReceiptPreview && activeOrder.paymentReceipt && (
                                         <div className="pt-2">
                                             <button
                                                 type="button"
                                                 onClick={handleSubmitReceipt}
-                                                disabled={isSubmittingReceipt || (!gcashRefNumber.trim() && !activeOrder.paymentReceipt)}
-                                                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-blue-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                disabled={isSubmittingReceipt}
+                                                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-blue-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
                                             >
-                                                {isSubmittingReceipt ? (
-                                                    <span>Submitting to Database & Staff...</span>
-                                                ) : gcashRefNumber.trim() && activeOrder.paymentReceipt ? (
-                                                    <span>✓ Update GCash Reference & Receipt</span>
-                                                ) : gcashRefNumber.trim() ? (
-                                                    <span>✓ Submit GCash Reference Number</span>
-                                                ) : (
-                                                    <span>Submit Payment Verification</span>
-                                                )}
+                                                {isSubmittingReceipt ? 'Submitting to Database & Staff...' : '✓ Update Payment Receipt'}
                                             </button>
-                                            {gcashRefNumber.trim() && !activeOrder.paymentReceipt && (
-                                                <p className="text-[10px] text-center text-neutral-500 mt-1.5 font-medium">
-                                                    You can submit your Reference Number now. Attaching a screenshot is optional but recommended.
-                                                </p>
-                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -3719,6 +4062,49 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
                             >
                                 Keep Waiting in Billing
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+                        {/* Minimal Confirm Order Verification Modal */}
+            {isConfirmOrderModalOpen && (
+                <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200"
+                    onClick={() => !isSubmittingOrder && setIsConfirmOrderModalOpen(false)}
+                >
+                    <div
+                        className="bg-white rounded-3xl max-w-sm w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 text-center space-y-4"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h3 className="text-lg font-black text-neutral-900">
+                            Confirm Order
+                        </h3>
+
+                        <p className="text-xs text-neutral-600 leading-relaxed">
+                            Please verify and confirm you are sure about your order details before proceeding to the assistant.
+                        </p>
+
+                        <div className="flex flex-col gap-2 pt-2">
+                            <button
+                                type="button"
+                                disabled={isSubmittingOrder}
+                                onClick={async () => {
+                                    await handlePlaceOrder()
+                                    setIsConfirmOrderModalOpen(false)
+                                }}
+                                className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all shadow-md shadow-orange-500/20 active:scale-98 cursor-pointer"
+                            >
+                                {isSubmittingOrder ? 'Submitting Order...' : 'Submit Order'}
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isSubmittingOrder}
+                                onClick={() => setIsConfirmOrderModalOpen(false)}
+                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold py-2.5 px-4 rounded-xl text-xs transition-all cursor-pointer"
+                            >
+                                Cancel
                             </button>
                         </div>
                     </div>

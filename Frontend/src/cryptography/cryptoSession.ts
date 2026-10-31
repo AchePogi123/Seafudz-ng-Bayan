@@ -36,14 +36,16 @@ export const ROLE_ROUTE_PERMISSIONS: Record<string, string[]> = {
     '/rider',
     '/customer',
     '/customer-dashboard',
+    '/customer/purchases',
+    '/purchases',
     '/account',
     '/about',
   ],
-  cashier: ['/pos', '/sales-report', '/customer', '/customer-dashboard', '/account', '/about'],
+  cashier: ['/pos', '/sales-report', '/customer', '/customer-dashboard', '/customer/purchases', '/purchases', '/account', '/about'],
   kitchen: ['/kitchen', '/account', '/about'],
   rider: ['/rider', '/account', '/about'],
   assistant: ['/assistant', '/account', '/about'],
-  customer: ['/customer', '/customer-dashboard', '/account', '/about'],
+  customer: ['/customer', '/customer-dashboard', '/customer/purchases', '/purchases', '/account', '/about'],
 };
 
 /**

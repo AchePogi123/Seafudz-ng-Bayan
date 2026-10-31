@@ -31,6 +31,8 @@ export interface OnlineOrder {
   status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | 'out_of_stock' | string
   items: OrderItem[]
   outOfStockItems?: any[]
+  receiptStatus?: string
+  rejectionReason?: string
   customerResolution?: 'REFUND' | 'REPLACE' | null
   customerResolutionStatus?: string
   customerReplacements?: any[]
@@ -89,6 +91,15 @@ export const AssistantRole: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
+  const [viewedReceipts, setViewedReceipts] = useState<Record<string, string>>({})
+
+  const handleViewReceipt = (receiptUrl: string, orderId: string) => {
+    setPreviewReceiptUrl(receiptUrl)
+    setViewedReceipts((prev) => ({
+      ...prev,
+      [orderId]: receiptUrl,
+    }))
+  }
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
@@ -528,6 +539,18 @@ export const AssistantRole: React.FC = () => {
       notifyOrderSync()
     } catch { }
 
+    setViewedReceipts((prev) => {
+      const next = { ...prev }
+      delete next[orderId]
+      return next
+    })
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId || o.ref === orderId
+          ? { ...o, status: 'RECEIPT_REJECTED', rejectionReason: reason }
+          : o
+      )
+    )
     fetchAssistantOrders(true)
     setNotification(`Receipt rejected for order #${orderId}. Customer notified to re-upload.`)
   }
@@ -1015,30 +1038,65 @@ export const AssistantRole: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Payment Receipt / Screenshot (Minimal) */}
-                  {selectedOrder.paymentReceipt && (
-                    <div className="pt-2 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={selectedOrder.paymentReceipt}
-                          alt="Receipt Preview"
-                          onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
-                          className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity"
-                        />
-                        <div>
-                          <p className="text-[11px] font-semibold text-emerald-700">Receipt Attached</p>
-                          <p className="text-[10px] text-slate-400">Click to view image</p>
+                  {/* Payment Receipt / Screenshot */}
+                  {selectedOrder.paymentReceipt && (() => {
+                    const st = normalizeStatusStr(selectedOrder.status).toUpperCase()
+                    const isRejected = st === 'RECEIPT_REJECTED'
+                    const isReceiptViewed = Boolean(
+                      selectedOrder.paymentReceipt &&
+                      viewedReceipts[selectedOrder.id] === selectedOrder.paymentReceipt &&
+                      !isRejected
+                    )
+
+                    return (
+                      <div className="pt-2 flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <img
+                            src={selectedOrder.paymentReceipt}
+                            alt="Receipt Preview"
+                            onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
+                            className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0 shadow-2xs"
+                          />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] font-bold text-neutral-800">Receipt Attached</span>
+                              {isRejected ? (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
+                                  Rejected
+                                </span>
+                              ) : isReceiptViewed ? (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                  ✓ Inspected
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                                  Inspection required
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                              {isRejected
+                                ? 'Waiting for customer to resubmit'
+                                : isReceiptViewed
+                                ? 'Receipt viewed and ready to approve'
+                                : 'Click to view reference image'}
+                            </p>
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
+                          className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 shrink-0 ${
+                            isReceiptViewed
+                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                              : 'bg-blue-600 hover:bg-blue-700 text-white'
+                          }`}
+                        >
+                          View
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewReceiptUrl(selectedOrder.paymentReceipt || null)}
-                        className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-                      >
-                        View
-                      </button>
-                    </div>
-                  )}
+                    )
+                  })()}
 
                   {/* Cashback / Refund Reference Photo (Viewable whenever reopening the order) */}
                   {selectedOrder.refundReceipt && (
@@ -1149,7 +1207,9 @@ export const AssistantRole: React.FC = () => {
                     if (st === 'OUT_OF_STOCK') {
                       const oosItems = (selectedOrder.outOfStockItems && selectedOrder.outOfStockItems.length > 0)
                         ? selectedOrder.outOfStockItems
-                        : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+                        : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK').length > 0
+                          ? selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+                          : (normalizeStatusStr(selectedOrder.status) === 'out_of_stock' ? selectedOrder.items : [])
                       const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()
                       const choiceStatus = String(selectedOrder.customerResolutionStatus || '').toUpperCase()
                       const canProcessChoice = choiceStatus === 'PENDING_ASSISTANT' && ['REFUND', 'REPLACE'].includes(customerChoice)
@@ -1298,44 +1358,69 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
+                    const isReceiptRejected = st === 'RECEIPT_REJECTED'
+                    const isReceiptViewed = Boolean(
+                      selectedOrder.paymentReceipt &&
+                      viewedReceipts[selectedOrder.id] === selectedOrder.paymentReceipt &&
+                      !isReceiptRejected
+                    )
+
+                    if (isReceiptRejected) {
+                      return (
+                        <div className="space-y-3 bg-rose-50 p-3.5 rounded-2xl border border-rose-200 text-center">
+                          <div className="flex items-center justify-center gap-1.5 text-xs font-black text-rose-900">
+                            <span>❌</span> Receipt Rejected (Invalid Image)
+                          </div>
+                          <p className="text-[11px] text-rose-700 leading-relaxed">
+                            {selectedOrder.rejectionReason
+                              ? `Reason: "${selectedOrder.rejectionReason}". `
+                              : ''}
+                            Customer was notified to upload a replacement GCash screenshot. Order approval is disabled until the customer submits a replacement image.
+                          </p>
+                          <button
+                            type="button"
+                            disabled
+                            className="w-full bg-neutral-200 text-neutral-400 border border-neutral-300 font-extrabold py-3 rounded-xl text-xs cursor-not-allowed opacity-75"
+                          >
+                            Approve order
+                          </button>
+                        </div>
+                      )
+                    }
+
                     // 2. GCash Order WITH Reference Screenshot Submitted (Customer sent receipt)
                     if (hasReceipt) {
                       return (
                         <div className="space-y-3 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
-                          <p className="font-extrabold text-xs text-emerald-950 text-center">Payment Receipt Screenshot Received</p>
-
-                          {/* GCash Reference Input for Assistant Inspection */}
-                          <div className="bg-white p-2.5 rounded-xl border border-emerald-200 space-y-1">
-                            <div className="flex justify-between items-center text-[10px] font-bold text-neutral-500 uppercase">
-                              <span>GCash Reference Number</span>
-                              <span className="text-emerald-700 font-extrabold">Customer Reference #</span>
-                            </div>
-                            <input
-                              type="text"
-                              placeholder="e.g. 1002 984 1234 (From customer receipt)"
-                              value={selectedOrder.paymentReference || selectedOrder.referenceNumber || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setOrders((prev) =>
-                                  prev.map((o) =>
-                                    o.id === selectedOrder.id || o.ref === selectedOrder.id
-                                      ? { ...o, paymentReference: val, referenceNumber: val }
-                                      : o
-                                  )
-                                );
-                              }}
-                              className="w-full text-xs font-mono font-bold px-2.5 py-1.5 border border-emerald-300 rounded-lg outline-none focus:ring-1 focus:ring-emerald-500 bg-white"
-                            />
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-extrabold text-emerald-950">Payment Receipt Screenshot Received</span>
+                            {isReceiptViewed ? (
+                              <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
+                                ✓ Inspected
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full">
+                                Inspection required
+                              </span>
+                            )}
                           </div>
 
                           <div className="flex gap-2">
                             <button
-                              onClick={() => handleVerifyReceipt(selectedOrder.id)}
-                              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
+                              type="button"
+                              disabled={!isReceiptViewed}
+                              onClick={() => isReceiptViewed && handleVerifyReceipt(selectedOrder.id)}
+                              title={!isReceiptViewed ? 'Inspection required: Please click View to inspect the receipt screenshot first' : undefined}
+                              className={`flex-1 font-extrabold py-3 rounded-xl text-xs transition-all shadow-xs ${
+                                isReceiptViewed
+                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 shadow-emerald-600/20'
+                                  : 'bg-neutral-200 text-neutral-400 border border-neutral-300 cursor-not-allowed opacity-75'
+                              }`}
                             >
-                              Approve Receipt & Send to Kitchen
+                              Approve order
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleRejectReceipt(selectedOrder.id)}
                               className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
                             >
@@ -1459,7 +1544,9 @@ export const AssistantRole: React.FC = () => {
       {isResolveModalOpen && selectedOrder && (() => {
         const oosItems = (selectedOrder.outOfStockItems && selectedOrder.outOfStockItems.length > 0)
           ? selectedOrder.outOfStockItems
-          : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+          : selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK').length > 0
+            ? selectedOrder.items.filter((i: any) => (i.item_status || '').toUpperCase() === 'OUT_OF_STOCK')
+            : (normalizeStatusStr(selectedOrder.status) === 'out_of_stock' ? selectedOrder.items : [])
 
 
         const customerChoice = String(selectedOrder.customerResolution || '').toUpperCase()

@@ -159,16 +159,21 @@ export function formatOrderResponse(row) {
     specialNote: item.specialNote || item.notes || '',
     replacementForItemId: item.replacement_for_item_id || item.replacementForItemId || null,
   }));
-  const outOfStockItems = Array.isArray(row.outOfStockItems) ? row.outOfStockItems
-    : Array.isArray(row.out_of_stock_items) ? row.out_of_stock_items
-    : formattedItems.filter(item => String(item.item_status).toUpperCase() === 'OUT_OF_STOCK');
+  const outOfStockItems = (Array.isArray(row.outOfStockItems) && row.outOfStockItems.length > 0)
+    ? row.outOfStockItems
+    : (Array.isArray(row.out_of_stock_items) && row.out_of_stock_items.length > 0)
+      ? row.out_of_stock_items
+      : formattedItems.filter(item => String(item.item_status).toUpperCase() === 'OUT_OF_STOCK').length > 0
+        ? formattedItems.filter(item => String(item.item_status).toUpperCase() === 'OUT_OF_STOCK')
+        : (normStatus === 'OUT_OF_STOCK' ? formattedItems : []);
 
   let effectiveTotal = parseFloat(row.total || 0);
   if (row.projectedTotal || row.projected_total) {
     effectiveTotal = parseFloat(row.projectedTotal || row.projected_total);
   } else if (normStatus === 'OUT_OF_STOCK' && customerResolution === 'REPLACE' && customerReplacements.length > 0) {
+    const replacedIds = new Set(customerReplacements.map(r => String(r.oldItemId)));
     const activeSubtotal = formattedItems
-      .filter(i => String(i.item_status).toUpperCase() === 'ACTIVE')
+      .filter(i => !replacedIds.has(String(i.id)) && String(i.item_status).toUpperCase() !== 'OUT_OF_STOCK')
       .reduce((sum, i) => sum + (Number(i.price || 0) * Number(i.quantity || 1)), 0);
     const replacementSubtotal = customerReplacements
       .reduce((sum, r) => sum + (Number(r.newPrice || 0) * Number(r.quantity || 1)), 0);

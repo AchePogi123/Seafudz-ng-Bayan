@@ -5,6 +5,7 @@ import { AssistantRole } from './features/AssistantRole'
 import { RideRoleDemo } from './features/rideRoleDemo'
 import SalesReportCashier from './features/salesReportCashier'
 import { OnlineCustomer } from './features/OnlineCustomer'
+import { CustomerPurchases } from './features/CustomerPurchases'
 import { AccMan } from './features/AccMan'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
 import LandingPage from './features/LandingPage'
@@ -44,6 +45,10 @@ function App() {
 
         {/* Customer Routes */}
         <Route path="/customer" element={<OnlineCustomer />} />
+
+        <Route path="/customer/purchases" element={<CustomerPurchases />} />
+
+        <Route path="/purchases" element={<CustomerPurchases />} />
 
         <Route
           path="/customer-dashboard"

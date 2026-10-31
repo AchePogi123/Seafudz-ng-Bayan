@@ -216,11 +216,15 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
 
     if (dbOrder) {
       const itemResult = await query(
-        `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity
-         FROM order_items WHERE order_id = $1 AND item_status = 'OUT_OF_STOCK' ORDER BY id`,
+        `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity, item_status
+         FROM order_items WHERE order_id = $1 ORDER BY id`,
         [id]
       );
-      dbOutOfStockItems = itemResult.rows;
+      const allDbItems = itemResult.rows;
+      dbOutOfStockItems = allDbItems.filter(item => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK');
+      if (dbOutOfStockItems.length === 0) {
+        dbOutOfStockItems = allDbItems.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || '').toUpperCase()));
+      }
     }
   } catch (error) {
     databaseReadError = error;
@@ -268,7 +272,7 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
       : (order?.items || []).filter(item => String(item.item_status || item.itemStatus || '').toUpperCase() === 'OUT_OF_STOCK');
 
   if (flaggedItems.length === 0 && Array.isArray(order?.items) && order.items.length > 0) {
-    flaggedItems = order.items;
+    flaggedItems = order.items.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase()));
   }
 
   if (flaggedItems.length === 0) {
@@ -342,15 +346,17 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
       });
     }
 
-    // Calculate active items subtotal
+    // Calculate active items subtotal (excluding items currently being replaced)
     let activeSubtotal = 0;
+    const replacedItemIds = flaggedItems.map(f => String(f.id)).filter(Boolean);
     if (dbOrder) {
       try {
         const actRes = await query(
           `SELECT COALESCE(SUM(unit_price * quantity), 0) AS active_subtotal
            FROM order_items
-           WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') NOT IN ('OUT_OF_STOCK', 'REPLACED')`,
-          [id]
+           WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') NOT IN ('OUT_OF_STOCK', 'REPLACED')
+             AND (id::text <> ALL($2::text[]))`,
+          [id, replacedItemIds]
         );
         activeSubtotal = parseFloat(actRes.rows[0]?.active_subtotal || 0);
       } catch (err) {
@@ -358,7 +364,7 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
       }
     } else if (order?.items) {
       activeSubtotal = order.items
-        .filter(i => !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()))
+        .filter(i => !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()) && !replacedItemIds.includes(String(i.id)))
         .reduce((sum, i) => sum + (Number(i.price || i.unit_price || 0) * (Number(i.quantity) || 1)), 0);
     }
 
@@ -410,6 +416,17 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
              ON CONFLICT (order_id) WHERE status = 'PENDING'
              DO UPDATE SET amount = EXCLUDED.amount`,
             [id, refundTargetAmount]
+          );
+        }
+      }
+
+      if (resolution === 'REPLACE' && Array.isArray(customerReplacements) && customerReplacements.length > 0) {
+        const oldIds = customerReplacements.map(r => String(r.oldItemId)).filter(Boolean);
+        if (oldIds.length > 0) {
+          await query(
+            `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
+             WHERE order_id = $1 AND id::text = ANY($2::text[]) AND item_status <> 'REPLACED'`,
+            [id, oldIds]
           );
         }
       }

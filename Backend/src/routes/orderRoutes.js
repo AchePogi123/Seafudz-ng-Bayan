@@ -83,7 +83,8 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
                    'subtotal', oi.subtotal,
                    'notes', oi.notes,
                    'name', oi.product_name_snapshot,
-                   'snapshot_item_name', oi.product_name_snapshot
+                   'snapshot_item_name', oi.product_name_snapshot,
+                   'item_status', oi.item_status
                  )
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
@@ -207,6 +208,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
              o.order_type AS type, o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
+             o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
              t.name AS table_name,
              COALESCE(o.payment_method, p_pay.payment_method, 'CASH') AS payment_method,
              COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS payment_reference,
@@ -227,7 +229,8 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
                    'subtotal', oi.subtotal,
                    'notes', oi.notes,
                    'name', oi.product_name_snapshot,
-                   'snapshot_item_name', oi.product_name_snapshot
+                   'snapshot_item_name', oi.product_name_snapshot,
+                   'item_status', oi.item_status
                  )
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
@@ -247,7 +250,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
       WHERE o.id = $1
-      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, d.rider_cash_received, r_emp.fullname
+      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, d.rider_cash_received, r_emp.fullname
     `;
     const { rows } = await query(sql, [id]);
 

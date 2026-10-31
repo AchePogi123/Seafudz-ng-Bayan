@@ -482,10 +482,13 @@ export const KitchenMode: React.FC = () => {
 
         // Update localStorage
         try {
+          const flaggedOosItems = (outOfStockOrder?.items || []).filter((item, index) =>
+            selectedOosItemIds.includes(item.id || index + 1)
+          )
           const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
           const updated = existing.map((o: any) =>
             (o.id === outOfStockModalOrderId || o.ref === outOfStockModalOrderId)
-              ? { ...o, status: 'OUT_OF_STOCK' }
+              ? { ...o, status: 'OUT_OF_STOCK', outOfStockItems: flaggedOosItems.length > 0 ? flaggedOosItems : (outOfStockOrder?.items || []) }
               : o
           )
           localStorage.setItem('seafudz_orders', JSON.stringify(updated))

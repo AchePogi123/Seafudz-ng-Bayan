@@ -114,14 +114,18 @@ router.get('/assistant/orders', optionalAuth, async (req, res) => {
     const sql = `
       SELECT o.id, o.id AS ref, o.order_type, o.status, o.subtotal, o.tax AS vat,
              o.delivery_fee, o.total, o.notes, o.created_at,
+             o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
              c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
              p_pay.payment_method, p_pay.status AS payment_status,
              COALESCE(
                json_agg(
                  json_build_object(
+                   'id', oi.id,
+                   'productId', oi.product_id,
                    'name', oi.product_name_snapshot,
                    'quantity', oi.quantity,
-                   'price', oi.unit_price
+                   'price', oi.unit_price,
+                   'item_status', oi.item_status
                  )
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS items
@@ -154,6 +158,10 @@ router.get('/assistant/orders', optionalAuth, async (req, res) => {
       vat: parseFloat(o.vat || 0),
       deliveryFee: parseFloat(o.delivery_fee || 50),
       total: parseFloat(o.total || 0),
+      customerResolution: o.customer_resolution || null,
+      customerResolutionStatus: o.customer_resolution_status || 'NONE',
+      customerReplacements: o.customer_replacements || [],
+      outOfStockItems: (o.items || []).filter((i) => String(i.item_status).toUpperCase() === 'OUT_OF_STOCK'),
       createdAt: o.created_at,
       notes: o.notes,
     }));
@@ -690,7 +698,7 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             await client.query(
               `UPDATE order_items
                SET item_status = 'REPLACED'
-               WHERE order_id = $1 AND (id::text = $2 OR product_id = $2 OR product_name_snapshot = $2) AND item_status = 'OUT_OF_STOCK'`,
+               WHERE order_id = $1 AND (id::text = $2 OR product_id = $2 OR product_name_snapshot = $2) AND item_status <> 'REPLACED'`,
               [id, String(oldItemId)]
             );
 

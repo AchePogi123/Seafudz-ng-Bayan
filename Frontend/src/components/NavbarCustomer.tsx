@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, Link } from 'react-router-dom'
 import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
 import { API_BASE_URL } from '../utils/api'
 import SidebarDrawer from './SidebarDrawer'
@@ -113,6 +113,7 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
 
   const getCurrentPageName = () => {
     if (location.pathname === '/customer') return 'Online Customer Menu'
+    if (location.pathname === '/customer/purchases' || location.pathname === '/purchases') return 'Your Purchases'
     if (location.pathname === '/account') return 'Account Management'
     return 'Customer Portal'
   }
@@ -141,32 +142,45 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
           />
         </div>
 
-        {/* Shopping Cart Button in Header */}
-        {onOpenCart && (
-          <button
-            ref={(node) => updateCartButtonRef(node, false)}
-            type="button"
-            onClick={onOpenCart}
-            aria-label={`Open Cart with ${cartItemCount} items`}
-            title={cartItemCount > 0 ? `Cart (${cartItemCount} items)` : 'Cart'}
-            className={`relative flex items-center justify-center p-2.5 sm:p-2.5 rounded-xl cursor-pointer select-none shrink-0 transition-all duration-300 ${
-              isScrolled ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'
-            } bg-orange-500 hover:bg-orange-600 text-white border border-orange-400/50 shadow-sm shadow-orange-500/30 active:scale-95 ${
-              isCartBumping && !isScrolled ? 'animate-cart-bump ring-4 ring-orange-400/60' : ''
-            }`}
-          >
-            <div className="relative flex items-center justify-center">
-              <svg className="w-5.5 h-5.5 text-current" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
-              </svg>
-              {cartItemCount > 0 && (
-                <span className="absolute -top-2.5 -right-2.5 bg-rose-600 text-white text-[10px] font-black min-w-[19px] h-[19px] px-1 rounded-full flex items-center justify-center border-2 border-white shadow-xs">
-                  {cartItemCount > 99 ? '99+' : cartItemCount}
-                </span>
-              )}
-            </div>
-          </button>
-        )}
+        {/* Right Header Navigation: "Your Purchases" Text Button + Shopping Cart */}
+        <div className="flex items-center gap-3 sm:gap-4 md:gap-5 shrink-0">
+          {location.pathname !== '/customer/purchases' && location.pathname !== '/purchases' && (
+            <Link
+              to="/customer/purchases"
+              className="text-sm sm:text-base font-bold transition-colors cursor-pointer select-none py-1 px-1 whitespace-nowrap text-neutral-700 hover:text-orange-600"
+              title="View Your Purchases"
+            >
+              Your Purchases
+            </Link>
+          )}
+
+          {/* Shopping Cart Button in Header */}
+          {onOpenCart && (
+            <button
+              ref={(node) => updateCartButtonRef(node, false)}
+              type="button"
+              onClick={onOpenCart}
+              aria-label={`Open Cart with ${cartItemCount} items`}
+              title={cartItemCount > 0 ? `Cart (${cartItemCount} items)` : 'Cart'}
+              className={`relative flex items-center justify-center p-2.5 sm:p-2.5 rounded-xl cursor-pointer select-none shrink-0 transition-all duration-300 ${
+                isScrolled ? 'opacity-0 scale-75 pointer-events-none' : 'opacity-100 scale-100'
+              } bg-orange-500 hover:bg-orange-600 text-white border border-orange-400/50 shadow-sm shadow-orange-500/30 active:scale-95 ${
+                isCartBumping && !isScrolled ? 'animate-cart-bump ring-4 ring-orange-400/60' : ''
+              }`}
+            >
+              <div className="relative flex items-center justify-center">
+                <svg className="w-5.5 h-5.5 text-current" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                </svg>
+                {cartItemCount > 0 && (
+                  <span className="absolute -top-2.5 -right-2.5 bg-rose-600 text-white text-[10px] font-black min-w-[19px] h-[19px] px-1 rounded-full flex items-center justify-center border-2 border-white shadow-xs">
+                    {cartItemCount > 99 ? '99+' : cartItemCount}
+                  </span>
+                )}
+              </div>
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Floating Animated Cart Button (Brings down to lower right when scrolled) */}

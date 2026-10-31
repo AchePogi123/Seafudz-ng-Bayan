@@ -153,21 +153,32 @@ router.get('/user-flow/orders', async (req, res) => {
 
     let allOrders = Array.from(mergedMap.values());
 
-    if (customerName) {
-      const lower = String(customerName).toLowerCase().trim();
-      allOrders = allOrders.filter(o =>
-        (o.customerName && String(o.customerName).toLowerCase().trim() === lower) ||
-        (o.customer && String(o.customer).toLowerCase().trim() === lower)
-      );
-    }
-
-    if (phone) {
-      const cleanP = String(phone).trim();
-      allOrders = allOrders.filter(o => o.phone === cleanP);
-    }
-
-    if (customerId) {
-      allOrders = allOrders.filter(o => String(o.customer_id) === String(customerId));
+    // Resilient customer matching: match if ANY specified customer attribute matches
+    if (customerName || phone || customerId) {
+      allOrders = allOrders.filter(o => {
+        // Match customerId (integer, string, or UUID)
+        const oCustId = o.customer_id || o.customerId || o.supabase_user_id || o.user_id;
+        if (customerId && oCustId && String(oCustId) === String(customerId)) {
+          return true;
+        }
+        // Match customerName (case-insensitive)
+        if (customerName) {
+          const lower = String(customerName).toLowerCase().trim();
+          const oName = String(o.customerName || o.customer || o.customer_name || '').toLowerCase().trim();
+          if (oName && oName === lower) {
+            return true;
+          }
+        }
+        // Match phone (normalized digits)
+        if (phone) {
+          const cleanP = String(phone).replace(/\D/g, '');
+          const oPhone = String(o.phone || o.customer_phone || '').replace(/\D/g, '');
+          if (cleanP && oPhone && (oPhone === cleanP || oPhone.endsWith(cleanP) || cleanP.endsWith(oPhone))) {
+            return true;
+          }
+        }
+        return false;
+      });
     }
 
     if (status) {

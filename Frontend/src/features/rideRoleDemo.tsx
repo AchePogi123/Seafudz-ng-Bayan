@@ -625,7 +625,49 @@ export const RideRoleDemo: React.FC = () => {
         }
       }
 
+      // Also scan and sync all customer-scoped keys in LocalStorage (seafudz_orders_* and seafudz_active_online_order_*)
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && (key.startsWith('seafudz_orders_') || key.startsWith('seafudz_active_online_order_'))) {
+          try {
+            const raw = localStorage.getItem(key)
+            if (!raw) continue
+            const parsed = JSON.parse(raw)
+            if (Array.isArray(parsed)) {
+              let changed = false
+              const updatedList = parsed.map((o: any) => {
+                const u = updateMap.get(o.id) || updateMap.get(o.ref)
+                if (u) {
+                  changed = true
+                  const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
+                  return {
+                    ...o,
+                    status: apiStatus,
+                    riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : o.riderCashReceived,
+                    rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : o.rider_cash_received,
+                  }
+                }
+                return o
+              })
+              if (changed) localStorage.setItem(key, JSON.stringify(updatedList))
+            } else if (parsed && typeof parsed === 'object') {
+              const u = updateMap.get(parsed.id) || updateMap.get(parsed.ref)
+              if (u) {
+                const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
+                localStorage.setItem(key, JSON.stringify({
+                  ...parsed,
+                  status: apiStatus,
+                  riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : parsed.riderCashReceived,
+                  rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : parsed.rider_cash_received,
+                }))
+              }
+            }
+          } catch {}
+        }
+      }
+
       notifyOrderSync()
+      window.dispatchEvent(new Event('storage'))
     } catch {}
 
     // Update in Backend API in parallel

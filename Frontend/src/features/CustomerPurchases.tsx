@@ -204,14 +204,16 @@ export const CustomerPurchases: React.FC = () => {
       // 2. Fetch from Backend API
       try {
         const queryParams = new URLSearchParams()
-        if (currentUser?.fullname && !isUuidString(currentUser.fullname)) {
-          queryParams.set('customerName', currentUser.fullname)
-        }
-        if (currentUser?.id) {
-          queryParams.set('customerId', currentUser.id)
+        const custName = (!isUuidString(currentUser?.fullname) ? currentUser?.fullname : null) ||
+                         (!isUuidString(currentUser?.username) ? currentUser?.username : null)
+        if (custName) {
+          queryParams.set('customerName', custName)
         }
         if (currentUser?.phone) {
           queryParams.set('phone', currentUser.phone)
+        }
+        if (currentUser?.id && !isUuidString(currentUser.id)) {
+          queryParams.set('customerId', currentUser.id)
         }
 
         const res = await fetch(`${API_BASE_URL}/user-flow/orders?${queryParams.toString()}`)
@@ -223,14 +225,47 @@ export const CustomerPurchases: React.FC = () => {
               if (!order || !order.id) return
               const id = String(order.id)
               const existing = (mergedMap.get(id) || {}) as any
+              const authoritativeStatus = order.status || existing.status || 'PENDING'
               mergedMap.set(id, {
                 ...existing,
                 ...order,
                 id,
                 items: Array.isArray(order.items) && order.items.length > 0 ? order.items : existing.items || [],
-                status: order.status || existing.status || 'PENDING',
+                status: authoritativeStatus,
               })
             })
+
+            // Sync updated authoritative statuses back into user-scoped LocalStorage
+            try {
+              const currentCached = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+              if (Array.isArray(currentCached) && currentCached.length > 0) {
+                let cacheChanged = false
+                const updatedCached = currentCached.map((co: any) => {
+                  const match = backendList.find((bo: any) => String(bo.id) === String(co.id) || String(bo.ref) === String(co.ref))
+                  if (match && match.status && match.status !== co.status) {
+                    cacheChanged = true
+                    return { ...co, status: match.status }
+                  }
+                  return co
+                })
+                if (cacheChanged) {
+                  localStorage.setItem(userOrdersKey, JSON.stringify(updatedCached))
+                }
+              }
+
+              const savedActiveStr = localStorage.getItem(activeOrderKey)
+              if (savedActiveStr) {
+                const parsedActive = JSON.parse(savedActiveStr)
+                const match = backendList.find((bo: any) => String(bo.id) === String(parsedActive.id) || String(bo.ref) === String(parsedActive.ref))
+                if (match && match.status && match.status !== parsedActive.status) {
+                  if (['COMPLETED', 'DELIVERED', 'CANCELLED'].includes(normalizeStatus(match.status))) {
+                    localStorage.removeItem(activeOrderKey)
+                  } else {
+                    localStorage.setItem(activeOrderKey, JSON.stringify({ ...parsedActive, status: match.status }))
+                  }
+                }
+              }
+            } catch {}
           }
         }
       } catch (err) {

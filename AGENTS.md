@@ -13,10 +13,14 @@
 ## Vault Session Retention & Knowledge Capture
 - **Vault Location**: `/home/zacrisr/Documents/Obsidian` (Obsidian Development Vault)
 - **Master Project Hub**: `/home/zacrisr/Documents/Obsidian/Development/Seafudz ng Bayan 1.md`
-- **User Flows & Node Maps**: `/home/zacrisr/Documents/Obsidian/Development/User Flows/`
-- **Architecture Notes**: `/home/zacrisr/Documents/Obsidian/Development/Architecture/`
-- **Curated Session Logs**: `/home/zacrisr/Documents/Obsidian/Development/Sessions/`
+- **User Flows & Role-Specific Changelogs**: `/home/zacrisr/Documents/Obsidian/Development/User Flows/`
+  - `Customer Flow.md` — Online customer menu, cart, tracking, and account updates.
+  - `Assistant Flow.md` — Order verification, payment proof inspection, and refund coordination.
+  - `Kitchen Flow.md` — Kitchen ticket management, cooking state, and out-of-stock toggles.
+  - `Rider Flow.md` — Dispatch queue, companion bundling, and delivery completion.
+  - `Cashier & POS Flow.md` — Counter orders, split billing, thermal receipts, and sales reports.
+  - `Admin Flow.md` — Analytics, employee accounts, security, and backup management.
 - **Rule**:
-  - **Lean & High-Value Only**: Log significant architectural changes, database schema updates, major business logic revisions, and new user flows into dedicated notes in `Sessions/`.
-  - **Zero Noise**: DO NOT log trivial micro-commits, routine Git operations (such as merges/pushes), or minor cosmetic CSS tweaks.
-  - Keep `/home/zacrisr/Documents/Obsidian/INDEX.md` and `Seafudz ng Bayan 1.md` synchronized with clean wiki-links.
+  - **Role-Based Logging**: When making architectural or feature changes, append the change directly to the affected role note in `User Flows/` under `## 📜 Updates & Feature Changelog`.
+  - **Zero Noise**: DO NOT create scattered session files for routine Git operations (merges/pushes) or trivial CSS tweaks.
+  - Keep `INDEX.md` and `Seafudz ng Bayan 1.md` synchronized with clean wiki-links.

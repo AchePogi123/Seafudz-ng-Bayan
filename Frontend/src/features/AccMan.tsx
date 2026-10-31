@@ -389,9 +389,10 @@ export const AccMan: React.FC = () => {
                 headers,
                 body: JSON.stringify({ newEmail: cleanEmail, otp: emailOtpInput.trim() }),
             })
-            const data = await res.json()
+            const data = await res.json().catch(() => ({}))
             if (!res.ok || !data.success) {
-                throw new Error(data.message || 'Verification failed. Please check the 6-digit code.')
+                const detailedError = data.error ? `${data.message} (${data.error})` : data.message
+                throw new Error(detailedError || 'Verification failed. Please check the 6-digit code.')
             }
 
             setEmailModalSuccess('Email address changed successfully!')

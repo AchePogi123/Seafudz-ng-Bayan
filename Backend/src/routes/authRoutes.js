@@ -1237,14 +1237,37 @@ router.post('/auth/request-email-change', requireAuth, async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
 
-    const userId = String(req.user?.id || req.user?.supabase_user_id || cleanNewEmail);
-    emailChangeOtpStore.set(userId, {
+    const userId = String(req.user?.id || req.user?.supabase_user_id || '');
+    const userEmail = currentEmail;
+
+    const otpPayload = {
       newEmail: cleanNewEmail,
       otp,
       expiresAt,
-    });
+      userId,
+      userEmail,
+    };
 
-    console.log(`[AUTH EMAIL CHANGE] Generated 6-digit code for ${cleanNewEmail} (User ID: ${userId}): ${otp}`);
+    // Store in-memory under multiple keys for resilient retrieval
+    if (userId) emailChangeOtpStore.set(userId, otpPayload);
+    if (userEmail) emailChangeOtpStore.set(userEmail, otpPayload);
+    emailChangeOtpStore.set(cleanNewEmail, otpPayload);
+
+    // Also persist in PostgreSQL password_resets table so it survives across multi-container Cloud Run instances
+    try {
+      const dbExpiresAt = new Date(expiresAt).toISOString();
+      await query(
+        `INSERT INTO password_resets (email, token, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (email) DO UPDATE
+         SET token = EXCLUDED.token, expires_at = EXCLUDED.expires_at, created_at = NOW()`,
+        [`email_change:${cleanNewEmail}`, otp, dbExpiresAt]
+      );
+    } catch (dbErr) {
+      console.warn('[AUTH EMAIL CHANGE] DB persistence note:', dbErr.message);
+    }
+
+    console.log(`[AUTH EMAIL CHANGE] Generated 6-digit code for ${cleanNewEmail} (User ID: ${userId}, Email: ${userEmail}): ${otp}`);
 
     // Dispatch email via Resend API
     let emailSent = false;
@@ -1318,8 +1341,32 @@ router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
     const cleanNewEmail = newEmail.trim().toLowerCase();
     const cleanOtp = String(otp).trim();
     const userId = String(req.user?.id || req.user?.supabase_user_id || '');
+    const userEmail = (req.user?.email || '').trim().toLowerCase();
 
-    const record = emailChangeOtpStore.get(userId);
+    // 1. Look up OTP in memory
+    let record = (userId ? emailChangeOtpStore.get(userId) : null) ||
+                 (userEmail ? emailChangeOtpStore.get(userEmail) : null) ||
+                 emailChangeOtpStore.get(cleanNewEmail);
+
+    // 2. If not found in memory (e.g. routed to another Cloud Run instance), check database
+    if (!record) {
+      try {
+        const dbRes = await query(
+          'SELECT token, expires_at FROM password_resets WHERE email = $1 LIMIT 1',
+          [`email_change:${cleanNewEmail}`]
+        );
+        if (dbRes.rows.length > 0) {
+          record = {
+            newEmail: cleanNewEmail,
+            otp: dbRes.rows[0].token,
+            expiresAt: new Date(dbRes.rows[0].expires_at).getTime(),
+          };
+        }
+      } catch (dbLookupErr) {
+        console.warn('[AUTH EMAIL CHANGE] DB OTP lookup error:', dbLookupErr.message);
+      }
+    }
+
     if (!record || record.newEmail !== cleanNewEmail) {
       return res.status(400).json({
         success: false,
@@ -1328,7 +1375,9 @@ router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
     }
 
     if (Date.now() > record.expiresAt) {
-      emailChangeOtpStore.delete(userId);
+      if (userId) emailChangeOtpStore.delete(userId);
+      if (userEmail) emailChangeOtpStore.delete(userEmail);
+      emailChangeOtpStore.delete(cleanNewEmail);
       return res.status(400).json({
         success: false,
         message: 'Verification code has expired. Please request a new code.',
@@ -1342,7 +1391,7 @@ router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
       });
     }
 
-    // OTP matched! Perform the update
+    // OTP matched! Determine role and perform DB update
     const userRole = (req.user?.role || '').toLowerCase();
     const isEmployee = userRole !== 'customer';
     let updatedRecord = null;
@@ -1351,41 +1400,63 @@ router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
       const empRes = await query(
         `UPDATE employees 
          SET email = $1, updated_at = NOW() 
-         WHERE id::text = $2 OR supabase_user_id::text = $2
+         WHERE ($2 <> '' AND (id::text = $2 OR supabase_user_id::text = $2))
+            OR ($3 <> '' AND LOWER(email) = $3)
          RETURNING id, supabase_user_id, fullname, username, email, phone, role, is_active`,
-        [cleanNewEmail, userId]
+        [cleanNewEmail, userId, userEmail]
       );
       if (empRes.rows.length > 0) {
-        updatedRecord = empRes.rows[0];
+        updatedRecord = { ...empRes.rows[0], type: 'employee' };
       }
     } else {
+      // NOTE: customers table in PostgreSQL does NOT have a username column!
       const custRes = await query(
         `UPDATE customers 
          SET email = $1, updated_at = NOW() 
-         WHERE id::text = $2 OR supabase_user_id::text = $2
-         RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, is_active`,
-        [cleanNewEmail, userId]
+         WHERE ($2 <> '' AND (id::text = $2 OR supabase_user_id::text = $2))
+            OR ($3 <> '' AND LOWER(email) = $3)
+         RETURNING id, supabase_user_id, fullname, email, phone, delivery_address AS address, is_active`,
+        [cleanNewEmail, userId, userEmail]
       );
       if (custRes.rows.length > 0) {
-        updatedRecord = { ...custRes.rows[0], role: 'customer' };
+        const cRow = custRes.rows[0];
+        updatedRecord = {
+          ...cRow,
+          username: cRow.fullname,
+          role: 'customer',
+          type: 'customer',
+        };
       }
     }
 
-    // Fallback if update by userId returned 0 rows (e.g. user matched by current email)
-    if (!updatedRecord && req.user?.email) {
-      const fallbackTable = isEmployee ? 'employees' : 'customers';
-      const fallbackRes = await query(
-        `UPDATE ${fallbackTable} 
-         SET email = $1, updated_at = NOW() 
-         WHERE LOWER(email) = LOWER($2)
-         RETURNING id, supabase_user_id, fullname, username, email, phone, is_active`,
-        [cleanNewEmail, req.user.email]
-      );
-      if (fallbackRes.rows.length > 0) {
-        updatedRecord = {
-          ...fallbackRes.rows[0],
-          role: fallbackTable === 'employees' ? fallbackRes.rows[0].role : 'customer',
-        };
+    // Fallback if not updated by ID or email
+    if (!updatedRecord && userEmail) {
+      if (isEmployee) {
+        const fbEmp = await query(
+          `UPDATE employees 
+           SET email = $1, updated_at = NOW() 
+           WHERE LOWER(email) = $2
+           RETURNING id, supabase_user_id, fullname, username, email, phone, role, is_active`,
+          [cleanNewEmail, userEmail]
+        );
+        if (fbEmp.rows.length > 0) updatedRecord = { ...fbEmp.rows[0], type: 'employee' };
+      } else {
+        const fbCust = await query(
+          `UPDATE customers 
+           SET email = $1, updated_at = NOW() 
+           WHERE LOWER(email) = $2
+           RETURNING id, supabase_user_id, fullname, email, phone, delivery_address AS address, is_active`,
+          [cleanNewEmail, userEmail]
+        );
+        if (fbCust.rows.length > 0) {
+          const cRow = fbCust.rows[0];
+          updatedRecord = {
+            ...cRow,
+            username: cRow.fullname,
+            role: 'customer',
+            type: 'customer',
+          };
+        }
       }
     }
 
@@ -1396,28 +1467,40 @@ router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
       });
     }
 
-    // Sync with Supabase Auth if linked
+    // Sync with Supabase Auth
     const supabaseUserId = updatedRecord.supabase_user_id || req.user?.supabase_user_id;
-    if (supabaseUserId) {
-      try {
+    try {
+      if (supabaseUserId) {
         await supabase.auth.admin.updateUserById(supabaseUserId, {
           email: cleanNewEmail,
           email_confirm: true,
         });
-      } catch (sbErr) {
-        console.warn('[AUTH EMAIL CHANGE] Supabase auth email sync notice:', sbErr.message);
+      } else if (userEmail) {
+        const { data: usersData } = await supabase.auth.admin.listUsers();
+        const foundUser = usersData?.users?.find((u) => u.email?.toLowerCase() === userEmail);
+        if (foundUser?.id) {
+          await supabase.auth.admin.updateUserById(foundUser.id, {
+            email: cleanNewEmail,
+            email_confirm: true,
+          });
+        }
       }
+    } catch (sbErr) {
+      console.warn('[AUTH EMAIL CHANGE] Supabase auth sync notice:', sbErr.message);
     }
 
-    // Clear old password reset records for previous email
-    if (req.user?.email) {
-      try {
-        await query('DELETE FROM password_resets WHERE LOWER(email) = LOWER($1)', [req.user.email]);
-      } catch {}
-    }
+    // Clean up used OTP and password reset records
+    try {
+      await query(
+        `DELETE FROM password_resets 
+         WHERE email = $1 OR ($2 <> '' AND LOWER(email) = $2)`,
+        [`email_change:${cleanNewEmail}`, userEmail]
+      );
+    } catch {}
 
-    // Remove used OTP
-    emailChangeOtpStore.delete(userId);
+    if (userId) emailChangeOtpStore.delete(userId);
+    if (userEmail) emailChangeOtpStore.delete(userEmail);
+    emailChangeOtpStore.delete(cleanNewEmail);
 
     // Generate fresh HMAC session token
     const cryptoSession = generateSessionHashToken({

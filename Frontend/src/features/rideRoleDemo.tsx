@@ -123,10 +123,40 @@ export const normalizePhoneKey = (phone?: string): string => {
   return (phone || '').replace(/\D/g, '')
 }
 
+export const isOrderCompleted = (status?: string): boolean => {
+  const s = String(status || '').toLowerCase().trim()
+  return s === 'completed' || s === 'delivered' || s === 'served' || s === 'cancelled'
+}
+
 export const areOrdersCompanion = (a: DeliveryJob, b: DeliveryJob): boolean => {
   if (a.id === b.id) return true
-  // Both must be in compatible status
-  if (a.status.toLowerCase() !== b.status.toLowerCase()) return false
+
+  const statusA = String(a.status || '').toLowerCase().trim()
+  const statusB = String(b.status || '').toLowerCase().trim()
+
+  // CRITICAL RULE: The ONLY orders that combine are those actively preparing or pending delivery!
+  // Completed or cancelled orders MUST NEVER combine or accumulate history orders.
+  const activeCombinable = ['ready', 'preparing', 'out for delivery']
+  if (!activeCombinable.includes(statusA) || !activeCombinable.includes(statusB)) {
+    return false
+  }
+
+  // Active status compatibility:
+  // Both orders actively in kitchen ('ready' or 'preparing') can combine, or both already 'out for delivery'
+  const isKitchenActiveA = statusA === 'ready' || statusA === 'preparing'
+  const isKitchenActiveB = statusB === 'ready' || statusB === 'preparing'
+  if (!((isKitchenActiveA && isKitchenActiveB) || statusA === statusB)) {
+    return false
+  }
+
+  // Timestamp check: Only combine orders placed contemporaneously (within 60 minutes of each other)
+  const timeA = Date.parse(a.createdAt || '')
+  const timeB = Date.parse(b.createdAt || '')
+  if (!isNaN(timeA) && !isNaN(timeB)) {
+    if (Math.abs(timeA - timeB) > 60 * 60 * 1000) {
+      return false
+    }
+  }
 
   const addrA = normalizeAddressKey(a.address)
   const addrB = normalizeAddressKey(b.address)
@@ -185,14 +215,18 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
     const group: DeliveryJob[] = [current]
     visited.add(current.id)
 
-    for (let j = i + 1; j < deliveries.length; j++) {
-      const candidate = deliveries[j]
-      if (visited.has(candidate.id)) continue
+    // The ONLY orders that combine are those actively preparing or pending delivery!
+    if (!isOrderCompleted(current.status)) {
+      for (let j = i + 1; j < deliveries.length; j++) {
+        const candidate = deliveries[j]
+        if (visited.has(candidate.id)) continue
+        if (isOrderCompleted(candidate.status)) continue
 
-      const isCompanion = group.some((member) => areOrdersCompanion(member, candidate))
-      if (isCompanion) {
-        group.push(candidate)
-        visited.add(candidate.id)
+        const isCompanion = group.some((member) => areOrdersCompanion(member, candidate))
+        if (isCompanion) {
+          group.push(candidate)
+          visited.add(candidate.id)
+        }
       }
     }
 
@@ -265,7 +299,7 @@ export const RideRoleDemo: React.FC = () => {
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false)
   const [routingUnavailable, setRoutingUnavailable] = useState(false)
   const [customerDetailsOrder, setCustomerDetailsOrder] = useState<DeliveryJob | null>(null)
-  const [activeTab, setActiveTab] = useState<'All' | 'Ready' | 'Out for Delivery' | 'Completed'>('Ready')
+  const [activeTab, setActiveTab] = useState<'Ready' | 'All' | 'Out for Delivery'>('Ready')
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -378,12 +412,20 @@ export const RideRoleDemo: React.FC = () => {
                 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
               ]
               if (unconfirmedStatuses.includes(rawStatus)) return
+              // Once an order is completed, delivered, served, or cancelled, it is gone from the rider side!
+              const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
+              if (finishedStatuses.includes(rawStatus)) return
+
               let displayStatus = 'Ready'
-              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
-              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
-              else if (rawStatus === 'READY') displayStatus = 'Ready'
-              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else return
+              if (rawStatus === 'OUT_FOR_DELIVERY') {
+                displayStatus = 'Out for Delivery'
+              } else if (rawStatus === 'READY') {
+                displayStatus = 'Ready'
+              } else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') {
+                displayStatus = 'Preparing'
+              } else {
+                return
+              }
 
               const address = o.address || o.deliveryAddress || 'Monumento, Caloocan'
               const latitude = o.deliveryLatitude ?? o.delivery_latitude
@@ -448,12 +490,20 @@ export const RideRoleDemo: React.FC = () => {
               ]
               if (unconfirmedStatuses.includes(rawStatus)) return
 
+              // Once an order is completed, delivered, served, or cancelled, it is gone from the rider side!
+              const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
+              if (finishedStatuses.includes(rawStatus)) return
+
               let displayStatus = 'Ready'
-              if (rawStatus === 'OUT_FOR_DELIVERY') displayStatus = 'Out for Delivery'
-              else if (rawStatus === 'COMPLETED' || rawStatus === 'DELIVERED') displayStatus = 'Completed'
-              else if (rawStatus === 'READY') displayStatus = 'Ready'
-              else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') displayStatus = 'Preparing'
-              else return
+              if (rawStatus === 'OUT_FOR_DELIVERY') {
+                displayStatus = 'Out for Delivery'
+              } else if (rawStatus === 'READY') {
+                displayStatus = 'Ready'
+              } else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') {
+                displayStatus = 'Preparing'
+              } else {
+                return
+              }
 
               const items = Array.isArray(o.cartItems)
                 ? o.cartItems.map((ci: any) => ({
@@ -689,19 +739,25 @@ export const RideRoleDemo: React.FC = () => {
       })
     )
 
-    // Update state once
+    // Update state: completed orders are immediately cleared from rider view
     setRawDeliveries((prev) =>
-      prev.map((d) => {
-        const u = updateMap.get(d.id) || updateMap.get(d.ref)
-        if (u) {
-          return {
-            ...d,
-            status: u.newStatus,
-            riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : d.riderCashReceived,
+      prev
+        .filter((d) => {
+          const u = updateMap.get(d.id) || updateMap.get(d.ref)
+          if (u && isOrderCompleted(u.newStatus)) return false
+          return !isOrderCompleted(d.status)
+        })
+        .map((d) => {
+          const u = updateMap.get(d.id) || updateMap.get(d.ref)
+          if (u) {
+            return {
+              ...d,
+              status: u.newStatus,
+              riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : d.riderCashReceived,
+            }
           }
-        }
-        return d
-      })
+          return d
+        })
     )
 
     // Update active modal selected order if it was modified
@@ -778,9 +834,11 @@ export const RideRoleDemo: React.FC = () => {
     })
 
     await handleUpdateOrdersStatus(updates)
+    // Close modal once order is delivered so it is cleared from rider's view
+    setCustomerDetailsOrder(null)
     setNotification(
       bundle.isBundle
-        ? `All ${bundle.orders.length} orders delivered to ${bundle.customer}! ${bundle.hasCod ? `₱${parsedReceived.toFixed(2)} collected.` : 'No cash collected (Prepaid).'}`
+        ? `All ${bundle.orders.length} orders delivered to ${bundle.customer}! Delivery completed.`
         : `Order #${bundle.primaryOrder.ref} delivered & completed!`
     )
   }
@@ -847,10 +905,23 @@ export const RideRoleDemo: React.FC = () => {
       const allHidden = b.orders.every((o) => hiddenOrderIds.has(o.id) || hiddenOrderIds.has(o.ref))
       if (allHidden) return false
 
-      const matchesTab =
-        activeTab === 'All'
-          ? b.status !== 'Completed'
-          : b.status.toLowerCase() === activeTab.toLowerCase()
+      const matchesTab = (() => {
+        if (activeTab === 'All') {
+          // "All" tab represents all active deliveries (Ready and Out for Delivery).
+          // Once an order is completed, it is gone from the active rider board!
+          return !isOrderCompleted(b.status)
+        }
+        if (activeTab === 'Ready') {
+          return b.status.toLowerCase() === 'ready'
+        }
+        if (activeTab === 'Out for Delivery') {
+          return b.status.toLowerCase() === 'out for delivery'
+        }
+        if (activeTab === 'Completed') {
+          return isOrderCompleted(b.status)
+        }
+        return false
+      })()
       if (!matchesTab) return false
 
       if (!searchQuery.trim()) return true
@@ -984,7 +1055,7 @@ export const RideRoleDemo: React.FC = () => {
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               {/* Tabs */}
               <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-neutral-200 shadow-2xs overflow-x-auto">
-                {(['Ready', 'All', 'Out for Delivery', 'Completed'] as const).map((tab) => (
+                {(['Ready', 'All', 'Out for Delivery'] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}

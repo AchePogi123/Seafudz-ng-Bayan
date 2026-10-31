@@ -30,6 +30,19 @@ const RIDER_DEMO_ORDERS: DeliveryJob[] = [
     coord: METRO_MANILA_LOCATIONS['bagong silang'],
   },
   {
+    id: 'DEMO-RIDER-001-B',
+    ref: 'DEMO-RIDER-001-B',
+    customer: 'Demo Customer 1',
+    phone: '09170000001',
+    address: 'Bagong Silang, Caloocan',
+    items: [{ name: 'Butter Garlic Shrimp', quantity: 1 }],
+    total: 499,
+    status: 'Ready',
+    createdAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+    paymentMethod: 'GCash',
+    coord: METRO_MANILA_LOCATIONS['bagong silang'],
+  },
+  {
     id: 'DEMO-RIDER-002',
     ref: 'DEMO-RIDER-002',
     customer: 'Demo Customer 2',
@@ -87,6 +100,162 @@ export const getPaymentMethodDisplay = (paymentMethod?: string) => {
   }
 }
 
+/**
+ * Normalization helpers to identify companion orders placed by the same customer
+ * sharing the same delivery address and matching active delivery status.
+ */
+export const normalizeAddressKey = (addr?: string): string => {
+  return (addr || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export const normalizeCustomerKey = (name?: string): string => {
+  return (name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim()
+}
+
+export const normalizePhoneKey = (phone?: string): string => {
+  return (phone || '').replace(/\D/g, '')
+}
+
+export const areOrdersCompanion = (a: DeliveryJob, b: DeliveryJob): boolean => {
+  if (a.id === b.id) return true
+  // Both must be in compatible status
+  if (a.status.toLowerCase() !== b.status.toLowerCase()) return false
+
+  const addrA = normalizeAddressKey(a.address)
+  const addrB = normalizeAddressKey(b.address)
+  if (!addrA || !addrB) return false
+
+  // Address match (exact or substring/containment)
+  const addrMatches = addrA === addrB || addrA.includes(addrB) || addrB.includes(addrA)
+  if (!addrMatches) return false
+
+  // Phone match (valid >= 7 digits)
+  const phoneA = normalizePhoneKey(a.phone)
+  const phoneB = normalizePhoneKey(b.phone)
+  const hasValidPhone = phoneA.length >= 7 && phoneB.length >= 7
+  if (hasValidPhone && phoneA === phoneB) return true
+
+  // Customer name match (non-generic)
+  const nameA = normalizeCustomerKey(a.customer)
+  const nameB = normalizeCustomerKey(b.customer)
+  const isGeneric = (n: string) =>
+    !n || n === 'onlinecustomer' || n === 'walkin' || n === 'customer' || n === 'guest'
+  if (nameA && nameB && nameA === nameB && !isGeneric(nameA)) {
+    return true
+  }
+
+  return false
+}
+
+export interface DeliveryBundle {
+  bundleKey: string
+  isBundle: boolean
+  customer: string
+  phone: string
+  address: string
+  status: string
+  roadDistanceKm?: number
+  orders: DeliveryJob[]
+  totalCombinedAmount: number
+  totalDeliveryFee: number
+  codAmountToCollect: number
+  onlineAmountPrepaid: number
+  hasCod: boolean
+  hasOnline: boolean
+  isMixedPayment: boolean
+  latestCreatedAt: string
+  primaryOrder: DeliveryJob
+}
+
+export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryBundle[] {
+  const visited = new Set<string>()
+  const bundles: DeliveryBundle[] = []
+
+  for (let i = 0; i < deliveries.length; i++) {
+    const current = deliveries[i]
+    if (visited.has(current.id)) continue
+
+    const group: DeliveryJob[] = [current]
+    visited.add(current.id)
+
+    for (let j = i + 1; j < deliveries.length; j++) {
+      const candidate = deliveries[j]
+      if (visited.has(candidate.id)) continue
+
+      const isCompanion = group.some((member) => areOrdersCompanion(member, candidate))
+      if (isCompanion) {
+        group.push(candidate)
+        visited.add(candidate.id)
+      }
+    }
+
+    const primary = group[0]
+    const isBundle = group.length > 1
+
+    const totalCombinedAmount = group.reduce((sum, o) => sum + (Number(o.total) || 0), 0)
+    const totalDeliveryFee = group.reduce((sum, o) => sum + (Number(o.deliveryFee) || 0), 0)
+
+    let codAmountToCollect = 0
+    let onlineAmountPrepaid = 0
+    let hasCod = false
+    let hasOnline = false
+
+    group.forEach((o) => {
+      if (isCodOrder(o)) {
+        hasCod = true
+        codAmountToCollect += Number(o.total) || 0
+      } else {
+        hasOnline = true
+        onlineAmountPrepaid += Number(o.total) || 0
+      }
+    })
+
+    const isMixedPayment = hasCod && hasOnline
+    const roadDistanceKm = group.find((o) => o.roadDistanceKm !== undefined)?.roadDistanceKm
+
+    let latestTime = 0
+    let latestCreatedAtStr = primary.createdAt || ''
+    group.forEach((o) => {
+      const t = Date.parse(o.createdAt || '')
+      if (!isNaN(t) && t > latestTime) {
+        latestTime = t
+        latestCreatedAtStr = o.createdAt || ''
+      }
+    })
+
+    const bundleKey = group.map((o) => o.id).sort().join('___')
+
+    bundles.push({
+      bundleKey,
+      isBundle,
+      customer: primary.customer,
+      phone: primary.phone,
+      address: primary.address,
+      status: primary.status,
+      roadDistanceKm,
+      orders: group,
+      totalCombinedAmount,
+      totalDeliveryFee,
+      codAmountToCollect,
+      onlineAmountPrepaid,
+      hasCod,
+      hasOnline,
+      isMixedPayment,
+      latestCreatedAt: latestCreatedAtStr,
+      primaryOrder: primary,
+    })
+  }
+
+  return bundles
+}
+
 export const RideRoleDemo: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
@@ -111,9 +280,11 @@ export const RideRoleDemo: React.FC = () => {
 
   const handleDeleteRiderOrder = async (orderId: string) => {
     const isDemoOrder = import.meta.env.DEV && orderId.startsWith('DEMO-RIDER-')
-    const confirmDelete = window.confirm(isDemoOrder
-      ? `Remove demo order ${orderId} from the Rider view?`
-      : `Are you sure you want to permanently delete Delivery #${orderId}? This will remove it from the database.`)
+    const confirmDelete = window.confirm(
+      isDemoOrder
+        ? `Remove demo order ${orderId} from the Rider view?`
+        : `Are you sure you want to permanently delete Delivery #${orderId}? This will remove it from the database.`
+    )
     if (!confirmDelete) return
 
     if (isDemoOrder) {
@@ -376,74 +547,79 @@ export const RideRoleDemo: React.FC = () => {
     }
   }, [notification])
 
-  const handleHideOrder = (orderId: string, e?: React.MouseEvent) => {
+  // Hide bundle from UI
+  const handleHideBundle = (bundle: DeliveryBundle, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     setHiddenOrderIds((prev) => {
       const next = new Set(prev)
-      next.add(orderId)
+      bundle.orders.forEach((o) => {
+        next.add(o.id)
+        if (o.ref) next.add(o.ref)
+      })
       try {
         localStorage.setItem('seafudz_rider_hidden_orders', JSON.stringify(Array.from(next)))
       } catch {}
       return next
     })
-    setCustomerDetailsOrder((prev) => (prev?.id === orderId ? null : prev))
-    setNotification(`Order ${orderId} removed from Rider view (UI only).`)
+    if (customerDetailsOrder && bundle.orders.some((o) => o.id === customerDetailsOrder.id)) {
+      setCustomerDetailsOrder(null)
+    }
+    setNotification(
+      bundle.isBundle
+        ? `Combined delivery (${bundle.orders.length} orders) removed from Rider view.`
+        : `Order ${bundle.primaryOrder.ref} removed from Rider view.`
+    )
   }
 
-  // Rider updates status to Out for Delivery or Delivered/Completed
-  const handleUpdateStatus = async (
-    orderId: string,
-    newStatus: 'Out for Delivery' | 'Completed',
-    moneyReceived?: number
+  // Unified status updater supporting batch updates for bundled companion orders
+  const handleUpdateOrdersStatus = async (
+    updates: Array<{ orderId: string; newStatus: 'Out for Delivery' | 'Completed'; moneyReceived?: number }>
   ) => {
-    const apiStatus = newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
+    const updateMap = new Map(updates.map((u) => [u.orderId, u]))
 
-    if (import.meta.env.DEV && orderId.startsWith('DEMO-RIDER-')) {
+    // Handle demo orders
+    if (import.meta.env.DEV) {
       try {
         const statuses = JSON.parse(localStorage.getItem(DEMO_ORDER_STATUS_KEY) || '{}')
-        localStorage.setItem(DEMO_ORDER_STATUS_KEY, JSON.stringify({ ...statuses, [orderId]: newStatus }))
+        updates.forEach((u) => {
+          if (u.orderId.startsWith('DEMO-RIDER-')) {
+            statuses[u.orderId] = u.newStatus
+          }
+        })
+        localStorage.setItem(DEMO_ORDER_STATUS_KEY, JSON.stringify(statuses))
       } catch {}
-      setRawDeliveries((prev) =>
-        prev.map((delivery) =>
-          delivery.id === orderId
-            ? { ...delivery, status: newStatus, riderCashReceived: moneyReceived !== undefined ? moneyReceived : delivery.riderCashReceived }
-            : delivery
-        )
-      )
-      setCustomerDetailsOrder((prev) =>
-        prev?.id === orderId
-          ? { ...prev, status: newStatus, riderCashReceived: moneyReceived !== undefined ? moneyReceived : prev.riderCashReceived }
-          : prev
-      )
-      setNotification(`Order status updated to "${newStatus}".`)
-      return
     }
 
     // Update in LocalStorage
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.map((o: any) =>
-        o.id === orderId || o.ref === orderId
-          ? {
-              ...o,
-              status: apiStatus,
-              riderCashReceived: moneyReceived !== undefined ? moneyReceived : o.riderCashReceived,
-              rider_cash_received: moneyReceived !== undefined ? moneyReceived : o.rider_cash_received,
-            }
-          : o
-      )
+      const updated = existing.map((o: any) => {
+        const u = updateMap.get(o.id) || updateMap.get(o.ref)
+        if (u) {
+          const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
+          return {
+            ...o,
+            status: apiStatus,
+            riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : o.riderCashReceived,
+            rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : o.rider_cash_received,
+          }
+        }
+        return o
+      })
       localStorage.setItem('seafudz_orders', JSON.stringify(updated))
 
       const savedActive = localStorage.getItem('seafudz_active_online_order')
       if (savedActive) {
         const activeObj = JSON.parse(savedActive)
-        if (activeObj && (activeObj.id === orderId || activeObj.ref === orderId)) {
+        const u = activeObj ? (updateMap.get(activeObj.id) || updateMap.get(activeObj.ref)) : null
+        if (u) {
+          const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
           localStorage.setItem(
             'seafudz_active_online_order',
             JSON.stringify({
               ...activeObj,
               status: apiStatus,
-              riderCashReceived: moneyReceived !== undefined ? moneyReceived : activeObj.riderCashReceived,
+              riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : activeObj.riderCashReceived,
             })
           )
         }
@@ -452,34 +628,119 @@ export const RideRoleDemo: React.FC = () => {
       notifyOrderSync()
     } catch {}
 
-    // Update in backend API
-    try {
-      await fetch(`${API_BASE_URL}/user-flow/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: apiStatus,
-          riderCashReceived: moneyReceived,
-          riderName: currentUser?.fullname || currentUser?.username || 'Rider',
-        }),
+    // Update in Backend API in parallel
+    const riderName = currentUser?.fullname || currentUser?.username || 'Rider'
+    await Promise.all(
+      updates.map(async (u) => {
+        const apiStatus = u.newStatus === 'Out for Delivery' ? 'OUT_FOR_DELIVERY' : 'COMPLETED'
+        try {
+          await fetch(`${API_BASE_URL}/user-flow/orders/${u.orderId}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: apiStatus,
+              riderCashReceived: u.moneyReceived,
+              riderName,
+            }),
+          })
+        } catch {}
       })
-    } catch {}
+    )
 
+    // Update state once
     setRawDeliveries((prev) =>
-      prev.map((d) =>
-        d.id === orderId
-          ? { ...d, status: newStatus, riderCashReceived: moneyReceived !== undefined ? moneyReceived : d.riderCashReceived }
-          : d
-      )
+      prev.map((d) => {
+        const u = updateMap.get(d.id) || updateMap.get(d.ref)
+        if (u) {
+          return {
+            ...d,
+            status: u.newStatus,
+            riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : d.riderCashReceived,
+          }
+        }
+        return d
+      })
     )
 
-    setCustomerDetailsOrder((prev) =>
-      prev?.id === orderId
-        ? { ...prev, status: newStatus, riderCashReceived: moneyReceived !== undefined ? moneyReceived : prev.riderCashReceived }
-        : prev
-    )
+    // Update active modal selected order if it was modified
+    setCustomerDetailsOrder((prev) => {
+      if (!prev) return null
+      const u = updateMap.get(prev.id) || updateMap.get(prev.ref)
+      if (u) {
+        return {
+          ...prev,
+          status: u.newStatus,
+          riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : prev.riderCashReceived,
+        }
+      }
+      return prev
+    })
+  }
 
-    setNotification(`Order status updated to "${newStatus}"!`)
+
+  // Handle bundle start delivery
+  const handleStartBundleDelivery = async (bundle: DeliveryBundle) => {
+    setPaymentError(null)
+    const updates = bundle.orders.map((o) => ({
+      orderId: o.id,
+      newStatus: 'Out for Delivery' as const,
+    }))
+    await handleUpdateOrdersStatus(updates)
+    setNotification(
+      bundle.isBundle
+        ? `Started combined delivery for ${bundle.orders.length} orders to ${bundle.customer}!`
+        : `Started delivery for order #${bundle.primaryOrder.ref}!`
+    )
+  }
+
+  // Handle bundle complete delivery
+  const handleCompleteBundleDelivery = async (bundle: DeliveryBundle) => {
+    if (bundle.hasCod) {
+      if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
+        setPaymentError(`Please enter the COD cash amount received (or tap "Exact ₱${bundle.codAmountToCollect.toFixed(2)}").`)
+        return
+      }
+      const parsed = parseFloat(riderReceivedAmount)
+      if (parsed < 0) {
+        setPaymentError('Payment amount cannot be negative.')
+        return
+      }
+      if (parsed < bundle.codAmountToCollect) {
+        setPaymentError(`Cash received (₱${parsed.toFixed(2)}) is less than total COD due (₱${bundle.codAmountToCollect.toFixed(2)}).`)
+        return
+      }
+    }
+
+    setPaymentError(null)
+    const parsedReceived = bundle.hasCod ? parseFloat(riderReceivedAmount) : 0
+
+    const codOrders = bundle.orders.filter((o) => isCodOrder(o))
+    const updates = bundle.orders.map((order) => {
+      if (isCodOrder(order)) {
+        let allocated = parsedReceived
+        if (codOrders.length > 1) {
+          const ratio = order.total / (bundle.codAmountToCollect || 1)
+          allocated = Math.round(parsedReceived * ratio * 100) / 100
+        }
+        return {
+          orderId: order.id,
+          newStatus: 'Completed' as const,
+          moneyReceived: allocated,
+        }
+      }
+      return {
+        orderId: order.id,
+        newStatus: 'Completed' as const,
+        moneyReceived: 0,
+      }
+    })
+
+    await handleUpdateOrdersStatus(updates)
+    setNotification(
+      bundle.isBundle
+        ? `All ${bundle.orders.length} orders delivered to ${bundle.customer}! ${bundle.hasCod ? `₱${parsedReceived.toFixed(2)} collected.` : 'No cash collected (Prepaid).'}`
+        : `Order #${bundle.primaryOrder.ref} delivered & completed!`
+    )
   }
 
   const routeTargets = useMemo(
@@ -532,21 +793,37 @@ export const RideRoleDemo: React.FC = () => {
     })
   }, [rawDeliveries, roadMetrics])
 
-  // Filter & sort deliveries
-  const filteredDeliveries = useMemo(() => {
-    const list = pricedDeliveries.filter((d) => {
-      if (hiddenOrderIds.has(d.id) || hiddenOrderIds.has(d.ref)) return false
-      const matchesTab = activeTab === 'All' ? d.status !== 'Completed' : d.status.toLowerCase() === activeTab.toLowerCase()
+  // Group deliveries into bundles sharing customer + address + active status
+  const bundledDeliveries = useMemo<DeliveryBundle[]>(() => {
+    return groupDeliveriesIntoBundles(pricedDeliveries)
+  }, [pricedDeliveries])
+
+  // Filter & sort bundled deliveries
+  const filteredBundles = useMemo(() => {
+    const list = bundledDeliveries.filter((b) => {
+      // Check if all orders in this bundle are hidden
+      const allHidden = b.orders.every((o) => hiddenOrderIds.has(o.id) || hiddenOrderIds.has(o.ref))
+      if (allHidden) return false
+
+      const matchesTab =
+        activeTab === 'All'
+          ? b.status !== 'Completed'
+          : b.status.toLowerCase() === activeTab.toLowerCase()
       if (!matchesTab) return false
 
       if (!searchQuery.trim()) return true
       const q = searchQuery.toLowerCase()
       return (
-        (d.ref || '').toLowerCase().includes(q) ||
-        (d.customer || '').toLowerCase().includes(q) ||
-        (d.phone || '').toLowerCase().includes(q) ||
-        (d.address || '').toLowerCase().includes(q) ||
-        (d.paymentMethod || '').toLowerCase().includes(q)
+        b.customer.toLowerCase().includes(q) ||
+        b.phone.toLowerCase().includes(q) ||
+        b.address.toLowerCase().includes(q) ||
+        b.orders.some(
+          (o) =>
+            (o.ref || '').toLowerCase().includes(q) ||
+            (o.id || '').toLowerCase().includes(q) ||
+            (o.paymentMethod || '').toLowerCase().includes(q) ||
+            o.items.some((item) => item.name.toLowerCase().includes(q))
+        )
       )
     })
 
@@ -554,39 +831,50 @@ export const RideRoleDemo: React.FC = () => {
       return list.sort((a, b) => (a.roadDistanceKm ?? Infinity) - (b.roadDistanceKm ?? Infinity))
     }
     return list.sort((a, b) => {
-      const aTime = Date.parse(a.createdAt || '')
-      const bTime = Date.parse(b.createdAt || '')
+      const aTime = Date.parse(a.latestCreatedAt || '')
+      const bTime = Date.parse(b.latestCreatedAt || '')
       if (!Number.isFinite(aTime)) return Number.isFinite(bTime) ? 1 : 0
       if (!Number.isFinite(bTime)) return -1
       return bTime - aTime
     })
-  }, [pricedDeliveries, activeTab, searchQuery, hiddenOrderIds, sortBy])
+  }, [bundledDeliveries, activeTab, searchQuery, hiddenOrderIds, sortBy])
 
   // Reset pagination when filter or search changes
   useEffect(() => {
     setCurrentPage(1)
   }, [activeTab, searchQuery, sortBy])
 
-  const totalPages = Math.max(1, Math.ceil(filteredDeliveries.length / ITEMS_PER_PAGE))
-  const paginatedDeliveries = useMemo(() => {
+  const totalPages = Math.max(1, Math.ceil(filteredBundles.length / ITEMS_PER_PAGE))
+  const paginatedBundles = useMemo(() => {
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
-    return filteredDeliveries.slice(startIndex, startIndex + ITEMS_PER_PAGE)
-  }, [filteredDeliveries, currentPage, ITEMS_PER_PAGE])
+    return filteredBundles.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  }, [filteredBundles, currentPage, ITEMS_PER_PAGE])
 
-  // Keep selected order in sync with updated metrics
-  const activeCustomerDetailsOrder = useMemo(() => {
+  // Keep selected bundle in sync with updated metrics
+  const activeBundle = useMemo<DeliveryBundle | null>(() => {
     if (!customerDetailsOrder) return null
-    return pricedDeliveries.find((d) => d.id === customerDetailsOrder.id) || customerDetailsOrder
-  }, [customerDetailsOrder, pricedDeliveries])
+    return (
+      bundledDeliveries.find((b) =>
+        b.orders.some((o) => o.id === customerDetailsOrder.id || o.ref === customerDetailsOrder.ref)
+      ) || null
+    )
+  }, [customerDetailsOrder, bundledDeliveries])
 
   useEffect(() => {
-    if (activeCustomerDetailsOrder?.riderCashReceived != null) {
-      setRiderReceivedAmount(String(activeCustomerDetailsOrder.riderCashReceived))
+    if (activeBundle?.hasCod) {
+      const codOrderWithMoney = activeBundle.orders.find(
+        (o) => isCodOrder(o) && o.riderCashReceived != null
+      )
+      if (codOrderWithMoney?.riderCashReceived != null) {
+        setRiderReceivedAmount(String(codOrderWithMoney.riderCashReceived))
+      } else {
+        setRiderReceivedAmount('')
+      }
     } else {
       setRiderReceivedAmount('')
     }
     setPaymentError(null)
-  }, [activeCustomerDetailsOrder?.id, activeCustomerDetailsOrder?.riderCashReceived, activeCustomerDetailsOrder?.status])
+  }, [activeBundle?.bundleKey, activeBundle?.status])
 
   return (
     <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 text-neutral-900 font-sans pb-24 lg:pb-6">
@@ -647,7 +935,7 @@ export const RideRoleDemo: React.FC = () => {
           </div>
         </div>
 
-        {/* 4-Column Layout */}
+        {/* Main Content Layout */}
         <div className="grid grid-cols-1 gap-4 sm:gap-6 items-start">
           <div className="flex flex-col gap-4">
             {/* Search and Tabs Row */}
@@ -692,52 +980,68 @@ export const RideRoleDemo: React.FC = () => {
               </div>
             </div>
 
+            {/* Grid of Delivery Cards (Bundled & Single) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {paginatedDeliveries.length === 0 ? (
-                  <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                    <h3 className="font-bold text-neutral-700">No delivery orders found.</h3>
-                    <p className="text-xs mt-1">
-                      {searchQuery ? `No results matching "${searchQuery}"` : 'Orders dispatched by Assistant will show up here live.'}
-                    </p>
-                  </div>
-                ) : (
-                  paginatedDeliveries.map((ord) => {
-                    const isCod = isCodOrder(ord)
-                    const payInfo = getPaymentMethodDisplay(ord.paymentMethod)
+              {paginatedBundles.length === 0 ? (
+                <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
+                  <h3 className="font-bold text-neutral-700">No delivery orders found.</h3>
+                  <p className="text-xs mt-1">
+                    {searchQuery ? `No results matching "${searchQuery}"` : 'Orders dispatched by Assistant will show up here live.'}
+                  </p>
+                </div>
+              ) : (
+                paginatedBundles.map((bundle) => {
+                  if (bundle.isBundle) {
+                    // Render Unified Bundled Delivery Card (Multiple Orders for Same Customer)
                     return (
                       <div
-                        key={ord.id}
-                        onClick={() => setCustomerDetailsOrder(ord)}
-                        className="bg-white rounded-3xl p-5 border border-neutral-200 transition-all shadow-xs hover:shadow-md cursor-pointer"
+                        key={bundle.bundleKey}
+                        onClick={() => setCustomerDetailsOrder(bundle.primaryOrder)}
+                        className="bg-gradient-to-br from-white via-white to-orange-50/30 rounded-3xl p-5 border-2 border-orange-300 transition-all shadow-sm hover:shadow-md hover:border-orange-400 cursor-pointer relative"
                       >
-                        <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
+                        <div className="flex items-start justify-between gap-2 border-b border-orange-100 pb-3">
                           <div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${payInfo.badgeClass}`}>
-                                <span>{payInfo.icon}</span>
-                                <span>{payInfo.shortLabel}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-500 text-white shadow-2xs">
+                                <span>📦</span>
+                                <span>COMBINED DELIVERY ({bundle.orders.length} ORDERS)</span>
                               </span>
+                              {bundle.isMixedPayment ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-50 text-purple-800 border border-purple-200">
+                                  <span>🔀</span>
+                                  <span>Mixed (GCash + COD)</span>
+                                </span>
+                              ) : bundle.hasCod ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200">
+                                  <span>💵</span>
+                                  <span>COD ({bundle.orders.length} Orders)</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                  <span>📱</span>
+                                  <span>GCash Paid Online</span>
+                                </span>
+                              )}
                             </div>
-                            <h4 className="text-base font-black leading-tight mt-1 text-neutral-800">{ord.customer}</h4>
-                            <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
+                            <h4 className="text-base font-black leading-tight mt-1.5 text-neutral-900">{bundle.customer}</h4>
+                            <p className="text-xs text-neutral-500 mt-0.5">Phone: {bundle.phone}</p>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <span
                               className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                                ord.status === 'Ready'
+                                bundle.status === 'Ready'
                                   ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : ord.status === 'Out for Delivery'
+                                  : bundle.status === 'Out for Delivery'
                                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                   : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               }`}
                             >
-                              ● {ord.status}
+                              ● {bundle.status}
                             </span>
                             <button
                               type="button"
-                              onClick={(e) => handleHideOrder(ord.id, e)}
-                              title="Remove from Rider UI (does not delete from DB)"
+                              onClick={(e) => handleHideBundle(bundle, e)}
+                              title="Remove bundle from Rider UI"
                               className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
                             >
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -747,51 +1051,166 @@ export const RideRoleDemo: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Delivery distance and fee */}
+                        {/* Distance & Combined Delivery Fee */}
                         <div className="pt-2.5 pb-1 flex items-center justify-between text-xs">
-                          <div className="inline-flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-800 font-extrabold px-2.5 py-1 rounded-lg text-[11px]">
-                            <span>{ord.roadDistanceKm === undefined ? 'Distance unavailable' : `${ord.roadDistanceKm.toFixed(1)} km`}</span>
+                          <div className="inline-flex items-center gap-1.5 bg-orange-100/70 border border-orange-200 text-orange-900 font-extrabold px-2.5 py-1 rounded-lg text-[11px]">
+                            <span>{bundle.roadDistanceKm === undefined ? 'Distance unavailable' : `${bundle.roadDistanceKm.toFixed(1)} km`}</span>
                             <span className="text-orange-300">•</span>
                             <span>
-                              {ord.deliveryFee === null
-                                ? 'Outside 8 km delivery limit'
-                                : `Delivery fee ₱${ord.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              Combined Delivery Fee ₱{bundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({bundle.orders.length}× separate orders)
                             </span>
                           </div>
                         </div>
 
-                        <div className="py-2 text-xs text-neutral-600 space-y-1">
-                          <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
-                          <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                        {/* Address */}
+                        <div className="py-1 text-xs text-neutral-600">
+                          <p className="truncate font-medium text-neutral-700">📍 {bundle.address}</p>
                         </div>
 
-                        <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
+                        {/* Mini breakdown of companion packages */}
+                        <div className="mt-1 mb-2 space-y-1.5 bg-white/70 p-2.5 rounded-2xl border border-orange-100">
+                          {bundle.orders.map((ord, idx) => {
+                            const ordIsCod = isCodOrder(ord)
+                            return (
+                              <div key={ord.id} className="flex items-center justify-between text-xs border-b border-neutral-100 last:border-b-0 pb-1 last:pb-0">
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <span className="text-[10px] font-black text-orange-600">#{idx + 1}</span>
+                                  <span className="font-mono text-[10px] font-bold text-neutral-500 truncate max-w-[100px]">{ord.ref}</span>
+                                  <span className="text-neutral-300">•</span>
+                                  <span className="text-neutral-700 truncate max-w-[140px]">
+                                    {ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                  <span className="font-bold text-neutral-800 text-[11px]">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${ordIsCod ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                    {ordIsCod ? 'COD' : 'GCash'}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {/* Footer Totals */}
+                        <div className="flex items-center justify-between border-t border-orange-100 pt-2.5 text-xs font-bold">
                           <div className="flex items-center gap-2">
-                            <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                            {isCod ? (
-                              <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold">
-                                Collect Cash
+                            <span className="text-[#ff7b00] text-sm font-black">
+                              ₱{bundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Total
+                            </span>
+                            {bundle.isMixedPayment ? (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-black">
+                                Collect ₱{bundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} COD (1 Online, 1 COD)
+                              </span>
+                            ) : bundle.hasCod ? (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-black">
+                                Collect ₱{bundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Cash
                               </span>
                             ) : (
-                              <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
-                                Paid Online
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-black">
+                                Prepaid Online (₱0 Cash)
                               </span>
                             )}
                           </div>
-                          <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
+                          <span className="text-neutral-400 font-medium text-[11px]">{bundle.latestCreatedAt}</span>
                         </div>
                       </div>
                     )
-                  })
-                )}
+                  }
+
+                  // Render Single Delivery Card
+                  const ord = bundle.primaryOrder
+                  const isCod = isCodOrder(ord)
+                  const payInfo = getPaymentMethodDisplay(ord.paymentMethod)
+                  return (
+                    <div
+                      key={ord.id}
+                      onClick={() => setCustomerDetailsOrder(ord)}
+                      className="bg-white rounded-3xl p-5 border border-neutral-200 transition-all shadow-xs hover:shadow-md cursor-pointer"
+                    >
+                      <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${payInfo.badgeClass}`}>
+                              <span>{payInfo.icon}</span>
+                              <span>{payInfo.shortLabel}</span>
+                            </span>
+                          </div>
+                          <h4 className="text-base font-black leading-tight mt-1 text-neutral-800">{ord.customer}</h4>
+                          <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
+                              ord.status === 'Ready'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : ord.status === 'Out for Delivery'
+                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            }`}
+                          >
+                            ● {ord.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => handleHideBundle(bundle, e)}
+                            title="Remove from Rider UI"
+                            className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Delivery distance and fee */}
+                      <div className="pt-2.5 pb-1 flex items-center justify-between text-xs">
+                        <div className="inline-flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-800 font-extrabold px-2.5 py-1 rounded-lg text-[11px]">
+                          <span>{ord.roadDistanceKm === undefined ? 'Distance unavailable' : `${ord.roadDistanceKm.toFixed(1)} km`}</span>
+                          <span className="text-orange-300">•</span>
+                          <span>
+                            {ord.deliveryFee === null
+                              ? 'Outside 8 km delivery limit'
+                              : `Delivery fee ₱${ord.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="py-2 text-xs text-neutral-600 space-y-1">
+                        <p className="truncate"><span className="font-medium text-neutral-700">📍 {ord.address}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                      </div>
+
+                      <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          {isCod ? (
+                            <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold">
+                              Collect Cash
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
+                              Paid Online
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
             </div>
 
             {/* Pagination Controls */}
-            {filteredDeliveries.length > ITEMS_PER_PAGE && (
+            {filteredBundles.length > ITEMS_PER_PAGE && (
               <div className="bg-white px-5 py-3.5 rounded-2xl border border-neutral-200 shadow-2xs flex items-center justify-between">
                 <span className="text-xs font-bold text-neutral-500">
                   Page <span className="text-neutral-900 font-black">{currentPage}</span> of{' '}
-                  <span className="text-neutral-900 font-black">{totalPages}</span> ({filteredDeliveries.length} total orders)
+                  <span className="text-neutral-900 font-black">{totalPages}</span> ({filteredBundles.length} deliveries
+                  {filteredBundles.some((b) => b.isBundle) ? ` • ${filteredBundles.reduce((acc, b) => acc + b.orders.length, 0)} total customer packages` : ''})
                 </span>
 
                 <div className="flex items-center gap-2">
@@ -813,372 +1232,484 @@ export const RideRoleDemo: React.FC = () => {
               </div>
             )}
           </div>
-
         </div>
       </div>
 
-      {activeCustomerDetailsOrder && (() => {
-        const modalIsCod = isCodOrder(activeCustomerDetailsOrder)
-        const modalPayInfo = getPaymentMethodDisplay(activeCustomerDetailsOrder.paymentMethod)
-
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            onClick={() => setCustomerDetailsOrder(null)}
+      {/* DETAIL MODAL (Bundled & Single Deliveries) */}
+      {activeBundle && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setCustomerDetailsOrder(null)}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rider-customer-details-title"
+            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
           >
-            <section
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="rider-customer-details-title"
-              className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="mb-4 flex items-start justify-between gap-4 border-b border-neutral-100 pb-3">
-                <div>
-                  <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900">
-                    {activeCustomerDetailsOrder.customer}
-                  </h2>
-                  <p className="mt-1 text-xs text-neutral-500">Order {activeCustomerDetailsOrder.ref}</p>
+            {/* Modal Header */}
+            <div className="mb-4 flex items-start justify-between gap-4 border-b border-neutral-100 pb-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {activeBundle.isBundle && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-500 text-white shadow-2xs">
+                      <span>📦</span> BUNDLED DELIVERY ({activeBundle.orders.length} ORDERS)
+                    </span>
+                  )}
+                  {activeBundle.isMixedPayment && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                      <span>🔀</span> Split Payment (GCash + COD)
+                    </span>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setCustomerDetailsOrder(null)}
-                  className="rounded-lg px-2 py-1 text-sm font-bold text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 cursor-pointer"
-                  aria-label="Close customer details"
-                >
-                  Close
-                </button>
+                <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900 mt-1">
+                  {activeBundle.customer}
+                </h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {activeBundle.isBundle
+                    ? `Combined transit for ${activeBundle.orders.length} orders to single destination`
+                    : `Order ${activeBundle.primaryOrder.ref}`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomerDetailsOrder(null)}
+                className="rounded-lg px-2 py-1 text-sm font-bold text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 cursor-pointer"
+                aria-label="Close customer details"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="space-y-3.5 text-sm">
+              {/* Customer Info */}
+              <div>
+                <p className="text-xs font-bold uppercase text-neutral-400">Phone</p>
+                <p className="mt-0.5 text-neutral-800 font-semibold">{activeBundle.phone}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase text-neutral-400">Delivery Address</p>
+                <p className="mt-0.5 text-neutral-800">{activeBundle.address}</p>
               </div>
 
-              <div className="space-y-3 text-sm">
+              {/* Status and Overall Payment Mode */}
+              <div className="flex items-center justify-between border-y border-neutral-100 py-2.5">
                 <div>
-                  <p className="text-xs font-bold uppercase text-neutral-400">Phone</p>
-                  <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.phone}</p>
+                  <p className="text-xs font-bold uppercase text-neutral-400">Delivery Status</p>
+                  <p className="mt-0.5 font-bold text-neutral-800">{activeBundle.status}</p>
                 </div>
-                <div>
-                  <p className="text-xs font-bold uppercase text-neutral-400">Delivery address</p>
-                  <p className="mt-0.5 text-neutral-800">{activeCustomerDetailsOrder.address}</p>
-                </div>
-
-                <div className="flex items-center justify-between border-y border-neutral-100 py-2.5">
-                  <div>
-                    <p className="text-xs font-bold uppercase text-neutral-400">Status</p>
-                    <p className="mt-0.5 font-bold text-neutral-800">{activeCustomerDetailsOrder.status}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-bold uppercase text-neutral-400">Customer Payment</p>
-                    <div className="mt-0.5 flex items-center gap-1.5 justify-end">
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black border ${modalPayInfo.badgeClass}`}>
-                        <span>{modalPayInfo.icon}</span>
-                        <span>{modalPayInfo.label}</span>
+                <div className="text-right">
+                  <p className="text-xs font-bold uppercase text-neutral-400">Payment Summary</p>
+                  <div className="mt-0.5 flex items-center gap-1.5 justify-end">
+                    {activeBundle.isMixedPayment ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-purple-50 text-purple-800 border border-purple-200">
+                        <span>🔀</span>
+                        <span>Mixed (GCash + COD)</span>
                       </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3 rounded-xl bg-orange-50 p-3">
-                  <div>
-                    <p className="text-xs font-bold uppercase text-neutral-500">Road distance</p>
-                    <p className="mt-0.5 font-bold text-neutral-900">
-                      {activeCustomerDetailsOrder.roadDistanceKm === undefined
-                        ? 'Unavailable'
-                        : `${activeCustomerDetailsOrder.roadDistanceKm.toFixed(1)} km`}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-neutral-500">Total rider fee</p>
-                    <p className="mt-0.5 font-bold text-orange-700">
-                      {activeCustomerDetailsOrder.deliveryFee === null
-                        ? 'Outside delivery range'
-                        : `₱${activeCustomerDetailsOrder.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                    </p>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-xs font-bold uppercase text-neutral-400">Items</p>
-                  <ul className="mt-1 space-y-1 text-neutral-800">
-                    {activeCustomerDetailsOrder.items.map((item, index) => (
-                      <li key={`${item.name}-${index}`} className="flex justify-between gap-3">
-                        <span>{item.name}</span>
-                        <span className="font-semibold">x{item.quantity}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="border-t border-neutral-100 pt-3">
-                  <div className="flex justify-between font-bold">
-                    <span>Order total</span>
-                    <span className="font-mono text-base text-neutral-900">₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <p className={`text-[11px] font-semibold mt-0.5 text-right ${modalIsCod ? 'text-amber-700' : 'text-emerald-700'}`}>
-                    {modalIsCod
-                      ? '• Collect in cash from customer upon handover'
-                      : '• Fully paid online via GCash (₱0.00 cash to collect)'}
-                  </p>
-                </div>
-
-                {/* Ready status note & actions: Rider has not started delivery yet */}
-                {activeCustomerDetailsOrder.status === 'Ready' && (
-                  <div className="space-y-3 pt-1">
-                    <div className={`rounded-xl border p-3 text-xs flex items-center gap-2.5 ${
-                      modalIsCod ? 'border-amber-200 bg-amber-50/80 text-amber-900' : 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
-                    }`}>
-                      <svg className={`w-5 h-5 shrink-0 ${modalIsCod ? 'text-amber-600' : 'text-emerald-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <span>
-                        This order is ready for pickup at the store. Click <strong>Start Delivery</strong> to begin transit.{' '}
-                        {modalIsCod
-                          ? `Payment of ₱${activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} will be collected in cash upon arrival.`
-                          : 'Customer already paid via GCash (no cash collection required).'}
+                    ) : activeBundle.hasCod ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-50 text-amber-800 border border-amber-200">
+                        <span>💵</span>
+                        <span>Cash on Delivery</span>
                       </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPaymentError(null)
-                        void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Out for Delivery')
-                      }}
-                      className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      <span>Start Delivery</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Out for Delivery status: Item is in transit / being delivered */}
-                {activeCustomerDetailsOrder.status === 'Out for Delivery' && (
-                  <div className="space-y-3 pt-1">
-                    {modalIsCod ? (
-                      <>
-                        {/* Cash on Delivery: Rider enters cash received */}
-                        <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-900 flex items-center gap-2.5">
-                          <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          <span>Order is out for delivery. Once handed over to the customer, collect cash payment and enter the amount received below before marking as delivered.</span>
-                        </div>
-
-                        <div className={`rounded-2xl border ${paymentError ? 'border-red-400 bg-red-50/50' : 'border-amber-300 bg-amber-50/80'} p-3.5 space-y-2.5 shadow-xs transition-colors`}>
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs font-bold uppercase tracking-wider text-amber-950">
-                                Payment Received Upon Delivery
-                              </label>
-                              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-600 text-white shadow-2xs">
-                                COD
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setRiderReceivedAmount(String(activeCustomerDetailsOrder.total))
-                                setPaymentError(null)
-                              }}
-                              className="text-[10px] font-bold text-amber-800 bg-white border border-amber-300 px-2.5 py-1 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
-                            >
-                              Exact (₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                            </button>
-                          </div>
-                          <div className="relative flex items-center">
-                            <span className="absolute left-3 text-neutral-500 font-bold text-sm">₱</span>
-                            <input
-                              type="number"
-                              step="any"
-                              value={riderReceivedAmount}
-                              onChange={(e) => {
-                                setRiderReceivedAmount(e.target.value)
-                                if (paymentError) setPaymentError(null)
-                              }}
-                              placeholder={String(activeCustomerDetailsOrder.total)}
-                              className={`w-full pl-8 pr-3 py-2.5 text-sm font-black text-neutral-900 bg-white border ${paymentError ? 'border-red-500 focus:border-red-600 ring-2 ring-red-200' : 'border-amber-300 focus:border-amber-600'} rounded-xl focus:outline-none transition-all placeholder-neutral-300 shadow-2xs`}
-                            />
-                          </div>
-                          {paymentError && (
-                            <p className="text-xs font-bold text-red-600 flex items-center gap-1.5 pt-0.5">
-                              <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                              </svg>
-                              <span>{paymentError}</span>
-                            </p>
-                          )}
-                          {riderReceivedAmount !== '' && !isNaN(parseFloat(riderReceivedAmount)) && (
-                            <div className="flex items-center justify-between text-xs pt-1.5 border-t border-amber-200 font-semibold">
-                              <span className="text-neutral-600">
-                                {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'Change due to customer:' : 'Short payment balance:'}
-                              </span>
-                              <span className={`font-mono font-black ${parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total ? 'text-emerald-700 text-sm' : 'text-amber-600 text-sm'}`}>
-                                {parseFloat(riderReceivedAmount) >= activeCustomerDetailsOrder.total
-                                  ? `₱${(parseFloat(riderReceivedAmount) - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `Short by ₱${(activeCustomerDetailsOrder.total - parseFloat(riderReceivedAmount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
-                              setPaymentError('Please enter the payment amount received from customer (or tap "Exact").')
-                              return
-                            }
-                            const parsed = parseFloat(riderReceivedAmount)
-                            if (parsed < 0) {
-                              setPaymentError('Payment amount cannot be negative.')
-                              return
-                            }
-                            setPaymentError(null)
-                            void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Completed', parsed)
-                          }}
-                          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                          </svg>
-                          <span>Mark Delivered & Paid</span>
-                        </button>
-                      </>
                     ) : (
-                      <>
-                        {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
-                        <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
-                          <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <div>
-                            <p className="font-bold">Customer paid online via GCash</p>
-                            <p className="text-emerald-800 mt-0.5">Order is out for delivery. Hand over the items to customer. No cash collection is needed.</p>
-                          </div>
-                        </div>
-
-                        <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-neutral-600">Payment Method:</span>
-                            <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
-                              <span>📱</span> GCash (Paid Online)
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-bold text-neutral-600">Total Order Amount:</span>
-                            <span className="font-mono font-bold text-neutral-800">
-                              ₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
-                            <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
-                            <span className="font-mono font-black text-emerald-700 text-sm">
-                              ₱0.00 (Prepaid Online)
-                            </span>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaymentError(null)
-                            void handleUpdateStatus(activeCustomerDetailsOrder.id, 'Completed')
-                          }}
-                          className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                          </svg>
-                          <span>Mark Delivered</span>
-                        </button>
-                      </>
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <span>📱</span>
+                        <span>Paid Online via GCash</span>
+                      </span>
                     )}
                   </div>
+                </div>
+              </div>
+
+              {/* Road distance and Delivery Fee breakdown */}
+              <div className="grid grid-cols-2 gap-3 rounded-xl bg-orange-50 p-3">
+                <div>
+                  <p className="text-xs font-bold uppercase text-neutral-500">Road Distance</p>
+                  <p className="mt-0.5 font-bold text-neutral-900">
+                    {activeBundle.roadDistanceKm === undefined ? 'Unavailable' : `${activeBundle.roadDistanceKm.toFixed(1)} km`}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase text-neutral-500">Total Rider Delivery Fee</p>
+                  <p className="mt-0.5 font-bold text-orange-700">
+                    ₱{activeBundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  {activeBundle.isBundle && (
+                    <span className="text-[10px] text-orange-600 block font-semibold">
+                      ({activeBundle.orders.length} separate orders × ₱50.00 each)
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Itemized Packages Breakdown */}
+              <div className="space-y-2.5">
+                <p className="text-xs font-bold uppercase text-neutral-500 tracking-wider">
+                  {activeBundle.isBundle ? `Bundled Packages to Deliver (${activeBundle.orders.length} Orders)` : 'Order Items'}
+                </p>
+                {activeBundle.orders.map((ord, idx) => {
+                  const ordIsCod = isCodOrder(ord)
+                  const ordPayInfo = getPaymentMethodDisplay(ord.paymentMethod)
+                  return (
+                    <div key={ord.id} className="rounded-2xl border border-neutral-200 bg-neutral-50/80 p-3.5 space-y-2 shadow-2xs">
+                      <div className="flex items-center justify-between border-b border-neutral-200/60 pb-2">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-black text-orange-600 uppercase">Package #{idx + 1}</span>
+                            <span className="text-[10px] font-mono font-bold text-neutral-500">{ord.ref}</span>
+                          </div>
+                        </div>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${ordPayInfo.badgeClass}`}>
+                          <span>{ordPayInfo.icon}</span>
+                          <span>{ordPayInfo.label}</span>
+                        </span>
+                      </div>
+
+                      {/* Items */}
+                      <ul className="space-y-1 text-xs text-neutral-800">
+                        {ord.items.map((item, itemIdx) => (
+                          <li key={`${item.name}-${itemIdx}`} className="flex justify-between">
+                            <span>{item.name}</span>
+                            <span className="font-semibold">x{item.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      {/* Subtotal and Cash Rule */}
+                      <div className="flex items-center justify-between pt-1.5 border-t border-neutral-200/60 text-xs">
+                        <span className="font-semibold">
+                          {ordIsCod ? (
+                            <span className="text-amber-800 font-bold flex items-center gap-1">
+                              <span>💵</span> Cash to collect: ₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 font-bold flex items-center gap-1">
+                              <span>📱</span> Paid via GCash (₱0.00 cash to collect)
+                            </span>
+                          )}
+                        </span>
+                        <span className="font-mono font-bold text-neutral-800">
+                          ₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+
+                      {/* Admin CRUD options for individual order */}
+                      {isAdmin && !ord.id.startsWith('DEMO-RIDER-') && (
+                        <div className="flex gap-2 pt-1 border-t border-neutral-200/60">
+                          <button
+                            type="button"
+                            onClick={() => setEditingRiderOrder(ord)}
+                            className="text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1 cursor-pointer"
+                          >
+                            Edit Package #{idx + 1}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteRiderOrder(ord.id)}
+                            className="text-[10px] font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg px-2.5 py-1 cursor-pointer"
+                          >
+                            Delete Package #{idx + 1}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Combined Financial Summary Box */}
+              <div className="rounded-2xl border border-neutral-200 bg-white p-3.5 space-y-2 shadow-xs">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-600 font-medium">Combined Orders Value:</span>
+                  <span className="font-mono font-bold text-neutral-800">
+                    ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-neutral-600 font-medium">Total Delivery Fees Included:</span>
+                  <span className="font-mono text-neutral-700">
+                    ₱{activeBundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+
+                {activeBundle.isMixedPayment && (
+                  <>
+                    <div className="flex justify-between items-center text-xs text-emerald-800 bg-emerald-50/80 px-2.5 py-1 rounded-xl">
+                      <span className="font-bold">Prepaid Online (GCash):</span>
+                      <span className="font-mono font-bold">
+                        ₱{activeBundle.onlineAmountPrepaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs text-amber-900 bg-amber-50/80 px-2.5 py-1 rounded-xl">
+                      <span className="font-bold">Cash on Delivery (COD Due):</span>
+                      <span className="font-mono font-bold">
+                        ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </>
                 )}
 
-                {activeCustomerDetailsOrder.status === 'Completed' && (
-                  <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-2 text-xs">
-                    <div className="flex justify-between items-center font-bold text-neutral-800">
-                      <span>Payment Method:</span>
-                      <span className={`inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full text-[11px] border ${modalPayInfo.badgeClass}`}>
-                        <span>{modalPayInfo.icon}</span>
-                        <span>{modalPayInfo.label}</span>
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-neutral-600">
-                      <span>Total Order Amount:</span>
-                      <span className="font-mono font-bold text-neutral-800">
-                        ₱{activeCustomerDetailsOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    {modalIsCod ? (
-                      <>
-                        <div className="flex justify-between items-center font-bold text-neutral-800">
-                          <span>Payment Received by Rider:</span>
-                          <span className="font-mono text-emerald-700 text-sm font-black">
-                            ₱{Number(activeCustomerDetailsOrder.riderCashReceived ?? activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <div className="flex justify-between items-center pt-2 border-t border-neutral-100">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-neutral-800">Total Cash to Collect</p>
+                    <p className="text-[10px] text-neutral-500">
+                      {activeBundle.hasCod
+                        ? activeBundle.isMixedPayment
+                          ? 'Collect ONLY the COD portion upon handover.'
+                          : 'Collect cash upon arrival.'
+                        : 'Fully paid online (₱0.00 cash).'}
+                    </p>
+                  </div>
+                  <span className={`font-mono font-black text-base ${activeBundle.hasCod ? 'text-[#ff7b00]' : 'text-emerald-700'}`}>
+                    ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Ready status note & actions: Rider has not started delivery yet */}
+              {activeBundle.status === 'Ready' && (
+                <div className="space-y-3 pt-1">
+                  <div
+                    className={`rounded-xl border p-3 text-xs flex items-center gap-2.5 ${
+                      activeBundle.hasCod
+                        ? 'border-amber-200 bg-amber-50/80 text-amber-900'
+                        : 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
+                    }`}
+                  >
+                    <svg
+                      className={`w-5 h-5 shrink-0 ${activeBundle.hasCod ? 'text-amber-600' : 'text-emerald-600'}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>
+                      {activeBundle.isBundle
+                        ? `All ${activeBundle.orders.length} orders for ${activeBundle.customer} are prepared and packed at the store. Tap Start Delivery to begin combined transit.`
+                        : `This order is ready for pickup at the store. Click Start Delivery to begin transit.`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleStartBundleDelivery(activeBundle)}
+                    className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <span>
+                      Start Delivery {activeBundle.isBundle ? `(${activeBundle.orders.length} Orders Combined)` : ''}
+                    </span>
+                  </button>
+                </div>
+              )}
+
+              {/* Out for Delivery status: Item is in transit / being delivered */}
+              {activeBundle.status === 'Out for Delivery' && (
+                <div className="space-y-3 pt-1">
+                  {activeBundle.hasCod ? (
+                    <>
+                      {/* Mixed / COD Payment Instructions */}
+                      <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-900 flex items-center gap-2.5">
+                        <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>
+                          {activeBundle.isMixedPayment
+                            ? `Package is in transit. Hand over all ${activeBundle.orders.length} packages to ${activeBundle.customer}. Collect ₱${activeBundle.codAmountToCollect.toFixed(2)} cash for the COD package.`
+                            : `Hand over all packages to the customer and collect cash payment.`}
+                        </span>
+                      </div>
+
+                      {activeBundle.isMixedPayment && (
+                        <div className="rounded-xl border border-purple-200 bg-purple-50/90 p-3 text-xs text-purple-950 flex items-center gap-2">
+                          <span className="text-base shrink-0">⚠️</span>
+                          <span>
+                            <strong>Mixed Payment Rule:</strong> 1 package is prepaid online via GCash (₱0.00 cash). Do not charge the customer for it. Only collect ₱{activeBundle.codAmountToCollect.toFixed(2)} in cash for the COD package.
                           </span>
                         </div>
-                        {activeCustomerDetailsOrder.riderCashReceived !== undefined && activeCustomerDetailsOrder.riderCashReceived > activeCustomerDetailsOrder.total && (
-                          <div className="flex justify-between items-center text-[11px] text-neutral-500 font-semibold">
-                            <span>Change Given to Customer:</span>
-                            <span className="font-mono text-neutral-700">
-                              ₱{(activeCustomerDetailsOrder.riderCashReceived - activeCustomerDetailsOrder.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      )}
+
+                      <div className={`rounded-2xl border ${paymentError ? 'border-red-400 bg-red-50/50' : 'border-amber-300 bg-amber-50/80'} p-3.5 space-y-2.5 shadow-xs transition-colors`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-bold uppercase tracking-wider text-amber-950">
+                              Cash Received from Customer
+                            </label>
+                            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-600 text-white shadow-2xs">
+                              COD
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setRiderReceivedAmount(String(activeBundle.codAmountToCollect))
+                              setPaymentError(null)
+                            }}
+                            className="text-[10px] font-bold text-amber-800 bg-white border border-amber-300 px-2.5 py-1 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
+                          >
+                            Exact (₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </button>
+                        </div>
+                        <div className="relative flex items-center">
+                          <span className="absolute left-3 text-neutral-500 font-bold text-sm">₱</span>
+                          <input
+                            type="number"
+                            step="any"
+                            value={riderReceivedAmount}
+                            onChange={(e) => {
+                              setRiderReceivedAmount(e.target.value)
+                              if (paymentError) setPaymentError(null)
+                            }}
+                            placeholder={String(activeBundle.codAmountToCollect)}
+                            className={`w-full pl-8 pr-3 py-2.5 text-sm font-black text-neutral-900 bg-white border ${paymentError ? 'border-red-500 focus:border-red-600 ring-2 ring-red-200' : 'border-amber-300 focus:border-amber-600'} rounded-xl focus:outline-none transition-all placeholder-neutral-300 shadow-2xs`}
+                          />
+                        </div>
+                        {paymentError && (
+                          <p className="text-xs font-bold text-red-600 flex items-center gap-1.5 pt-0.5">
+                            <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                            </svg>
+                            <span>{paymentError}</span>
+                          </p>
+                        )}
+                        {riderReceivedAmount !== '' && !isNaN(parseFloat(riderReceivedAmount)) && (
+                          <div className="flex items-center justify-between text-xs pt-1.5 border-t border-amber-200 font-semibold">
+                            <span className="text-neutral-600">
+                              {parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect ? 'Change due to customer:' : 'Short payment balance:'}
+                            </span>
+                            <span className={`font-mono font-black ${parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect ? 'text-emerald-700 text-sm' : 'text-amber-600 text-sm'}`}>
+                              {parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect
+                                ? `₱${(parseFloat(riderReceivedAmount) - activeBundle.codAmountToCollect).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                : `Short by ₱${(activeBundle.codAmountToCollect - parseFloat(riderReceivedAmount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                             </span>
                           </div>
                         )}
-                      </>
-                    ) : (
-                      <div className="flex justify-between items-center text-neutral-600">
-                        <span>Cash Collected by Rider:</span>
-                        <span className="font-mono font-bold text-emerald-700">
-                          ₱0.00 (Prepaid Online)
-                        </span>
                       </div>
-                    )}
-                    <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
-                      <span>Delivery Status:</span>
-                      <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
-                    </div>
-                  </div>
-                )}
 
-                {activeCustomerDetailsOrder.status !== 'Ready'
-                  && activeCustomerDetailsOrder.status !== 'Out for Delivery'
-                  && activeCustomerDetailsOrder.status !== 'Completed' && (
-                    <button
-                      type="button"
-                      disabled
-                      className="w-full cursor-not-allowed rounded-xl bg-neutral-200 px-4 py-3 text-sm font-bold text-neutral-500"
-                    >
-                      Waiting for Kitchen
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCompleteBundleDelivery(activeBundle)}
+                        className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>
+                          Mark {activeBundle.isBundle ? `Both Delivered & Paid` : `Delivered & Paid`}
+                        </span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
+                        <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                          <p className="font-bold">Customer paid online via GCash</p>
+                          <p className="text-emerald-800 mt-0.5">
+                            {activeBundle.isBundle
+                              ? `All ${activeBundle.orders.length} packages are prepaid. Hand over the items to customer. No cash collection is needed.`
+                              : `Order is out for delivery. Hand over the items to customer. No cash collection is needed.`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-neutral-600">Payment Method:</span>
+                          <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
+                            <span>📱</span> GCash (Prepaid Online)
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-bold text-neutral-600">Combined Order Value:</span>
+                          <span className="font-mono font-bold text-neutral-800">
+                            ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
+                          <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
+                          <span className="font-mono font-black text-emerald-700 text-sm">
+                            ₱0.00 (Prepaid Online)
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleCompleteBundleDelivery(activeBundle)}
+                        className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                        </svg>
+                        <span>
+                          Mark {activeBundle.isBundle ? `Both Delivered` : `Delivered`}
+                        </span>
+                      </button>
+                    </>
                   )}
+                </div>
+              )}
 
-                {isAdmin && !activeCustomerDetailsOrder.id.startsWith('DEMO-RIDER-') && (
-                  <div className="flex gap-2 border-t border-neutral-100 pt-3">
-                    <button
-                      type="button"
-                      onClick={() => setEditingRiderOrder(activeCustomerDetailsOrder)}
-                      className="flex-1 rounded-xl bg-amber-500 px-3 py-2 text-xs font-bold text-white hover:bg-amber-600 cursor-pointer"
-                    >
-                      Edit Order
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleDeleteRiderOrder(activeCustomerDetailsOrder.id)}
-                      className="rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-700 cursor-pointer"
-                    >
-                      Delete Order
-                    </button>
+              {/* Completed status summary */}
+              {activeBundle.status === 'Completed' && (
+                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-2 text-xs">
+                  <div className="flex justify-between items-center font-bold text-neutral-800">
+                    <span>Payment Mode:</span>
+                    <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full text-[11px] bg-neutral-200 text-neutral-800">
+                      {activeBundle.isMixedPayment ? 'Mixed (GCash + COD)' : activeBundle.hasCod ? 'Cash on Delivery' : 'GCash Paid Online'}
+                    </span>
                   </div>
+                  <div className="flex justify-between items-center text-neutral-600">
+                    <span>Total Order Value:</span>
+                    <span className="font-mono font-bold text-neutral-800">
+                      ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  {activeBundle.hasCod ? (
+                    <div className="flex justify-between items-center font-bold text-neutral-800">
+                      <span>Cash Collected by Rider:</span>
+                      <span className="font-mono text-emerald-700 text-sm font-black">
+                        ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex justify-between items-center text-neutral-600">
+                      <span>Cash Collected by Rider:</span>
+                      <span className="font-mono font-bold text-emerald-700">
+                        ₱0.00 (Prepaid Online)
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
+                    <span>Delivery Status:</span>
+                    <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
+                  </div>
+                </div>
+              )}
+
+              {activeBundle.status !== 'Ready' &&
+                activeBundle.status !== 'Out for Delivery' &&
+                activeBundle.status !== 'Completed' && (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full cursor-not-allowed rounded-xl bg-neutral-200 px-4 py-3 text-sm font-bold text-neutral-500"
+                  >
+                    Waiting for Kitchen
+                  </button>
                 )}
-              </div>
-            </section>
-          </div>
-        )
-      })()}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* ADMIN CRUD MODALS */}
       <AdminEditTransactionModal

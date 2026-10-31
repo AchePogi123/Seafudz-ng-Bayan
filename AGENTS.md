@@ -11,13 +11,12 @@
 ---
 
 ## Vault Session Retention & Knowledge Capture
-- **Vault Location**: `/home/ohmyiu/Documents/Obsidian Vault`
-- **Dedicated Project Note & Session Log**: `/home/ohmyiu/Documents/Obsidian Vault/Development/Seafudz ng Bayan 1.md`
+- **Vault Location**: `/home/zacrisr/Documents/Obsidian` (Obsidian Development Vault)
+- **Master Project Hub**: `/home/zacrisr/Documents/Obsidian/Development/Seafudz ng Bayan 1.md`
+- **User Flows & Node Maps**: `/home/zacrisr/Documents/Obsidian/Development/User Flows/`
+- **Architecture Notes**: `/home/zacrisr/Documents/Obsidian/Development/Architecture/`
+- **Curated Session Logs**: `/home/zacrisr/Documents/Obsidian/Development/Sessions/`
 - **Rule**:
-  - Automatically log all conversation sessions, architectural changes, database schema updates, bug fixes, and development progress into the vault project note.
-  - Structure each entry with:
-    - Date & session goal
-    - Decisions and user instructions
-    - Changes made / files modified
-    - Next steps & outstanding items
-  - Keep `/home/ohmyiu/Documents/Obsidian Vault/INDEX.md` synchronized.
+  - **Lean & High-Value Only**: Log significant architectural changes, database schema updates, major business logic revisions, and new user flows into dedicated notes in `Sessions/`.
+  - **Zero Noise**: DO NOT log trivial micro-commits, routine Git operations (such as merges/pushes), or minor cosmetic CSS tweaks.
+  - Keep `/home/zacrisr/Documents/Obsidian/INDEX.md` and `Seafudz ng Bayan 1.md` synchronized with clean wiki-links.

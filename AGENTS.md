@@ -21,6 +21,6 @@
   - `Cashier & POS Flow.md` — Counter orders, split billing, thermal receipts, and sales reports.
   - `Admin Flow.md` — Analytics, employee accounts, security, and backup management.
 - **Rule**:
-  - **Role-Based Logging**: When making architectural or feature changes, append the change directly to the affected role note in `User Flows/` under `## 📜 Updates & Feature Changelog`.
+  - **Single Source of Truth (Update In-Place, NEVER Add New Files)**: When making changes, bug fixes, or new features for a user role, **UPDATE THE EXISTING NOTE DIRECTLY** in `User Flows/` (update the flowchart/rules if the flow changed, and append the entry under its `## 📜 Updates & Feature Changelog`). DO NOT create new files or extra session notes.
   - **Zero Noise**: DO NOT create scattered session files for routine Git operations (merges/pushes) or trivial CSS tweaks.
   - Keep `INDEX.md` and `Seafudz ng Bayan 1.md` synchronized with clean wiki-links.

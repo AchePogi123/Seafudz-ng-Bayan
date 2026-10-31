@@ -124,6 +124,26 @@ export const AccMan: React.FC = () => {
     const [showNewPassword, setShowNewPassword] = useState(false)
     const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
+    // Shopee-style Email Change Modal states
+    const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
+    const [newEmailInput, setNewEmailInput] = useState('')
+    const [emailOtpInput, setEmailOtpInput] = useState('')
+    const [isSendingOtp, setIsSendingOtp] = useState(false)
+    const [isVerifyingOtp, setIsVerifyingOtp] = useState(false)
+    const [otpCooldown, setOtpCooldown] = useState(0)
+    const [otpSent, setOtpSent] = useState(false)
+    const [emailModalError, setEmailModalError] = useState<string | null>(null)
+    const [emailModalSuccess, setEmailModalSuccess] = useState<string | null>(null)
+
+    // Cooldown countdown for 60-second Shopee resend timer
+    useEffect(() => {
+        if (otpCooldown <= 0) return
+        const timer = setInterval(() => {
+            setOtpCooldown((prev) => (prev > 0 ? prev - 1 : 0))
+        }, 1000)
+        return () => clearInterval(timer)
+    }, [otpCooldown])
+
     // Notification states
     const [emailAlerts, setEmailAlerts] = useState(() => {
         try {
@@ -290,6 +310,118 @@ export const AccMan: React.FC = () => {
             setMessage({ type: 'success', text: 'Notification preferences updated!' })
         } finally {
             setTimeout(() => setMessage(null), 3000)
+        }
+    }
+
+    // Shopee-Style Email Change Handlers
+    const handleOpenEmailModal = () => {
+        setNewEmailInput('')
+        setEmailOtpInput('')
+        setEmailModalError(null)
+        setEmailModalSuccess(null)
+        setOtpSent(false)
+        setIsEmailModalOpen(true)
+    }
+
+    const handleCloseEmailModal = () => {
+        setIsEmailModalOpen(false)
+        setEmailModalError(null)
+        setEmailModalSuccess(null)
+    }
+
+    const handleSendEmailCode = async () => {
+        if (!newEmailInput.trim()) {
+            setEmailModalError('Please enter a new email address.')
+            return
+        }
+        const cleanEmail = newEmailInput.trim().toLowerCase()
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (!emailRegex.test(cleanEmail)) {
+            setEmailModalError('Please enter a valid email format (e.g. name@gmail.com).')
+            return
+        }
+        if (cleanEmail === (profile.email || '').toLowerCase()) {
+            setEmailModalError('New email must be different from your current email.')
+            return
+        }
+
+        setIsSendingOtp(true)
+        setEmailModalError(null)
+        setEmailModalSuccess(null)
+
+        try {
+            const headers = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/auth/request-email-change`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ newEmail: cleanEmail }),
+            })
+            const data = await res.json()
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Failed to send verification code.')
+            }
+
+            setOtpSent(true)
+            setOtpCooldown(60)
+            setEmailModalSuccess(data.message || `Verification code sent to ${cleanEmail}. Check your Gmail inbox!`)
+        } catch (err: any) {
+            setEmailModalError(err?.message || 'Could not send verification code.')
+        } finally {
+            setIsSendingOtp(false)
+        }
+    }
+
+    const handleConfirmEmailChange = async () => {
+        if (!newEmailInput.trim() || emailOtpInput.length !== 6) {
+            setEmailModalError('Please enter the 6-digit verification code.')
+            return
+        }
+
+        setIsVerifyingOtp(true)
+        setEmailModalError(null)
+        setEmailModalSuccess(null)
+
+        try {
+            const headers = await getAuthHeaders()
+            const cleanEmail = newEmailInput.trim().toLowerCase()
+            const res = await fetch(`${API_BASE_URL}/auth/confirm-email-change`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ newEmail: cleanEmail, otp: emailOtpInput.trim() }),
+            })
+            const data = await res.json()
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'Verification failed. Please check the 6-digit code.')
+            }
+
+            setEmailModalSuccess('Email address changed successfully!')
+            const currentActive = getActiveUser()
+            if (currentActive) {
+                saveActiveUser({
+                    ...currentActive,
+                    email: cleanEmail,
+                })
+            }
+            if (data.sessionToken) {
+                localStorage.setItem('seafudz_token', data.sessionToken)
+            }
+
+            setProfile((prev) => ({ ...prev, email: cleanEmail }))
+            setEditForm((prev) => ({ ...prev, email: cleanEmail }))
+            window.dispatchEvent(new Event('seafudz_profile_updated'))
+
+            setMessage({
+                type: 'success',
+                text: `Your email address has been successfully changed to ${cleanEmail}!`,
+            })
+
+            setTimeout(() => {
+                handleCloseEmailModal()
+            }, 1200)
+        } catch (err: any) {
+            setEmailModalError(err?.message || 'Failed to confirm email change.')
+        } finally {
+            setIsVerifyingOtp(false)
         }
     }
 
@@ -472,14 +604,40 @@ export const AccMan: React.FC = () => {
                                         />
                                     </div>
                                     <div className="flex flex-col gap-1.5 md:col-span-2">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Email Address</label>
-                                        <input
-                                            type="email"
-                                            required
-                                            value={editForm.email}
-                                            onChange={(e) => handleProfileChange('email', e.target.value)}
-                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                        />
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Email Address</label>
+                                            <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                                                Verified
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="relative flex-1">
+                                                <input
+                                                    type="email"
+                                                    readOnly
+                                                    value={editForm.email || 'No email registered'}
+                                                    className="w-full bg-neutral-50/80 text-neutral-700 font-medium border border-neutral-200 rounded-xl px-4 py-2.5 text-sm cursor-not-allowed select-none"
+                                                />
+                                                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleOpenEmailModal}
+                                                className="shrink-0 bg-orange-50 hover:bg-orange-100 text-orange-600 hover:text-orange-700 border border-orange-200 font-bold px-4 py-2.5 rounded-xl text-sm transition-all duration-200 flex items-center gap-2 active:scale-95 shadow-xs cursor-pointer"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                                </svg>
+                                                Change
+                                            </button>
+                                        </div>
+                                        <p className="text-[11px] text-neutral-400 mt-0.5">
+                                            To update your email like in Shopee, click <strong className="text-neutral-600">Change</strong> to receive a 6-digit confirmation code at your new Gmail.
+                                        </p>
                                     </div>
                                     {!isEmployee && (
                                         <div className="flex flex-col gap-1.5 md:col-span-2">
@@ -735,6 +893,163 @@ export const AccMan: React.FC = () => {
                 </div>
 
             </div>
+
+            {/* SHOPEE-STYLE CHANGE EMAIL MODAL */}
+            {isEmailModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-100 p-6 md:p-8 flex flex-col gap-6 relative">
+                        
+                        {/* Header */}
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-11 h-11 rounded-2xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 shadow-xs">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="font-extrabold text-neutral-900 text-lg leading-tight">Change Email Address</h3>
+                                    <p className="text-xs text-neutral-400 font-medium mt-0.5">Shopee-Style Secure Email Verification</p>
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleCloseEmailModal}
+                                className="text-neutral-400 hover:text-neutral-600 p-1.5 rounded-xl hover:bg-neutral-100 transition-colors cursor-pointer"
+                            >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        </div>
+
+                        {/* Modal Alerts */}
+                        {emailModalError && (
+                            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs font-semibold flex items-center gap-2">
+                                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span>{emailModalError}</span>
+                            </div>
+                        )}
+                        {emailModalSuccess && (
+                            <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl text-xs font-semibold flex items-center gap-2">
+                                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                                <span>{emailModalSuccess}</span>
+                            </div>
+                        )}
+
+                        {/* Form Steps */}
+                        <div className="flex flex-col gap-4">
+                            
+                            {/* Current Email Display */}
+                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100 flex items-center justify-between text-xs">
+                                <span className="text-neutral-400 font-medium">Current Email:</span>
+                                <span className="font-bold text-neutral-700">{profile.email || 'None'}</span>
+                            </div>
+
+                            {/* Step 1: New Email Address */}
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-xs font-bold text-neutral-600 uppercase tracking-wider">
+                                    New Gmail Address
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="email"
+                                        required
+                                        placeholder="e.g. yourname@gmail.com"
+                                        value={newEmailInput}
+                                        onChange={(e) => setNewEmailInput(e.target.value)}
+                                        disabled={isSendingOtp || otpCooldown > 0}
+                                        className="flex-1 border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors disabled:bg-neutral-50"
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={!newEmailInput.trim() || isSendingOtp || otpCooldown > 0}
+                                        onClick={handleSendEmailCode}
+                                        className="shrink-0 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-orange-500/20 disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                                    >
+                                        {isSendingOtp ? (
+                                            <>
+                                                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                Sending...
+                                            </>
+                                        ) : otpCooldown > 0 ? (
+                                            `Resend (${otpCooldown}s)`
+                                        ) : otpSent ? (
+                                            'Resend Code'
+                                        ) : (
+                                            'Send Code'
+                                        )}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-neutral-400">
+                                    {otpSent
+                                        ? `A 6-digit code was sent to ${newEmailInput}. Check your inbox or spam.`
+                                        : 'Click "Send Code" to receive the 6-digit verification code.'}
+                                </p>
+                            </div>
+
+                            {/* Step 2: 6-Digit Verification Code */}
+                            <div className="flex flex-col gap-1.5 pt-2">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-xs font-bold text-neutral-600 uppercase tracking-wider">
+                                        6-Digit Verification Code
+                                    </label>
+                                    {otpSent && (
+                                        <span className="text-[11px] text-orange-600 font-bold flex items-center gap-1">
+                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
+                                            Code sent to Gmail
+                                        </span>
+                                    )}
+                                </div>
+                                <input
+                                    type="text"
+                                    maxLength={6}
+                                    placeholder="••••••"
+                                    value={emailOtpInput}
+                                    onChange={(e) => {
+                                        const val = e.target.value.replace(/\D/g, '')
+                                        setEmailOtpInput(val)
+                                    }}
+                                    className="w-full text-center font-mono text-2xl font-black tracking-[0.5em] text-neutral-800 border-2 border-neutral-200 focus:border-orange-500 focus:bg-orange-50/20 rounded-2xl py-3 transition-all outline-none"
+                                />
+                                <p className="text-[11px] text-neutral-400 text-center">
+                                    Enter the 6-digit number received in your Gmail to finish.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Modal Actions */}
+                        <div className="flex items-center gap-3 pt-2">
+                            <button
+                                type="button"
+                                onClick={handleCloseEmailModal}
+                                className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 px-4 rounded-xl text-sm transition-colors cursor-pointer"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                disabled={isVerifyingOtp || emailOtpInput.length !== 6 || !newEmailInput.trim()}
+                                onClick={handleConfirmEmailChange}
+                                className="flex-1 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-md shadow-orange-500/20 hover:shadow-orange-500/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
+                            >
+                                {isVerifyingOtp ? (
+                                    <>
+                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                        Verifying...
+                                    </>
+                                ) : (
+                                    'Confirm & Update'
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

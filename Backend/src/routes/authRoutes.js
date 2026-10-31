@@ -1181,6 +1181,268 @@ router.post('/auth/verify-otp', (req, res) => {
   }
 });
 
+// In-memory OTP storage for Shopee-style email change verification codes (10-min expiration)
+// Key: userId, Value: { newEmail, otp, expiresAt }
+const emailChangeOtpStore = new Map();
+
+/**
+ * POST /api/auth/request-email-change
+ * Validates new email address, generates a 6-digit OTP, and emails it to the new address
+ */
+router.post('/auth/request-email-change', requireAuth, async (req, res) => {
+  try {
+    const { newEmail } = req.body;
+    if (!newEmail || typeof newEmail !== 'string' || !newEmail.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid new email address is required.',
+      });
+    }
+
+    const cleanNewEmail = newEmail.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanNewEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address (e.g. name@gmail.com).',
+      });
+    }
+
+    const currentEmail = (req.user?.email || '').trim().toLowerCase();
+    if (cleanNewEmail === currentEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'New email address must be different from your current email.',
+      });
+    }
+
+    // Check if new email is already taken by another employee or customer
+    const empConflict = await query('SELECT id FROM employees WHERE LOWER(email) = $1 LIMIT 1', [cleanNewEmail]);
+    if (empConflict.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'This email address is already registered to another account.',
+      });
+    }
+
+    const custConflict = await query('SELECT id FROM customers WHERE LOWER(email) = $1 LIMIT 1', [cleanNewEmail]);
+    if (custConflict.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'This email address is already registered to another account.',
+      });
+    }
+
+    // Generate random 6-digit numerical code (100000 - 999999)
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+    const userId = String(req.user?.id || req.user?.supabase_user_id || cleanNewEmail);
+    emailChangeOtpStore.set(userId, {
+      newEmail: cleanNewEmail,
+      otp,
+      expiresAt,
+    });
+
+    console.log(`[AUTH EMAIL CHANGE] Generated 6-digit code for ${cleanNewEmail} (User ID: ${userId}): ${otp}`);
+
+    // Dispatch email via Resend API
+    let emailSent = false;
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM_EMAIL || 'Seafudz ng Bayan <noreply@seafudzngbayan.app>',
+            to: [cleanNewEmail],
+            subject: `${otp} is your Seafudz email change verification code`,
+            html: `
+              <div style="font-family: Arial, sans-serif; padding: 28px; color: #1e293b; max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
+                <div style="text-align: center; margin-bottom: 24px;">
+                  <h1 style="color: #ea580c; font-size: 26px; font-weight: 800; margin: 0; letter-spacing: -0.5px;">Seafudz ng Bayan</h1>
+                  <p style="color: #64748b; font-size: 13px; margin-top: 4px; font-weight: 600;">Account Email Verification</p>
+                </div>
+                <p style="font-size: 15px; color: #334155; line-height: 1.5;">Hello <strong>${req.user?.fullname || 'User'}</strong>,</p>
+                <p style="font-size: 15px; color: #334155; line-height: 1.5;">We received a request to update your account email address to <strong>${cleanNewEmail}</strong>. Please enter the following 6-digit confirmation code in the application to complete this change:</p>
+                <div style="text-align: center; margin: 28px 0;">
+                  <span style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #ea580c; background: #fff7ed; padding: 14px 28px; border-radius: 12px; border: 2px dashed #fed7aa; display: inline-block;">${otp}</span>
+                </div>
+                <p style="font-size: 13px; color: #64748b; text-align: center; line-height: 1.4;">This code is valid for <strong>10 minutes</strong>. If you did not make this request, please disregard this email or secure your account.</p>
+                <hr style="border: none; border-top: 1px solid #f1f5f9; margin: 24px 0;" />
+                <p style="font-size: 11px; color: #94a3b8; text-align: center; margin: 0;">Seafudz ng Bayan • Point-of-Sale & Kitchen Order Management System</p>
+              </div>
+            `,
+          }),
+        });
+        const resendData = await resendRes.json();
+        console.log(`[AUTH EMAIL CHANGE] Resend output for ${cleanNewEmail}:`, resendData);
+        emailSent = resendRes.ok;
+      } catch (rErr) {
+        console.warn('[AUTH EMAIL CHANGE] Resend delivery notice:', rErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Verification code sent to ${cleanNewEmail}. Please check your Gmail inbox.`,
+      emailSent,
+    });
+  } catch (error) {
+    console.error('Error requesting email change:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to send email verification code. Please try again.',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/auth/confirm-email-change
+ * Validates 6-digit OTP code and updates user's email in DB and Supabase
+ */
+router.post('/auth/confirm-email-change', requireAuth, async (req, res) => {
+  try {
+    const { newEmail, otp } = req.body;
+    if (!newEmail || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: 'New email and 6-digit verification code are required.',
+      });
+    }
+
+    const cleanNewEmail = newEmail.trim().toLowerCase();
+    const cleanOtp = String(otp).trim();
+    const userId = String(req.user?.id || req.user?.supabase_user_id || '');
+
+    const record = emailChangeOtpStore.get(userId);
+    if (!record || record.newEmail !== cleanNewEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'No pending email change request found for this email. Please request a new code.',
+      });
+    }
+
+    if (Date.now() > record.expiresAt) {
+      emailChangeOtpStore.delete(userId);
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code has expired. Please request a new code.',
+      });
+    }
+
+    if (record.otp !== cleanOtp) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid 6-digit verification code. Please check your Gmail and try again.',
+      });
+    }
+
+    // OTP matched! Perform the update
+    const userRole = (req.user?.role || '').toLowerCase();
+    const isEmployee = userRole !== 'customer';
+    let updatedRecord = null;
+
+    if (isEmployee) {
+      const empRes = await query(
+        `UPDATE employees 
+         SET email = $1, updated_at = NOW() 
+         WHERE id::text = $2 OR supabase_user_id::text = $2
+         RETURNING id, supabase_user_id, fullname, username, email, phone, role, is_active`,
+        [cleanNewEmail, userId]
+      );
+      if (empRes.rows.length > 0) {
+        updatedRecord = empRes.rows[0];
+      }
+    } else {
+      const custRes = await query(
+        `UPDATE customers 
+         SET email = $1, updated_at = NOW() 
+         WHERE id::text = $2 OR supabase_user_id::text = $2
+         RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, is_active`,
+        [cleanNewEmail, userId]
+      );
+      if (custRes.rows.length > 0) {
+        updatedRecord = { ...custRes.rows[0], role: 'customer' };
+      }
+    }
+
+    // Fallback if update by userId returned 0 rows (e.g. user matched by current email)
+    if (!updatedRecord && req.user?.email) {
+      const fallbackTable = isEmployee ? 'employees' : 'customers';
+      const fallbackRes = await query(
+        `UPDATE ${fallbackTable} 
+         SET email = $1, updated_at = NOW() 
+         WHERE LOWER(email) = LOWER($2)
+         RETURNING id, supabase_user_id, fullname, username, email, phone, is_active`,
+        [cleanNewEmail, req.user.email]
+      );
+      if (fallbackRes.rows.length > 0) {
+        updatedRecord = {
+          ...fallbackRes.rows[0],
+          role: fallbackTable === 'employees' ? fallbackRes.rows[0].role : 'customer',
+        };
+      }
+    }
+
+    if (!updatedRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'User account not found to update email.',
+      });
+    }
+
+    // Sync with Supabase Auth if linked
+    const supabaseUserId = updatedRecord.supabase_user_id || req.user?.supabase_user_id;
+    if (supabaseUserId) {
+      try {
+        await supabase.auth.admin.updateUserById(supabaseUserId, {
+          email: cleanNewEmail,
+          email_confirm: true,
+        });
+      } catch (sbErr) {
+        console.warn('[AUTH EMAIL CHANGE] Supabase auth email sync notice:', sbErr.message);
+      }
+    }
+
+    // Clear old password reset records for previous email
+    if (req.user?.email) {
+      try {
+        await query('DELETE FROM password_resets WHERE LOWER(email) = LOWER($1)', [req.user.email]);
+      } catch {}
+    }
+
+    // Remove used OTP
+    emailChangeOtpStore.delete(userId);
+
+    // Generate fresh HMAC session token
+    const cryptoSession = generateSessionHashToken({
+      userId: updatedRecord.id,
+      email: updatedRecord.email,
+      role: updatedRecord.role || 'customer',
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Your email address has been successfully changed to ${cleanNewEmail}!`,
+      data: updatedRecord,
+      sessionToken: cryptoSession.sessionToken,
+      hashToken: cryptoSession.hashToken,
+    });
+  } catch (error) {
+    console.error('Error confirming email change:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to complete email change. Please try again.',
+      error: error.message,
+    });
+  }
+});
+
 // In-memory token store for password reset links (15-min expiration)
 const resetTokenStore = new Map();
 
@@ -1781,15 +2043,12 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
         }
       }
 
-      // Validate email uniqueness excluding own employee ID
+      // Enforce 6-digit OTP verification for email changes
       if (cleanEmail && cleanEmail.toLowerCase() !== (emp.email || '').toLowerCase()) {
-        const emailConflict = await query(
-          'SELECT 1 FROM employees WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
-          [cleanEmail, emp.id]
-        );
-        if (emailConflict.rows.length > 0) {
-          return res.status(409).json({ success: false, message: 'That email is already registered to another account.' });
-        }
+        return res.status(400).json({
+          success: false,
+          message: 'To change your email address, please use the "Change Email" button to verify your new email with a 6-digit code.',
+        });
       }
 
       // Update employee record in DB
@@ -1848,15 +2107,12 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
       let cust = custTarget.rows[0];
 
       if (cust) {
-        // Validate email uniqueness if changed
+        // Enforce 6-digit OTP verification for email changes
         if (cleanEmail && cleanEmail.toLowerCase() !== (cust.email || '').toLowerCase()) {
-          const emailConflict = await query(
-            'SELECT 1 FROM customers WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
-            [cleanEmail, cust.id]
-          );
-          if (emailConflict.rows.length > 0) {
-            return res.status(409).json({ success: false, message: 'That email is already registered to another account.' });
-          }
+          return res.status(400).json({
+            success: false,
+            message: 'To change your email address, please use the "Change Email" button to verify your new email with a 6-digit code.',
+          });
         }
 
         const custRes = await query(

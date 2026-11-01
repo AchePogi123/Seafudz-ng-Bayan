@@ -79,13 +79,22 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
     setCashReceived(amount.toString())
   }
 
+  const isSubmitDisabled = Boolean(
+    hasUnavailableItems ||
+    (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
+    (paymentMethod === 'GCash' && !gcashRefNumber.trim()) ||
+    (paymentMethod === 'Hybrid' && (!isHybridComplete || !hybridRefNumber.trim()))
+  )
+
   const handleConfirm = () => {
     if (hasUnavailableItems) return
     if (paymentMethod === 'Hybrid') {
+      if (!isHybridComplete || !hybridRefNumber.trim()) return
       const hybridLabel = `Hybrid (Cash ₱${parsedHybridCash.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + ${hybridWalletType} ₱${parsedHybridEwallet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-      onConfirm(parsedHybridCash.toString(), 0, hybridLabel, hybridRefNumber.trim() || undefined)
+      onConfirm(parsedHybridCash.toString(), 0, hybridLabel, hybridRefNumber.trim())
     } else if (paymentMethod === 'GCash') {
-      onConfirm('', null, 'GCash', gcashRefNumber.trim() || undefined)
+      if (!gcashRefNumber.trim()) return
+      onConfirm('', null, 'GCash', gcashRefNumber.trim())
     } else {
       onConfirm(cashReceived, change, paymentMethod)
     }
@@ -142,67 +151,44 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
               onClick={() => setPaymentMethod(method)}
               className={`py-2 text-[11px] font-extrabold rounded-xl transition-all cursor-pointer ${
                 paymentMethod === method
-                  ? method === 'Hybrid'
-                    ? 'bg-purple-600 text-white shadow-xs'
-                    : 'bg-orange-500 text-white shadow-xs'
+                  ? 'bg-orange-500 text-white shadow-xs'
                   : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
-              {method === 'Hybrid' ? 'Hybrid' : method}
+              {method}
             </button>
           ))}
         </div>
 
-        {/* GCash Payment Box */}
+        {/* GCash Payment Field */}
         {paymentMethod === 'GCash' && (
-          <div className="bg-blue-50/50 border border-blue-200/80 rounded-2xl p-4 sm:p-4.5 mb-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-black text-blue-900 tracking-wider uppercase flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
-                GCASH PAYMENT
-              </h3>
-              <span className="text-[11px] font-bold text-neutral-500">
-                Amount Due: <strong className="text-blue-700 font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              </span>
+          <div className="mb-5 space-y-1.5">
+            <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+              GCash Reference Number <span className="text-rose-500 font-bold">*</span>
+            </label>
+            <div className="relative flex items-center">
+              <input
+                type="text"
+                value={gcashRefNumber}
+                onChange={(e) => setGcashRefNumber(e.target.value)}
+                placeholder="e.g. 1002 4859 1234"
+                className="w-full px-3.5 py-2.5 text-xs font-bold text-neutral-900 bg-white border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300 shadow-2xs"
+              />
             </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-blue-900/70 uppercase tracking-wider mb-1.5">
-                GCASH REFERENCE NUMBER
-              </label>
-              <div className="relative flex items-center">
-                <input
-                  type="text"
-                  value={gcashRefNumber}
-                  onChange={(e) => setGcashRefNumber(e.target.value)}
-                  placeholder="e.g. 1002 4859 1234"
-                  className="w-full px-3 py-2 text-xs font-bold text-neutral-900 bg-white border border-blue-200 rounded-xl focus:outline-none focus:border-blue-500 transition-all placeholder-neutral-300"
-                />
-              </div>
-              <p className="text-[10px] text-neutral-400 font-medium mt-1">
-                Enter the reference number from the customer's GCash transaction.
-              </p>
-            </div>
+            <p className="text-[10px] text-neutral-400 font-medium">
+              Enter the reference number from the customer's GCash transaction.
+            </p>
           </div>
         )}
 
-        {/* Hybrid Split Payment Box */}
+        {/* Hybrid Split Payment */}
         {paymentMethod === 'Hybrid' && (
-          <div className="bg-purple-50/50 border border-purple-200/80 rounded-2xl p-4 mb-5 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-[11px] font-black text-purple-900 tracking-wider uppercase flex items-center gap-1.5">
-                HYBRID SPLIT PAYMENT
-              </h3>
-              <span className="text-[11px] font-bold text-neutral-500">
-                Target: <strong className="text-purple-700 font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              </span>
-            </div>
-
+          <div className="mb-5 space-y-3">
             {/* Split Input Row */}
             <div className="grid grid-cols-2 gap-3">
               {/* Cash Portion */}
               <div>
-                <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider mb-1">
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
                   Cash Amount
                 </label>
                 <div className="relative flex items-center">
@@ -212,7 +198,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                     value={hybridCash}
                     onChange={(e) => setHybridCash(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
+                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
                   />
                 </div>
               </div>
@@ -220,13 +206,13 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
               {/* E-Wallet Portion */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider">
+                  <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider">
                     E-Wallet Amount
                   </label>
                   <select
                     value={hybridWalletType}
                     onChange={(e) => setHybridWalletType(e.target.value as 'GCash' | 'Maya')}
-                    className="text-[10px] font-extrabold text-purple-700 bg-purple-100/80 px-1 py-0.5 rounded outline-none cursor-pointer"
+                    className="text-[10px] font-extrabold text-neutral-700 bg-neutral-100 hover:bg-neutral-200 px-1.5 py-0.5 rounded-lg outline-none cursor-pointer transition-colors"
                   >
                     <option value="GCash">GCash</option>
                     <option value="Maya">Maya</option>
@@ -239,7 +225,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                     value={hybridEwallet}
                     onChange={(e) => setHybridEwallet(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
+                    className="w-full pl-6 pr-2.5 py-2 text-xs font-black text-neutral-900 bg-white border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
                   />
                 </div>
               </div>
@@ -247,20 +233,23 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
 
             {/* E-Wallet Reference Number */}
             <div>
-              <label className="block text-[10px] font-bold text-purple-900/60 uppercase tracking-wider mb-1">
-                {hybridWalletType} Reference Number (Optional)
+              <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1">
+                {hybridWalletType} Reference Number <span className="text-rose-500 font-bold">*</span>
               </label>
               <input
                 type="text"
                 value={hybridRefNumber}
                 onChange={(e) => setHybridRefNumber(e.target.value)}
                 placeholder={`e.g. Enter ${hybridWalletType} reference #`}
-                className="w-full px-3 py-2 text-xs font-semibold text-neutral-900 bg-white border border-purple-200 rounded-xl focus:outline-none focus:border-purple-600 transition-all placeholder-neutral-300"
+                className="w-full px-3 py-2 text-xs font-semibold text-neutral-900 bg-white border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
               />
+              <p className="text-[10px] text-neutral-400 font-medium mt-1">
+                Enter the reference number from the customer's {hybridWalletType} transaction.
+              </p>
             </div>
 
             {/* Split Status indicator */}
-            <div className="pt-2 border-t border-purple-100 flex items-center justify-between text-xs">
+            <div className="pt-2 border-t border-neutral-100 flex items-center justify-between text-xs">
               <span className="text-[11px] font-bold text-neutral-600">
                 Split Total: <strong>₱{hybridTotalEntered.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> / ₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
@@ -279,16 +268,12 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           </div>
         )}
 
-        {/* Cash Calculator Box */}
+        {/* Cash Calculator Section */}
         {paymentMethod === 'Cash' && (
-          <div className="bg-amber-50/40 border border-amber-100/90 rounded-2xl p-4 sm:p-4.5 mb-5 space-y-3.5">
-            <h3 className="text-[11px] font-black text-amber-900 tracking-wider uppercase flex items-center gap-1.5">
-              POS CASH CALCULATOR
-            </h3>
-
+          <div className="mb-5 space-y-3">
             <div className="grid grid-cols-2 gap-3 items-center">
               <div>
-                <label className="block text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1.5">
                   CASH RECEIVED
                 </label>
                 <div className="relative flex items-center">
@@ -298,16 +283,16 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                     value={cashReceived}
                     onChange={(e) => setCashReceived(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-7 pr-3 py-2 text-sm font-black text-neutral-900 bg-white border border-amber-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
+                    className="w-full pl-7 pr-3 py-2 text-sm font-black text-neutral-900 bg-white border border-neutral-200 rounded-xl focus:outline-none focus:border-orange-500 transition-all placeholder-neutral-300"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1.5">
+                <label className="block text-[10px] font-bold text-neutral-500 uppercase tracking-wider mb-1.5">
                   CHANGE DUE
                 </label>
-                <div className="bg-white border border-amber-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                <div className="bg-neutral-50 border border-neutral-200 rounded-xl px-3 py-2 flex items-center justify-between">
                   <span className="text-xs font-bold text-neutral-400">₱</span>
                   <span className="text-sm font-black text-emerald-600">
                     {change !== null ? Number(change).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'}
@@ -317,7 +302,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             </div>
 
             {/* Quick Cash Presets */}
-            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
               <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mr-1">
                 Quick:
               </span>
@@ -340,11 +325,11 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                     ₱{amt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </button>
                 ))}
-              </div>
+            </div>
 
             {/* Alert for Insufficient cash */}
             {cashReceived && change === null && parseFloat(cashReceived) < totalAmount && (
-              <p className="text-[11px] font-bold text-red-600 flex items-center gap-1 pt-1">
+              <p className="text-[11px] font-bold text-rose-600 flex items-center gap-1 pt-1">
                 Cash received is less than total amount (₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
               </p>
             )}
@@ -397,18 +382,10 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           </button>
           <button
             onClick={handleConfirm}
-            disabled={
-              hasUnavailableItems ||
-              (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
-              (paymentMethod === 'Hybrid' && !isHybridComplete)
-            }
+            disabled={isSubmitDisabled}
             className={`flex-2 text-white font-bold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md ${
-              hasUnavailableItems ||
-              (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
-              (paymentMethod === 'Hybrid' && !isHybridComplete)
+              isSubmitDisabled
                 ? 'bg-neutral-300 cursor-not-allowed shadow-none'
-                : paymentMethod === 'Hybrid'
-                ? 'bg-purple-600 hover:bg-purple-700 shadow-purple-500/25'
                 : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/25'
             }`}
           >

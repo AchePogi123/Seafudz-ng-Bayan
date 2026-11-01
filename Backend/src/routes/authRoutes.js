@@ -2245,7 +2245,7 @@ router.get('/auth/me-profile', async (req, res) => {
     // If role indicates employee, check employees table first
     if (isEmp) {
       const empRes = await query(
-        `SELECT id, supabase_user_id, fullname, username, email, phone, role, created_at
+        `SELECT id, supabase_user_id, fullname, username, email, phone, role, avatar, created_at
          FROM employees
          WHERE (id::text = $1 OR supabase_user_id::text = $1)
             OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
@@ -2263,7 +2263,7 @@ router.get('/auth/me-profile', async (req, res) => {
 
     // Check customers
     const custRes = await query(
-      `SELECT id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, created_at
+      `SELECT id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at
        FROM customers
        WHERE (id::text = $1 OR supabase_user_id::text = $1)
           OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
@@ -2281,7 +2281,7 @@ router.get('/auth/me-profile', async (req, res) => {
     // Check employees if not yet checked
     if (!isEmp) {
       const empRes = await query(
-        `SELECT id, supabase_user_id, fullname, username, email, phone, role, created_at
+        `SELECT id, supabase_user_id, fullname, username, email, phone, role, avatar, created_at
          FROM employees
          WHERE (id::text = $1 OR supabase_user_id::text = $1)
             OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
@@ -2309,7 +2309,8 @@ router.get('/auth/me-profile', async (req, res) => {
  */
 router.put('/auth/profile', requireAuth, async (req, res) => {
   try {
-    const { originalEmail, email, fullname, phone, address, username, role, id } = req.body;
+    const { originalEmail, email, fullname, phone, address, username, role, id, avatar } = req.body;
+    const cleanAvatar = (avatar || '').trim();
     const cleanEmail = (email || originalEmail || '').trim().toLowerCase();
     const cleanFullname = (fullname || '').trim();
     const cleanPhone = (phone || '').trim();
@@ -2335,7 +2336,7 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Inactive accounts cannot edit their profile.' });
     }
 
-    if (!cleanEmail && !cleanFullname && !requestedUsername && !cleanPhone && !cleanAddress) {
+    if (!cleanEmail && !cleanFullname && !requestedUsername && !cleanPhone && !cleanAddress && !cleanAvatar) {
       return res.status(400).json({
         success: false,
         message: 'At least one field (Full Name, Username, Phone, Email, Address) is required to update profile.',
@@ -2401,14 +2402,16 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
              email = COALESCE(NULLIF($2, ''), email),
              username = COALESCE(NULLIF($3, ''), username),
              phone = COALESCE(NULLIF($4, ''), phone),
+             avatar = COALESCE(NULLIF($5, ''), avatar),
              updated_at = NOW()
-         WHERE id = $5
-         RETURNING id, supabase_user_id, fullname, username, email, phone, role, created_at, updated_at`,
+         WHERE id = $6
+         RETURNING id, supabase_user_id, fullname, username, email, phone, role, avatar, created_at, updated_at`,
         [
           cleanFullname,
           cleanEmail,
           requestedUsername,
           cleanPhone,
+          cleanAvatar,
           emp.id,
         ]
       );
@@ -2465,15 +2468,17 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
                email = COALESCE(NULLIF($3, ''), email),
                phone = COALESCE(NULLIF($4, ''), phone),
                delivery_address = COALESCE(NULLIF($5, ''), delivery_address),
+               avatar = COALESCE(NULLIF($6, ''), avatar),
                updated_at = NOW()
-           WHERE id = $6
-           RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, created_at, updated_at`,
+           WHERE id = $7
+           RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at, updated_at`,
           [
             cleanFullname,
             requestedUsername,
             cleanEmail,
             cleanPhone,
             cleanAddress,
+            cleanAvatar,
             cust.id,
           ]
         );

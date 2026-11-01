@@ -17,6 +17,7 @@ export interface UserProfile {
   role: UserRole | string;
   sessionToken?: string;
   type?: string;
+  avatar?: string;
 }
 
 /**
@@ -207,7 +208,18 @@ export function getActiveUser(): UserProfile | null {
     } catch { }
   }
 
-  if (userFromStorage) return userFromStorage;
+  if (userFromStorage) {
+    if (!userFromStorage.avatar) {
+      try {
+        const key = userFromStorage.id || userFromStorage.email || userFromStorage.username || 'user';
+        const savedAvatar = localStorage.getItem(`sfb_user_avatar_${key}`);
+        if (savedAvatar) {
+          userFromStorage.avatar = savedAvatar;
+        }
+      } catch { }
+    }
+    return userFromStorage;
+  }
 
   // 3. Token fallback from stored session token
   const token = getStoredSessionToken();

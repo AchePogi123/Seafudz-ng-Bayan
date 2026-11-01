@@ -10,6 +10,7 @@ import { AccMan } from './features/AccMan'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
 import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
+import AdminMenuManagement from './features/AdminMenuManagement'
 import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
 import ResetPassword from './features/ResetPassword'
@@ -135,6 +136,15 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['admin']}>
               <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin-menu"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminMenuManagement />
             </ProtectedRoute>
           }
         />

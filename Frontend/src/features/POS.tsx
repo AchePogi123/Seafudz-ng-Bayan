@@ -127,6 +127,12 @@ export const POS: React.FC = () => {
   const [onlineSearchQuery, setOnlineSearchQuery] = useState('')
   const [onlineFilter, setOnlineFilter] = useState<'all' | 'unprinted' | 'printed'>('unprinted')
 
+  // Pagination states (10 transactions per page)
+  const [onlinePage, setOnlinePage] = useState<number>(1)
+  const [posPage, setPosPage] = useState<number>(1)
+  const ONLINE_PAGE_SIZE = 10
+  const POS_PAGE_SIZE = 10
+
   // Order Modification & Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingPosOrder, setEditingPosOrder] = useState<any | null>(null)
@@ -473,17 +479,29 @@ export const POS: React.FC = () => {
     if (!rawDateStr) return 'Today'
     const d = new Date(rawDateStr)
     if (!isNaN(d.getTime())) {
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      const isToday = new Date().toDateString() === d.toDateString()
+      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      if (isToday) return timeStr
+      return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} • ${timeStr}`
     }
     return String(rawDateStr)
   }
 
-  const parseOrderTimestamp = (o: any) => {
-    const val = o.createdAt || o.created_at || o.dateTime
-    if (!val) return 0
+  const parseOrderTimestamp = (o: any): number => {
+    const val = o.createdAt || o.created_at || o.dateTime || o.timestamp
+    if (!val) {
+      const idStr = String(o.id || o.ref || '')
+      const match = idStr.match(/\d{10,13}/)
+      if (match) return parseInt(match[0], 10)
+      return Infinity
+    }
+    if (typeof val === 'number') return val
+    if (val instanceof Date) return val.getTime()
+    const parsed = Date.parse(val)
+    if (!isNaN(parsed)) return parsed
     const d = new Date(val)
     if (!isNaN(d.getTime())) return d.getTime()
-    return 0
+    return Infinity
   }
 
   const filteredOnlineReceipts = useMemo(() => {
@@ -508,8 +526,13 @@ export const POS: React.FC = () => {
       return ref.includes(q) || cust.includes(q) || phone.includes(q)
     })
 
-    // Strict FIFO sorting by creation timestamp (oldest first: Order A 10:01 AM before Order B 10:05 AM)
-    return filtered.sort((a, b) => parseOrderTimestamp(a) - parseOrderTimestamp(b))
+    // Strict FIFO sorting by creation timestamp (oldest first: Order #1 before Order #2)
+    return filtered.sort((a, b) => {
+      const timeA = parseOrderTimestamp(a)
+      const timeB = parseOrderTimestamp(b)
+      if (timeA !== timeB) return timeA - timeB
+      return String(a.id || a.ref || '').localeCompare(String(b.id || b.ref || ''))
+    })
   }, [onlineReceipts, onlineFilter, onlineSearchQuery])
 
   const handlePrepareReceiptDetails = (order: any) => {
@@ -618,6 +641,115 @@ export const POS: React.FC = () => {
       return ref.includes(q) || dishesStr.includes(q) || notes.includes(q) || type.includes(q)
     })
   }, [posOrders, posStatusFilter, posSearchQuery])
+
+  // Reset to page 1 on search / filter changes
+  useEffect(() => {
+    setOnlinePage(1)
+  }, [onlineFilter, onlineSearchQuery])
+
+  useEffect(() => {
+    setPosPage(1)
+  }, [posStatusFilter, posSearchQuery])
+
+  // Paginated Slices (10 transactions per page)
+  const totalOnlinePages = Math.max(1, Math.ceil(filteredOnlineReceipts.length / ONLINE_PAGE_SIZE))
+  const paginatedOnlineReceipts = useMemo(() => {
+    const start = (onlinePage - 1) * ONLINE_PAGE_SIZE
+    return filteredOnlineReceipts.slice(start, start + ONLINE_PAGE_SIZE)
+  }, [filteredOnlineReceipts, onlinePage])
+
+  const totalPosPages = Math.max(1, Math.ceil(filteredPosOrders.length / POS_PAGE_SIZE))
+  const paginatedPosOrders = useMemo(() => {
+    const start = (posPage - 1) * POS_PAGE_SIZE
+    return filteredPosOrders.slice(start, start + POS_PAGE_SIZE)
+  }, [filteredPosOrders, posPage])
+
+  useEffect(() => {
+    if (onlinePage > totalOnlinePages) setOnlinePage(1)
+  }, [onlinePage, totalOnlinePages])
+
+  useEffect(() => {
+    if (posPage > totalPosPages) setPosPage(1)
+  }, [posPage, totalPosPages])
+
+  const renderPagination = (
+    currentPage: number,
+    totalPages: number,
+    totalItems: number,
+    pageSize: number,
+    onPageChange: (newPage: number) => void
+  ) => {
+    if (totalItems <= pageSize) return null
+
+    const startIndex = (currentPage - 1) * pageSize
+    const endIndex = Math.min(startIndex + pageSize, totalItems)
+
+    const pages: (number | string)[] = []
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i)
+    } else {
+      pages.push(1)
+      if (currentPage > 3) pages.push('...')
+      const start = Math.max(2, currentPage - 1)
+      const end = Math.min(totalPages - 1, currentPage + 1)
+      for (let i = start; i <= end; i++) pages.push(i)
+      if (currentPage < totalPages - 2) pages.push('...')
+      pages.push(totalPages)
+    }
+
+    return (
+      <div className="bg-white p-4 rounded-2xl border border-neutral-200/80 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs mt-3">
+        <div className="text-neutral-500 font-bold">
+          Showing <strong className="text-neutral-900">{startIndex + 1}</strong> to{' '}
+          <strong className="text-neutral-900">{endIndex}</strong> of{' '}
+          <strong className="text-neutral-900">{totalItems}</strong> transactions (Page {currentPage} of {totalPages})
+        </div>
+
+        <div className="flex items-center gap-1.5 flex-wrap justify-center">
+          <button
+            type="button"
+            disabled={currentPage === 1}
+            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+          >
+            ← Previous
+          </button>
+
+          <div className="flex items-center gap-1">
+            {pages.map((p, i) =>
+              typeof p === 'number' ? (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onPageChange(p)}
+                  className={`w-8 h-8 rounded-xl font-black text-xs transition-all cursor-pointer ${
+                    currentPage === p
+                      ? 'bg-orange-500 text-white shadow-xs'
+                      : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-700 border border-neutral-200'
+                  }`}
+                >
+                  {p}
+                </button>
+              ) : (
+                <span key={i} className="px-1 text-neutral-400 font-bold">
+                  …
+                </span>
+              )
+            )}
+          </div>
+
+          <button
+            type="button"
+            disabled={currentPage === totalPages}
+            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   const totalCartCount = useMemo(() => {
     return cartItems.reduce((acc, item) => acc + item.quantity, 0)
@@ -765,6 +897,14 @@ export const POS: React.FC = () => {
   ) => {
     if (hasUnavailableItems) {
       alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
+      return
+    }
+    if (paymentMethod === 'GCash' && (!paymentReference || !paymentReference.trim())) {
+      alert('GCash Reference Number is required to confirm this order.')
+      return
+    }
+    if (paymentMethod.startsWith('Hybrid') && (!paymentReference || !paymentReference.trim())) {
+      alert('Reference Number is required for Hybrid payment to confirm this order.')
       return
     }
     const activeItemIds = new Set(menuItems.map((m) => m.id))
@@ -1050,7 +1190,7 @@ export const POS: React.FC = () => {
               </div>
             </div>
 
-            {/* Orders Grid */}
+            {/* Orders Row-by-Row List (Paginated: 10 per page) */}
             {filteredPosOrders.length === 0 ? (
               <div className="bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
                 <span className="text-3xl block mb-2">📋</span>
@@ -1060,201 +1200,192 @@ export const POS: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                {filteredPosOrders.map((ord) => {
+              <div className="space-y-3">
+                {/* Desktop Column Header Guide */}
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                  <div className="xl:col-span-3">Order Ref & Status</div>
+                  <div className="xl:col-span-4">Ordered Dishes & Notes</div>
+                  <div className="xl:col-span-2 text-right">Payment & Total</div>
+                  <div className="xl:col-span-3 text-right">Actions / Controls</div>
+                </div>
+
+                {paginatedPosOrders.map((ord, idx) => {
                   const s = (ord.status || '').toUpperCase()
                   const isCancelled = s === 'CANCELLED'
                   const isCompleted = ['COMPLETED', 'SERVED', 'DELIVERED'].includes(s)
                   const isReady = ['READY', 'PREPARED', 'READY TO SERVE'].includes(s)
                   const isCooking = ['PREPARING', 'COOKING', 'IN_PROCESS'].includes(s)
+                  const dishes = parseOrderDishes(ord)
+                  const orderTotalNum = typeof ord.total === 'number' ? ord.total : parseFloat(String(ord.total || 0).replace(/[^0-9.-]+/g, '')) || 0
+                  const globalIdx = (posPage - 1) * POS_PAGE_SIZE + idx + 1
 
                   return (
                     <div
                       key={ord.id}
-                      className={`bg-white rounded-3xl p-5 border transition-all shadow-xs flex flex-col justify-between gap-4 ${
-                        isCancelled
-                          ? 'border-rose-200 bg-rose-50/20'
-                          : isCompleted
-                          ? 'border-neutral-200 bg-neutral-50/50'
-                          : isReady
-                          ? 'border-emerald-300 ring-2 ring-emerald-500/10'
-                          : 'border-orange-200'
-                      }`}
+                      className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200 hover:border-neutral-300 transition-all shadow-2xs hover:shadow-xs"
                     >
-                      <div className="space-y-3">
-                        {/* Header */}
-                        <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
-                          <div>
-                            <span className="text-xs font-black uppercase text-orange-600 tracking-wider">
-                              REF: {String(ord.ref || ord.id || 'N/A')}
-                            </span>
-                            <h4 className="font-extrabold text-neutral-900 text-base mt-0.5">
-                              {String(ord.type || 'On-Site Order')}
-                            </h4>
-                            <p className="text-[11px] text-neutral-400 font-medium">Placed {String(ord.dateTime || 'Just now')}</p>
+                      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
+                        {/* Col 1: Order Ref, Type, Time, Status (xl:col-span-3) */}
+                        <div className="xl:col-span-3 flex items-start gap-3">
+                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
+                            <span className="text-[8px] uppercase tracking-wider font-extrabold text-neutral-400">POS</span>
+                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
                           </div>
 
-                          {/* Status Badge */}
-                          <span
-                            className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${
-                              isCancelled
-                                ? 'bg-rose-100 text-rose-800 border-rose-300'
-                                : isCompleted
-                                ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
-                                : isReady
-                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300 animate-pulse'
-                                : isCooking
-                                ? 'bg-blue-100 text-blue-900 border-blue-300'
-                                : 'bg-amber-100 text-amber-900 border-amber-300'
-                            }`}
-                          >
-                            ● {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready to Serve' : isCooking ? 'Cooking in Kitchen' : 'In Kitchen Queue'}
-                          </span>
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 truncate" title={`REF: ${String(ord.ref || ord.id || 'N/A')}`}>
+                                REF: {String(ord.ref || ord.id || 'N/A')}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border ${
+                                  isCancelled
+                                    ? 'bg-neutral-100 text-neutral-600 border-neutral-300'
+                                    : isCompleted
+                                    ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
+                                    : isReady
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 animate-pulse'
+                                    : isCooking
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                                }`}
+                              >
+                                ● {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In Kitchen'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
+                              <span className="font-extrabold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
+                              <span>•</span>
+                              <span>Placed {String(ord.dateTime || 'Just now')}</span>
+                            </div>
+                          </div>
                         </div>
 
-                        {/* Items Breakdown */}
-                        <div className="space-y-1 text-xs text-neutral-700 font-medium bg-neutral-50 p-3 rounded-2xl border border-neutral-100">
-                          <p className="font-bold text-neutral-400 uppercase text-[10px] tracking-wider mb-1">Ordered Dishes:</p>
-                          {(() => {
-                            const dishes = parseOrderDishes(ord)
-                            if (dishes.length === 0) {
-                              return <p className="text-neutral-400 italic text-[11px]">No item details recorded</p>
-                            }
-                            return dishes.map((d, idx) => (
-                              <div key={idx} className="flex justify-between items-center text-xs">
-                                <span>{d.name} <strong className="text-neutral-900">x{d.quantity}</strong></span>
-                                {d.price > 0 ? (
-                                  <span className="font-bold text-neutral-500">
-                                    ₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </span>
-                                ) : (
-                                  <span className="text-neutral-400 text-[11px]">-</span>
-                                )}
-                              </div>
-                            ))
-                          })()}
-
+                        {/* Col 2: Ordered Dishes & Notes (xl:col-span-4) */}
+                        <div className="xl:col-span-4 space-y-1">
+                          <div className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider">
+                            Ordered Dishes ({dishes.reduce((acc, d) => acc + (d.quantity || 1), 0)}):
+                          </div>
+                          <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto pr-1">
+                            {dishes.length === 0 ? (
+                              <span className="text-xs text-neutral-400 italic">No item details recorded</span>
+                            ) : (
+                              dishes.map((d, dIdx) => (
+                                <span
+                                  key={dIdx}
+                                  className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
+                                >
+                                  <span className="truncate max-w-[130px]">{d.name}</span>
+                                  <span className="font-mono font-black text-neutral-900">x{d.quantity}</span>
+                                  {d.price > 0 && (
+                                    <span className="text-neutral-500 font-mono text-[10px]">
+                                      (₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                    </span>
+                                  )}
+                                </span>
+                              ))
+                            )}
+                          </div>
                           {ord.notes && (
-                            <p className="text-orange-600 text-[11px] font-semibold pt-1 border-t border-neutral-200 mt-1">
+                            <p className="text-neutral-600 text-[11px] font-medium truncate" title={String(ord.notes)}>
                               Note: "{String(ord.notes)}"
                             </p>
                           )}
                         </div>
 
-                        {/* Total & Payment mode */}
-                        <div className="flex justify-between items-center text-xs pt-1">
-                          <span className="text-neutral-500 font-semibold">Payment: <strong className="text-neutral-800">{String(ord.paymentMethod || 'Paid (POS)')}</strong></span>
-                          <span className="text-base font-black text-orange-600">
-                            ₱{(() => {
-                              const t = typeof ord.total === 'number' ? ord.total : parseFloat(String(ord.total || 0).replace(/[^0-9.-]+/g, '')) || 0
-                              return t.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                            })()}
+                        {/* Col 3: Payment & Total Amount (xl:col-span-2) */}
+                        <div className="xl:col-span-2 text-left xl:text-right space-y-0.5">
+                          <span className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider block">
+                            {String(ord.paymentMethod || 'Paid (POS)')}
+                          </span>
+                          <span className="text-base font-black font-mono text-neutral-900 block">
+                            ₱{orderTotalNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
-                      </div>
 
-                      {/* Cashier Controls */}
-                      <div className="pt-2 border-t border-neutral-100 flex flex-col gap-2">
-                        {!isCancelled && !isCompleted && (
-                          <div className="flex flex-col gap-2 w-full">
-                            {/* Action Row: Modify & Cancel / Kitchen Processing State */}
-                            <div className="flex gap-2 w-full">
+                        {/* Col 4: Cashier Controls / Actions (xl:col-span-3) */}
+                        <div className="xl:col-span-3 flex flex-col gap-1.5 justify-center">
+                          {!isCancelled && !isCompleted && (
+                            <div className="flex items-center gap-2 flex-wrap xl:justify-end">
                               {!isCooking && !isReady ? (
                                 <>
                                   <button
                                     type="button"
                                     onClick={() => setModifyingPosOrder(ord)}
-                                    className="flex-1 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5 shadow-2xs"
-                                    title="Modify dishes, quantities, dining type, or kitchen notes"
+                                    className="bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
                                   >
-                                    <span>✏️</span> Modify Order
+                                    <span>✏️</span> Modify
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => promptCancelPosOrder(ord)}
-                                    className="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-1.5"
+                                    className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
                                   >
                                     <span>❌</span> Cancel
                                   </button>
                                 </>
                               ) : isCooking ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    disabled
-                                    className="flex-1 bg-neutral-100 text-neutral-400 border border-neutral-200/80 font-bold py-2 rounded-xl text-[11px] flex items-center justify-center gap-1 cursor-not-allowed opacity-75"
-                                    title="Order is already being prepared in the kitchen and can no longer be modified or edited."
-                                  >
-                                    <span>🔒</span> Kitchen Processing (Locked)
-                                  </button>
-                                  <div className="flex-1 bg-blue-50 text-blue-700 border border-blue-200 font-extrabold py-2 rounded-xl text-[11px] text-center flex items-center justify-center gap-1">
-                                    <span>🍳</span> Cooking in Kitchen
-                                  </div>
-                                </>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="bg-neutral-100 text-neutral-500 border border-neutral-200 font-semibold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1 cursor-not-allowed">
+                                    <span>🔒</span> Locked
+                                  </span>
+                                  <span className="bg-blue-50 text-blue-700 border border-blue-200 font-extrabold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1">
+                                    <span>🍳</span> Cooking
+                                  </span>
+                                </div>
+                              ) : isReady ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCompletePosOrder(ord.id)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                >
+                                  <span>✅</span> Mark Served
+                                </button>
                               ) : null}
                             </div>
+                          )}
 
-                            {/* Status Progression Row: Mark Served */}
-                            {isReady ? (
-                              <button
-                                type="button"
-                                onClick={() => handleCompletePosOrder(ord.id)}
-                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center gap-1.5"
-                              >
-                                <span>✅</span> Mark Served & Complete
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled
-                                className="w-full bg-neutral-100 text-neutral-400 font-extrabold py-2 rounded-xl text-xs cursor-not-allowed border border-neutral-200 opacity-70 flex items-center justify-center gap-1"
-                                title="Kitchen has not marked this order as Done yet"
-                              >
-                                <span>🔒</span> Mark Served
-                              </button>
-                            )}
-                          </div>
-                        )}
+                          {isCancelled && (
+                            <div className="text-left xl:text-right text-xs font-bold text-neutral-400 py-0.5">
+                              <span className="bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-500 text-[11px]">
+                                Order Cancelled
+                              </span>
+                            </div>
+                          )}
 
-                        {isCancelled && (
-                          <div className="w-full text-center text-xs font-bold text-rose-700 bg-rose-50 py-2 rounded-xl border border-rose-200">
-                            Order Cancelled
-                          </div>
-                        )}
+                          {isCompleted && (
+                            <div className="text-left xl:text-right text-xs font-bold text-neutral-500 py-0.5">
+                              <span className="bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-600 text-[11px]">
+                                Served & Completed
+                              </span>
+                            </div>
+                          )}
 
-                        {isCompleted && (
-                          <div className="w-full text-center text-xs font-bold text-emerald-800 bg-emerald-50 py-2 rounded-xl border border-emerald-200">
-                            Order Served & Completed
-                          </div>
-                        )}
-
-                        {isAdmin && (
-                          <div className="pt-2 border-t border-amber-200/60 bg-amber-50/50 p-2 rounded-xl flex items-center justify-between gap-2">
-                            <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">
-                              Admin Controls:
-                            </span>
-                            <div className="flex items-center gap-1.5">
+                          {isAdmin && (
+                            <div className="flex items-center justify-start xl:justify-end gap-1.5 pt-1 border-t border-neutral-100">
                               <button
                                 type="button"
                                 onClick={() => setEditingPosOrder(ord)}
-                                className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1 rounded-lg text-xs transition-all cursor-pointer shadow-2xs"
+                                className="text-neutral-500 hover:text-neutral-800 text-[11px] font-bold px-2 py-0.5 rounded hover:bg-neutral-100 cursor-pointer"
                               >
                                 ✏️ Edit
                               </button>
+                              <span className="text-neutral-300">•</span>
                               <button
                                 type="button"
                                 onClick={() => handleDeletePosOrder(ord.id)}
-                                className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-1 rounded-lg text-xs transition-all cursor-pointer shadow-2xs"
+                                className="text-rose-600 hover:text-rose-800 text-[11px] font-bold px-2 py-0.5 rounded hover:bg-rose-50 cursor-pointer"
                               >
                                 🗑️ Delete
                               </button>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     </div>
                   )
                 })}
+                {renderPagination(posPage, totalPosPages, filteredPosOrders.length, POS_PAGE_SIZE, setPosPage)}
               </div>
             )}
           </div>
@@ -1333,7 +1464,7 @@ export const POS: React.FC = () => {
               </div>
             </div>
 
-            {/* Orders Cards Grid */}
+            {/* Orders Row-by-Row List (FIFO Queue) */}
             {filteredOnlineReceipts.length === 0 ? (
               <div className="bg-white p-12 rounded-2xl border border-neutral-200 text-center space-y-3">
                 <div className="text-4xl">🧾</div>
@@ -1347,8 +1478,18 @@ export const POS: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
-                {filteredOnlineReceipts.map((ord) => {
+              <div className="space-y-3">
+                {/* Desktop Column Header Guide */}
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                  <div className="xl:col-span-3">Queue & Order Ref</div>
+                  <div className="xl:col-span-3">Customer & Delivery Info</div>
+                  <div className="xl:col-span-3">Ordered Dishes</div>
+                  <div className="xl:col-span-1 text-right">Total</div>
+                  <div className="xl:col-span-2 text-right">Actions</div>
+                </div>
+
+                {paginatedOnlineReceipts.map((ord, idx) => {
+                  const globalIdx = (onlinePage - 1) * ONLINE_PAGE_SIZE + idx + 1
                   const orderId = ord.id || ord.ref
                   const isPrinted = Boolean(ord.isReceiptPrinted || (ord.receiptStatus || '').toUpperCase() === 'PRINTED')
                   const items = Array.isArray(ord.items) ? ord.items : []
@@ -1357,98 +1498,106 @@ export const POS: React.FC = () => {
                   return (
                     <div
                       key={orderId}
-                      className="bg-white rounded-2xl border border-neutral-200/90 shadow-sm hover:shadow-md transition-all p-5 flex flex-col justify-between gap-4"
+                      className="bg-white rounded-2xl border border-neutral-200 hover:border-neutral-300 transition-all p-4 sm:p-5 shadow-2xs hover:shadow-xs" 
                     >
-                      {/* Top Bar: Ref ID & Receipt Print Badge */}
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-black text-sm text-neutral-900 tracking-wide font-mono bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200">
-                            #{orderId}
-                          </span>
-
-                          {/* Printed / Unprinted Badge */}
-                          {isPrinted ? (
-                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2.5 py-1 rounded-full text-[10px] font-black flex items-center gap-1">
-                              <span>✅</span> Receipt Printed
-                            </span>
-                          ) : (
-                            <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2.5 py-1 rounded-full text-[10px] font-black flex items-center gap-1 animate-pulse">
-                              <span>🖨️</span> Unprinted
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Order Type & Fulfillment Status Badges */}
-                        <div className="flex items-center justify-between text-xs mb-3">
-                          <span className="font-bold text-neutral-500 text-[11px]">
-                            {formatOrderTime(ord.createdAt || ord.created_at || ord.dateTime)}
-                          </span>
-                          <span className="bg-orange-50 text-orange-700 border border-orange-200 font-extrabold px-2 py-0.5 rounded-md text-[10px]">
-                            Status: {statusNorm}
-                          </span>
-                        </div>
-
-                        {/* Customer Metadata Card */}
-                        <div className="bg-neutral-50 p-3 rounded-xl border border-neutral-200/70 space-y-1 text-xs mb-3">
-                          <div className="flex justify-between items-center font-bold text-neutral-800">
-                            <span className="text-neutral-500 text-[11px]">Customer:</span>
-                            <span className="truncate max-w-[150px]">{ord.customerName || ord.customer || 'Online Customer'}</span>
+                      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
+                        {/* Col 1: Queue Rank, ID, Time, Print Badge (col-span-3) */}
+                        <div className="xl:col-span-3 flex items-center gap-3">
+                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
+                            <span className="text-[8px] uppercase tracking-wider font-extrabold opacity-85">FIFO</span>
+                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
                           </div>
-                          <div className="flex justify-between items-center font-bold text-neutral-800">
-                            <span className="text-neutral-500 text-[11px]">Phone:</span>
+
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
+                                #{orderId}
+                              </span>
+                              {isPrinted ? (
+                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
+                                  <span>✅</span> Printed
+                                </span>
+                              ) : (
+                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 animate-pulse">
+                                  <span>🖨️</span> Unprinted
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
+                              <span>🕒 {formatOrderTime(ord.createdAt || ord.created_at || ord.dateTime)}</span>
+                              <span>•</span>
+                              <span className="text-orange-600 font-extrabold text-[10px] uppercase">{statusNorm}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Col 2: Customer, Phone, Address, Payment (col-span-3) */}
+                        <div className="xl:col-span-3 space-y-0.5 text-xs">
+                          <div className="font-extrabold text-neutral-900 flex items-center gap-1.5">
+                            <span className="text-neutral-400">👤</span>
+                            <span className="truncate">{ord.customerName || ord.customer || 'Online Customer'}</span>
+                          </div>
+                          <div className="text-neutral-500 font-semibold text-[11px] flex items-center gap-1.5">
+                            <span className="text-neutral-400">📞</span>
                             <span>{ord.phone || 'N/A'}</span>
-                          </div>
-                          <div className="flex justify-between items-center font-bold text-neutral-800">
-                            <span className="text-neutral-500 text-[11px]">Payment:</span>
-                            <span className="text-orange-600">{ord.paymentMethod || 'GCash'}</span>
+                            <span className="text-neutral-300">•</span>
+                            <span className="text-orange-600 font-extrabold">{ord.paymentMethod || 'GCash'}</span>
                           </div>
                           {ord.deliveryAddress && (
-                            <div className="text-[10px] text-neutral-600 pt-1 border-t border-neutral-200/60 font-medium">
-                              <span className="font-bold text-neutral-500">Address: </span>
-                              {ord.deliveryAddress}
+                            <div className="text-neutral-400 text-[11px] font-medium truncate flex items-center gap-1.5" title={ord.deliveryAddress}>
+                              <span className="text-neutral-400 shrink-0">📍</span>
+                              <span className="truncate">{ord.deliveryAddress}</span>
                             </div>
                           )}
                         </div>
 
-                        {/* Ordered Items Preview */}
-                        <div className="space-y-1 mb-3 max-h-28 overflow-y-auto pr-1">
-                          <div className="text-[10px] font-extrabold text-neutral-400 tracking-wider uppercase mb-1">
-                            Items ({items.reduce((acc: number, i: any) => acc + (i.quantity || 1), 0)})
+                        {/* Col 3: Ordered Items (col-span-3) */}
+                        <div className="xl:col-span-3">
+                          <div className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider mb-1">
+                            Items ({items.reduce((acc: number, i: any) => acc + (i.quantity || 1), 0)}):
                           </div>
-                          {items.map((it: any, idx: number) => (
-                            <div key={idx} className="flex justify-between text-xs font-semibold text-neutral-700">
-                              <span className="truncate">{it.name || it.product_name_snapshot || 'Seafood Item'}</span>
-                              <span className="text-neutral-400 font-mono ml-2">
-                                x{it.quantity || 1}
-                              </span>
-                            </div>
-                          ))}
+                          <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto pr-1">
+                            {items.length === 0 ? (
+                              <span className="text-xs text-neutral-400 italic">No item details</span>
+                            ) : (
+                              items.map((it: any, iIdx: number) => (
+                                <span
+                                  key={iIdx}
+                                  className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
+                                >
+                                  <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
+                                  <span className="font-mono font-black text-orange-600">x{it.quantity || 1}</span>
+                                </span>
+                              ))
+                            )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Bottom Section: Total & Actions */}
-                      <div className="pt-3 border-t border-neutral-200 space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-xs font-bold text-neutral-500">Total Amount:</span>
-                          <span className="text-base font-black text-neutral-900 font-mono">
+                        {/* Col 4: Total Amount (col-span-1) */}
+                        <div className="xl:col-span-1 text-left xl:text-right">
+                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
+                            Total:
+                          </span>
+                          <span className="text-base font-black font-mono text-neutral-900">
                             ₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
 
-                        <div className="flex gap-2">
+                        {/* Col 5: Actions (col-span-2) */}
+                        <div className="xl:col-span-2 flex items-center justify-start xl:justify-end gap-2">
                           <button
                             type="button"
                             onClick={() => handleViewOnlineReceipt(ord)}
-                            className="flex-1 bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center"
+                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
                           >
-                            👁️ View Receipt
+                            <span>👁️</span> View
                           </button>
                           <button
                             type="button"
                             onClick={() => handlePrintOnlineReceipt(ord)}
-                            className={`flex-1 text-white font-extrabold py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center gap-1.5 ${
+                            className={`font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
                               isPrinted
-                                ? 'bg-neutral-800 hover:bg-black'
+                                ? 'bg-neutral-700 hover:bg-neutral-800 shadow-neutral-500/20'
                                 : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
                             }`}
                           >
@@ -1460,6 +1609,7 @@ export const POS: React.FC = () => {
                     </div>
                   )
                 })}
+                {renderPagination(onlinePage, totalOnlinePages, filteredOnlineReceipts.length, ONLINE_PAGE_SIZE, setOnlinePage)}
               </div>
             )}
           </div>

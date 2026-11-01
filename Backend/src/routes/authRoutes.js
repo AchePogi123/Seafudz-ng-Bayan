@@ -1194,8 +1194,60 @@ router.post('/auth/login', async (req, res) => {
 const otpStore = new Map();
 
 /**
+ * GET /api/auth/check-email
+ * Checks if an email is already registered in customers, employees, or Supabase Auth.
+ */
+router.get('/auth/check-email', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || typeof email !== 'string' || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email parameter is required.',
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check PostgreSQL customers and employees
+    const dbCheck = await query(
+      `SELECT 'customer' AS source FROM customers WHERE LOWER(email) = $1
+       UNION ALL
+       SELECT 'employee' AS source FROM employees WHERE LOWER(email) = $1
+       LIMIT 1`,
+      [cleanEmail]
+    );
+
+    let existsInSupabase = false;
+    try {
+      const { data: usersData } = await supabase.auth.admin.listUsers();
+      existsInSupabase = !!usersData?.users?.some((u) => u.email?.toLowerCase() === cleanEmail);
+    } catch (sbErr) {
+      console.warn('[AUTH] Supabase check note in check-email:', sbErr.message);
+    }
+
+    const exists = dbCheck.rows.length > 0 || existsInSupabase;
+
+    return res.status(200).json({
+      success: true,
+      exists,
+      message: exists
+        ? 'This email address is already registered. Please sign in or use a different email.'
+        : 'Email address is available.',
+    });
+  } catch (err) {
+    console.error('Error checking email existence:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check email availability.',
+      error: err.message,
+    });
+  }
+});
+
+/**
  * POST /api/auth/send-otp
- * Generates and sends a 5-digit verification code to the target email
+ * Generates and sends a 6-digit verification code to the target email
  */
 router.post('/auth/send-otp', async (req, res) => {
   try {
@@ -1211,51 +1263,34 @@ router.post('/auth/send-otp', async (req, res) => {
     const cleanEmail = email.trim().toLowerCase();
 
     // Check if email already exists in customers or employees table
-    let checkCust = { rows: [] };
-    let checkEmp = { rows: [] };
+    let checkAccount = { rows: [] };
     try {
-      checkCust = await query('SELECT id, supabase_user_id FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-      checkEmp = await query(
-        'SELECT id, supabase_user_id, activation_status FROM employees WHERE LOWER(email) = $1',
+      checkAccount = await query(
+        `SELECT 'customer' AS source FROM customers WHERE LOWER(email) = $1
+         UNION ALL
+         SELECT 'employee' AS source FROM employees WHERE LOWER(email) = $1
+         LIMIT 1`,
         [cleanEmail]
       );
     } catch (dbErr) {
       console.warn('[AUTH OTP] DB query check notice:', dbErr.message);
     }
 
-    if (checkCust.rows.length > 0 || checkEmp.rows.length > 0) {
-      if (checkEmp.rows.some((employee) => employee.activation_status === 'pending')) {
-        return res.status(400).json({
-          success: false,
-          message: 'An account with this email address already exists.',
-        });
-      }
+    // Check if user still exists in Supabase Auth
+    let existsInSupabase = false;
+    try {
+      const { data: usersData } = await supabase.auth.admin.listUsers();
+      existsInSupabase = !!usersData?.users?.some((u) => u.email?.toLowerCase() === cleanEmail);
+    } catch (sErr) {
+      console.warn('[AUTH OTP] Supabase Auth check note:', sErr.message);
+    }
 
-      // Check if user still exists in Supabase Auth
-      let existsInSupabase = false;
-      try {
-        const { data: usersData } = await supabase.auth.admin.listUsers();
-        existsInSupabase = !!usersData?.users?.some(u => u.email?.toLowerCase() === cleanEmail);
-      } catch (sErr) {
-        console.warn('Supabase Auth sync check note:', sErr.message);
-        existsInSupabase = false; // Fallback to database check only if Supabase admin list is unavailable
-      }
-
-      if (!existsInSupabase) {
-        // User was deleted from Supabase Auth Dashboard! Auto-clean PostgreSQL orphaned records
-        console.log(`[AUTH SYNC] User ${cleanEmail} was deleted from Supabase Auth. Auto-purging DB records...`);
-        await query('DELETE FROM customers WHERE LOWER(email) = $1', [cleanEmail]);
-        await query(
-          `DELETE FROM employees
-           WHERE LOWER(email) = $1 AND activation_status <> 'pending'`,
-          [cleanEmail]
-        );
-      } else {
-        return res.status(400).json({
-          success: false,
-          message: 'An account with this email address already exists.',
-        });
-      }
+    if (checkAccount.rows.length > 0 || existsInSupabase) {
+      return res.status(409).json({
+        success: false,
+        code: 'EMAIL_ALREADY_EXISTS',
+        message: 'This email address is already registered. Please sign in or use a different email.',
+      });
     }
 
     // Generate random 6-digit numerical code (100000 - 999999)
@@ -2066,7 +2101,7 @@ router.post('/auth/change-password', requireAuth, async (req, res) => {
  */
 router.post('/auth/register', async (req, res) => {
   try {
-    const { fullname, username, email, role, phone, address } = req.body;
+    const { fullname, username, email, role, phone, address, supabaseUserId } = req.body;
 
     if (!fullname || !email) {
       return res.status(400).json({
@@ -2086,24 +2121,56 @@ router.post('/auth/register', async (req, res) => {
       });
     }
 
-    const cleanUsername = (username || cleanEmail.split('@')[0]).trim();
+    // STRICT UNIQUENESS CHECK: Check if email already exists in customers OR employees
+    const existingAccount = await query(
+      `SELECT 'customer' AS source FROM customers WHERE LOWER(email) = $1
+       UNION ALL
+       SELECT 'employee' AS source FROM employees WHERE LOWER(email) = $1
+       LIMIT 1`,
+      [cleanEmail]
+    );
+
+    if (existingAccount.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        code: 'EMAIL_ALREADY_EXISTS',
+        message: 'This email address is already registered. Please sign in or use a different email.',
+      });
+    }
+
+    // Check if Supabase Auth user ID is already linked
+    if (supabaseUserId) {
+      const existingSb = await query(
+        `SELECT 1 FROM customers WHERE supabase_user_id = $1
+         UNION ALL
+         SELECT 1 FROM employees WHERE supabase_user_id = $1
+         LIMIT 1`,
+        [supabaseUserId]
+      );
+      if (existingSb.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          code: 'ACCOUNT_ALREADY_EXISTS',
+          message: 'An account is already linked to this authentication record. Please sign in.',
+        });
+      }
+    }
+
+    const cleanPhone = phone ? phone.trim() : null;
+    const cleanAddress = address ? address.trim() : null;
+
     const sql = `
       INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
       VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (email) DO UPDATE SET
-        supabase_user_id = COALESCE(EXCLUDED.supabase_user_id, customers.supabase_user_id),
-        fullname = EXCLUDED.fullname,
-        phone = COALESCE(EXCLUDED.phone, customers.phone),
-        delivery_address = COALESCE(EXCLUDED.delivery_address, customers.delivery_address)
       RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
     `;
 
     const { rows } = await query(sql, [
-      req.body.supabaseUserId || null,
+      supabaseUserId || null,
       cleanFullname,
       cleanEmail,
-      phone || null,
-      address || null,
+      cleanPhone,
+      cleanAddress,
     ]);
 
     const cust = rows[0];
@@ -2118,6 +2185,13 @@ router.post('/auth/register', async (req, res) => {
     });
   } catch (error) {
     console.error('Error registering user:', error);
+    if (error.code === '23505') {
+      return res.status(409).json({
+        success: false,
+        code: 'EMAIL_ALREADY_EXISTS',
+        message: 'This email address is already registered. Please sign in or use a different email.',
+      });
+    }
     return res.status(500).json({
       success: false,
       message: 'User profile registration failed',

@@ -2679,7 +2679,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                 {/* VIEW 3: ORDER STATUS TRACKING */}
                 {activeTab === 'tracking' && activeOrder && (
-                    <div className="max-w-3xl mx-auto w-full bg-white rounded-2xl border border-neutral-100 shadow-xs p-6 lg:p-8 space-y-8">
+                    <div className="max-w-6xl xl:max-w-7xl mx-auto w-full bg-white rounded-2xl sm:rounded-3xl border border-neutral-100 shadow-sm p-6 sm:p-8 lg:p-10 space-y-8">
                         {/* Navigation: Back to Menu & Your Purchases */}
                         <div className="flex items-center justify-between gap-4 pb-3 border-b border-neutral-100">
                             <button
@@ -3350,70 +3350,131 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             </div>
                         )}
 
-                        {/* Progress Bar */}
+                        {/* Progress Tracker */}
                         {normalizeStatus(activeOrder.status) !== 'CANCELLED' && (
-                            <div className="py-6">
-                                <div className="relative flex items-center justify-between w-full">
-                                    <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-neutral-100 z-0 rounded-full" />
-                                    <div
-                                        className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
-                                        style={{
-                                            width:
-                                                normalizeStatus(activeOrder.status) === 'PENDING'
-                                                    ? '0%'
-                                                    : normalizeStatus(activeOrder.status) === 'CONFIRMED'
-                                                        ? '20%'
-                                                        : normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK'
-                                                            ? '30%'
-                                                            : normalizeStatus(activeOrder.status) === 'PREPARING'
-                                                            ? '40%'
-                                                            : normalizeStatus(activeOrder.status) === 'READY'
-                                                                ? '60%'
-                                                                : normalizeStatus(activeOrder.status) === 'OUT_FOR_DELIVERY'
-                                                                    ? '80%'
-                                                                    : '100%',
-                                        }}
-                                    />
+                            <div className="py-4">
+                                {(() => {
+                                    const steps = [
+                                        { key: 'PENDING', label: 'Order Placed', icon: '📋' },
+                                        { key: 'CONFIRMED', label: 'Confirmed', icon: '✓' },
+                                        { key: 'PREPARING', label: 'Preparing', icon: '🍳' },
+                                        { key: 'READY', label: 'Ready', icon: '📦' },
+                                        { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', icon: '🛵' },
+                                        { key: 'COMPLETED', label: 'Delivered', icon: '✓' },
+                                    ]
+                                    const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
+                                    const currUpper = normalizeStatus(activeOrder.status)
+                                    const currentIdx = statusOrder.indexOf(currUpper)
 
-                                    {[
-                                        { key: 'PENDING', label: 'Order Placed', desc: 'Awaiting Assistant Verification' },
-                                        { key: 'CONFIRMED', label: 'Confirmed', desc: 'Sent to Kitchen Queue' },
-                                        { key: 'PREPARING', label: 'Preparing', desc: 'Chef in the Kitchen' },
-                                        { key: 'READY', label: 'Order Ready', desc: 'Waiting for Rider' },
-                                        { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', desc: 'Rider is en route' },
-                                        { key: 'COMPLETED', label: 'Delivered', desc: 'Order Completed' },
-                                    ].map((step) => {
-                                        const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
-                                        const currUpper = normalizeStatus(activeOrder.status)
-                                        const isCurrent = currUpper === step.key
-                                        const isCompleted =
-                                            statusOrder.indexOf(currUpper) >= statusOrder.indexOf(step.key)
+                                    return (
+                                        <div className="relative">
+                                            {/* Desktop/Tablet: Horizontal */}
+                                            <div className="hidden sm:block">
+                                                <div className="flex items-center w-full">
+                                                    {steps.map((step, idx) => {
+                                                        const isCurrent = currUpper === step.key
+                                                        const isCompleted = currentIdx >= statusOrder.indexOf(step.key)
+                                                        const isLast = idx === steps.length - 1
 
-                                        return (
-                                            <div key={step.key} className="flex flex-col items-center z-10 relative">
-                                                <div
-                                                    className={`w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center text-xs sm:text-sm font-extrabold border-2 shadow-xs transition-all duration-300 ${isCurrent
-                                                        ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-100'
-                                                        : isCompleted
-                                                            ? 'bg-orange-500 border-orange-500 text-white'
-                                                            : 'bg-white border-neutral-200 text-neutral-400'
-                                                        }`}
-                                                >
-                                                    ●
+                                                        return (
+                                                            <div key={step.key} className={`flex items-center ${isLast ? '' : 'flex-1'}`}>
+                                                                {/* Step indicator */}
+                                                                <div className="flex flex-col items-center relative">
+                                                                    <div
+                                                                        className={`w-9 h-9 lg:w-10 lg:h-10 rounded-xl flex items-center justify-center text-xs font-bold transition-all duration-300 ${
+                                                                            isCurrent
+                                                                                ? 'bg-orange-500 text-white shadow-md shadow-orange-200 ring-[3px] ring-orange-100 scale-110'
+                                                                                : isCompleted
+                                                                                    ? 'bg-neutral-800 text-white'
+                                                                                    : 'bg-neutral-100 text-neutral-400 border border-neutral-200'
+                                                                        }`}
+                                                                    >
+                                                                        {isCompleted && !isCurrent ? (
+                                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                                                            </svg>
+                                                                        ) : (
+                                                                            <span className="text-sm">{step.icon}</span>
+                                                                        )}
+                                                                    </div>
+                                                                    <p className={`text-[10px] lg:text-[11px] font-bold mt-2 text-center whitespace-nowrap transition-colors ${
+                                                                        isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-700' : 'text-neutral-400'
+                                                                    }`}>
+                                                                        {step.label}
+                                                                    </p>
+                                                                </div>
+
+                                                                {/* Connector line */}
+                                                                {!isLast && (
+                                                                    <div className="flex-1 h-[2px] mx-1.5 lg:mx-2.5 rounded-full relative -mt-5">
+                                                                        <div className="absolute inset-0 bg-neutral-100 rounded-full" />
+                                                                        <div
+                                                                            className={`absolute inset-y-0 left-0 rounded-full transition-all duration-500 ${
+                                                                                currentIdx > idx ? 'bg-neutral-800 w-full' : currentIdx === idx ? 'bg-gradient-to-r from-orange-500 to-orange-200 w-1/2' : 'w-0'
+                                                                            }`}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )
+                                                    })}
                                                 </div>
-                                                <p
-                                                    className={`text-[11px] sm:text-xs font-bold mt-2 transition-colors duration-200 text-center ${isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-800' : 'text-neutral-400'
-                                                        }`}
-                                                >
-                                                    {step.label}
-                                                </p>
-                                                <p className="text-[9px] sm:text-[10px] text-neutral-400 font-medium hidden md:block text-center max-w-[100px]">
-                                                    {step.desc}
-                                                </p>
                                             </div>
-                                        )
-                                    })}
-                                </div>
+
+                                            {/* Mobile: Compact vertical */}
+                                            <div className="sm:hidden space-y-0">
+                                                {steps.map((step, idx) => {
+                                                    const isCurrent = currUpper === step.key
+                                                    const isCompleted = currentIdx >= statusOrder.indexOf(step.key)
+                                                    const isLast = idx === steps.length - 1
+
+                                                    return (
+                                                        <div key={step.key} className="flex items-stretch gap-3">
+                                                            {/* Vertical track */}
+                                                            <div className="flex flex-col items-center">
+                                                                <div
+                                                                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-all duration-300 ${
+                                                                        isCurrent
+                                                                            ? 'bg-orange-500 text-white shadow-md shadow-orange-200 scale-110'
+                                                                            : isCompleted
+                                                                                ? 'bg-neutral-800 text-white'
+                                                                                : 'bg-neutral-100 text-neutral-400 border border-neutral-200'
+                                                                    }`}
+                                                                >
+                                                                    {isCompleted && !isCurrent ? (
+                                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                                                        </svg>
+                                                                    ) : (
+                                                                        <span className="text-sm">{step.icon}</span>
+                                                                    )}
+                                                                </div>
+                                                                {!isLast && (
+                                                                    <div className="w-[2px] flex-1 min-h-[20px] relative my-0.5">
+                                                                        <div className="absolute inset-0 bg-neutral-100 rounded-full" />
+                                                                        {currentIdx > idx && <div className="absolute inset-0 bg-neutral-800 rounded-full" />}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+
+                                                            {/* Label */}
+                                                            <div className={`pb-4 pt-1.5 ${isCurrent ? '' : ''}`}>
+                                                                <p className={`text-xs font-bold leading-none ${
+                                                                    isCurrent ? 'text-orange-600' : isCompleted ? 'text-neutral-700' : 'text-neutral-400'
+                                                                }`}>
+                                                                    {step.label}
+                                                                </p>
+                                                                {isCurrent && (
+                                                                    <p className="text-[10px] text-orange-500 font-medium mt-0.5">Current step</p>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        </div>
+                                    )
+                                })()}
                             </div>
                         )}
 
@@ -3427,207 +3488,219 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const riderPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone || '0917-888-9999'
 
                             return (
-                                <div className={`grid grid-cols-1 ${isOutForDelivery ? 'lg:grid-cols-3 md:grid-cols-2' : 'md:grid-cols-2'} gap-6 pt-4`}>
-                                    <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
-                                        <div>
-                                            <h4 className="font-bold text-neutral-800 text-sm mb-2">Delivery Info</h4>
-                                            <div className="text-xs space-y-1.5 text-neutral-600">
-                                                <p>
-                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Customer:</span>{' '}
-                                                    {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
-                                                </p>
-                                                <p>
-                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Phone:</span>{' '}
-                                                    {activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}
-                                                </p>
-                                                <p className="leading-relaxed">
-                                                    <span className="font-bold text-neutral-400 uppercase text-[10px]">Address:</span>{' '}
-                                                    {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}
-                                                </p>
+                                <div className="space-y-6 mt-2">
+                                    {/* ── Top Row: 2-column layout ── */}
+                                    <div className={`grid grid-cols-1 ${isOutForDelivery ? 'lg:grid-cols-2' : 'md:grid-cols-2'} gap-5`}>
+
+                                        {/* LEFT: Delivery & Order Info Card */}
+                                        <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
+                                            {/* Card Header */}
+                                            <div className="bg-gradient-to-r from-neutral-800 to-neutral-900 px-5 py-3.5 flex items-center justify-between">
+                                                <div className="flex items-center gap-2.5">
+                                                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-base">📍</div>
+                                                    <h4 className="font-bold text-white text-sm tracking-wide">Delivery & Order Info</h4>
+                                                </div>
+                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
+                                                    {(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items
+                                                </span>
+                                            </div>
+
+                                            <div className="p-5 space-y-4">
+                                                {/* Customer Details Grid */}
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                        <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Customer</span>
+                                                        <p className="text-sm font-bold text-neutral-900">{activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}</p>
+                                                    </div>
+                                                    <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                        <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Phone</span>
+                                                        <p className="text-sm font-bold text-neutral-900 font-mono">{activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Delivery Address</span>
+                                                    <p className="text-sm font-semibold text-neutral-800 leading-relaxed">{activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}</p>
+                                                </div>
                                                 {activeOrder.notes && (
-                                                    <p className="leading-relaxed text-orange-600">
-                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Notes:</span>{' '}
-                                                        {activeOrder.notes}
-                                                    </p>
+                                                    <div className="bg-orange-50 rounded-xl p-3 border border-orange-200/50">
+                                                        <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider block mb-0.5">Special Notes</span>
+                                                        <p className="text-sm font-medium text-orange-800">{activeOrder.notes}</p>
+                                                    </div>
                                                 )}
+
+                                                {/* Itemized Dishes */}
+                                                <div className="pt-1">
+                                                    <h5 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">Dishes Ordered</h5>
+                                                    <div className="bg-neutral-50 rounded-xl border border-neutral-100 divide-y divide-neutral-100 overflow-hidden">
+                                                        {(activeOrder.items || []).map((ci: any, idx: number) => {
+                                                            const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
+                                                            const qty = ci.quantity || 1
+                                                            const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
+                                                            return (
+                                                                <div key={idx} className="px-3.5 py-2.5 flex items-center justify-between gap-3">
+                                                                    <div className="flex items-center gap-2.5 min-w-0">
+                                                                        <span className="w-6 h-6 rounded-md bg-orange-100 text-orange-700 flex items-center justify-center text-[10px] font-black shrink-0">{qty}×</span>
+                                                                        <span className="text-xs font-semibold text-neutral-800 truncate">{name}</span>
+                                                                    </div>
+                                                                    <span className="text-xs font-bold text-neutral-900 whitespace-nowrap">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
 
-                                        {/* Itemized Dishes Ordered */}
-                                        <div className="border-t border-neutral-200/60 pt-3">
-                                            <h5 className="font-bold text-neutral-800 text-xs mb-2">Dishes in this Order</h5>
-                                            <div className="divide-y divide-neutral-200/50 text-xs">
-                                                {(activeOrder.items || []).map((ci: any, idx: number) => {
-                                                    const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
-                                                    const qty = ci.quantity || 1
-                                                    const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
-                                                    return (
-                                                        <div key={idx} className="py-1.5 flex items-center justify-between gap-2">
-                                                            <span className="font-medium text-neutral-800">{qty}× {name}</span>
-                                                            <span className="font-bold text-neutral-900">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        {/* RIGHT: Rider + Billing Stacked */}
+                                        <div className="space-y-5">
+                                            {/* Rider Card (visible when out for delivery) */}
+                                            {isOutForDelivery && (
+                                                <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
+                                                    <div className={`px-5 py-3.5 flex items-center justify-between ${isEnRoute ? 'bg-gradient-to-r from-orange-500 to-amber-500' : 'bg-gradient-to-r from-emerald-500 to-teal-500'}`}>
+                                                        <div className="flex items-center gap-2.5">
+                                                            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-base backdrop-blur-xs">🛵</div>
+                                                            <h4 className="font-bold text-white text-sm tracking-wide">Your Rider</h4>
                                                         </div>
-                                                    )
-                                                })}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Delivery Rider Details (Visible when Out for Delivery or Completed) */}
-                                    {isOutForDelivery && (
-                                        <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-4">
-                                            <div>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <h4 className="font-bold text-neutral-800 text-sm">Delivery Rider Details</h4>
-                                                    {isEnRoute ? (
-                                                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-100 text-orange-700 border border-orange-200 shadow-2xs">
-                                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-ping"></span>
-                                                            En Route
-                                                        </span>
-                                                    ) : (
-                                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
-                                                            ✓ Delivered
-                                                        </span>
-                                                    )}
-                                                </div>
-
-                                                <div className="bg-white rounded-xl p-3.5 border border-neutral-200/80 shadow-2xs flex items-center gap-3.5 mt-2">
-                                                    <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200 text-orange-600 flex items-center justify-center text-2xl shrink-0 shadow-2xs">
-                                                        🛵
+                                                        {isEnRoute ? (
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-white/20 text-white backdrop-blur-xs">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                                                                En Route
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-black bg-white/20 text-white backdrop-blur-xs">
+                                                                ✓ Delivered
+                                                            </span>
+                                                        )}
                                                     </div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <span className="text-[10px] font-bold text-orange-600 uppercase tracking-wider block">Assigned Rider</span>
-                                                        <h5 className="font-extrabold text-neutral-900 text-sm truncate">{riderName}</h5>
-                                                        <p className="text-xs text-neutral-500 font-medium flex items-center gap-1 mt-0.5">
-                                                            <span>📞</span>
-                                                            <span className="font-mono text-neutral-700 font-semibold">{riderPhone}</span>
+
+                                                    <div className="p-5 space-y-4">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="w-14 h-14 rounded-2xl bg-orange-50 border-2 border-orange-200 text-orange-600 flex items-center justify-center text-3xl shrink-0">
+                                                                🛵
+                                                            </div>
+                                                            <div className="min-w-0 flex-1">
+                                                                <h5 className="font-extrabold text-neutral-900 text-base">{riderName}</h5>
+                                                                <p className="text-sm text-neutral-600 font-medium flex items-center gap-2 mt-0.5">
+                                                                    <span className="text-neutral-400">📞</span>
+                                                                    <span className="font-mono text-neutral-800 font-bold whitespace-nowrap">{riderPhone}</span>
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Service Mode</span>
+                                                                <p className="text-xs font-bold text-neutral-800">Motorcycle Express</p>
+                                                            </div>
+                                                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Status</span>
+                                                                <p className={`text-xs font-bold ${isEnRoute ? 'text-orange-600' : 'text-emerald-600'}`}>
+                                                                    {isEnRoute ? 'On the way' : 'Delivered ✓'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <p className="text-[11px] text-neutral-400 leading-relaxed text-center pt-1">
+                                                            {isEnRoute
+                                                                ? 'Your rider has dispatched from the store. Please ensure your contact number is reachable for a smooth handover.'
+                                                                : 'This delivery has been successfully received. Thank you for dining with Seafudz ng Bayan!'}
                                                         </p>
                                                     </div>
                                                 </div>
+                                            )}
 
-                                                <div className="text-xs space-y-2 text-neutral-600 mt-3 pt-2 border-t border-neutral-200/60">
-                                                    <p className="flex justify-between items-center">
-                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Service Mode:</span>
-                                                        <span className="font-semibold text-neutral-800">Motorcycle Express Dispatch</span>
-                                                    </p>
-                                                    <p className="flex justify-between items-center">
-                                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Current Status:</span>
-                                                        <span className={`font-bold ${isEnRoute ? 'text-orange-600' : 'text-emerald-600'}`}>
-                                                            {isEnRoute ? 'On the way to your address' : 'Delivered & Completed'}
-                                                        </span>
-                                                    </p>
-                                                    {isEnRoute && (
-                                                        <p className="flex justify-between items-center">
-                                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Estimated Arrival:</span>
-                                                            <span className="font-extrabold text-neutral-900">15 – 25 mins</span>
-                                                        </p>
-                                                    )}
+                                            {/* Billing Card */}
+                                            <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
+                                                <div className="bg-gradient-to-r from-neutral-800 to-neutral-900 px-5 py-3.5 flex items-center gap-2.5">
+                                                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-base">💳</div>
+                                                    <h4 className="font-bold text-white text-sm tracking-wide">Billing & Payment</h4>
                                                 </div>
-                                            </div>
 
-                                            {/* Direct Call Button & Note */}
-                                            <div className="border-t border-neutral-200/60 pt-3 space-y-2">
-                                                <a
-                                                    href={`tel:${riderPhone.replace(/\D/g, '')}`}
-                                                    className="w-full bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-extrabold text-xs py-2.5 px-3 rounded-xl shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer"
-                                                >
-                                                    <span>📞 Call Rider ({riderPhone})</span>
-                                                </a>
-                                                <p className="text-[11px] text-neutral-500 leading-relaxed text-center">
-                                                    {isEnRoute
-                                                        ? 'Your rider has dispatched from the store. Please ensure your contact number is reachable for a smooth handover.'
-                                                        : 'This delivery has been successfully received. Thank you for dining with Seafudz ng Bayan!'}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    )}
+                                                <div className="p-5 space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                        <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Payment Method</span>
+                                                            <p className="text-sm font-bold text-neutral-900">{activeOrder.paymentMethod} Transfer</p>
+                                                        </div>
+                                                        {activeOrder.paymentReference && (
+                                                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Reference No.</span>
+                                                                <p className="text-sm font-bold text-neutral-900 font-mono">{activeOrder.paymentReference}</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
 
-                            <div className="bg-neutral-50 rounded-2xl p-5 border border-neutral-200/50 space-y-3">
-                                <h4 className="font-bold text-neutral-800 text-sm">Billing & Payment Details</h4>
-                                <div className="text-xs space-y-1.5 text-neutral-600">
-                                    <p>
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Payment Mode:</span>{' '}
-                                        <span className="font-bold text-neutral-800">{activeOrder.paymentMethod} Transfer</span>
-                                    </p>
-                                    {activeOrder.paymentReference && (
-                                        <p>
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px]">Reference No:</span>{' '}
-                                            <span className="font-mono font-bold text-neutral-800 bg-neutral-200/70 px-1.5 py-0.5 rounded text-[11px]">{activeOrder.paymentReference}</span>
-                                        </p>
-                                    )}
-                                    {activeOrder.paymentReceipt && (
-                                        <div className="pt-1">
-                                            <span className="font-bold text-neutral-400 uppercase text-[10px] block mb-1">Receipt Uploaded:</span>
-                                            <img
-                                                src={activeOrder.paymentReceipt}
-                                                alt="Receipt"
-                                                className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
-                                            />
-                                        </div>
-                                    )}
+                                                    {activeOrder.paymentReceipt && (
+                                                        <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                            <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1.5">Receipt Uploaded</span>
+                                                            <img
+                                                                src={activeOrder.paymentReceipt}
+                                                                alt="Receipt"
+                                                                className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs"
+                                                            />
+                                                        </div>
+                                                    )}
 
-                                    {/* Refund Transaction Screenshot Proof */}
-                                    {activeOrder.refundReceipt && (
-                                        <div className="pt-2 border-t border-rose-200">
-                                            <span className="font-black text-rose-800 uppercase text-[10px] block mb-1 tracking-wider">
-                                                Refund Transaction Proof:
-                                            </span>
-                                            <div className="bg-white p-2.5 rounded-xl border border-rose-200 flex items-center justify-between gap-3 shadow-2xs">
-                                                <div className="flex items-center gap-2.5 min-w-0">
-                                                    <img
-                                                        src={activeOrder.refundReceipt}
-                                                        alt="Refund Transaction Screenshot"
-                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
-                                                        className="w-12 h-12 object-cover rounded-lg border border-rose-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
-                                                    />
-                                                    <div className="min-w-0">
-                                                        <p className="text-xs font-bold text-neutral-800 truncate">Refund Reference Screenshot</p>
-                                                        <p className="text-[10px] text-neutral-500">Shows refund transaction ref #</p>
+                                                    {/* Refund Transaction Screenshot Proof */}
+                                                    {activeOrder.refundReceipt && (
+                                                        <div className="bg-rose-50 rounded-xl p-3 border border-rose-200">
+                                                            <span className="font-black text-rose-800 uppercase text-[10px] block mb-1.5 tracking-wider">
+                                                                Refund Transaction Proof
+                                                            </span>
+                                                            <div className="bg-white p-2.5 rounded-lg border border-rose-200 flex items-center justify-between gap-3">
+                                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                                    <img
+                                                                        src={activeOrder.refundReceipt}
+                                                                        alt="Refund Transaction Screenshot"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                                        className="w-12 h-12 object-cover rounded-lg border border-rose-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                                                                    />
+                                                                    <div className="min-w-0">
+                                                                        <p className="text-xs font-bold text-neutral-800 truncate">Refund Reference Screenshot</p>
+                                                                        <p className="text-[10px] text-neutral-500">Shows refund transaction ref #</p>
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                                    className="px-2.5 py-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors shrink-0"
+                                                                >
+                                                                    View
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Price Breakdown */}
+                                                    <div className="bg-neutral-50 rounded-xl p-4 border border-neutral-100 space-y-2">
+                                                        <div className="flex justify-between text-xs text-neutral-600">
+                                                            <span>Subtotal</span>
+                                                            <span className="font-semibold text-neutral-800">
+                                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between text-xs text-orange-600">
+                                                            <span className="font-medium">VAT (12%)</span>
+                                                            <span className="font-bold">
+                                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (Number(activeOrder.deliveryFee || 50))) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex justify-between text-xs text-neutral-600">
+                                                            <span>Delivery Fee</span>
+                                                            <span className="font-semibold text-neutral-800">₱{(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
+                                                        <div className="border-t-2 border-dashed border-neutral-200 pt-2.5 mt-1 flex justify-between items-center">
+                                                            <span className="text-sm font-extrabold text-neutral-900">Paid Total</span>
+                                                            <span className="text-lg font-black text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
-                                                    className="px-2.5 py-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors shrink-0"
-                                                >
-                                                    View
-                                                </button>
                                             </div>
                                         </div>
-                                    )}
-                                    <p className="pt-1">
-                                        <span className="font-bold text-neutral-400 uppercase text-[10px]">Items ordered:</span>{' '}
-                                        {(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items
-                                    </p>
-
-                                    {/* Itemized Price & VAT Breakdown */}
-                                    <div className="pt-2 border-t border-neutral-200/70 space-y-1 text-[11px] text-neutral-500">
-                                        <div className="flex justify-between">
-                                            <span>Subtotal:</span>
-                                            <span className="font-semibold text-neutral-700">
-                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between text-orange-600 font-medium">
-                                            <span>VAT (12%):</span>
-                                            <span className="font-bold">
-                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (Number(activeOrder.deliveryFee || 50))) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span>Delivery Fee:</span>
-                                            <span className="font-semibold text-neutral-700">₱{(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                        </div>
                                     </div>
-
-                                    <p className="font-bold text-neutral-800 border-t border-dashed border-neutral-200 pt-1.5 flex justify-between">
-                                        <span>Paid Total:</span>
-                                        <span className="text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                    </p>
                                 </div>
-                            </div>
-                        </div>
-                    )
-                })()}
+                            )
+                        })()}
                     </div>
                 )}
 

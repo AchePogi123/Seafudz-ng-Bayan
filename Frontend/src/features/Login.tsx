@@ -76,6 +76,35 @@ return () => {
   };
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
+
+  const checkEmailAvailability = async (emailToCheck: string) => {
+    const trimmed = emailToCheck.trim();
+    if (!trimmed || !trimmed.includes('@') || !trimmed.includes('.')) {
+      setEmailError('');
+      return;
+    }
+    setIsCheckingEmail(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/check-email?email=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (data?.exists) {
+        setEmailError('This email is already registered. Please sign in or use a different email.');
+      } else {
+        setEmailError('');
+      }
+    } catch {
+      // Ignore background check errors
+    } finally {
+      setIsCheckingEmail(false);
+    }
+  };
+
+  const handleEmailChange = (val: string) => {
+    setEmail(val);
+    if (emailError) setEmailError('');
+  };
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -312,11 +341,16 @@ return () => {
       return;
     }
 
+    if (emailError) {
+      setErrorMessage(emailError);
+      return;
+    }
+
     setIsSendingOtp(true);
     setIsRegisterLoading(true);
 
     try {
-      // Send 5-digit OTP verification code to user email
+      // Send 6-digit OTP verification code to user email
       const otpRes = await fetch(`${API_BASE_URL}/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -326,6 +360,9 @@ return () => {
       const otpJson = await otpRes.json();
 
       if (!otpRes.ok || !otpJson.success) {
+        if (otpJson.code === 'EMAIL_ALREADY_EXISTS' || (otpJson.message && otpJson.message.toLowerCase().includes('already exist'))) {
+          setEmailError(otpJson.message || 'This email address is already registered. Please sign in or use a different email.');
+        }
         throw new Error(otpJson.message || 'Failed to send verification code.');
       }
 
@@ -464,10 +501,20 @@ return () => {
 
         if (authError) {
           console.warn('Supabase Auth SignUp note:', authError.message);
+          const lowerMsg = (authError.message || '').toLowerCase();
+          if (lowerMsg.includes('already registered') || lowerMsg.includes('already exists') || lowerMsg.includes('unique')) {
+            const existsMsg = 'This email address is already registered. Please sign in or use a different email.';
+            setEmailError(existsMsg);
+            throw new Error(existsMsg);
+          }
         } else if (authData?.user?.id) {
           supabaseUserId = authData.user.id;
         }
-      } catch (sErr) {
+      } catch (sErr: unknown) {
+        const msg = sErr instanceof Error ? sErr.message : '';
+        if (msg.includes('already registered') || msg.includes('already exists')) {
+          throw sErr;
+        }
         console.warn('Supabase Auth SignUp exception note:', sErr);
       }
 
@@ -489,6 +536,9 @@ return () => {
       const regJson = await regRes.json();
 
       if (!regRes.ok || !regJson.success) {
+        if (regJson.code === 'EMAIL_ALREADY_EXISTS' || (regJson.message && regJson.message.toLowerCase().includes('already exist'))) {
+          setEmailError(regJson.message || 'This email address is already registered. Please sign in or use a different email.');
+        }
         throw new Error(regJson.message || 'Account registration failed. Please try again.');
       }
 
@@ -500,6 +550,7 @@ return () => {
       setLastName('');
       setUsername('');
       setEmail('');
+      setEmailError('');
       setPhone('');
       setPassword('');
       setConfirmPassword('');
@@ -971,18 +1022,53 @@ return () => {
 
                 {/* Email */}
                 <div className="mb-2.5">
-                  <label htmlFor="register-email" className="block mb-1.5 text-xs font-semibold text-neutral-700">
-                    Email address <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="register-email" className="block text-xs font-semibold text-neutral-700">
+                      Email address <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    {isCheckingEmail && (
+                      <span className="text-[11px] text-neutral-400 flex items-center gap-1">
+                        <span className="inline-block w-2.5 h-2.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
+                        Checking availability...
+                      </span>
+                    )}
+                  </div>
                   <input
                     id="register-email"
                     type="email"
                     placeholder="you@example.com"
                     required
-                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    className={`w-full py-3 px-3.5 rounded-xl border font-sans text-sm font-medium placeholder-neutral-400 focus:outline-none transition-all box-border ${
+                      emailError
+                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
+                        : 'border-[#eadfd7] bg-[#fcfaf8] text-neutral-800 hover:border-[#d8b9a5] focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10'
+                    }`}
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => handleEmailChange(e.target.value)}
+                    onBlur={() => checkEmailAvailability(email)}
                   />
+                  {emailError && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between text-xs text-red-700">
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        {emailError}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('login');
+                          setLoginInput(email);
+                          setErrorMessage('');
+                          setEmailError('');
+                        }}
+                        className="text-xs font-bold text-[#FF6900] hover:underline ml-2 whitespace-nowrap cursor-pointer"
+                      >
+                        Sign in →
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Phone */}
@@ -1384,14 +1470,43 @@ return () => {
                 />
 
                 {/* Email */}
-                <input
-                  type="email"
-                  placeholder="Email Address"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                />
+                <div>
+                  <div className="relative">
+                    <input
+                      type="email"
+                      placeholder="Email Address"
+                      required
+                      value={email}
+                      onChange={(e) => handleEmailChange(e.target.value)}
+                      onBlur={() => checkEmailAvailability(email)}
+                      className={`w-full h-11 px-3.5 rounded-xl border text-xs font-medium placeholder-neutral-400 focus:outline-none box-border ${
+                        emailError
+                          ? 'border-red-400 bg-red-50 text-red-900 focus:ring-2 focus:ring-red-500/10'
+                          : 'border-neutral-200 bg-white text-neutral-800 focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10'
+                      }`}
+                    />
+                    {isCheckingEmail && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
+                    )}
+                  </div>
+                  {emailError && (
+                    <div className="mt-1 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between text-[11px] text-red-700">
+                      <span>⚠️ {emailError}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAuthMode('login');
+                          setLoginInput(email);
+                          setErrorMessage('');
+                          setEmailError('');
+                        }}
+                        className="text-[11px] font-bold text-[#FF6900] hover:underline ml-1 whitespace-nowrap"
+                      >
+                        Sign in →
+                      </button>
+                    </div>
+                  )}
+                </div>
 
                 {/* Phone */}
                 <input

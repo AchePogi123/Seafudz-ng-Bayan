@@ -496,7 +496,7 @@ export const AccMan: React.FC = () => {
                 setRelocateMessage('')
                 setMessage({ type: 'success', text: responseData.message || 'Personal details saved to database successfully!' })
             } else {
-                const errorMsg = responseData.message || responseData.error || 'Failed to update personal details in database.'
+                const errorMsg = responseData.error ? `${responseData.message || 'Failed to update profile'}: ${responseData.error}` : (responseData.message || 'Failed to update personal details in database.')
                 setMessage({ type: 'error', text: errorMsg })
             }
         } catch (err: any) {

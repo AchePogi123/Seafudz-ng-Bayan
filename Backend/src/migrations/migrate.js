@@ -20,7 +20,7 @@ export async function runMigrations() {
       return p.connect();
     });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Connection attempt timed out')), 2500)
+      setTimeout(() => reject(new Error('Connection attempt timed out')), 15000)
     );
     client = await Promise.race([connectPromise, timeoutPromise]);
   } catch (err) {

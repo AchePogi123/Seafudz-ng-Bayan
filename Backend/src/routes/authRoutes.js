@@ -2229,8 +2229,26 @@ router.get('/auth/verify-token', (req, res) => {
  * GET /api/auth/me-profile
  * Fetches user profile record from PostgreSQL customers or employees table
  */
+let customerTableSchemaVerified = false;
+async function ensureCustomerTableColumns() {
+  if (customerTableSchemaVerified) return;
+  try {
+    await query(`
+      ALTER TABLE customers ADD COLUMN IF NOT EXISTS username VARCHAR(100);
+      ALTER TABLE customers ADD COLUMN IF NOT EXISTS avatar TEXT;
+      ALTER TABLE customers ADD COLUMN IF NOT EXISTS password_hash TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS avatar TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS password_hash TEXT;
+    `);
+    customerTableSchemaVerified = true;
+  } catch (schemaErr) {
+    console.warn("[AUTH] Customer table column verification note:", schemaErr.message);
+  }
+}
+
 router.get('/auth/me-profile', async (req, res) => {
   try {
+    await ensureCustomerTableColumns();
     const { email, id, role } = req.query;
     const cleanEmail = (email || '').trim().toLowerCase();
     const cleanId = (id || '').trim();
@@ -2262,14 +2280,26 @@ router.get('/auth/me-profile', async (req, res) => {
     }
 
     // Check customers
-    const custRes = await query(
-      `SELECT id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at
-       FROM customers
-       WHERE (id::text = $1 OR supabase_user_id::text = $1)
-          OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
-       LIMIT 1`,
-      [cleanId || '00000000-0000-0000-0000-000000000000', cleanEmail]
-    );
+    let custRes;
+    try {
+      custRes = await query(
+        `SELECT id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at
+         FROM customers
+         WHERE (id::text = $1 OR supabase_user_id::text = $1)
+            OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
+         LIMIT 1`,
+        [cleanId || '00000000-0000-0000-0000-000000000000', cleanEmail]
+      );
+    } catch {
+      custRes = await query(
+        `SELECT id, supabase_user_id, fullname, email, phone, delivery_address AS address, created_at
+         FROM customers
+         WHERE (id::text = $1 OR supabase_user_id::text = $1)
+            OR ($2 <> '' AND LOWER(email) = $2)
+         LIMIT 1`,
+        [cleanId || '00000000-0000-0000-0000-000000000000', cleanEmail]
+      );
+    }
 
     if (custRes.rows.length > 0) {
       return res.status(200).json({
@@ -2309,6 +2339,7 @@ router.get('/auth/me-profile', async (req, res) => {
  */
 router.put('/auth/profile', requireAuth, async (req, res) => {
   try {
+    await ensureCustomerTableColumns();
     const { originalEmail, email, fullname, phone, address, username, role, id, avatar } = req.body;
     const cleanAvatar = (avatar || '').trim();
     const cleanEmail = (email || originalEmail || '').trim().toLowerCase();
@@ -2441,16 +2472,29 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
       }
     } else {
       // 2. Customer Profile Update or Upsert
-      const custTarget = await query(
-        `SELECT id, supabase_user_id, email, username
-         FROM customers
-         WHERE ($1 <> '' AND (id::text = $1 OR supabase_user_id::text = $1))
-            OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
-         LIMIT 1`,
-        [targetId, targetEmail]
-      );
-
-      let cust = custTarget.rows[0];
+      let cust = null;
+      try {
+        const custTarget = await query(
+          `SELECT id, supabase_user_id, email, username
+           FROM customers
+           WHERE ($1 <> '' AND (id::text = $1 OR supabase_user_id::text = $1))
+              OR ($2 <> '' AND (LOWER(email) = $2 OR LOWER(username) = $2))
+           LIMIT 1`,
+          [targetId, targetEmail]
+        );
+        cust = custTarget.rows[0];
+      } catch (custLookupErr) {
+        // Fallback without username column
+        const custTargetFallback = await query(
+          `SELECT id, supabase_user_id, email
+           FROM customers
+           WHERE ($1 <> '' AND (id::text = $1 OR supabase_user_id::text = $1))
+              OR ($2 <> '' AND LOWER(email) = $2)
+           LIMIT 1`,
+          [targetId, targetEmail]
+        );
+        cust = custTargetFallback.rows[0];
+      }
 
       if (cust) {
         // Enforce 6-digit OTP verification for email changes
@@ -2461,29 +2505,51 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
           });
         }
 
-        const custRes = await query(
-          `UPDATE customers
-           SET fullname = COALESCE(NULLIF($1, ''), fullname),
-               username = COALESCE(NULLIF($2, ''), username),
-               email = COALESCE(NULLIF($3, ''), email),
-               phone = COALESCE(NULLIF($4, ''), phone),
-               delivery_address = COALESCE(NULLIF($5, ''), delivery_address),
-               avatar = COALESCE(NULLIF($6, ''), avatar),
-               updated_at = NOW()
-           WHERE id = $7
-           RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at, updated_at`,
-          [
-            cleanFullname,
-            requestedUsername,
-            cleanEmail,
-            cleanPhone,
-            cleanAddress,
-            cleanAvatar,
-            cust.id,
-          ]
-        );
+        let custRes;
+        try {
+          custRes = await query(
+            `UPDATE customers
+             SET fullname = COALESCE(NULLIF($1, ''), fullname),
+                 username = COALESCE(NULLIF($2, ''), username),
+                 email = COALESCE(NULLIF($3, ''), email),
+                 phone = COALESCE(NULLIF($4, ''), phone),
+                 delivery_address = COALESCE(NULLIF($5, ''), delivery_address),
+                 avatar = COALESCE(NULLIF($6, ''), avatar),
+                 updated_at = NOW()
+             WHERE id = $7
+             RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, avatar, created_at, updated_at`,
+            [
+              cleanFullname,
+              requestedUsername,
+              cleanEmail,
+              cleanPhone,
+              cleanAddress,
+              cleanAvatar,
+              cust.id,
+            ]
+          );
+        } catch (updateErr) {
+          // Fallback update without username/avatar if column is not yet present
+          custRes = await query(
+            `UPDATE customers
+             SET fullname = COALESCE(NULLIF($1, ''), fullname),
+                 email = COALESCE(NULLIF($2, ''), email),
+                 phone = COALESCE(NULLIF($3, ''), phone),
+                 delivery_address = COALESCE(NULLIF($4, ''), delivery_address),
+                 updated_at = NOW()
+             WHERE id = $5
+             RETURNING id, supabase_user_id, fullname, email, phone, delivery_address AS address, created_at, updated_at`,
+            [
+              cleanFullname,
+              cleanEmail,
+              cleanPhone,
+              cleanAddress,
+              cust.id,
+            ]
+          );
+        }
 
-        if (custRes.rows.length > 0) {
+        if (custRes && custRes.rows.length > 0) {
           updatedRecord = { ...custRes.rows[0], role: 'customer' };
 
           // Sync Supabase Auth user metadata if linked
@@ -2495,7 +2561,7 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
                   name: updatedRecord.fullname,
                   phone: updatedRecord.phone,
                   delivery_address: updatedRecord.address,
-                  username: updatedRecord.username,
+                  username: updatedRecord.username || requestedUsername,
                 },
               };
               if (cleanEmail && cleanEmail !== cust.email) {
@@ -2508,27 +2574,51 @@ router.put('/auth/profile', requireAuth, async (req, res) => {
           }
         }
       } else {
-        // Upsert new customer if not found
-        const newCustRes = await query(
-          `INSERT INTO customers (fullname, username, email, phone, delivery_address, supabase_user_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (email) DO UPDATE
-           SET fullname = COALESCE(NULLIF(EXCLUDED.fullname, ''), customers.fullname),
-               username = COALESCE(NULLIF(EXCLUDED.username, ''), customers.username),
-               phone = COALESCE(NULLIF(EXCLUDED.phone, ''), customers.phone),
-               delivery_address = COALESCE(NULLIF(EXCLUDED.delivery_address, ''), customers.delivery_address),
-               updated_at = NOW()
-           RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, created_at, updated_at`,
-          [
-            cleanFullname || 'Customer',
-            requestedUsername || null,
-            cleanEmail || authEmail,
-            cleanPhone || null,
-            cleanAddress || null,
-            authId || null,
-          ]
-        );
-        if (newCustRes.rows.length > 0) {
+        const isUuid = (val) => typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+        const safeSupabaseId = isUuid(authId) ? authId : (isUuid(targetId) ? targetId : null);
+
+        let newCustRes;
+        try {
+          newCustRes = await query(
+            `INSERT INTO customers (fullname, username, email, phone, delivery_address, supabase_user_id)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (email) DO UPDATE
+             SET fullname = COALESCE(NULLIF(EXCLUDED.fullname, ''), customers.fullname),
+                 username = COALESCE(NULLIF(EXCLUDED.username, ''), customers.username),
+                 phone = COALESCE(NULLIF(EXCLUDED.phone, ''), customers.phone),
+                 delivery_address = COALESCE(NULLIF(EXCLUDED.delivery_address, ''), customers.delivery_address),
+                 updated_at = NOW()
+             RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address AS address, created_at, updated_at`,
+            [
+              cleanFullname || 'Customer',
+              requestedUsername || null,
+              cleanEmail || authEmail,
+              cleanPhone || null,
+              cleanAddress || null,
+              safeSupabaseId,
+            ]
+          );
+        } catch (insertErr) {
+          // Fallback insert without username
+          newCustRes = await query(
+            `INSERT INTO customers (fullname, email, phone, delivery_address, supabase_user_id)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (email) DO UPDATE
+             SET fullname = COALESCE(NULLIF(EXCLUDED.fullname, ''), customers.fullname),
+                 phone = COALESCE(NULLIF(EXCLUDED.phone, ''), customers.phone),
+                 delivery_address = COALESCE(NULLIF(EXCLUDED.delivery_address, ''), customers.delivery_address),
+                 updated_at = NOW()
+             RETURNING id, supabase_user_id, fullname, email, phone, delivery_address AS address, created_at, updated_at`,
+            [
+              cleanFullname || 'Customer',
+              cleanEmail || authEmail,
+              cleanPhone || null,
+              cleanAddress || null,
+              safeSupabaseId,
+            ]
+          );
+        }
+        if (newCustRes && newCustRes.rows.length > 0) {
           updatedRecord = { ...newCustRes.rows[0], role: 'customer' };
         }
       }

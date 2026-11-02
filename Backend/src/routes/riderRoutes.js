@@ -161,7 +161,7 @@ export async function handleRiderStatusUpdate(req, res) {
       const newEntry = {
         id,
         status: nextStatus,
-        riderName: riderName || (nextStatus === 'OUT_FOR_DELIVERY' ? 'Kuya Mark Reyes' : undefined),
+        riderName: (riderName && riderName !== 'Kuya Mark Reyes' ? riderName : (nextStatus === 'OUT_FOR_DELIVERY' ? 'Rider Alex Ramos' : undefined)),
         riderPhone: riderPhone || (nextStatus === 'OUT_FOR_DELIVERY' ? '0917-888-9999' : undefined),
         riderCashReceived: finalRiderMoney,
         updated_at: new Date().toISOString()
@@ -187,20 +187,37 @@ export async function handleRiderStatusUpdate(req, res) {
         rows = res.rows;
       }
       
-      // Update deliveries status in DB
+      // Update deliveries status in DB and associate rider
       let dbDeliveryStatus = 'PENDING';
       if (nextStatus === 'OUT_FOR_DELIVERY') dbDeliveryStatus = 'IN_TRANSIT';
       else if (nextStatus === 'COMPLETED') dbDeliveryStatus = 'DELIVERED';
 
-      if (finalRiderMoney !== undefined) {
+      let riderEmployeeId = req.user?.id || req.body?.riderId || req.body?.employeeId || null;
+      if (!riderEmployeeId && riderName && riderName !== 'Kuya Mark Reyes') {
+        try {
+          const empLookup = await query('SELECT id FROM employees WHERE LOWER(fullname) = LOWER($1) OR LOWER(username) = LOWER($1) LIMIT 1', [riderName.trim()]);
+          if (empLookup?.rows?.length > 0) riderEmployeeId = empLookup.rows[0].id;
+        } catch {}
+      }
+      if (!riderEmployeeId) {
+        riderEmployeeId = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'; // Default to Rider Alex Ramos
+      }
+
+      const delRes = await query(
+        `UPDATE deliveries SET status = $1, rider_id = COALESCE($2, rider_id, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'), rider_cash_received = COALESCE($3, rider_cash_received), updated_at = NOW() WHERE order_id = $4 RETURNING *`,
+        [dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null, id]
+      );
+
+      if (delRes.rows.length === 0) {
         await query(
-          `UPDATE deliveries SET status = $1, rider_cash_received = $2, updated_at = NOW() WHERE order_id = $3`,
-          [dbDeliveryStatus, finalRiderMoney, id]
-        );
-      } else {
-        await query(
-          `UPDATE deliveries SET status = $1, updated_at = NOW() WHERE order_id = $2`,
-          [dbDeliveryStatus, id]
+          `INSERT INTO deliveries (order_id, delivery_address, status, rider_id, rider_cash_received, updated_at)
+           VALUES ($1, 'Standard Delivery Address', $2, $3, $4, NOW())
+           ON CONFLICT (order_id) DO UPDATE SET
+             status = EXCLUDED.status,
+             rider_id = COALESCE(EXCLUDED.rider_id, deliveries.rider_id),
+             rider_cash_received = COALESCE(EXCLUDED.rider_cash_received, deliveries.rider_cash_received),
+             updated_at = NOW()`,
+          [id, dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null]
         );
       }
 

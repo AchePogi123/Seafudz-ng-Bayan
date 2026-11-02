@@ -844,6 +844,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
+    const [addressDetails, setAddressDetails] = useState('')
     const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null)
     const [isFindingAddress, setIsFindingAddress] = useState(false)
     const [addressLookupMessage, setAddressLookupMessage] = useState('')
@@ -904,7 +905,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 try {
                     const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates)
                     setAddress(resolvedAddress)
-                    setAddressLookupMessage('Current location added. Please check the address and add unit or gate details if needed.')
+                    setAddressLookupMessage('Location updated successfully. Add any unit or gate details below.')
                 } catch (error) {
                     setAddress(`${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`)
                     setAddressLookupMessage(
@@ -1733,11 +1734,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
         try {
             const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
+            const combinedAddress = addressDetails.trim()
+                ? `${address.trim()} (${addressDetails.trim()})`
+                : address.trim()
+
             const orderPayload = {
                 type: 'Delivery',
                 customerName: customerName.trim(),
                 phone: phone.trim(),
-                deliveryAddress: address.trim(),
+                deliveryAddress: combinedAddress,
                 deliveryLatitude: addressCoordinates?.lat,
                 deliveryLongitude: addressCoordinates?.lng,
                 paymentMethod,
@@ -1800,8 +1805,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 customerName: serverOrder?.customerName || serverOrder?.customer_name || customerName,
                 customer: serverOrder?.customerName || serverOrder?.customer_name || customerName,
                 phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
-                address: serverOrder?.address || serverOrder?.delivery_address || address,
-                deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || address,
+                address: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
+                deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
                 deliveryLatitude: serverOrder?.deliveryLatitude ?? addressCoordinates?.lat,
                 deliveryLongitude: serverOrder?.deliveryLongitude ?? addressCoordinates?.lng,
                 paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
@@ -1873,6 +1878,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setCustomerName('')
         setPhone('')
         setAddress('')
+        setAddressDetails('')
         setOrderNotes('')
         setCartItems([])
         setActiveTab('menu')
@@ -2460,50 +2466,52 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             type="button"
                                             onClick={handleUseCurrentLocation}
                                             disabled={isFindingAddress}
-                                            className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-1.5 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60"
+                                            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
+                                            title="Refresh or change your delivery location"
                                         >
-                                            {isFindingAddress ? 'Finding location…' : 'Use my current location'}
+                                            <svg className={`w-3.5 h-3.5 text-neutral-500 ${isFindingAddress ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                            </svg>
+                                            {isFindingAddress ? 'Relocating…' : 'Relocate'}
                                         </button>
-                                        {addressCoordinates && (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setAddressCoordinates(null)
-                                                    setDeliveryDistanceKm(null)
-                                                    setIsCalculatingDeliveryFee(Boolean(address.trim()))
-                                                    setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.')
-                                                }}
-                                                className="text-xs font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700"
-                                            >
-                                                Remove location pin
-                                            </button>
-                                        )}
                                     </div>
                                     <textarea
                                         required
-                                        rows={3}
+                                        rows={2}
+                                        readOnly={Boolean(address.trim())}
                                         disabled={isFindingAddress}
-                                        placeholder="Enter your complete delivery address"
+                                        placeholder={address.trim() ? '' : 'No address set. Click Relocate to detect your location.'}
                                         value={address}
                                         onChange={(e) => {
-                                            setAddress(e.target.value)
-                                            setAddressLookupMessage('')
-                                            if (!addressCoordinates) {
-                                                setDeliveryDistanceKm(null)
-                                                setIsCalculatingDeliveryFee(Boolean(e.target.value.trim()))
-                                                setDeliveryDistanceMessage('')
+                                            if (!address.trim()) {
+                                                setAddress(e.target.value)
                                             }
                                         }}
-                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
+                                        className={`border rounded-xl px-4 py-2.5 text-sm transition-colors resize-none ${
+                                            address.trim()
+                                                ? 'bg-neutral-50/80 text-neutral-700 border-neutral-200 cursor-default select-text focus:outline-none'
+                                                : 'border-neutral-200 focus:outline-none focus:border-orange-500'
+                                        }`}
                                     />
                                     {addressLookupMessage && (
                                         <p role="status" className="text-xs text-neutral-500">
                                             {addressLookupMessage}
                                         </p>
                                     )}
-                                    <p className="text-[11px] text-neutral-400">
-                                        Address lookup uses OpenStreetMap. Please verify the address before ordering.
-                                    </p>
+                                </div>
+
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider flex items-center justify-between">
+                                        <span>Additional Details (Unit / Floor / Landmark)</span>
+                                        <span className="text-neutral-400 font-semibold text-[11px] normal-case tracking-normal">(Optional)</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. Unit 4B, 3rd Floor, Blue Gate, near 7-Eleven"
+                                        value={addressDetails}
+                                        onChange={(e) => setAddressDetails(e.target.value)}
+                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                                    />
                                 </div>
 
                                 <div className="flex flex-col gap-1.5">
@@ -3484,8 +3492,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const isOutForDelivery = ['OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(norm)
                             const isEnRoute = norm === 'OUT_FOR_DELIVERY'
 
-                            const riderName = activeOrder.riderName || (activeOrder as any).rider_name || (activeOrder as any).assignedRiderName || 'Kuya Mark Reyes'
-                            const riderPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone || '0917-888-9999'
+                            const rawRider = activeOrder.riderName || (activeOrder as any).rider_name || (activeOrder as any).assignedRiderName
+                            const riderName = (!rawRider || rawRider === 'Kuya Mark Reyes') ? 'Rider Alex Ramos' : rawRider
+                            const rawPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone
+                            const riderPhone = (!rawPhone) ? '0917-888-9999' : rawPhone
 
                             return (
                                 <div className="space-y-6 mt-2">

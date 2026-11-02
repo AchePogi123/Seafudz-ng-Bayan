@@ -640,7 +640,8 @@ export const RideRoleDemo: React.FC = () => {
       } catch {}
     }
 
-    const riderName = currentUser?.fullname || currentUser?.username || 'Kuya Mark Reyes'
+    const rawRider = currentUser?.fullname || currentUser?.username
+    const riderName = (!rawRider || rawRider === 'Kuya Mark Reyes') ? 'Rider Alex Ramos' : rawRider
     const riderPhone = currentUser?.phone || '0917-888-9999'
 
     // Update in LocalStorage
@@ -748,6 +749,7 @@ export const RideRoleDemo: React.FC = () => {
               riderCashReceived: u.moneyReceived,
               riderName,
               riderPhone,
+              riderId: currentUser?.id || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
             }),
           })
         } catch {}

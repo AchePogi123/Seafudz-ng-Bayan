@@ -4,6 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
+import { reverseGeocodeCoordinates, type Coordinates } from '../utils/locationServices';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
@@ -106,6 +107,10 @@ return () => {
     if (emailError) setEmailError('');
   };
   const [phone, setPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null);
+  const [isFindingAddress, setIsFindingAddress] = useState(false);
+  const [addressLookupMessage, setAddressLookupMessage] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -113,6 +118,43 @@ return () => {
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'privacy'>('terms');
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setAddressLookupMessage('Location is not supported by this browser.');
+      return;
+    }
+
+    setIsFindingAddress(true);
+    setAddressLookupMessage('');
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const currentCoordinates = { lat: coords.latitude, lng: coords.longitude };
+        setAddressCoordinates(currentCoordinates);
+        try {
+          const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates);
+          setAddress(resolvedAddress);
+          setAddressLookupMessage('Current location added. Please check the address and add unit or gate details if needed.');
+        } catch (error) {
+          setAddress(`${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`);
+          setAddressLookupMessage(
+            `${error instanceof Error ? error.message : 'Could not find a readable address.'} Coordinates were added instead; add any helpful delivery details.`
+          );
+        } finally {
+          setIsFindingAddress(false);
+        }
+      },
+      (error) => {
+        setIsFindingAddress(false);
+        setAddressLookupMessage(
+          error.code === 1
+            ? 'Location permission was denied. Enter your delivery address manually.'
+            : 'Could not get your location. Check your device settings and try again.'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+  };
 
   // Terms and Conditions modal
   const [showTerms, setShowTerms] = useState(false);
@@ -153,7 +195,7 @@ return () => {
   const navigateByRole = (userRole?: string, token?: string, userData?: Record<string, unknown>) => {
     const normRole = (userRole || 'customer').toLowerCase();
     const userPhone = (userData?.phone as string) || phone || undefined;
-    const userAddress = (userData?.delivery_address as string) || (userData?.address as string) || undefined;
+    const userAddress = (userData?.delivery_address as string) || (userData?.address as string) || address.trim() || undefined;
 
     const activeToken =
       token ||
@@ -528,6 +570,7 @@ return () => {
           username: username.trim(),
           email: email.trim(),
           phone: phone.trim(),
+          address: address.trim(),
           role,
           token: verificationCode.trim(),
         }),
@@ -552,6 +595,9 @@ return () => {
       setEmail('');
       setEmailError('');
       setPhone('');
+      setAddress('');
+      setAddressCoordinates(null);
+      setAddressLookupMessage('');
       setPassword('');
       setConfirmPassword('');
       setVerificationCode('');
@@ -763,7 +809,7 @@ return () => {
           authMode === 'welcome'
             ? 'flex flex-col justify-center md:col-start-2'
             : authMode === 'signup'
-              ? 'flex flex-col justify-center md:rounded-l-[28px] lg:rounded-l-[36px]'
+              ? 'flex flex-col justify-center md:rounded-l-[28px] lg:rounded-l-[36px] overflow-y-auto max-h-[92vh]'
               : 'flex flex-col justify-center md:rounded-r-[28px] lg:rounded-r-[36px]'
         }`}>
           {/* Notification when redirected from customer order */}
@@ -1085,6 +1131,61 @@ return () => {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
+                </div>
+
+                {/* Delivery Address with "Use my current location" */}
+                <div className="mb-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                    <label htmlFor="register-address" className="block text-xs font-semibold text-neutral-700">
+                      Delivery address <span className="text-neutral-400 font-normal text-[11px]">(Optional)</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleUseCurrentLocation}
+                        disabled={isFindingAddress}
+                        className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <svg className="w-3.5 h-3.5 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>{isFindingAddress ? 'Finding location…' : 'Use my current location'}</span>
+                      </button>
+                      {addressCoordinates && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddressCoordinates(null);
+                            setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.');
+                          }}
+                          className="text-xs font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700 cursor-pointer"
+                        >
+                          Remove location pin
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <textarea
+                    id="register-address"
+                    rows={2}
+                    disabled={isFindingAddress}
+                    placeholder="Enter your complete delivery address"
+                    value={address}
+                    onChange={(e) => {
+                      setAddress(e.target.value);
+                      setAddressLookupMessage('');
+                    }}
+                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border resize-none"
+                  />
+                  {addressLookupMessage && (
+                    <p role="status" className="text-xs text-neutral-500 mt-1">
+                      {addressLookupMessage}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Address lookup uses OpenStreetMap. Please verify the address before ordering.
+                  </p>
                 </div>
 
                 {/* Password */}
@@ -1517,6 +1618,61 @@ return () => {
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
                 />
+
+                {/* Delivery Address with "Use my current location" */}
+                <div className="space-y-1.5 text-left">
+                  <div className="flex flex-wrap items-center justify-between gap-1">
+                    <label htmlFor="mobile-register-address" className="text-xs font-bold text-neutral-800">
+                      Delivery Address <span className="text-neutral-400 font-normal text-[11px]">(Optional)</span>
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleUseCurrentLocation}
+                        disabled={isFindingAddress}
+                        className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1"
+                      >
+                        <svg className="w-3 h-3 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>{isFindingAddress ? 'Finding location…' : 'Use my current location'}</span>
+                      </button>
+                      {addressCoordinates && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddressCoordinates(null);
+                            setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.');
+                          }}
+                          className="text-[11px] font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700 cursor-pointer"
+                        >
+                          Remove pin
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <textarea
+                    id="mobile-register-address"
+                    rows={2}
+                    disabled={isFindingAddress}
+                    placeholder="Enter your complete delivery address"
+                    value={address}
+                    onChange={(e) => {
+                      setAddress(e.target.value);
+                      setAddressLookupMessage('');
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border resize-none"
+                  />
+                  {addressLookupMessage && (
+                    <p role="status" className="text-[10px] text-neutral-500">
+                      {addressLookupMessage}
+                    </p>
+                  )}
+                  <p className="text-[10px] text-neutral-400">
+                    Address lookup uses OpenStreetMap. Please verify the address before ordering.
+                  </p>
+                </div>
 
                 {/* Passwords */}
                 <div className="grid grid-cols-2 gap-2">

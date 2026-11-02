@@ -209,8 +209,20 @@ export function formatOrderResponse(row) {
     referenceNumber: row.payment_reference || row.paymentReference || row.reference_number || row.referenceNumber || paymentReferenceFromPayments || undefined,
     riderCashReceived: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
     rider_cash_received: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
-    riderName: row.rider_name || row.riderName || (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED' ? 'Kuya Mark Reyes' : undefined),
-    riderPhone: row.rider_phone || row.riderPhone || (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED' ? '0917-888-9999' : undefined),
+    riderName: (() => {
+      const name = row.rider_name || row.riderName;
+      if (!name || name === 'Kuya Mark Reyes') {
+        return (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED') ? 'Rider Alex Ramos' : undefined;
+      }
+      return name;
+    })(),
+    riderPhone: (() => {
+      const phone = row.rider_phone || row.riderPhone;
+      if (!phone || phone === '0917-888-9999') {
+        return (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED') ? '0917-888-9999' : undefined;
+      }
+      return phone;
+    })(),
     paymentReceipt: row.payment_receipt || row.paymentReceipt || paymentReceiptFromPayments || undefined,
     refundReceipt: row.refund_receipt || row.refundReceipt || refundReceiptFromRefunds || undefined,
     refundReference: row.refund_reference || row.refundReference || refundReferenceFromRefunds || undefined,

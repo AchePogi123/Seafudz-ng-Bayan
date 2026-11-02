@@ -11,6 +11,7 @@ import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { supabase } from '../utils/supabase'
 import { normalizeStatus } from './OnlineCustomer'
 import { subscribeOrderSync } from '../utils/orderSync'
+import { reverseGeocodeCoordinates } from '../utils/locationServices'
 
 interface OrderItem {
     id?: string | number
@@ -336,6 +337,8 @@ export const AccMan: React.FC = () => {
     }, [])
     const [isSaving, setIsSaving] = useState(false)
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+    const [isRelocating, setIsRelocating] = useState(false)
+    const [relocateMessage, setRelocateMessage] = useState('')
 
     // Password fields (for Security tab)
     const [currentPassword, setCurrentPassword] = useState('')
@@ -391,6 +394,44 @@ export const AccMan: React.FC = () => {
     // Handlers
     const handleProfileChange = (field: keyof UserProfile, value: string) => {
         setEditForm((prev) => ({ ...prev, [field]: value }))
+    }
+
+    const handleRelocate = () => {
+        if (!navigator.geolocation) {
+            setRelocateMessage('Geolocation is not supported by your browser.')
+            return
+        }
+
+        setIsRelocating(true)
+        setRelocateMessage('')
+
+        navigator.geolocation.getCurrentPosition(
+            async ({ coords }) => {
+                const currentCoordinates = { lat: coords.latitude, lng: coords.longitude }
+                try {
+                    const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates)
+                    handleProfileChange('address', resolvedAddress)
+                    setRelocateMessage('Location detected! Click "Save Profile Changes" to save it to database.')
+                } catch (error) {
+                    const fallback = `${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`
+                    handleProfileChange('address', fallback)
+                    setRelocateMessage(
+                        `${error instanceof Error ? error.message : 'Could not resolve address.'} Coordinates were added instead. Click "Save Profile Changes" to save.`
+                    )
+                } finally {
+                    setIsRelocating(false)
+                }
+            },
+            (error) => {
+                setIsRelocating(false)
+                setRelocateMessage(
+                    error.code === 1
+                        ? 'Location permission was denied. You can enter your delivery address manually.'
+                        : 'Could not get your location. Please check your device location settings.'
+                )
+            },
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+        )
     }
 
     const handleSaveProfile = async (e: React.FormEvent) => {
@@ -452,6 +493,7 @@ export const AccMan: React.FC = () => {
                     })
                 }
                 window.dispatchEvent(new Event('seafudz_profile_updated'))
+                setRelocateMessage('')
                 setMessage({ type: 'success', text: responseData.message || 'Personal details saved to database successfully!' })
             } else {
                 const errorMsg = responseData.message || responseData.error || 'Failed to update personal details in database.'
@@ -468,6 +510,7 @@ export const AccMan: React.FC = () => {
 
     const handleResetProfile = () => {
         setEditForm({ ...profile })
+        setRelocateMessage('')
         setMessage(null)
     }
 
@@ -1187,14 +1230,35 @@ export const AccMan: React.FC = () => {
                                     </div>
                                     {!isEmployee && (
                                         <div className="flex flex-col gap-1.5 md:col-span-2">
-                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Delivery Address</label>
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                                    Delivery Address
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleRelocate}
+                                                    disabled={isRelocating}
+                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
+                                                    title="Detect current location"
+                                                >
+                                                    <svg className={`w-3.5 h-3.5 text-neutral-500 ${isRelocating ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                    </svg>
+                                                    {isRelocating ? 'Relocating…' : 'Relocate'}
+                                                </button>
+                                            </div>
                                             <textarea
-                                                required
                                                 rows={3}
                                                 value={editForm.address}
+                                                placeholder={isRelocating ? 'Detecting your location...' : 'Enter your delivery address or click Relocate'}
                                                 onChange={(e) => handleProfileChange('address', e.target.value)}
                                                 className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
                                             />
+                                            {relocateMessage && (
+                                                <p className="text-xs text-neutral-500 mt-0.5">
+                                                    {relocateMessage}
+                                                </p>
+                                            )}
                                         </div>
                                     )}
                                 </div>

@@ -360,7 +360,11 @@ const AdminDashboard: React.FC = () => {
                                 dbMap.set(o.id, o)
                             }
                         })
-                        combinedOrders = Array.from(dbMap.values())
+                        combinedOrders = Array.from(dbMap.values()).sort((a, b) => {
+                            const timeA = parseOrderDate(a.dateTime, a.created_at).getTime()
+                            const timeB = parseOrderDate(b.dateTime, b.created_at).getTime()
+                            return timeB - timeA
+                        })
                     }
                 }
             } catch (err) {
@@ -386,10 +390,11 @@ const AdminDashboard: React.FC = () => {
             void refreshProductImages()
         })
 
+        // Relaxed periodic background heartbeat (30s) - instant updates are pushed via SSE (subscribeOrderSync)
         const interval = setInterval(() => {
             void fetchSummary()
             void fetchLiveOrders()
-        }, 2000)
+        }, 30000)
 
         return () => {
             unsubscribe()
@@ -400,46 +405,53 @@ const AdminDashboard: React.FC = () => {
 
     // --- GLOBAL TIME RANGE FILTERED ORDERS ---
     const dateFilteredOrders = useMemo(() => {
-        if (timeRange === 'ALL') return orders
+        let list = orders
+        if (timeRange !== 'ALL') {
+            const now = new Date()
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime()
+            const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime()
 
-        const now = new Date()
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime()
-        const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime()
+            list = orders.filter((o) => {
+                const orderDate = parseOrderDate(o.dateTime, o.created_at)
+                const orderTime = orderDate.getTime()
+                if (isNaN(orderTime) || orderTime <= 0) return false
 
-        return orders.filter((o) => {
-            const orderDate = parseOrderDate(o.dateTime, o.created_at)
-            const orderTime = orderDate.getTime()
-            if (isNaN(orderTime) || orderTime <= 0) return false
-
-            if (timeRange === '1D') {
-                return orderTime >= todayStart && orderTime <= todayEnd
-            }
-            if (timeRange === '1W') {
-                const oneWeekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0).getTime()
-                return orderTime >= oneWeekAgo && orderTime <= todayEnd
-            }
-            if (timeRange === '1M') {
-                const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime()
-                return orderTime >= monthStart && orderTime <= todayEnd
-            }
-            if (timeRange === '1Y') {
-                const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0).getTime()
-                return orderTime >= yearStart && orderTime <= todayEnd
-            }
-            if (timeRange === 'CUSTOM') {
-                let startOk = true
-                let endOk = true
-                if (customStartDate) {
-                    const s = new Date(`${customStartDate}T00:00:00`).getTime()
-                    startOk = orderTime >= s
+                if (timeRange === '1D') {
+                    return orderTime >= todayStart && orderTime <= todayEnd
                 }
-                if (customEndDate) {
-                    const e = new Date(`${customEndDate}T23:59:59.999`).getTime()
-                    endOk = orderTime <= e
+                if (timeRange === '1W') {
+                    const oneWeekAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0).getTime()
+                    return orderTime >= oneWeekAgo && orderTime <= todayEnd
                 }
-                return startOk && endOk
-            }
-            return true
+                if (timeRange === '1M') {
+                    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime()
+                    return orderTime >= monthStart && orderTime <= todayEnd
+                }
+                if (timeRange === '1Y') {
+                    const yearStart = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0).getTime()
+                    return orderTime >= yearStart && orderTime <= todayEnd
+                }
+                if (timeRange === 'CUSTOM') {
+                    let startOk = true
+                    let endOk = true
+                    if (customStartDate) {
+                        const s = new Date(`${customStartDate}T00:00:00`).getTime()
+                        startOk = orderTime >= s
+                    }
+                    if (customEndDate) {
+                        const e = new Date(`${customEndDate}T23:59:59.999`).getTime()
+                        endOk = orderTime <= e
+                    }
+                    return startOk && endOk
+                }
+                return true
+            })
+        }
+
+        return [...list].sort((a, b) => {
+            const timeA = parseOrderDate(a.dateTime, a.created_at).getTime()
+            const timeB = parseOrderDate(b.dateTime, b.created_at).getTime()
+            return timeB - timeA
         })
     }, [orders, timeRange, customStartDate, customEndDate])
 
@@ -450,8 +462,9 @@ const AdminDashboard: React.FC = () => {
     }
 
     // Filtered Order History Table (combining Time Range + Table Channel & Search Filters)
+    // Strictly sorted newest first (top), oldest last
     const filteredOrders = useMemo(() => {
-        return dateFilteredOrders.filter((o) => {
+        const list = dateFilteredOrders.filter((o) => {
             const isOnline = isOnlineOrder(o.type)
             const matchesFilter =
                 orderTableFilter === 'All'
@@ -468,6 +481,12 @@ const AdminDashboard: React.FC = () => {
                 o.items.toLowerCase().includes(query)
 
             return matchesFilter && matchesSearch
+        })
+
+        return list.sort((a, b) => {
+            const timeA = parseOrderDate(a.dateTime, a.created_at).getTime()
+            const timeB = parseOrderDate(b.dateTime, b.created_at).getTime()
+            return timeB - timeA
         })
     }, [dateFilteredOrders, orderTableFilter, orderSearchQuery])
 

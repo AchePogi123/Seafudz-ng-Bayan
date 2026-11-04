@@ -5,6 +5,7 @@ import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { extractReceiptReferenceFromImage } from '../utils/ocr'
 
 export interface OrderItem {
   id?: number | string
@@ -116,6 +117,21 @@ export const AssistantRole: React.FC = () => {
   const [isSubmittingResolution, setIsSubmittingResolution] = useState(false)
   const [manualRefundRef, setManualRefundRef] = useState('')
 
+  // Cancellation Refund Modal states
+  const [isCancellationRefundModalOpen, setIsCancellationRefundModalOpen] = useState(false)
+  const [cancellationRefundProof, setCancellationRefundProof] = useState<string | null>(null)
+  const [manualCancellationRef, setManualCancellationRef] = useState('')
+  const [isSubmittingCancellationRefund, setIsSubmittingCancellationRefund] = useState(false)
+  const [cancellationUploadError, setCancellationUploadError] = useState<string | null>(null)
+  const cancellationFileInputRef = useRef<HTMLInputElement>(null)
+
+  // GCash Payment Reference & OCR states
+  const [assistantRefNumber, setAssistantRefNumber] = useState('')
+  const [isOcrScanning, setIsOcrScanning] = useState(false)
+  const [ocrStatusText, setOcrStatusText] = useState('')
+  const [ocrDetectedRef, setOcrDetectedRef] = useState<string | null>(null)
+  const scannedReceiptsRef = useRef<Set<string>>(new Set())
+
   const handleDeleteAssistantOrder = async (orderId: string) => {
     const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete order #${orderId}? This will remove it from the PostgreSQL database.`)
     if (!confirmDelete) return
@@ -180,17 +196,168 @@ export const AssistantRole: React.FC = () => {
     }
   }, [selectedOrder?.id, isResolveModalOpen])
 
+  const runReceiptOcr = async (receiptImage: string, orderId: string, force = false) => {
+    if (!receiptImage || (isOcrScanning && !force)) return
+    scannedReceiptsRef.current.add(orderId)
+    setIsOcrScanning(true)
+    setOcrStatusText('Initializing OCR...')
+
+    try {
+      const result = await extractReceiptReferenceFromImage(receiptImage, (progress) => {
+        setOcrStatusText(`Reading screenshot (${progress}%)...`)
+      })
+
+      if (result.referenceNumber) {
+        setAssistantRefNumber(result.referenceNumber)
+        setOcrDetectedRef(result.referenceNumber)
+        setNotification(`✨ GCash Ref #${result.referenceNumber} auto-detected from receipt!`)
+
+        // Update local order and save to backend
+        try {
+          await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/reference`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ referenceNumber: result.referenceNumber }),
+          }).catch(() => {})
+        } catch {}
+
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === orderId || o.ref === orderId
+              ? { ...o, paymentReference: result.referenceNumber!, referenceNumber: result.referenceNumber! }
+              : o
+          )
+        )
+      } else {
+        setOcrStatusText('No reference number detected')
+        setTimeout(() => setOcrStatusText(''), 3000)
+      }
+    } catch (err) {
+      console.error('Receipt OCR error:', err)
+      setOcrStatusText('OCR scan failed')
+      setTimeout(() => setOcrStatusText(''), 3000)
+    } finally {
+      setIsOcrScanning(false)
+    }
+  }
+
+  // Sync assistant reference number when order is selected, and auto-detect via OCR if receipt exists without reference
+  useEffect(() => {
+    if (!selectedOrder) {
+      setAssistantRefNumber('')
+      setOcrDetectedRef(null)
+      setIsOcrScanning(false)
+      setOcrStatusText('')
+      return
+    }
+
+    const currentRef = (selectedOrder.paymentReference || selectedOrder.referenceNumber || '').trim()
+    setAssistantRefNumber(currentRef)
+    setOcrDetectedRef(null)
+
+    // Auto-trigger OCR when customer provided payment receipt image but no reference number text
+    if (selectedOrder.paymentReceipt && !currentRef && !scannedReceiptsRef.current.has(selectedOrder.id)) {
+      runReceiptOcr(selectedOrder.paymentReceipt, selectedOrder.id)
+    }
+  }, [selectedOrderId, selectedOrder?.id, selectedOrder?.paymentReceipt])
+
+  const handleRefNumberChange = (newVal: string) => {
+    setAssistantRefNumber(newVal)
+    if (selectedOrder) {
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === selectedOrder.id || o.ref === selectedOrder.id
+            ? { ...o, paymentReference: newVal, referenceNumber: newVal }
+            : o
+        )
+      )
+    }
+  }
+
+  const handleSaveRefNumber = async () => {
+    if (!selectedOrder || !assistantRefNumber.trim()) return
+    const refToSave = assistantRefNumber.trim()
+    try {
+      await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/reference`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ referenceNumber: refToSave }),
+      })
+      setNotification(`Reference #${refToSave} saved!`)
+    } catch {}
+  }
+
   // Close Out-of-Stock Resolution modal on Escape key press
   useEffect(() => {
-    if (!isResolveModalOpen) return
+    if (!isResolveModalOpen && !isCancellationRefundModalOpen) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setIsResolveModalOpen(false)
+        setIsCancellationRefundModalOpen(false)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isResolveModalOpen])
+  }, [isResolveModalOpen, isCancellationRefundModalOpen])
+
+  const handleCancellationProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      alert('Please select a valid image file.')
+      return
+    }
+
+    setCancellationUploadError(null)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = reader.result as string
+      setCancellationRefundProof(base64)
+    }
+    reader.onerror = () => {
+      setCancellationUploadError('Failed to read file. Please try another image.')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleProcessCancellationRefund = async () => {
+    if (!selectedOrder) return
+    const hasProof = Boolean(cancellationRefundProof || manualCancellationRef.trim())
+    if (!hasProof) {
+      alert('Please attach a refund screenshot OR type the reference number before submitting.')
+      return
+    }
+
+    setIsSubmittingCancellationRefund(true)
+    try {
+      const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (token) headers['Authorization'] = `Bearer ${token}`
+
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${selectedOrder.id}/process-cancellation-refund`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          refundReceipt: cancellationRefundProof || undefined,
+          refundReference: manualCancellationRef.trim() || undefined,
+        }),
+      })
+
+      const result = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(result.message || 'Failed to process cancellation refund.')
+
+      setIsCancellationRefundModalOpen(false)
+      setCancellationRefundProof(null)
+      setManualCancellationRef('')
+      setNotification(`Order #${selectedOrder.ref || selectedOrder.id} cancellation refund completed successfully!`)
+      void fetchAssistantOrders(true)
+    } catch (err: any) {
+      alert(err instanceof Error ? err.message : 'Error processing cancellation refund.')
+    } finally {
+      setIsSubmittingCancellationRefund(false)
+    }
+  }
 
   const handleRefundProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -537,8 +704,8 @@ export const AssistantRole: React.FC = () => {
     setNotification(`GCash payment authorized for order #${orderId}! Customer can now pay and upload receipt.`)
   }
 
-  const handleVerifyReceipt = async (orderId: string) => {
-    const refToPass = (selectedOrder?.paymentReference || selectedOrder?.referenceNumber || '').trim() || undefined;
+  const handleVerifyReceipt = async (orderId: string, customRef?: string) => {
+    const refToPass = (customRef !== undefined ? customRef : (assistantRefNumber || selectedOrder?.paymentReference || selectedOrder?.referenceNumber || '')).trim() || undefined;
     try {
       await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/verify-receipt`, {
         method: 'PATCH',
@@ -837,10 +1004,11 @@ export const AssistantRole: React.FC = () => {
       }
 
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
+      const isCancellationRefundNeeded = s === 'cancel_requested' || (s === 'cancelled' && (order.paymentMethod || '').toLowerCase().includes('gcash') && !order.refundReceipt && !order.refundReference)
 
       const matchesTab =
         activeTab === 'pending'
-          ? !isConfirmedOrLater
+          ? (!isConfirmedOrLater || isCancellationRefundNeeded)
           : activeTab === 'kitchen'
             ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock'
             : activeTab === 'dispatch'
@@ -1002,7 +1170,9 @@ export const AssistantRole: React.FC = () => {
                           <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
                         <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'out_of_stock'
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'cancel_requested' || (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
+                            ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
+                            : s === 'out_of_stock'
                             ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
                             : s === 'awaiting_kitchen_approval'
                               ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse font-black'
@@ -1025,7 +1195,11 @@ export const AssistantRole: React.FC = () => {
                                               : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
-                          ● {s === 'out_of_stock'
+                          ● {s === 'cancel_requested'
+                            ? '🚨 Cancel & Refund Requested'
+                            : (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
+                              ? '🚨 Refund Needed'
+                              : s === 'out_of_stock'
                             ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
                               ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
                               : 'Awaiting Customer Choice'
@@ -1033,7 +1207,7 @@ export const AssistantRole: React.FC = () => {
                               ? 'Kitchen Review Needed'
                               : s === 'kitchen_rejected'
                                 ? 'Declined by Kitchen'
-                                : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled / Refunded' : ord.status}
+                                : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? (ord.refundReceipt || ord.refundReference ? 'Cancelled & Refunded' : 'Cancelled') : ord.status}
                         </span>
                       </div>
 
@@ -1147,17 +1321,60 @@ export const AssistantRole: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5 text-[11px]">
-                    <div className="flex justify-between">
+                  <div className="space-y-2 text-[11px]">
+                    <div className="flex justify-between items-center">
                       <span className="text-slate-500 font-medium">Payment Mode:</span>
                       <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
                     </div>
-                    {selectedOrder.paymentReference && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">Reference No:</span>
-                        <span className="font-mono font-semibold text-slate-800">
-                          {selectedOrder.paymentReference}
-                        </span>
+
+                    {/* GCash Reference Number Input with Tesseract OCR Auto-fill & Controls */}
+                    {((selectedOrder.paymentMethod || '').toLowerCase().includes('gcash') || Boolean(selectedOrder.paymentReceipt)) && (
+                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-600 font-bold flex items-center gap-1.5">
+                            <span>Reference No:</span>
+                            {isOcrScanning && (
+                              <span className="text-[10px] text-blue-600 font-bold flex items-center gap-1 animate-pulse">
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                                {ocrStatusText || 'Scanning receipt with OCR...'}
+                              </span>
+                            )}
+                            {!isOcrScanning && ocrDetectedRef && (
+                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded border border-emerald-300">
+                                ✨ OCR Extracted
+                              </span>
+                            )}
+                          </span>
+                          {selectedOrder.paymentReceipt && !isOcrScanning && (
+                            <button
+                              type="button"
+                              onClick={() => runReceiptOcr(selectedOrder.paymentReceipt!, selectedOrder.id, true)}
+                              className="text-[10px] text-blue-600 hover:text-blue-800 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                              title="Re-run Tesseract OCR on attached receipt image"
+                            >
+                              <span>🔍</span> Scan with OCR
+                            </button>
+                          )}
+                        </div>
+                        <div className="flex gap-1.5">
+                          <input
+                            type="text"
+                            value={assistantRefNumber}
+                            onChange={(e) => handleRefNumberChange(e.target.value)}
+                            onBlur={handleSaveRefNumber}
+                            placeholder="Type or auto-detect GCash Ref #"
+                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-300 placeholder:font-sans placeholder:font-normal shadow-2xs"
+                          />
+                          {assistantRefNumber.trim() && assistantRefNumber.trim() !== (selectedOrder.paymentReference || '').trim() && (
+                            <button
+                              type="button"
+                              onClick={handleSaveRefNumber}
+                              className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold cursor-pointer transition-colors shrink-0"
+                            >
+                              Save
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1466,6 +1683,66 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
+                    const isCancellationRefundNeeded = st === 'CANCEL_REQUESTED' || (
+                      st === 'CANCELLED' &&
+                      (selectedOrder.paymentMethod || '').toLowerCase().includes('gcash') &&
+                      !selectedOrder.refundReceipt &&
+                      !selectedOrder.refundReference
+                    )
+
+                    if (isCancellationRefundNeeded) {
+                      return (
+                        <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-5 text-center space-y-3.5 shadow-xs">
+                          <div className="flex items-center justify-center gap-2 text-rose-900 font-black text-sm">
+                            <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-pulse"></span>
+                            🚨 Customer Cancellation & Refund Requested
+                          </div>
+                          <p className="text-xs text-rose-800 leading-relaxed font-medium">
+                            Customer requested cancellation for this order. Since it was paid via GCash, a full refund of <strong className="text-rose-950 font-black">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> must be sent to GCash number <strong className="text-rose-950 font-black">{selectedOrder.phone}</strong>.
+                          </p>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCancellationRefundProof(selectedOrder.refundReceipt || null)
+                              setManualCancellationRef(selectedOrder.refundReference || '')
+                              setIsCancellationRefundModalOpen(true)
+                            }}
+                            className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-3.5 rounded-2xl text-xs shadow-md shadow-rose-500/20 cursor-pointer transition-all active:scale-98 flex items-center justify-center gap-2"
+                          >
+                            <span>💸</span> Process Cancellation Refund (₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                          </button>
+                        </div>
+                      )
+                    }
+
+                    if (st === 'CANCELLED') {
+                      return (
+                        <div className="bg-neutral-50 border border-neutral-200 rounded-3xl p-4 text-center space-y-2">
+                          <div className="flex items-center justify-center gap-1.5 text-neutral-800 font-black text-xs">
+                            <span>✓</span> Order Cancelled & Refund Completed
+                          </div>
+                          <p className="text-[11px] text-neutral-600">
+                            Full refund of ₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} was processed to {selectedOrder.phone}.
+                          </p>
+                          {selectedOrder.refundReceipt && (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                              className="text-[11px] font-bold text-blue-600 hover:underline flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                            >
+                              <span>📷</span> View Refund Proof Screenshot
+                            </button>
+                          )}
+                          {selectedOrder.refundReference && (
+                            <p className="text-[11px] font-mono font-bold text-neutral-700">
+                              Ref: {selectedOrder.refundReference}
+                            </p>
+                          )}
+                        </div>
+                      )
+                    }
+
                     const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'ASSIGNED', 'COMPLETED'].includes(st)
 
                     if (isConfirmedOrLater) {
@@ -1573,7 +1850,7 @@ export const AssistantRole: React.FC = () => {
                             <button
                               type="button"
                               disabled={!isReceiptViewed}
-                              onClick={() => isReceiptViewed && handleVerifyReceipt(selectedOrder.id)}
+                              onClick={() => isReceiptViewed && handleVerifyReceipt(selectedOrder.id, assistantRefNumber)}
                               title={!isReceiptViewed ? 'Inspection required: Please click View to inspect the receipt screenshot first' : undefined}
                               className={`flex-1 font-extrabold py-3 rounded-xl text-xs transition-all shadow-xs ${
                                 isReceiptViewed
@@ -2114,6 +2391,184 @@ export const AssistantRole: React.FC = () => {
           </div>
         )
       })()}
+
+      {/* ORDER CANCELLATION REFUND MODAL */}
+      {isCancellationRefundModalOpen && selectedOrder && (() => {
+        const hasValidProof = Boolean(cancellationRefundProof || manualCancellationRef.trim())
+        const refundAmount = Number(selectedOrder.total || 0)
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-in fade-in">
+            <div className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-rose-100 text-neutral-800 my-8">
+              {/* Header */}
+              <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 bg-rose-100 text-rose-600 rounded-lg text-sm">💸</span>
+                    <h3 className="text-base font-black text-neutral-900">
+                      Process Cancellation Refund
+                    </h3>
+                  </div>
+                  <p className="text-xs text-neutral-500 font-medium">
+                    Order #{selectedOrder.ref || selectedOrder.id} • {selectedOrder.customer || 'Customer'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCancellationRefundModalOpen(false)}
+                  disabled={isSubmittingCancellationRefund}
+                  className="p-1.5 hover:bg-neutral-100 rounded-xl text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Order & Refund Summary */}
+              <div className="bg-rose-50/70 border border-rose-200 rounded-2xl p-4 space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs font-bold text-rose-900">Refund Amount Due:</span>
+                  <span className="text-lg font-black text-rose-600">
+                    ₱{refundAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-neutral-600 pt-1 border-t border-rose-100">
+                  <span>Customer Phone / GCash:</span>
+                  <span className="font-mono font-bold text-neutral-900 bg-white px-2 py-0.5 rounded border border-rose-200">
+                    {selectedOrder.phone || 'N/A'}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-neutral-600">
+                  <span>Payment Method:</span>
+                  <span className="font-semibold text-neutral-800">{selectedOrder.paymentMethod || 'GCash Transfer'}</span>
+                </div>
+                <p className="text-[11px] text-rose-800/90 font-medium pt-1">
+                  💡 Send the refund via GCash to the number above, then submit <strong>either</strong> a screenshot proof <strong>or</strong> the GCash reference number.
+                </p>
+              </div>
+
+              {/* Input 1: Refund Screenshot Proof */}
+              <div className="space-y-2">
+                <label className="block text-xs font-black text-neutral-700">
+                  Option 1: Upload GCash Refund Screenshot Proof
+                </label>
+                {cancellationRefundProof ? (
+                  <div className="flex items-center gap-3 p-3 bg-neutral-50 border border-neutral-200 rounded-2xl">
+                    <img
+                      src={cancellationRefundProof}
+                      alt="Refund Proof"
+                      onClick={() => setPreviewReceiptUrl(cancellationRefundProof)}
+                      className="w-16 h-16 object-cover rounded-xl border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity"
+                    />
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <p className="text-xs font-bold text-neutral-800">Screenshot Attached</p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReceiptUrl(cancellationRefundProof)}
+                          className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer"
+                        >
+                          View Full
+                        </button>
+                        <span className="text-neutral-300">•</span>
+                        <button
+                          type="button"
+                          onClick={() => cancellationFileInputRef.current?.click()}
+                          className="text-[11px] font-bold text-neutral-600 hover:text-neutral-900 cursor-pointer"
+                        >
+                          Change
+                        </button>
+                        <span className="text-neutral-300">•</span>
+                        <button
+                          type="button"
+                          onClick={() => setCancellationRefundProof(null)}
+                          className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => cancellationFileInputRef.current?.click()}
+                    className="w-full border-2 border-dashed border-neutral-300 hover:border-rose-400 bg-neutral-50/50 hover:bg-rose-50/30 rounded-2xl p-4 text-center cursor-pointer transition-colors space-y-1 group"
+                  >
+                    <div className="text-xl group-hover:scale-110 transition-transform">📷</div>
+                    <p className="text-xs font-bold text-neutral-700">Click to Attach Refund Screenshot</p>
+                    <p className="text-[10px] text-neutral-400">PNG, JPG or WebP of the GCash receipt</p>
+                  </button>
+                )}
+                {cancellationUploadError && (
+                  <p className="text-xs text-rose-600 font-bold">{cancellationUploadError}</p>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-neutral-200"></div>
+                <span className="flex-shrink mx-3 text-[10px] font-black uppercase tracking-wider text-neutral-400 bg-white px-2">
+                  OR
+                </span>
+                <div className="flex-grow border-t border-neutral-200"></div>
+              </div>
+
+              {/* Input 2: Manual Reference Number */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-black text-neutral-700">
+                  Option 2: Manual GCash Reference Number
+                </label>
+                <input
+                  type="text"
+                  value={manualCancellationRef}
+                  onChange={(e) => setManualCancellationRef(e.target.value)}
+                  placeholder="e.g. 1002 9384 1029 or REF-9812498"
+                  className="w-full px-3.5 py-2.5 bg-white rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-rose-500 shadow-2xs font-mono placeholder:font-sans placeholder:text-neutral-400"
+                />
+                <p className="text-[10px] text-neutral-400">
+                  Enter the reference number from the completed GCash transaction.
+                </p>
+              </div>
+
+              {/* Validation Warning & Submit Button */}
+              <div className="space-y-2 pt-2 border-t border-neutral-100">
+                {!hasValidProof && (
+                  <p className="text-[11px] font-bold text-rose-600 text-center animate-pulse">
+                    * Please attach a refund screenshot OR type the reference number before submitting.
+                  </p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCancellationRefundModalOpen(false)}
+                    disabled={isSubmittingCancellationRefund}
+                    className="px-5 py-3 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold rounded-xl text-xs cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleProcessCancellationRefund}
+                    disabled={!hasValidProof || isSubmittingCancellationRefund}
+                    className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-black rounded-xl text-xs cursor-pointer transition-all shadow-md shadow-rose-500/20 active:scale-98 flex items-center justify-center gap-2"
+                  >
+                    {isSubmittingCancellationRefund ? 'Processing Refund...' : `Confirm Refund ₱${refundAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} & Cancel Order`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Hidden file input for cancellation refund photo uploads */}
+      <input
+        ref={cancellationFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleCancellationProofUpload}
+        className="hidden"
+      />
 
       {/* Hidden file input for refund / cashback reference photo uploads */}
       <input

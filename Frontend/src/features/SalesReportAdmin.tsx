@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { NavbarAdmin } from '../components/NavbarAdmin'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
+import { subscribeOrderSync } from '../utils/orderSync'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { AdminBackupModal } from '../components/AdminBackupModal'
@@ -79,6 +80,32 @@ const readReferenceString = (...values: unknown[]): string | undefined => {
         }
     }
     return undefined
+}
+
+const parseOrderDate = (dateStr?: string, createdAtRaw?: string): Date => {
+    if (createdAtRaw) {
+        const d = new Date(createdAtRaw)
+        if (!isNaN(d.getTime())) return d
+    }
+    if (!dateStr) return new Date(0)
+    const d = new Date(dateStr)
+    if (!isNaN(d.getTime())) return d
+    const parsed = Date.parse(dateStr)
+    if (!isNaN(parsed)) return new Date(parsed)
+    const match = String(dateStr).match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[,\s]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/)
+    if (match) {
+        const p1 = parseInt(match[1], 10)
+        const p2 = parseInt(match[2], 10)
+        const year = parseInt(match[3], 10)
+        const hour = match[4] ? parseInt(match[4], 10) : 0
+        const min = match[5] ? parseInt(match[5], 10) : 0
+        const sec = match[6] ? parseInt(match[6], 10) : 0
+        const month = p1 > 12 ? p2 - 1 : p1 - 1
+        const day = p1 > 12 ? p1 : p2
+        const res = new Date(year, month, day, hour, min, sec)
+        if (!isNaN(res.getTime())) return res
+    }
+    return new Date(0)
 }
 
 const SalesReportAdmin: React.FC = () => {
@@ -206,6 +233,21 @@ const SalesReportAdmin: React.FC = () => {
     const handleTabChange = (tab: TabType) => {
         setActiveTab(tab)
         setCurrentPage(1)
+        // Reset metrics immediately so previous period numbers don't linger
+        setSummaryData({
+            totalOrders: 0,
+            grossRevenue: 0,
+            subtotalRevenue: 0,
+            vatCollected: 0,
+            averageOrderValue: 0,
+            breakdown: {
+                cash: { total: 0, count: 0 },
+                gcash: { total: 0, count: 0 },
+                maya: { total: 0, count: 0 },
+                hybrid: { total: 0, count: 0 },
+                cod: { total: 0, count: 0 },
+            },
+        })
     }
 
     const handleChannelChange = (channel: string) => {
@@ -299,52 +341,38 @@ const SalesReportAdmin: React.FC = () => {
     }, [])
 
     const getOrderDate = (order: any): Date | null => {
-        const value =
-            order.created_at ??
-            order.createdAt ??
-            order.dateTime ??
-            order.date ??
-            null
-
-        if (!value) return null
-        if (value instanceof Date) return isNaN(value.getTime()) ? null : value
-        const parsed = new Date(value)
-        if (!isNaN(parsed.getTime())) return parsed
-        const num = Number(value)
-        if (!isNaN(num)) {
-            const d = new Date(num)
-            if (!isNaN(d.getTime())) return d
-        }
-        return null
+        const rawCreated = order.created_at ?? order.createdAt ?? null
+        const rawDate = order.dateTime ?? order.date ?? null
+        const parsed = parseOrderDate(rawDate, rawCreated)
+        return isNaN(parsed.getTime()) || parsed.getTime() <= 0 ? null : parsed
     }
 
     const checkIsInSelectedPeriod = useCallback((order: any, tab: TabType): boolean => {
         const orderDate = getOrderDate(order)
-        if (!orderDate) return true
+        if (!orderDate) return false
 
         const now = new Date()
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime()
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime()
+        const targetTime = orderDate.getTime()
 
         if (tab === 'Today') {
-            return orderDate >= startOfToday && orderDate <= endOfToday
+            return targetTime >= startOfToday && targetTime <= endOfToday
         }
 
         if (tab === 'This Week') {
-            const startOfWeek = new Date(startOfToday)
-            startOfWeek.setDate(startOfWeek.getDate() - 6)
-            startOfWeek.setHours(0, 0, 0, 0)
-            return orderDate >= startOfWeek
+            const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0).getTime()
+            return targetTime >= startOfWeek && targetTime <= endOfToday
         }
 
         if (tab === 'This Month') {
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-            return orderDate >= startOfMonth
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).getTime()
+            return targetTime >= startOfMonth && targetTime <= endOfToday
         }
 
         if (tab === 'This Year') {
-            const startOfYear = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0)
-            return orderDate >= startOfYear
+            const startOfYear = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0).getTime()
+            return targetTime >= startOfYear && targetTime <= endOfToday
         }
 
         return true
@@ -356,19 +384,28 @@ const SalesReportAdmin: React.FC = () => {
             const res = await fetch(`${API_BASE_URL}/sales/summary?tab=${encodeURIComponent(activeTab)}`, { headers: authHeaders })
             if (res.ok) {
                 const json = await res.json()
-                if (json.success && json.data && ((json.data.totalOrders || 0) > 0 || (json.data.grossRevenue || 0) > 0)) {
+                if (json.success && json.data) {
+                    const d = json.data
+                    const b = d.breakdown || {}
+                    const cashTotal = Number(b.cash?.total || 0) + Number(b.cod?.total || 0)
+                    const cashCount = Number(b.cash?.count || 0) + Number(b.cod?.count || 0)
+                    const gcashTotal = Number(b.gcash?.total || 0) + Number(b.maya?.total || 0)
+                    const gcashCount = Number(b.gcash?.count || 0) + Number(b.maya?.count || 0)
+                    const hybridTotal = Number(b.hybrid?.total || 0)
+                    const hybridCount = Number(b.hybrid?.count || 0)
+
                     setSummaryData({
-                        totalOrders: json.data.totalOrders || 0,
-                        grossRevenue: json.data.grossRevenue || 0,
-                        subtotalRevenue: json.data.subtotalRevenue || 0,
-                        vatCollected: json.data.vatCollected || 0,
-                        averageOrderValue: json.data.averageOrderValue || 0,
-                        breakdown: json.data.breakdown || {
-                            cash: { total: 0, count: 0 },
-                            gcash: { total: 0, count: 0 },
-                            maya: { total: 0, count: 0 },
-                            hybrid: { total: 0, count: 0 },
-                            cod: { total: 0, count: 0 },
+                        totalOrders: Number(d.totalOrders || 0),
+                        grossRevenue: Number(d.grossRevenue || 0),
+                        subtotalRevenue: Number(d.subtotalRevenue || 0),
+                        vatCollected: Number(d.vatCollected || 0),
+                        averageOrderValue: Number(d.averageOrderValue || 0),
+                        breakdown: {
+                            cash: { total: cashTotal, count: cashCount },
+                            gcash: { total: gcashTotal, count: gcashCount },
+                            maya: { total: Number(b.maya?.total || 0), count: Number(b.maya?.count || 0) },
+                            hybrid: { total: hybridTotal, count: hybridCount },
+                            cod: { total: Number(b.cod?.total || 0), count: Number(b.cod?.count || 0) },
                         },
                     })
                     return
@@ -384,19 +421,13 @@ const SalesReportAdmin: React.FC = () => {
             // 1. Include locally stored orders matching selected period
             try {
                 const localRaw = localStorage.getItem('seafudz_orders')
-
                 if (localRaw) {
                     const localOrders = JSON.parse(localRaw)
-
                     if (Array.isArray(localOrders)) {
                         localOrders
                             .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
                             .forEach((order: any, index: number) => {
-                                const key = String(
-                                    order.id ??
-                                    order.ref ??
-                                    `local-${index}`
-                                )
+                                const key = String(order.id ?? order.ref ?? `local-${index}`)
                                 orderMap.set(key, order)
                             })
                     }
@@ -415,18 +446,11 @@ const SalesReportAdmin: React.FC = () => {
 
                 if (ordersRes.ok) {
                     const ordersJson = await ordersRes.json()
-                    const backendOrders = Array.isArray(ordersJson.data)
-                        ? ordersJson.data
-                        : []
-
+                    const backendOrders = Array.isArray(ordersJson.data) ? ordersJson.data : []
                     backendOrders
                         .filter((o: any) => checkIsInSelectedPeriod(o, activeTab))
                         .forEach((order: any, index: number) => {
-                            const key = String(
-                                order.id ??
-                                order.ref ??
-                                `backend-${index}`
-                            )
+                            const key = String(order.id ?? order.ref ?? `backend-${index}`)
                             orderMap.set(key, order)
                         })
                 }
@@ -445,8 +469,12 @@ const SalesReportAdmin: React.FC = () => {
             }
 
             let grossRevenue = 0
+            let validOrdersCount = 0
 
             orders.forEach((order: any) => {
+                const statusUpper = String(order.status || '').toUpperCase()
+                if (['CANCELLED', 'KITCHEN_REJECTED'].includes(statusUpper)) return
+
                 const total = Number(
                     order.total ??
                     order.totalAmount ??
@@ -456,6 +484,7 @@ const SalesReportAdmin: React.FC = () => {
                 ) || 0
 
                 grossRevenue += total
+                validOrdersCount += 1
 
                 const payment = String(
                     order.payment_method ??
@@ -473,6 +502,8 @@ const SalesReportAdmin: React.FC = () => {
                 } else if (payment.includes('cod')) {
                     breakdown.cod.total += total
                     breakdown.cod.count += 1
+                    breakdown.cash.total += total
+                    breakdown.cash.count += 1
                 } else {
                     breakdown.cash.total += total
                     breakdown.cash.count += 1
@@ -480,11 +511,11 @@ const SalesReportAdmin: React.FC = () => {
             })
 
             setSummaryData({
-                totalOrders: orders.length,
+                totalOrders: validOrdersCount,
                 grossRevenue,
                 subtotalRevenue: grossRevenue,
                 vatCollected: 0,
-                averageOrderValue: orders.length > 0 ? grossRevenue / orders.length : 0,
+                averageOrderValue: validOrdersCount > 0 ? grossRevenue / validOrdersCount : 0,
                 breakdown,
             })
         } catch (err) {
@@ -599,48 +630,6 @@ const SalesReportAdmin: React.FC = () => {
 
             let allMatching = Array.from(orderMap.values())
 
-            // Always synchronize summary metrics with all transactions created in this time period
-            if (allMatching.length > 0) {
-                let grossRevenue = 0
-                const breakdown = {
-                    cash: { total: 0, count: 0 },
-                    gcash: { total: 0, count: 0 },
-                    maya: { total: 0, count: 0 },
-                    hybrid: { total: 0, count: 0 },
-                    cod: { total: 0, count: 0 },
-                }
-                allMatching.forEach((o: any) => {
-                    const tot = Number(o.total || 0)
-                    grossRevenue += tot
-                    const p = String(o.paymentMethod || 'Cash').toLowerCase()
-                    if (p.includes('hybrid') || p.includes('split')) {
-                        breakdown.hybrid.total += tot
-                        breakdown.hybrid.count += 1
-                    } else if (p.includes('gcash') || p.includes('online') || p.includes('card') || p.includes('maya')) {
-                        breakdown.gcash.total += tot
-                        breakdown.gcash.count += 1
-                    } else if (p.includes('cod')) {
-                        breakdown.cod.total += tot
-                        breakdown.cod.count += 1
-                    } else {
-                        breakdown.cash.total += tot
-                        breakdown.cash.count += 1
-                    }
-                })
-
-                setSummaryData((prev) => {
-                    if (prev.totalOrders >= allMatching.length && prev.grossRevenue > 0) return prev
-                    return {
-                        totalOrders: allMatching.length,
-                        grossRevenue,
-                        subtotalRevenue: grossRevenue,
-                        vatCollected: 0,
-                        averageOrderValue: allMatching.length > 0 ? Math.round(grossRevenue / allMatching.length) : 0,
-                        breakdown,
-                    }
-                })
-            }
-
             // 3. Apply channel filter
             if (channelFilter !== 'All') {
                 const isOnline = channelFilter === 'Online'
@@ -678,10 +667,10 @@ const SalesReportAdmin: React.FC = () => {
                 )
             }
 
-            // Sort descending by date
+            // Sort descending by date: newest transactions very first, oldest last
             allMatching.sort((a, b) => {
-                const dA = getOrderDate(a)?.getTime() || 0
-                const dB = getOrderDate(b)?.getTime() || 0
+                const dA = parseOrderDate(a.dateTime, a.created_at).getTime()
+                const dB = parseOrderDate(b.dateTime, b.created_at).getTime()
                 return dB - dA
             })
 
@@ -704,17 +693,13 @@ const SalesReportAdmin: React.FC = () => {
     }, [fetchOrdersPage])
 
     useEffect(() => {
-        const handleSync = () => {
+        const unsubscribe = subscribeOrderSync(() => {
             void fetchSummary()
             void fetchOrdersPage()
-        }
-
-        window.addEventListener('seafudz_order_created', handleSync)
-        window.addEventListener('storage', handleSync)
+        })
 
         return () => {
-            window.removeEventListener('seafudz_order_created', handleSync)
-            window.removeEventListener('storage', handleSync)
+            unsubscribe()
         }
     }, [fetchSummary, fetchOrdersPage])
 
@@ -907,7 +892,7 @@ const SalesReportAdmin: React.FC = () => {
                         <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
                             ₱{summaryData.breakdown.cash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </h3>
-                        <p className="text-xs text-slate-500 mt-1 font-normal">Physical register payments</p>
+                        <p className="text-xs text-slate-500 mt-1 font-normal">Physical register & COD cash</p>
                     </div>
 
                     {/* GCash */}
@@ -1053,7 +1038,7 @@ const SalesReportAdmin: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 text-xs font-normal text-slate-700">
-                                    {isLoading ? (
+                                    {isLoading && transactions.length === 0 ? (
                                         <tr>
                                             <td colSpan={8} className="text-center py-12 text-slate-400">
                                                 <div className="inline-flex items-center gap-2 text-orange-600 font-medium">

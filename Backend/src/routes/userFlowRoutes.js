@@ -240,332 +240,377 @@ router.get('/user-flow/orders', async (req, res) => {
 });
 
 router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (req, res) => {
-  const { id } = req.params;
-  const resolution = String(req.body.resolution || '').toUpperCase();
-
-  if (!['REPLACE', 'REFUND'].includes(resolution)) {
-    return res.status(400).json({
-      success: false,
-      message: 'Choose either REPLACE or REFUND.',
-    });
-  }
-
-  const order = inMemoryOrders.get(id);
-  let dbOrder = null;
-  let dbOutOfStockItems = [];
-  let databaseReadError = null;
-
   try {
-    const { rows } = await query(
-      `SELECT id, status, subtotal, tax, delivery_fee, total, customer_resolution_status
-       FROM orders WHERE id = $1`,
-      [id]
-    );
-    dbOrder = rows[0] || null;
+    const { id } = req.params;
+    const resolution = String(req.body.resolution || '').toUpperCase();
 
-    if (dbOrder) {
-      const itemResult = await query(
-        `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity, item_status
-         FROM order_items WHERE order_id = $1 ORDER BY id`,
-        [id]
-      );
-      const allDbItems = itemResult.rows;
-      dbOutOfStockItems = allDbItems.filter(item => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK');
-      if (dbOutOfStockItems.length === 0) {
-        dbOutOfStockItems = allDbItems.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || '').toUpperCase()));
-      }
-    }
-  } catch (error) {
-    databaseReadError = error;
-  }
-
-  if (!order && !dbOrder) {
-    return res.status(databaseReadError ? 503 : 404).json({
-      success: false,
-      message: databaseReadError ? 'Unable to load this order right now.' : 'Order not found.',
-    });
-  }
-
-  const isOutOfStock = normalizeFlowStatus(order?.status) === 'OUT_OF_STOCK'
-    || normalizeFlowStatus(dbOrder?.status) === 'OUT_OF_STOCK';
-
-  if (!isOutOfStock) {
-    return res.status(409).json({ success: false, message: 'This order is not awaiting an out-of-stock decision.' });
-  }
-
-  // Ensure DB order status is aligned to OUT_OF_STOCK if it lagged behind in-memory status
-  if (dbOrder && normalizeFlowStatus(dbOrder.status) !== 'OUT_OF_STOCK') {
-    try {
-      await query(
-        `UPDATE orders
-         SET status = 'OUT_OF_STOCK', customer_resolution = NULL,
-             customer_resolution_status = 'AWAITING_CUSTOMER', updated_at = NOW()
-         WHERE id = $1`,
-        [id]
-      );
-      dbOrder.status = 'OUT_OF_STOCK';
-    } catch (syncErr) {
-      console.warn('Sync orders table to OUT_OF_STOCK note:', syncErr.message);
-    }
-  }
-
-  const currentResolutionStatus = String(dbOrder?.customer_resolution_status || order?.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase();
-  if (currentResolutionStatus === 'COMPLETED') {
-    return res.status(409).json({ success: false, message: 'This out-of-stock issue has already been resolved.' });
-  }
-
-  let flaggedItems = dbOutOfStockItems.length > 0
-    ? dbOutOfStockItems
-    : order?.outOfStockItems?.length
-      ? order.outOfStockItems
-      : (order?.items || []).filter(item => String(item.item_status || item.itemStatus || '').toUpperCase() === 'OUT_OF_STOCK');
-
-  if (flaggedItems.length === 0 && Array.isArray(order?.items) && order.items.length > 0) {
-    flaggedItems = order.items.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase()));
-  }
-
-  if (flaggedItems.length === 0) {
-    return res.status(409).json({ success: false, message: 'No unavailable items were found for this order.' });
-  }
-
-  let customerReplacements = [];
-  let projectedSubtotal = 0;
-  let projectedVat = 0;
-  let deliveryFee = Number(dbOrder?.delivery_fee || order?.deliveryFee || 0);
-  let projectedTotal = 0;
-  let calculatedLedger = null;
-  let payMethod = order?.payment_method || order?.paymentMethod || (order?.status === 'PENDING_COD' ? 'COD' : 'GCash');
-
-  if (resolution === 'REPLACE') {
-    const submittedReplacements = req.body.replacements;
-    if (!Array.isArray(submittedReplacements) || submittedReplacements.length !== flaggedItems.length) {
-      return res.status(400).json({ success: false, message: 'Choose a replacement for every unavailable item.' });
-    }
-
-    const replacementByItemId = new Map(submittedReplacements.map(item => [String(item.oldItemId), item]));
-    let replacementSubtotal = 0;
-
-    for (const [index, item] of flaggedItems.entries()) {
-      const oldItemId = item.id ?? index;
-      const replacement = replacementByItemId.get(String(oldItemId))
-        || replacementByItemId.get(String(index))
-        || replacementByItemId.get(String(item.product_id || item.productId))
-        || submittedReplacements[index];
-      const newProductId = String(replacement?.newProductId || '').trim();
-
-      if (!replacement || !newProductId) {
-        return res.status(400).json({ success: false, message: 'One or more replacement selections are invalid.' });
-      }
-
-      let prodName = String(replacement?.newName || '').trim();
-      let prodPrice = Number(replacement?.newPrice);
-      let authoritativeProductId = newProductId;
-
-      try {
-        const prodRes = await query(
-          `SELECT id, name, price, is_available FROM products
-           WHERE id = $1 OR LOWER(id) = LOWER($1) OR LOWER(name) = LOWER($2)
-           ORDER BY (id = $1) DESC, (LOWER(id) = LOWER($1)) DESC, (LOWER(name) = LOWER($2)) DESC
-           LIMIT 1`,
-          [newProductId, prodName]
-        );
-        if (prodRes.rows.length === 0 || !prodRes.rows[0].is_available) {
-          return res.status(400).json({
-            success: false,
-            message: `Selected replacement dish '${prodName || newProductId}' is currently unavailable.`
-          });
-        }
-        authoritativeProductId = prodRes.rows[0].id;
-        prodName = prodRes.rows[0].name;
-        prodPrice = parseFloat(prodRes.rows[0].price);
-      } catch (err) {
-        console.warn('DB note (validate replacement product):', err.message);
-      }
-
-      const qty = Number(item.quantity) || 1;
-      replacementSubtotal += prodPrice * qty;
-
-      customerReplacements.push({
-        oldItemId,
-        oldItemName: item.name || item.product_name_snapshot || '',
-        newProductId: authoritativeProductId,
-        newName: prodName,
-        newPrice: prodPrice,
-        quantity: qty,
+    if (!['REPLACE', 'REFUND'].includes(resolution)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose either REPLACE or REFUND.',
       });
     }
 
-    // Calculate active items subtotal (excluding items currently being replaced)
-    let activeSubtotal = 0;
-    const replacedItemIds = flaggedItems.map(f => String(f.id)).filter(Boolean);
+    const order = inMemoryOrders.get(id);
+    let dbOrder = null;
+    let dbOutOfStockItems = [];
+    let databaseReadError = null;
+
+    try {
+      const { rows } = await query(
+        `SELECT id, status, subtotal, tax, delivery_fee, total, customer_resolution_status
+         FROM orders WHERE id = $1`,
+        [id]
+      );
+      dbOrder = rows[0] || null;
+
+      if (dbOrder) {
+        const itemResult = await query(
+          `SELECT id, product_id, product_name_snapshot AS name, unit_price AS price, quantity, item_status
+           FROM order_items WHERE order_id = $1 ORDER BY id`,
+          [id]
+        );
+        const allDbItems = itemResult.rows;
+        dbOutOfStockItems = allDbItems.filter(item => String(item.item_status || '').toUpperCase() === 'OUT_OF_STOCK');
+        if (dbOutOfStockItems.length === 0) {
+          dbOutOfStockItems = allDbItems.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || '').toUpperCase()));
+        }
+      }
+    } catch (error) {
+      databaseReadError = error;
+    }
+
+    if (!order && !dbOrder) {
+      return res.status(databaseReadError ? 503 : 404).json({
+        success: false,
+        message: databaseReadError ? 'Unable to load this order right now.' : 'Order not found.',
+      });
+    }
+
+    const isOutOfStock = normalizeFlowStatus(order?.status) === 'OUT_OF_STOCK'
+      || normalizeFlowStatus(dbOrder?.status) === 'OUT_OF_STOCK';
+
+    if (!isOutOfStock) {
+      return res.status(409).json({ success: false, message: 'This order is not awaiting an out-of-stock decision.' });
+    }
+
+    // Ensure DB order status is aligned to OUT_OF_STOCK if it lagged behind in-memory status
+    if (dbOrder && normalizeFlowStatus(dbOrder.status) !== 'OUT_OF_STOCK') {
+      try {
+        await query(
+          `UPDATE orders
+           SET status = 'OUT_OF_STOCK', customer_resolution = NULL,
+               customer_resolution_status = 'AWAITING_CUSTOMER', updated_at = NOW()
+           WHERE id = $1`,
+          [id]
+        );
+        dbOrder.status = 'OUT_OF_STOCK';
+      } catch (syncErr) {
+        console.warn('Sync orders table to OUT_OF_STOCK note:', syncErr.message);
+      }
+    }
+
+    const currentResolutionStatus = String(dbOrder?.customer_resolution_status || order?.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase();
+    if (currentResolutionStatus === 'COMPLETED') {
+      return res.status(409).json({ success: false, message: 'This out-of-stock issue has already been resolved.' });
+    }
+
+    let flaggedItems = dbOutOfStockItems.length > 0
+      ? dbOutOfStockItems
+      : order?.outOfStockItems?.length
+        ? order.outOfStockItems
+        : (order?.items || []).filter(item => String(item.item_status || item.itemStatus || '').toUpperCase() === 'OUT_OF_STOCK');
+
+    if (flaggedItems.length === 0 && Array.isArray(order?.items) && order.items.length > 0) {
+      flaggedItems = order.items.filter(item => !['REPLACED', 'REFUNDED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase()));
+    }
+
+    if (flaggedItems.length === 0) {
+      return res.status(409).json({ success: false, message: 'No unavailable items were found for this order.' });
+    }
+
+    let customerReplacements = [];
+    let projectedSubtotal = 0;
+    let projectedVat = 0;
+    let deliveryFee = Number(dbOrder?.delivery_fee || order?.deliveryFee || 0);
+    let projectedTotal = 0;
+    let calculatedLedger = null;
+    let payMethod = order?.payment_method || order?.paymentMethod || (order?.status === 'PENDING_COD' ? 'COD' : 'GCash');
+
+    if (resolution === 'REPLACE') {
+      const submittedReplacements = req.body.replacements;
+      if (!Array.isArray(submittedReplacements) || submittedReplacements.length !== flaggedItems.length) {
+        return res.status(400).json({ success: false, message: 'Choose a replacement for every unavailable item.' });
+      }
+
+      const replacementByItemId = new Map(submittedReplacements.map(item => [String(item.oldItemId), item]));
+      let replacementSubtotal = 0;
+
+      for (const [index, item] of flaggedItems.entries()) {
+        const oldItemId = item.id ?? index;
+        const replacement = replacementByItemId.get(String(oldItemId))
+          || replacementByItemId.get(String(index))
+          || replacementByItemId.get(String(item.product_id || item.productId))
+          || submittedReplacements[index];
+        const newProductId = String(replacement?.newProductId || '').trim();
+
+        if (!replacement || !newProductId) {
+          return res.status(400).json({ success: false, message: 'One or more replacement selections are invalid.' });
+        }
+
+        let prodName = String(replacement?.newName || '').trim();
+        const submittedNewPrice = Number(replacement?.newPrice);
+        let prodPrice = (submittedNewPrice && submittedNewPrice > 0) ? submittedNewPrice : 0;
+        let authoritativeProductId = newProductId;
+
+        try {
+          const prodRes = await query(
+            `SELECT id, name, price, is_available FROM products
+             WHERE id = $1 OR LOWER(id) = LOWER($1) OR LOWER(name) = LOWER($2)
+             ORDER BY (id = $1) DESC, (LOWER(id) = LOWER($1)) DESC, (LOWER(name) = LOWER($2)) DESC
+             LIMIT 1`,
+            [newProductId, prodName]
+          );
+          if (prodRes.rows.length === 0 || !prodRes.rows[0].is_available) {
+            return res.status(400).json({
+              success: false,
+              message: `Selected replacement dish '${prodName || newProductId}' is currently unavailable.`
+            });
+          }
+          authoritativeProductId = prodRes.rows[0].id;
+          prodName = prodRes.rows[0].name;
+          const dbBasePrice = parseFloat(prodRes.rows[0].price || 0);
+          // Menu display prices already include 12% VAT.
+          // If client submitted newPrice (e.g. 39.00), use that authoritative retail price.
+          // Otherwise calculate VAT-inclusive price from dbBasePrice.
+          if (!prodPrice || prodPrice <= 0) {
+            prodPrice = Math.round(dbBasePrice * 1.12);
+          }
+        } catch (err) {
+          console.warn('DB note (validate replacement product):', err.message);
+        }
+
+        const qty = Number(item.quantity) || 1;
+        replacementSubtotal += prodPrice * qty;
+
+        customerReplacements.push({
+          oldItemId,
+          oldItemName: item.name || item.product_name_snapshot || '',
+          newProductId: authoritativeProductId,
+          newName: prodName,
+          newPrice: prodPrice,
+          quantity: qty,
+        });
+      }
+
+      // Calculate active items subtotal (excluding items currently being replaced)
+      let activeSubtotal = 0;
+      const replacedItemIds = flaggedItems.map(f => String(f.id)).filter(Boolean);
+      if (dbOrder) {
+        try {
+          const actRes = await query(
+            `SELECT COALESCE(SUM(unit_price * quantity), 0) AS active_subtotal
+             FROM order_items
+             WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') NOT IN ('OUT_OF_STOCK', 'REPLACED')
+               AND (id::text <> ALL($2::text[]))`,
+            [id, replacedItemIds]
+          );
+          activeSubtotal = parseFloat(actRes.rows[0]?.active_subtotal || 0);
+        } catch (err) {
+          console.warn('DB note (calc active subtotal):', err.message);
+        }
+      } else if (order?.items) {
+        activeSubtotal = order.items
+          .filter(i => !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()) && !replacedItemIds.includes(String(i.id)))
+          .reduce((sum, i) => sum + (Number(i.price || i.unit_price || 0) * (Number(i.quantity) || 1)), 0);
+      }
+
+      projectedSubtotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
+      projectedVat = Math.round(projectedSubtotal * 0.12 * 100) / 100;
+
+      // Calculate authoritative projectedTotal based on original total and replacement difference (VAT-inclusive scale)
+      const originalOrderTotal = Number(dbOrder?.total || order?.total || 0);
+      let originalFlaggedTotal = 0;
+      const knownNetToRetail = {
+        35: 39,
+        40: 45,
+        99: 111,
+        189: 212,
+        199: 223,
+        699: 783,
+        1099: 1231,
+        1199: 1343,
+      };
+      for (const item of flaggedItems) {
+        const qty = Number(item.quantity) || 1;
+        let unitPrice = Number(item.price ?? item.unit_price ?? 0);
+        if (unitPrice > 0) {
+          const rounded = Math.round(unitPrice);
+          if (knownNetToRetail[rounded]) {
+            unitPrice = knownNetToRetail[rounded];
+          }
+        }
+        originalFlaggedTotal += unitPrice * qty;
+      }
+      const replacementDiff = Math.round((replacementSubtotal - originalFlaggedTotal) * 100) / 100;
+
+      projectedTotal = originalOrderTotal > 0
+        ? Math.max(0, Math.round((originalOrderTotal + replacementDiff) * 100) / 100)
+        : Math.round((projectedSubtotal + projectedVat + deliveryFee) * 100) / 100;
+    }
+
+    let databaseWriteError = null;
+    let dbPayments = [];
+    let dbRefunds = [];
+
     if (dbOrder) {
       try {
-        const actRes = await query(
-          `SELECT COALESCE(SUM(unit_price * quantity), 0) AS active_subtotal
-           FROM order_items
-           WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') NOT IN ('OUT_OF_STOCK', 'REPLACED')
-             AND (id::text <> ALL($2::text[]))`,
-          [id, replacedItemIds]
+        const payRes = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+        const refRes = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+        dbPayments = payRes.rows;
+        dbRefunds = refRes.rows;
+
+        const isCod = String(dbOrder.status).toUpperCase() === 'PENDING_COD'
+          || dbPayments.some(p => ['COD', 'CASH'].includes(String(p.payment_method).toUpperCase()));
+        payMethod = isCod ? 'COD' : (dbPayments[0]?.payment_method || 'GCash');
+
+        const targetTotal = resolution === 'REPLACE' ? projectedTotal : Number(dbOrder.total || 0);
+        calculatedLedger = calculateFinancialLedger(dbPayments, dbRefunds, targetTotal, payMethod);
+
+        if (resolution === 'REPLACE') {
+          if (calculatedLedger.excessAmount > 0) {
+            await query(
+              `INSERT INTO refunds (order_id, amount, status, reason)
+               VALUES ($1, $2, 'PENDING', 'OUT_OF_STOCK_REPLACEMENT_EXCESS')
+               ON CONFLICT (order_id) WHERE status = 'PENDING'
+               DO UPDATE SET amount = EXCLUDED.amount`,
+              [id, calculatedLedger.excessAmount]
+            );
+          } else {
+            await query(
+              `UPDATE refunds SET status = 'CANCELLED'
+               WHERE order_id = $1 AND status = 'PENDING'`,
+              [id]
+            );
+          }
+        } else if (resolution === 'REFUND') {
+          const refundTargetAmount = isCod ? 0 : Number(dbOrder.total || 0);
+          if (refundTargetAmount > 0) {
+            await query(
+              `INSERT INTO refunds (order_id, amount, status, reason)
+               VALUES ($1, $2, 'PENDING', 'OUT_OF_STOCK_REFUND_REQUEST')
+               ON CONFLICT (order_id) WHERE status = 'PENDING'
+               DO UPDATE SET amount = EXCLUDED.amount`,
+              [id, refundTargetAmount]
+            );
+          }
+        }
+
+        if (resolution === 'REPLACE' && Array.isArray(customerReplacements) && customerReplacements.length > 0) {
+          const oldIds = customerReplacements.map(r => String(r.oldItemId)).filter(Boolean);
+          if (oldIds.length > 0) {
+            await query(
+              `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
+               WHERE order_id = $1 AND id::text = ANY($2::text[]) AND item_status <> 'REPLACED'`,
+              [id, oldIds]
+            );
+          }
+        }
+
+        const { rows } = await query(
+          `UPDATE orders
+           SET customer_resolution = $2, customer_resolution_status = 'PENDING_ASSISTANT',
+               customer_replacements = $3::jsonb, updated_at = NOW()
+           WHERE id = $1 AND UPPER(status) = 'OUT_OF_STOCK'
+             AND COALESCE(customer_resolution_status, 'NONE') <> 'COMPLETED'
+           RETURNING id`,
+          [id, resolution, JSON.stringify(customerReplacements)]
         );
-        activeSubtotal = parseFloat(actRes.rows[0]?.active_subtotal || 0);
-      } catch (err) {
-        console.warn('DB note (calc active subtotal):', err.message);
-      }
-    } else if (order?.items) {
-      activeSubtotal = order.items
-        .filter(i => !['OUT_OF_STOCK', 'REPLACED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()) && !replacedItemIds.includes(String(i.id)))
-        .reduce((sum, i) => sum + (Number(i.price || i.unit_price || 0) * (Number(i.quantity) || 1)), 0);
-    }
-
-    projectedSubtotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
-    projectedVat = Math.round(projectedSubtotal * 0.12 * 100) / 100;
-    projectedTotal = Math.round((projectedSubtotal + projectedVat + deliveryFee) * 100) / 100;
-  }
-
-  let databaseWriteError = null;
-  let dbPayments = [];
-  let dbRefunds = [];
-
-  if (dbOrder) {
-    try {
-      const payRes = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
-      const refRes = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
-      dbPayments = payRes.rows;
-      dbRefunds = refRes.rows;
-
-      const isCod = String(dbOrder.status).toUpperCase() === 'PENDING_COD'
-        || dbPayments.some(p => ['COD', 'CASH'].includes(String(p.payment_method).toUpperCase()));
-      payMethod = isCod ? 'COD' : (dbPayments[0]?.payment_method || 'GCash');
-
-      const targetTotal = resolution === 'REPLACE' ? projectedTotal : Number(dbOrder.total || 0);
-      calculatedLedger = calculateFinancialLedger(dbPayments, dbRefunds, targetTotal, payMethod);
-
-      if (resolution === 'REPLACE') {
-        if (calculatedLedger.excessAmount > 0) {
-          await query(
-            `INSERT INTO refunds (order_id, amount, status, reason)
-             VALUES ($1, $2, 'PENDING', 'OUT_OF_STOCK_REPLACEMENT_EXCESS')
-             ON CONFLICT (order_id) WHERE status = 'PENDING'
-             DO UPDATE SET amount = EXCLUDED.amount`,
-            [id, calculatedLedger.excessAmount]
-          );
-        } else {
-          await query(
-            `UPDATE refunds SET status = 'CANCELLED'
-             WHERE order_id = $1 AND status = 'PENDING'`,
-            [id]
-          );
+        if (rows.length === 0) {
+          return res.status(409).json({ success: false, message: 'This out-of-stock issue has already been resolved.' });
         }
-      } else if (resolution === 'REFUND') {
-        const refundTargetAmount = isCod ? 0 : Number(dbOrder.total || 0);
-        if (refundTargetAmount > 0) {
-          await query(
-            `INSERT INTO refunds (order_id, amount, status, reason)
-             VALUES ($1, $2, 'PENDING', 'OUT_OF_STOCK_REFUND_REQUEST')
-             ON CONFLICT (order_id) WHERE status = 'PENDING'
-             DO UPDATE SET amount = EXCLUDED.amount`,
-            [id, refundTargetAmount]
-          );
-        }
+
+        const refetchPay = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+        const refetchRef = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+        dbPayments = refetchPay.rows;
+        dbRefunds = refetchRef.rows;
+      } catch (error) {
+        databaseWriteError = error;
+        console.warn('DB note (customer out-of-stock choice):', error.message);
       }
+    }
 
-      if (resolution === 'REPLACE' && Array.isArray(customerReplacements) && customerReplacements.length > 0) {
-        const oldIds = customerReplacements.map(r => String(r.oldItemId)).filter(Boolean);
-        if (oldIds.length > 0) {
-          await query(
-            `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
-             WHERE order_id = $1 AND id::text = ANY($2::text[]) AND item_status <> 'REPLACED'`,
-            [id, oldIds]
-          );
-        }
+    if (databaseWriteError && !order) {
+      return res.status(503).json({ success: false, message: 'Unable to save your choice right now. Please try again.', error: databaseWriteError?.message });
+    }
+
+    const normalizedOutOfStockItems = flaggedItems.map((item, index) => ({
+      id: item.id ?? index,
+      name: item.name || item.product_name_snapshot || 'Seafood Dish',
+      price: Number(item.price ?? item.unit_price ?? 0),
+      quantity: Number(item.quantity) || 1,
+    }));
+
+    if (order) {
+      order.customerResolution = resolution;
+      order.customer_resolution = resolution;
+      order.customerResolutionStatus = 'PENDING_ASSISTANT';
+      order.customer_resolution_status = 'PENDING_ASSISTANT';
+      order.customerReplacements = customerReplacements;
+      order.customer_replacements = customerReplacements;
+      order.outOfStockItems = normalizedOutOfStockItems;
+      if (resolution === 'REPLACE' && projectedTotal > 0) {
+        order.projectedSubtotal = projectedSubtotal;
+        order.projectedVat = projectedVat;
+        order.projectedTotal = projectedTotal;
+        order.total = projectedTotal;
+        order.subtotal = projectedSubtotal;
+        order.vat = projectedVat;
       }
-
-      const { rows } = await query(
-        `UPDATE orders
-         SET customer_resolution = $2, customer_resolution_status = 'PENDING_ASSISTANT',
-             customer_replacements = $3::jsonb, updated_at = NOW()
-         WHERE id = $1 AND UPPER(status) = 'OUT_OF_STOCK'
-           AND COALESCE(customer_resolution_status, 'NONE') <> 'COMPLETED'
-         RETURNING id`,
-        [id, resolution, JSON.stringify(customerReplacements)]
-      );
-      if (rows.length === 0) {
-        return res.status(409).json({ success: false, message: 'This out-of-stock issue has already been resolved.' });
+      if (calculatedLedger) {
+        order.excessAmount = calculatedLedger.excessAmount;
+        order.additionalRequired = calculatedLedger.additionalRequired;
+        order.financialStatus = calculatedLedger.financialStatus;
+        order.pendingRefundAmount = calculatedLedger.pendingRefundAmount;
+        order.netConfirmedPaid = calculatedLedger.netConfirmedPaid;
+        order.grossConfirmedPaid = calculatedLedger.grossConfirmedPaid;
       }
-
-      const refetchPay = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
-      const refetchRef = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
-      dbPayments = refetchPay.rows;
-      dbRefunds = refetchRef.rows;
-    } catch (error) {
-      databaseWriteError = error;
-      console.warn('DB note (customer out-of-stock choice):', error.message);
+      if (dbPayments && dbPayments.length > 0) order.payments = dbPayments;
+      if (dbRefunds && dbRefunds.length > 0) order.refunds = dbRefunds;
+      order.updated_at = new Date().toISOString();
+      inMemoryOrders.set(id, order);
     }
+
+    const updatedOrder = formatOrderResponse({
+      ...(dbOrder || {}),
+      ...(order || {}),
+      id,
+      payment_method: payMethod,
+      paymentMethod: payMethod,
+      status: 'OUT_OF_STOCK',
+      outOfStockItems: normalizedOutOfStockItems,
+      customer_resolution: resolution,
+      customer_resolution_status: 'PENDING_ASSISTANT',
+      customer_replacements: customerReplacements,
+      payments: dbPayments.length ? dbPayments : order?.payments || [],
+      refunds: dbRefunds.length ? dbRefunds : order?.refunds || [],
+      total: (resolution === 'REPLACE' && projectedTotal > 0) ? projectedTotal : (dbOrder?.total || order?.total),
+    });
+    realtimeEmitter.emit('order_update', { ...updatedOrder, type: 'CUSTOMER_OUT_OF_STOCK_CHOICE' });
+
+    return res.status(200).json({
+      success: true,
+      message: resolution === 'REFUND' ? 'Refund request sent to the assistant.' : 'Replacement choice sent to the assistant.',
+      data: updatedOrder,
+    });
+  } catch (error) {
+    console.error('Error processing customer out-of-stock choice:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to process out-of-stock choice.',
+      error: error.message
+    });
   }
-
-  if (databaseWriteError && !order) {
-    return res.status(503).json({ success: false, message: 'Unable to save your choice right now. Please try again.', error: databaseWriteError?.message });
-  }
-
-  const normalizedOutOfStockItems = flaggedItems.map((item, index) => ({
-    id: item.id ?? index,
-    name: item.name || item.product_name_snapshot || 'Seafood Dish',
-    price: Number(item.price ?? item.unit_price ?? 0),
-    quantity: Number(item.quantity) || 1,
-  }));
-
-  if (order) {
-    order.customerResolution = resolution;
-    order.customer_resolution = resolution;
-    order.customerResolutionStatus = 'PENDING_ASSISTANT';
-    order.customer_resolution_status = 'PENDING_ASSISTANT';
-    order.customerReplacements = customerReplacements;
-    order.customer_replacements = customerReplacements;
-    order.outOfStockItems = normalizedOutOfStockItems;
-    if (resolution === 'REPLACE' && projectedTotal > 0) {
-      order.projectedSubtotal = projectedSubtotal;
-      order.projectedVat = projectedVat;
-      order.projectedTotal = projectedTotal;
-      order.total = projectedTotal;
-      order.subtotal = projectedSubtotal;
-      order.vat = projectedVat;
-    }
-    if (calculatedLedger) {
-      order.excessAmount = calculatedLedger.excessAmount;
-      order.additionalRequired = calculatedLedger.additionalRequired;
-      order.financialStatus = calculatedLedger.financialStatus;
-      order.pendingRefundAmount = calculatedLedger.pendingRefundAmount;
-      order.netConfirmedPaid = calculatedLedger.netConfirmedPaid;
-      order.grossConfirmedPaid = calculatedLedger.grossConfirmedPaid;
-    }
-    if (dbPayments && dbPayments.length > 0) order.payments = dbPayments;
-    if (dbRefunds && dbRefunds.length > 0) order.refunds = dbRefunds;
-    order.updated_at = new Date().toISOString();
-    inMemoryOrders.set(id, order);
-  }
-
-  const updatedOrder = formatOrderResponse({
-    ...(dbOrder || {}),
-    ...(order || {}),
-    id,
-    payment_method: payMethod,
-    paymentMethod: payMethod,
-    status: 'OUT_OF_STOCK',
-    outOfStockItems: normalizedOutOfStockItems,
-    customer_resolution: resolution,
-    customer_resolution_status: 'PENDING_ASSISTANT',
-    customer_replacements: customerReplacements,
-    payments: dbPayments.length ? dbPayments : order?.payments || [],
-    refunds: dbRefunds.length ? dbRefunds : order?.refunds || [],
-    total: (resolution === 'REPLACE' && projectedTotal > 0) ? projectedTotal : (dbOrder?.total || order?.total),
-  });
-  realtimeEmitter.emit('order_update', { ...updatedOrder, type: 'CUSTOMER_OUT_OF_STOCK_CHOICE' });
-
-  return res.status(200).json({
-    success: true,
-    message: resolution === 'REFUND' ? 'Refund request sent to the assistant.' : 'Replacement choice sent to the assistant.',
-    data: updatedOrder,
-  });
 });
 
 /**
@@ -685,7 +730,7 @@ router.post('/user-flow/orders/:id/additional-payment-receipt', optionalAuth, as
   }
 });
 
-async function executeOrderCancellation(id) {
+async function executeOrderCancellation(id, options = {}) {
   let orderInMemory = inMemoryOrders.get(id);
   if (!orderInMemory) {
     for (const [k, v] of inMemoryOrders.entries()) {
@@ -709,9 +754,35 @@ async function executeOrderCancellation(id) {
   const currentStatus = orderInMemory?.status || dbOrder?.status || null;
   const normCurrent = normalizeFlowStatus(currentStatus);
 
+  const isCOD = String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('COD')
+    || String(orderInMemory?.status || dbOrder?.status || '').toUpperCase() === 'PENDING_COD';
+
+  const hasGcashPayment = !isCOD && !options.forceImmediateCancel && (
+    String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('GCASH')
+    || Boolean(orderInMemory?.paymentReceipt || dbOrder?.payment_receipt)
+    || Boolean(orderInMemory?.gcashAuthorized || dbOrder?.gcash_authorized)
+    || Boolean(orderInMemory?.referenceNumber || dbOrder?.payment_reference)
+  );
+
+  const orderTotal = parseFloat(dbOrder?.total || orderInMemory?.total || 0);
+
   if (normCurrent === 'CANCELLED') {
+    // If already cancelled but paid via GCash and has no completed refund, create pending refund for assistant
+    if (hasGcashPayment && !orderInMemory?.refundReceipt && !dbOrder?.refund_receipt && !orderInMemory?.refundReference) {
+      try {
+        await query(
+          `INSERT INTO refunds (order_id, amount, status, reason)
+           VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND')
+           ON CONFLICT (order_id) WHERE status = 'PENDING'
+           DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason`,
+          [id, orderTotal]
+        );
+      } catch (refErr) {
+        console.warn('Pending refund on cancelled order note:', refErr.message);
+      }
+    }
     const activeOrderObj = orderInMemory || (dbOrder ? formatOrderResponse(dbOrder) : { id, status: 'CANCELLED' });
-    return { success: true, message: `Order ${id} is already cancelled.`, order: activeOrderObj };
+    return { success: true, message: `Order ${id} is cancelled.`, order: activeOrderObj, requiresRefund: hasGcashPayment };
   }
 
   const nonCancellableStatuses = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
@@ -720,6 +791,88 @@ async function executeOrderCancellation(id) {
       success: false,
       status: 400,
       message: 'Order is already being prepared in the kitchen and cannot be cancelled.',
+    };
+  }
+
+  // If customer paid via GCash: request cancellation to assistant so they can process refund!
+  if (hasGcashPayment) {
+    try {
+      await query(
+        `UPDATE orders
+         SET status = 'CANCEL_REQUESTED',
+             customer_resolution = 'REFUND',
+             customer_resolution_status = 'PENDING_ASSISTANT',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+    } catch (dbErr) {
+      console.warn('Update orders CANCEL_REQUESTED fallback:', dbErr.message);
+    }
+
+    try {
+      await query(
+        `INSERT INTO refunds (order_id, amount, status, reason)
+         VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND')
+         ON CONFLICT (order_id) WHERE status = 'PENDING'
+         DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason`,
+        [id, orderTotal]
+      );
+    } catch (refErr) {
+      console.warn('Insert pending cancellation refund note:', refErr.message);
+    }
+
+    // Keep kitchen_orders table from preparing this order
+    try {
+      await query(
+        `UPDATE kitchen_orders
+         SET status = 'CANCELLED', updated_at = NOW()
+         WHERE order_id = $1`,
+        [id]
+      );
+    } catch (e) {}
+
+    // Restore any deducted remaining servings if cancelled before prep
+    try {
+      const pool = await getDbPool();
+      const client = await pool.connect();
+      try {
+        await restoreOrderRemainingServings(client, id);
+      } finally {
+        client.release();
+      }
+    } catch (restErr) {
+      console.warn('[SERVINGS] Cancellation servings restoration note:', restErr.message);
+    }
+
+    if (orderInMemory) {
+      orderInMemory.status = 'CANCEL_REQUESTED';
+      orderInMemory.customerResolution = 'REFUND';
+      orderInMemory.customerResolutionStatus = 'PENDING_ASSISTANT';
+      orderInMemory.pendingRefundAmount = orderTotal;
+      orderInMemory.updated_at = new Date().toISOString();
+      inMemoryOrders.set(orderInMemory.id || id, orderInMemory);
+    } else if (dbOrder) {
+      const formatted = formatOrderResponse(dbOrder);
+      formatted.status = 'CANCEL_REQUESTED';
+      formatted.customerResolution = 'REFUND';
+      formatted.customerResolutionStatus = 'PENDING_ASSISTANT';
+      formatted.pendingRefundAmount = orderTotal;
+      formatted.updated_at = new Date().toISOString();
+      inMemoryOrders.set(id, formatted);
+      orderInMemory = formatted;
+    }
+
+    const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCEL_REQUESTED' } : { id, status: 'CANCEL_REQUESTED' });
+    const formattedResponse = formatOrderResponse(activeOrderObj);
+
+    emitOrderUpdate(formattedResponse);
+
+    return {
+      success: true,
+      requiresRefund: true,
+      message: `Cancellation request sent to the assistant. Your refund of ₱${orderTotal.toFixed(2)} will be processed shortly.`,
+      order: formattedResponse,
     };
   }
 
@@ -808,7 +961,7 @@ async function executeOrderCancellation(id) {
 router.patch('/user-flow/orders/:id/cancel', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await executeOrderCancellation(id);
+    const result = await executeOrderCancellation(id, req.body || {});
     if (!result.success) {
       return res.status(result.status || 400).json(result);
     }
@@ -823,6 +976,24 @@ router.patch('/user-flow/orders/:id/cancel', async (req, res) => {
   }
 });
 
+router.post('/user-flow/orders/:id/request-cancellation', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await executeOrderCancellation(id, req.body || {});
+    if (!result.success) {
+      return res.status(result.status || 400).json(result);
+    }
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('Error requesting order cancellation:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to request order cancellation',
+      error: error.message,
+    });
+  }
+});
+
 /**
  * Common PATCH /api/user-flow/orders/:id/status
  * Central Status Transition router: Delegates logic to respective role controllers
@@ -831,9 +1002,9 @@ router.patch('/user-flow/orders/:id/status', optionalAuth, async (req, res) => {
   const { status } = req.body;
   const targetNorm = normalizeFlowStatus(status);
 
-  if (targetNorm === 'CANCELLED') {
+  if (targetNorm === 'CANCELLED' || targetNorm === 'CANCEL_REQUESTED') {
     const { id } = req.params;
-    const result = await executeOrderCancellation(id);
+    const result = await executeOrderCancellation(id, req.body || {});
     if (!result.success) {
       return res.status(result.status || 400).json(result);
     }

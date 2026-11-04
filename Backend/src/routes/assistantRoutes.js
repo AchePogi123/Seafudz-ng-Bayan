@@ -3,7 +3,7 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse, calculateFinancialLedger } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
-import { deductOrderRemainingServings } from '../utils/servingsDeduction.js';
+import { deductOrderRemainingServings, restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 const router = Router();
 
@@ -487,6 +487,43 @@ router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res
   }
 });
 
+// PATCH /api/assistant/orders/:id/reference - Update reference number directly
+router.patch('/assistant/orders/:id/reference', optionalAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { referenceNumber, paymentReference } = req.body;
+    const ref = (referenceNumber || paymentReference || '').toString().trim();
+    if (!ref) {
+      return res.status(400).json({ success: false, message: 'Reference number is required' });
+    }
+
+    let order = inMemoryOrders.get(id) || { id };
+    order.paymentReference = ref;
+    order.referenceNumber = ref;
+    order.updated_at = new Date().toISOString();
+    inMemoryOrders.set(id, order);
+
+    try {
+      await query(
+        `UPDATE orders SET payment_reference = $2, updated_at = NOW() WHERE id = $1`,
+        [id, ref]
+      );
+      await query(
+        `UPDATE payments SET reference_number = $2, updated_at = NOW() WHERE order_id = $1`,
+        [id, ref]
+      );
+    } catch (dbErr) {
+      console.warn('DB update note (update-reference):', dbErr.message);
+    }
+
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+    return res.status(200).json({ success: true, message: `Reference number updated to ${ref}`, data: formatted });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // PATCH /api/assistant/orders/:id/verify-receipt - Assistant approves receipt screenshot
 router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, res) => {
   try {
@@ -845,7 +882,9 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             );
             const verifiedId = prodRes.rows[0]?.id || replacement.newProductId;
             const verifiedName = prodRes.rows[0]?.name || replacement.newName;
-            const verifiedPrice = prodRes.rows[0]?.price ? parseFloat(prodRes.rows[0].price) : Number(replacement.newPrice || 0);
+            const verifiedPrice = Number(replacement.newPrice) > 0
+              ? Number(replacement.newPrice)
+              : (prodRes.rows[0]?.price ? Math.round(parseFloat(prodRes.rows[0].price) * 1.12) : 0);
             const qty = Number(replacement.quantity) || 1;
             const subtotal = Math.round(verifiedPrice * qty * 100) / 100;
 
@@ -856,16 +895,40 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             );
           }
 
-          const sumRes = await client.query(
-            `SELECT COALESCE(SUM(unit_price * quantity), 0) AS active_subtotal
-             FROM order_items
-             WHERE order_id = $1 AND item_status = 'ACTIVE'`,
+          const origTotal = parseFloat(dbOrder.total || 0);
+          const deliveryFee = parseFloat(dbOrder.delivery_fee || 0);
+          let replacementTotal = 0;
+          for (const rep of customerReplacements) {
+            replacementTotal += (Number(rep.newPrice || 0) * (Number(rep.quantity) || 1));
+          }
+          const replacedRes = await client.query(
+            `SELECT unit_price, quantity FROM order_items WHERE order_id = $1 AND item_status = 'REPLACED'`,
             [id]
           );
-          updatedSubtotal = Math.round(parseFloat(sumRes.rows[0]?.active_subtotal || 0) * 100) / 100;
-          updatedVat = Math.round(updatedSubtotal * 0.12 * 100) / 100;
-          updatedDeliveryFee = Math.round(parseFloat(dbOrder.delivery_fee || 0) * 100) / 100;
-          updatedTotal = Math.round((updatedSubtotal + updatedVat + updatedDeliveryFee) * 100) / 100;
+          const knownNetToRetail = {
+            35: 39,
+            40: 45,
+            99: 111,
+            189: 212,
+            199: 223,
+            699: 783,
+            1099: 1231,
+            1199: 1343,
+          };
+          let originalReplacedTotal = 0;
+          for (const row of replacedRes.rows) {
+            let uPrice = parseFloat(row.unit_price || 0);
+            if (knownNetToRetail[Math.round(uPrice)]) {
+              uPrice = knownNetToRetail[Math.round(uPrice)];
+            }
+            originalReplacedTotal += uPrice * (Number(row.quantity) || 1);
+          }
+          const priceDiff = Math.round((replacementTotal - originalReplacedTotal) * 100) / 100;
+          updatedTotal = origTotal > 0 ? Math.max(0, Math.round((origTotal + priceDiff) * 100) / 100) : 0;
+          const itemsPortion = Math.max(0, updatedTotal - deliveryFee);
+          updatedSubtotal = Math.round((itemsPortion / 1.12) * 100) / 100;
+          updatedVat = Math.round((itemsPortion - updatedSubtotal) * 100) / 100;
+          updatedDeliveryFee = deliveryFee;
 
           const refUpd = await client.query(
             `UPDATE refunds
@@ -1132,6 +1195,169 @@ router.patch('/assistant/orders/:id/verify-additional-payment', optionalAuth, as
       message: 'Failed to verify additional payment',
       error: error.message,
     });
+  }
+});
+
+/**
+ * PATCH /api/assistant/orders/:id/process-cancellation-refund
+ * Assistant processes and completes the refund for a cancelled or cancel-requested order.
+ * Either refundReceipt (screenshot photo) OR refundReference (manual typed string) MUST be provided.
+ */
+router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { refundReceipt, refundReference } = req.body;
+
+    const cleanReceipt = String(refundReceipt || '').trim() || null;
+    const cleanReference = String(refundReference || '').trim() || null;
+
+    if (!cleanReceipt && !cleanReference) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide either a refund screenshot photo or a reference number before submitting.'
+      });
+    }
+
+    let order = inMemoryOrders.get(id);
+    let dbOrder = null;
+    let databaseError = null;
+
+    const pool = await getDbPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows } = await client.query(
+        `SELECT id, status, subtotal, tax, delivery_fee, total, payment_method,
+                customer_resolution, customer_resolution_status
+         FROM orders WHERE id = $1 FOR UPDATE`,
+        [id]
+      );
+      dbOrder = rows[0] || null;
+
+      if (!dbOrder && !order) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ success: false, message: 'Order not found.' });
+      }
+
+      const orderTotal = parseFloat(dbOrder?.total || order?.total || 0);
+
+      // 1. Mark orders as CANCELLED with resolution completed
+      await client.query(
+        `UPDATE orders
+         SET status = 'CANCELLED',
+             customer_resolution = 'REFUND',
+             customer_resolution_status = 'COMPLETED',
+             cancelled_at = COALESCE(cancelled_at, NOW()),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id]
+      );
+
+      // 2. Update kitchen_orders to CANCELLED
+      await client.query(
+        `UPDATE kitchen_orders
+         SET status = 'CANCELLED',
+             cancelled_at = COALESCE(cancelled_at, NOW()),
+             updated_at = NOW()
+         WHERE order_id = $1`,
+        [id]
+      );
+
+      // 3. Update order_items to CANCELLED
+      await client.query(
+        `UPDATE order_items
+         SET item_status = 'CANCELLED'
+         WHERE order_id = $1 AND item_status != 'CANCELLED'`,
+        [id]
+      );
+
+      // 4. Update or insert refund record in refunds table
+      const updRef = await client.query(
+        `UPDATE refunds
+         SET status = 'COMPLETED',
+             refund_receipt = COALESCE($2, refund_receipt),
+             reference_number = COALESCE($3, reference_number),
+             completed_at = NOW()
+         WHERE order_id = $1 AND status = 'PENDING'
+         RETURNING id`,
+        [id, cleanReceipt, cleanReference]
+      );
+
+      if (updRef.rows.length === 0) {
+        await client.query(
+          `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number, completed_at)
+           VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_CANCELLATION_REFUND', $3, $4, NOW())`,
+          [id, orderTotal, cleanReceipt, cleanReference]
+        );
+      }
+
+      // 5. Update payments table to REFUNDED
+      await client.query(
+        `UPDATE payments
+         SET status = 'REFUNDED',
+             refunded_amount = amount
+         WHERE order_id = $1`,
+        [id]
+      );
+
+      // 6. Restore product inventory servings
+      try {
+        await restoreOrderRemainingServings(client, id);
+      } catch (restErr) {
+        console.warn('[SERVINGS] Restoration note:', restErr.message);
+      }
+
+      await client.query('COMMIT');
+    } catch (dbErr) {
+      try { await client.query('ROLLBACK'); } catch {}
+      databaseError = dbErr;
+      console.warn('DB error processing cancellation refund:', dbErr.message);
+    } finally {
+      client.release();
+    }
+
+    if (databaseError && !order) {
+      return res.status(500).json({ success: false, message: 'Database error processing refund.', error: databaseError.message });
+    }
+
+    // Refetch payments and refunds for consistent ledger
+    let finalPayments = [];
+    let finalRefunds = [];
+    try {
+      const pRes = await query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
+      const rRes = await query(`SELECT * FROM refunds WHERE order_id = $1`, [id]);
+      finalPayments = pRes.rows;
+      finalRefunds = rRes.rows;
+    } catch {}
+
+    const activeOrderObj = inMemoryOrders.get(id) || order || (dbOrder ? formatOrderResponse(dbOrder) : { id });
+    activeOrderObj.status = 'CANCELLED';
+    activeOrderObj.customerResolution = 'REFUND';
+    activeOrderObj.customerResolutionStatus = 'COMPLETED';
+    activeOrderObj.refundReceipt = cleanReceipt || activeOrderObj.refundReceipt;
+    activeOrderObj.refundReference = cleanReference || activeOrderObj.refundReference;
+    if (finalPayments.length) activeOrderObj.payments = finalPayments;
+    if (finalRefunds.length) activeOrderObj.refunds = finalRefunds;
+    activeOrderObj.updated_at = new Date().toISOString();
+    inMemoryOrders.set(id, activeOrderObj);
+
+    const formatted = formatOrderResponse(activeOrderObj);
+    emitOrderUpdate({
+      ...formatted,
+      type: 'ORDER_CANCELLED_REFUNDED',
+    });
+
+    console.log(`[ASSISTANT] Order #${id} cancellation refund completed by assistant.`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Order #${id} cancellation refund completed successfully!`,
+      data: formatted
+    });
+  } catch (error) {
+    console.error('Error in process-cancellation-refund:', error);
+    return res.status(500).json({ success: false, message: 'Server error processing cancellation refund.', error: error.message });
   }
 });
 

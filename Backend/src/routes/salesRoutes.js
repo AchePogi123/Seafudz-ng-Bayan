@@ -118,7 +118,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
 
     const paymentSql = `
       SELECT 
-        LOWER(COALESCE(p.payment_method, 'cash')) AS method,
+        LOWER(COALESCE(NULLIF(p.payment_method, ''), NULLIF(o.payment_method, ''), 'cash')) AS method,
         COUNT(DISTINCT o.id)::int AS count,
         COALESCE(SUM(o.total), 0)::float AS total
       FROM orders o
@@ -128,7 +128,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         ORDER BY order_id, created_at DESC
       ) p ON o.id = p.order_id
       WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}
-      GROUP BY LOWER(COALESCE(p.payment_method, 'cash'))
+      GROUP BY LOWER(COALESCE(NULLIF(p.payment_method, ''), NULLIF(o.payment_method, ''), 'cash'))
     `;
     const paymentRes = await query(paymentSql, dateParams);
     const breakdown = {
@@ -143,7 +143,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       if (m.includes('hybrid') || m.includes('split')) {
         breakdown.hybrid.total += r.total;
         breakdown.hybrid.count += r.count;
-      } else if (m.includes('gcash')) {
+      } else if (m.includes('gcash') || m.includes('online') || m.includes('card')) {
         breakdown.gcash.total += r.total;
         breakdown.gcash.count += r.count;
       } else if (m.includes('maya')) {
@@ -152,6 +152,8 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       } else if (m.includes('cod')) {
         breakdown.cod.total += r.total;
         breakdown.cod.count += r.count;
+        breakdown.cash.total += r.total;
+        breakdown.cash.count += r.count;
       } else {
         breakdown.cash.total += r.total;
         breakdown.cash.count += r.count;

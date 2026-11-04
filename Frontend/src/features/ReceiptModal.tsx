@@ -49,11 +49,13 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
     cashReceived,
     change,
     paymentMethod = 'Cash',
-    paymentReference,
+    paymentReference: rawPaymentRef,
     customerName,
     phone,
     address,
   } = orderDetails
+
+  const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 
   const rawSubtotal = typeof subtotal === 'number'
     ? subtotal
@@ -113,7 +115,7 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
         <div class="divider"></div>
 
         <div>
-          ${orderId ? `<div class="flex-row"><span>Order Ref:</span><span class="font-bold">${orderId}</span></div>` : ''}
+          ${orderId ? `<div class="flex-row"><span>Order ID:</span><span class="font-bold">${orderId}</span></div>` : ''}
           <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
           ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>` : ''}
           ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${customerName}</span></div>` : ''}
@@ -275,11 +277,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
     cashReceived,
     change,
     paymentMethod = 'Cash',
-    paymentReference,
+    paymentReference: rawPaymentRef,
     customerName,
     phone,
     address,
   } = orderDetails
+
+  const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 
   const rawSubtotal = typeof subtotal === 'number'
     ? subtotal
@@ -348,7 +352,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
             <div className="space-y-1 text-[11px] text-neutral-600 font-bold">
               {orderId && (
                 <div className="flex justify-between">
-                  <span>Order Ref:</span>
+                  <span>Order ID:</span>
                   <span className="text-neutral-800">{orderId}</span>
                 </div>
               )}

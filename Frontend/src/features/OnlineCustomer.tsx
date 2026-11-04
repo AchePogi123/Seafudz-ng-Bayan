@@ -137,7 +137,8 @@ export function normalizeStatus(rawStatus?: string): string {
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
     if (['OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'ON_THE_WAY', 'IN_TRANSIT'].includes(upper)) return 'OUT_FOR_DELIVERY'
     if (['COMPLETED', 'DELIVERED', 'SERVED'].includes(upper)) return 'COMPLETED'
-    if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK') return upper
+    if (['CANCEL_REQUESTED', 'CANCELLATION_REQUESTED', 'PENDING_CANCELLATION'].includes(upper)) return 'CANCEL_REQUESTED'
+    if (upper === 'FLAGGED' || upper === 'CANCELLED' || upper === 'OUT_OF_STOCK' || upper === 'CANCEL_REQUESTED') return upper
     return upper
 }
 
@@ -157,6 +158,7 @@ export function getStatusRank(rawStatus?: string): number {
         case 'OUT_FOR_DELIVERY': return 6
         case 'COMPLETED': return 7
         case 'CANCELLED':
+        case 'CANCEL_REQUESTED':
         case 'FLAGGED': return -1
         default: return 0
     }
@@ -1187,7 +1189,21 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleCancelOrder = async () => {
         if (!activeOrder || normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' || outOfStockItems.length > 0) return
-        const confirmCancel = window.confirm(`Are you sure you want to cancel Order #${activeOrder.id}?`)
+
+        const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
+            || String(activeOrder.status || '').toUpperCase() === 'PENDING_COD'
+        const hasGcashPayment = !isCOD && (
+            String(activeOrder.paymentMethod || '').toUpperCase().includes('GCASH')
+            || Boolean(activeOrder.paymentReceipt)
+            || Boolean(activeOrder.gcashAuthorized)
+            || Boolean(activeOrder.referenceNumber)
+        )
+
+        const confirmMsg = hasGcashPayment
+            ? `You already paid ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via GCash.\n\nCancelling this order will notify our restaurant assistant to send your full refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to ${activeOrder.phone}.\n\nDo you want to proceed with requesting cancellation and refund?`
+            : `Are you sure you want to cancel Order #${activeOrder.id}?`
+
+        const confirmCancel = window.confirm(confirmMsg)
         if (!confirmCancel) return
 
         setIsCancellingOrder(true)
@@ -1199,7 +1215,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-                body: JSON.stringify({ status: 'CANCELLED' }),
+                body: JSON.stringify({ status: hasGcashPayment ? 'CANCEL_REQUESTED' : 'CANCELLED' }),
             })
 
             const resData = await res.json().catch(() => ({}))
@@ -1208,40 +1224,48 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 setIsCancellingOrder(false)
                 return
             }
+
+            const targetStatus = resData.requiresRefund || resData.order?.status === 'CANCEL_REQUESTED' ? 'CANCEL_REQUESTED' : 'CANCELLED'
+            const updatedOrder = {
+                ...activeOrder,
+                status: targetStatus,
+                customerResolution: resData.requiresRefund ? 'REFUND' : activeOrder.customerResolution,
+                customerResolutionStatus: resData.requiresRefund ? 'PENDING_ASSISTANT' : activeOrder.customerResolutionStatus,
+            }
+            setActiveOrder(updatedOrder)
+            setCustomerOrders((prev) =>
+                prev.map((o: any) => (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o)
+            )
+
+            try {
+                const currentUser = getActiveUser()
+                const userOrderKey = getActiveOrderKey(currentUser)
+                const userOrdersKey = getOrdersKey(currentUser)
+                localStorage.setItem(userOrderKey, JSON.stringify(updatedOrder))
+
+                const existingUserOrders = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
+                const updatedUserOrders = existingUserOrders.map((o: any) =>
+                    (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o
+                )
+                localStorage.setItem(userOrdersKey, JSON.stringify(updatedUserOrders))
+
+                const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                const updatedGlobalOrders = globalOrders.map((o: any) =>
+                    (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o
+                )
+                localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobalOrders))
+            } catch { }
+
+            notifyOrderSync()
+            if (hasGcashPayment) {
+                alert(`Cancellation request submitted! Our restaurant assistant has been notified to send your refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to ${activeOrder.phone}.`)
+            }
         } catch (err: any) {
             console.error('Error sending cancel request:', err)
             alert(err?.message || 'Error sending cancel request')
+        } finally {
             setIsCancellingOrder(false)
-            return
         }
-
-        const updatedOrder = { ...activeOrder, status: 'CANCELLED' }
-        setActiveOrder(updatedOrder)
-        setCustomerOrders((prev) =>
-            prev.map((o: any) => (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o)
-        )
-
-        try {
-            const currentUser = getActiveUser()
-            const userOrderKey = getActiveOrderKey(currentUser)
-            const userOrdersKey = getOrdersKey(currentUser)
-            localStorage.setItem(userOrderKey, JSON.stringify(updatedOrder))
-
-            const existingUserOrders = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
-            const updatedUserOrders = existingUserOrders.map((o: any) =>
-                (o.id === activeOrder.id || o.ref === activeOrder.id) ? updatedOrder : o
-            )
-            localStorage.setItem(userOrdersKey, JSON.stringify(updatedUserOrders))
-
-            const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-            const updatedGlobalOrders = globalOrders.map((o: any) =>
-                (o.id === activeOrder.id || o.ref === activeOrder.id) ? { ...o, status: 'CANCELLED' } : o
-            )
-            localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobalOrders))
-        } catch { }
-
-        notifyOrderSync()
-        setIsCancellingOrder(false)
     }
 
     // Dismiss verification/waiting modal once confirmed or cancelled, but DO NOT hijack or force customer tab
@@ -1495,6 +1519,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [cartItems, getEffectivePrice])
     // 12% VAT added on top of base subtotal
     const vat = useMemo(() => subtotal * 0.12, [subtotal])
+    // Sum of items in cart (VAT-inclusive display price sum, without delivery fee)
+    const cartOrderSum = useMemo(() => {
+        return cartItems.reduce((acc, ci) => {
+            const displayPrice = ci.item.price ?? getEffectivePrice(ci.item.id, ci.item.price)
+            return acc + displayPrice * ci.quantity
+        }, 0)
+    }, [cartItems, getEffectivePrice])
     const deliveryDestination = useMemo(
         () => address.trim() ? addressCoordinates || geocodeAddress(address) : null,
         [address, addressCoordinates]
@@ -1825,7 +1856,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     id: ci.item.id,
                     name: ci.item.name,
                     quantity: ci.quantity,
-                    price: (ci.item as any).basePrice || ci.item.price,
+                    price: ci.item.price,
+                    basePrice: (ci.item as any).basePrice,
                     specialNote: ci.specialNote || '',
                 })),
             }
@@ -2842,14 +2874,28 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {/* CANCEL ORDER BUTTON (Eligible only when still in queue in kitchen, before PREPARING) */}
                             {(() => {
                                 const rawSt = (activeOrder.status || '').toUpperCase()
+                                const isCancelRequested = normalizeStatus(rawSt) === 'CANCEL_REQUESTED'
                                 const isCancelled = normalizeStatus(rawSt) === 'CANCELLED'
                                 const isOutOfStock = normalizeStatus(rawSt) === 'OUT_OF_STOCK' || outOfStockItems.length > 0
                                 const isPreparingOrLater = isOutOfStock || ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(rawSt))
 
-                                if (isCancelled) {
+                                if (isCancelRequested) {
                                     return (
-                                        <span className="bg-rose-100 text-rose-800 font-extrabold text-xs px-4 py-2 rounded-xl border border-rose-300">
-                                            Order Cancelled
+                                        <span className="bg-amber-100 text-amber-900 font-extrabold text-xs px-4 py-2 rounded-xl border border-amber-300 animate-pulse">
+                                            Refund Pending from Assistant
+                                        </span>
+                                    )
+                                }
+
+                                if (isCancelled) {
+                                    const hasRefundProof = Boolean(activeOrder.refundReceipt || activeOrder.refundReference)
+                                    return (
+                                        <span className={`font-extrabold text-xs px-4 py-2 rounded-xl border ${
+                                            hasRefundProof
+                                                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                                : 'bg-rose-100 text-rose-800 border-rose-300'
+                                        }`}>
+                                            {hasRefundProof ? 'Order Cancelled & Refunded' : 'Order Cancelled'}
                                         </span>
                                     )
                                 }
@@ -3060,81 +3106,147 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                         {/* Out of Stock Notice Banner */}
                         {normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' && (
-                            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 sm:p-6 text-amber-950 shadow-md space-y-4 animate-in fade-in">
-                                <div className="space-y-1">
-                                    <div className="flex items-center gap-2">
-                                        
-                                        <h4 className="text-base sm:text-lg font-black text-amber-900 tracking-tight">Item Unavailable in Kitchen</h4>
+                            <div className="bg-white border border-neutral-200 rounded-2xl p-5 sm:p-6 text-neutral-900 shadow-sm space-y-4 animate-in fade-in">
+                                <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
+                                    <div>
+                                        <h4 className="text-base sm:text-lg font-black text-neutral-900 tracking-tight">Item Unavailable in Kitchen</h4>
+                                        <p className="text-xs sm:text-sm text-neutral-500 leading-relaxed font-normal mt-0.5">
+                                            The kitchen flagged the following item(s) as out of stock. Choose an available replacement from our menu, or request a full refund.
+                                        </p>
                                     </div>
-                                    <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
-                                        The kitchen flagged the following item(s) as out of stock. Choose an available replacement from our menu, or request a full refund.
-                                    </p>
+                                    <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+                                        Out of Stock
+                                    </span>
                                 </div>
 
                                 {(activeOrder.customerResolutionStatus || 'AWAITING_CUSTOMER').toUpperCase() === 'PENDING_ASSISTANT' ? (
-                                    <div className="bg-amber-100/90 p-4 rounded-xl border border-amber-300 text-xs text-amber-900 space-y-2">
-                                        <p className="font-extrabold text-sm">
+                                    <div className="bg-neutral-50 p-4 rounded-xl border border-neutral-200 text-xs text-neutral-800 space-y-2">
+                                        <p className="font-extrabold text-sm text-neutral-900">
                                             {activeOrder.customerResolution === 'REFUND'
                                                 ? 'Full refund requested.'
                                                 : 'Replacement choices submitted.'}
                                         </p>
-                                        <p className="text-xs text-amber-800 font-medium">
+                                        <p className="text-xs text-neutral-600 font-medium">
                                             {activeOrder.customerResolution === 'REFUND'
                                                 ? 'Our restaurant assistant is verifying and processing the refund to your account.'
                                                 : 'Our restaurant assistant is reviewing your replacements and preparing them for the kitchen.'}
                                         </p>
-                                        {Array.isArray(activeOrder.customerReplacements) && activeOrder.customerReplacements.length > 0 && (
-                                            <div className="bg-white/80 p-3 rounded-lg border border-amber-200 text-xs space-y-1">
-                                                <span className="font-bold text-neutral-800 block">Submitted Replacements:</span>
-                                                {activeOrder.customerReplacements.map((r: any, idx: number) => (
-                                                    <div key={idx} className="flex justify-between text-neutral-700">
-                                                        <span>{r.oldItemName} → <span className="font-bold">{r.newName}</span> (x{r.quantity || 1})</span>
-                                                        <span className="font-bold">₱{(Number(r.newPrice || 0) * Number(r.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        {(() => {
+                                            const replacements = Array.isArray(activeOrder.customerReplacements) ? activeOrder.customerReplacements : []
+                                            if (replacements.length === 0) return null
+
+                                            const getPriceForDish = (idOrName: string, fallbackPrice = 0) => {
+                                                const clean = String(idOrName || '').toLowerCase().trim()
+                                                const m = allEffectiveItems.find(it => String(it.id).toLowerCase() === clean || it.name.toLowerCase() === clean)
+                                                if (m && m.price) return m.price
+                                                if (fallbackPrice > 0 && fallbackPrice < 100) {
+                                                    const withVat = Math.round(fallbackPrice * 1.12)
+                                                    const matchWithVat = allEffectiveItems.find(it => Math.abs(it.price - withVat) <= 1)
+                                                    if (matchWithVat) return matchWithVat.price
+                                                }
+                                                return fallbackPrice
+                                            }
+
+                                            let totalOld = 0
+                                            let totalNew = 0
+                                            replacements.forEach((r: any) => {
+                                                const qty = Number(r.quantity) || 1
+                                                const oldUnitPrice = getPriceForDish(r.oldItemId || r.oldItemName, Number(r.oldItemPrice || 0))
+                                                const newUnitPrice = getPriceForDish(r.newProductId || r.newName, Number(r.newPrice || 0))
+                                                totalOld += oldUnitPrice * qty
+                                                totalNew += newUnitPrice * qty
+                                            })
+
+                                            const diff = Math.round((totalNew - totalOld) * 100) / 100
+                                            // If both dishes have the same display price (e.g. ₱39.00 vs ₱39.00), diff is 0:
+                                            const effectiveExcess = diff < 0 ? Math.abs(diff) : 0
+                                            const effectiveAdditional = diff > 0 ? diff : 0
+
+                                            return (
+                                                <>
+                                                    <div className="bg-white p-3 rounded-lg border border-neutral-200 text-xs space-y-1">
+                                                        <span className="font-bold text-neutral-800 block">Submitted Replacements:</span>
+                                                        {replacements.map((r: any, idx: number) => {
+                                                            const qty = Number(r.quantity) || 1
+                                                            const newUnitPrice = getPriceForDish(r.newProductId || r.newName, Number(r.newPrice || 0))
+                                                            return (
+                                                                <div key={idx} className="flex justify-between text-neutral-700">
+                                                                    <span>{r.oldItemName} → <span className="font-bold">{r.newName}</span> (x{qty})</span>
+                                                                    <span className="font-bold">₱{(newUnitPrice * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                                </div>
+                                                            )
+                                                        })}
                                                     </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                        {activeOrder.excessAmount ? (
-                                            <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg text-emerald-900 text-xs flex justify-between items-center">
-                                                <span className="font-bold">Excess Refund Due:</span>
-                                                <span className="font-black">₱{Number(activeOrder.excessAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                            </div>
-                                        ) : null}
-                                        {activeOrder.additionalRequired ? (
-                                            <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-900 text-xs flex justify-between items-center">
-                                                <span className="font-bold">Additional Required:</span>
-                                                <span className="font-black">₱{Number(activeOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                            </div>
-                                        ) : null}
+
+                                                    {effectiveExcess > 0 ? (
+                                                        <div className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg text-emerald-900 text-xs flex justify-between items-center">
+                                                            <span className="font-bold">Excess Refund Due:</span>
+                                                            <span className="font-black">₱{effectiveExcess.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
+                                                    ) : effectiveAdditional > 0 ? (
+                                                        <div className="bg-amber-50 border border-amber-200 p-2.5 rounded-lg text-amber-900 text-xs flex justify-between items-center">
+                                                            <span className="font-bold">Additional Required:</span>
+                                                            <span className="font-black">₱{effectiveAdditional.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="bg-neutral-100 border border-neutral-200 p-2.5 rounded-lg text-neutral-700 text-xs flex justify-between items-center">
+                                                            <span className="font-bold">✓ Equal Exchange (₱0.00 Difference):</span>
+                                                            <span className="font-medium text-neutral-600">No additional payment or refund needed</span>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )
+                                        })()}
                                     </div>
                                 ) : (() => {
-                                    const activeItems = (activeOrder.items || []).filter((i: any) => {
-                                        const st = String(i.item_status || i.itemStatus || '').toUpperCase()
-                                        if (['OUT_OF_STOCK', 'REPLACED', 'REFUNDED'].includes(st)) return false
-                                        return !outOfStockItems.some((oos: any) => String(oos.id) === String(i.id))
-                                    })
-                                    const activeSubtotal = activeItems.reduce((acc: number, i: any) =>
-                                        acc + ((i.price || i.unit_price || 0) * (i.quantity || 1)), 0
-                                    )
-                                    const replacementsSubtotal = outOfStockItems.reduce((acc: number, item: any, idx: number) => {
-                                        const sel = replacementSelections[String(item.id ?? idx)]
-                                        return acc + ((sel?.price || 0) * (item.quantity || 1))
-                                    }, 0)
-                                    const projectedSubtotal = Math.round((activeSubtotal + replacementsSubtotal) * 100) / 100
-                                    const projectedVat = Math.round(projectedSubtotal * 0.12 * 100) / 100
-                                    const deliveryFee = Number(activeOrder.deliveryFee || 0)
-                                    const projectedTotal = Math.round((projectedSubtotal + projectedVat + deliveryFee) * 100) / 100
+                                    // Accurate display price lookup for out of stock items
+                                    const getOosItemUnitPrice = (item: any) => {
+                                        const rawUnitPrice = Number(item.price ?? item.unit_price ?? 0)
+                                        const matched = allEffectiveItems.find((m) =>
+                                            String(m.id) === String(item.productId || item.product_id || item.id) ||
+                                            m.name.toLowerCase() === (item.name || item.product_name_snapshot || '').toLowerCase()
+                                        )
+                                        if (matched && matched.price) {
+                                            return matched.price
+                                        }
+                                        if (rawUnitPrice > 0 && (item.basePrice !== undefined || rawUnitPrice < 100)) {
+                                            const withVat = Math.round(rawUnitPrice * 1.12)
+                                            const matchWithVat = allEffectiveItems.find(m => Math.abs(m.price - withVat) <= 1)
+                                            if (matchWithVat) return matchWithVat.price
+                                        }
+                                        return rawUnitPrice
+                                    }
 
+                                    const originalOrderTotal = Number(activeOrder.total || 0)
                                     const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
                                         || String(activeOrder.status).toUpperCase() === 'PENDING_COD'
 
+                                    // Total original cost of out-of-stock items in this order
+                                    const totalOriginalOos = outOfStockItems.reduce((acc: number, item: any) => {
+                                        const unitPrice = getOosItemUnitPrice(item)
+                                        const qty = Number(item.quantity) || 1
+                                        return acc + (unitPrice * qty)
+                                    }, 0)
+
+                                    // Total cost of selected replacement dishes
+                                    const totalReplacements = outOfStockItems.reduce((acc: number, item: any, idx: number) => {
+                                        const sel = replacementSelections[String(item.id ?? idx)]
+                                        const qty = Number(item.quantity) || 1
+                                        return acc + (Number(sel?.price || 0) * qty)
+                                    }, 0)
+
+                                    // Price difference: replacement total minus original out-of-stock total
+                                    // If replacement is higher (difference > 0): customer adds difference
+                                    // If replacement is lower (difference < 0): store refunds difference
+                                    const priceDifference = Math.round((totalReplacements - totalOriginalOos) * 100) / 100
+                                    const projectedTotal = Math.max(0, Math.round((originalOrderTotal + priceDifference) * 100) / 100)
+
                                     const confirmedPaid = activeOrder.netConfirmedPaid !== undefined
                                         ? Number(activeOrder.netConfirmedPaid)
-                                        : (!isCOD ? Number(activeOrder.total) : 0)
+                                        : (!isCOD ? originalOrderTotal : 0)
 
-                                    const balanceDiff = Math.round((projectedTotal - confirmedPaid) * 100) / 100
-                                    const excessAmount = balanceDiff < 0 ? Math.abs(balanceDiff) : 0
-                                    const additionalRequired = balanceDiff > 0 ? balanceDiff : 0
+                                    const excessAmount = priceDifference < 0 ? Math.abs(priceDifference) : 0
+                                    const additionalRequired = priceDifference > 0 ? priceDifference : 0
 
                                     const allReplacementsSelected = outOfStockItems.length > 0 && outOfStockItems.every((item: any, idx: number) =>
                                         Boolean(replacementSelections[String(item.id ?? idx)])
@@ -3147,41 +3259,52 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 {outOfStockItems.map((item: any, index: number) => {
                                                     const itemKey = String(item.id ?? index)
                                                     const selected = replacementSelections[itemKey]
-                                                    const originalUnitPrice = Number(item.price || item.unit_price || 0)
+                                                    const originalUnitPrice = getOosItemUnitPrice(item)
                                                     const qty = Number(item.quantity) || 1
+                                                    const itemOriginalTotal = originalUnitPrice * qty
+                                                    const selectedTotal = selected ? Number(selected.price || 0) * qty : 0
+                                                    const itemDiff = selected ? Math.round((selectedTotal - itemOriginalTotal) * 100) / 100 : 0
 
                                                     return (
-                                                        <div key={itemKey} className="bg-white border border-amber-200 rounded-xl p-3.5 space-y-2 shadow-2xs">
+                                                        <div key={itemKey} className="bg-neutral-50/80 border border-neutral-200 rounded-xl p-3.5 space-y-2.5">
                                                             <div className="flex items-center justify-between">
                                                                 <div>
                                                                     <span className="text-xs font-bold text-neutral-800">
                                                                         {item.name || item.product_name_snapshot} × {qty}
                                                                     </span>
                                                                     <p className="text-[11px] text-neutral-500">
-                                                                        Original Subtotal: ₱{(originalUnitPrice * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                        Original Subtotal: ₱{itemOriginalTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                                     </p>
                                                                 </div>
-                                                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200">
+                                                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
                                                                     Out of Stock
                                                                 </span>
                                                             </div>
 
                                                             {selected ? (
-                                                                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                                                                <div className="bg-white border border-neutral-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
                                                                     <div>
                                                                         <div className="flex items-center gap-1.5">
                                                                             <span className="text-emerald-600 font-black text-sm">✓</span>
-                                                                            <span className="text-xs font-extrabold text-emerald-950">
+                                                                            <span className="text-xs font-extrabold text-neutral-900">
                                                                                 Replacement: {selected.name} × {qty}
                                                                             </span>
                                                                         </div>
-                                                                        <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
-                                                                            ₱{(selected.price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                            {selected.price !== originalUnitPrice && (
-                                                                                <span className="ml-1.5 font-bold">
-                                                                                    ({selected.price > originalUnitPrice
-                                                                                        ? `+₱${((selected.price - originalUnitPrice) * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} difference`
-                                                                                        : `-₱${((originalUnitPrice - selected.price) * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} savings`})
+                                                                        <p className="text-[11px] text-neutral-600 font-medium mt-0.5">
+                                                                            ₱{selectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                            {itemDiff > 0 && (
+                                                                                <span className="ml-1.5 font-bold text-amber-700">
+                                                                                    (+₱{itemDiff.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} additional)
+                                                                                </span>
+                                                                            )}
+                                                                            {itemDiff < 0 && (
+                                                                                <span className="ml-1.5 font-bold text-emerald-700">
+                                                                                    (-₱{Math.abs(itemDiff).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} refund)
+                                                                                </span>
+                                                                            )}
+                                                                            {itemDiff === 0 && (
+                                                                                <span className="ml-1.5 font-medium text-neutral-400">
+                                                                                    (₱0.00 difference)
                                                                                 </span>
                                                                             )}
                                                                         </p>
@@ -3218,7 +3341,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                                             {/* Live Financial Breakdown Card (Shown when replacements selected) */}
                                             {allReplacementsSelected && (
-                                                <div className="bg-white border-2 border-orange-300 rounded-2xl p-4 sm:p-5 space-y-3.5 shadow-sm">
+                                                <div className="bg-white border border-neutral-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-xs">
                                                     <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
                                                         <h5 className="text-xs font-black uppercase tracking-wider text-neutral-800">
                                                             Order Recalculation Breakdown
@@ -3228,24 +3351,49 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </span>
                                                     </div>
 
-                                                    <div className="space-y-1.5 text-xs">
+                                                    {/* 1. Original Order Total First */}
+                                                    <div className="flex justify-between items-center text-xs pb-1">
+                                                        <span className="font-semibold text-neutral-600">Original Order Total:</span>
+                                                        <span className="font-bold text-neutral-900 text-sm">₱{originalOrderTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                    </div>
+
+                                                    {/* 2. Compare Replacement with Out-of-Stock Product */}
+                                                    <div className="bg-neutral-50 rounded-xl p-3.5 border border-neutral-200/80 space-y-2 text-xs">
                                                         <div className="flex justify-between text-neutral-600">
-                                                            <span>Original Order Total:</span>
-                                                            <span className="font-semibold text-neutral-800">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                            <span>Out-of-Stock Dish Total:</span>
+                                                            <span className="font-semibold text-neutral-800">₱{totalOriginalOos.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                         <div className="flex justify-between text-neutral-600">
-                                                            <span>Recalculated Order Total:</span>
-                                                            <span className="font-black text-neutral-900 text-sm">₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                            <span>Replacement Selection Total:</span>
+                                                            <span className="font-semibold text-neutral-800">₱{totalReplacements.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                        </div>
+                                                        <div className="flex justify-between items-center pt-2 border-t border-neutral-200 font-bold">
+                                                            <span>Replacement Price Comparison:</span>
+                                                            <span className={priceDifference > 0 ? 'text-amber-700 font-black' : priceDifference < 0 ? 'text-emerald-700 font-black' : 'text-neutral-700 font-bold'}>
+                                                                {priceDifference > 0
+                                                                    ? `+₱${priceDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Replacement is Higher • Customer Adds)`
+                                                                    : priceDifference < 0
+                                                                        ? `-₱${Math.abs(priceDifference).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Replacement is Lower • Refund Due)`
+                                                                        : '₱0.00 (Equal Exchange)'}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+
+                                                    {/* 3. Recalculated Order Total & Paid */}
+                                                    <div className="space-y-1.5 text-xs pt-1">
+                                                        <div className="flex justify-between items-center text-neutral-600">
+                                                            <span className="font-bold text-neutral-800">Recalculated Order Total:</span>
+                                                            <span className="font-black text-neutral-900 text-base">₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                         {!isCOD && (
-                                                            <div className="flex justify-between text-neutral-600">
+                                                            <div className="flex justify-between items-center text-neutral-600">
                                                                 <span>Amount Already Paid (GCash):</span>
                                                                 <span className="font-semibold text-emerald-700">₱{confirmedPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                         )}
                                                     </div>
 
-                                                    {/* Financial Scenario Handling */}
+                                                    {/* 4. Financial Scenario Handling */}
                                                     {isCOD ? (
                                                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs text-slate-800 space-y-1">
                                                             <p className="font-black text-sm">Cash on Delivery Balance: ₱{projectedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -3254,23 +3402,23 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                             </p>
                                                         </div>
                                                     ) : excessAmount > 0 ? (
-                                                        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1.5">
+                                                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-950 space-y-1.5">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="font-black text-emerald-900 text-xs sm:text-sm">Excess Refund Due:</span>
                                                                 <span className="font-black text-lg text-emerald-700">₱{excessAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                             <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
-                                                                Your replacement selection is ₱{excessAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lower than your original payment. Our assistant will transfer this excess back to your GCash with official screenshot proof upon confirming your replacements.
+                                                                Your replacement selection is ₱{excessAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lower than the out-of-stock item. Our assistant will transfer this excess back to your GCash with official screenshot proof upon confirming your replacements.
                                                             </p>
                                                         </div>
                                                     ) : additionalRequired > 0 ? (
-                                                        <div className="bg-amber-50 border border-amber-300 rounded-xl p-3.5 text-xs text-amber-950 space-y-3">
+                                                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-950 space-y-3">
                                                             <div className="flex items-center justify-between">
                                                                 <span className="font-black text-amber-900 text-xs sm:text-sm">Additional Payment Required:</span>
                                                                 <span className="font-black text-lg text-amber-700">₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                             </div>
                                                             <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
-                                                                Your replacement dishes total ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more than the amount originally paid. Please send ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to our official GCash account and upload proof below.
+                                                                Your replacement dishes total ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more than the original item. Please send ₱{additionalRequired.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to our official GCash account and upload proof below.
                                                             </p>
                                                             <div className="bg-white p-3 rounded-xl border border-amber-200 text-xs font-mono space-y-0.5">
                                                                 <p className="font-black text-neutral-800">GCash Account: 0917-123-4567</p>
@@ -3385,66 +3533,108 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </div>
                             )}
 
-                        {/* Order Cancelled / Refunded Banner (Consolidated - Displayed Only Once) */}
-                        {normalizeStatus(activeOrder.status) === 'CANCELLED' && (
-                            <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 sm:p-6 text-rose-950 shadow-md space-y-4 animate-in fade-in">
-                                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                                    <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            
-                                            <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">
-                                                {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
-                                                    ? 'Order Cancelled & Refunded'
-                                                    : 'Order Cancelled'}
-                                            </h4>
-                                        </div>
-                                        <p className="text-xs sm:text-sm text-rose-800 leading-relaxed font-medium">
-                                            {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
-                                                ? 'This order was cancelled due to stock unavailability. A 100% refund of your payment has been processed.'
-                                                : 'This order was cancelled. No further kitchen preparation or payment will be processed.'}
-                                        </p>
-                                    </div>
-                                    <button
-                                        onClick={handleStartNewOrder}
-                                        className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95"
-                                    >
-                                        {activeOrder.customerResolution === 'REFUND' || activeOrder.refundReceipt
-                                            ? 'Make Another Transaction'
-                                            : 'Start New Order'}
-                                    </button>
+                        {/* Order Cancellation & Refund Requested Banner */}
+                        {normalizeStatus(activeOrder.status) === 'CANCEL_REQUESTED' && (
+                            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 sm:p-6 text-amber-950 shadow-md space-y-3 animate-in fade-in">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-3 h-3 rounded-full bg-amber-500 animate-pulse"></span>
+                                    <h4 className="text-base sm:text-lg font-black text-amber-900 tracking-tight">
+                                        Order Cancellation & Refund Requested
+                                    </h4>
                                 </div>
-
-                                {/* Refund Transaction Screenshot Proof (Showing Refund Ref #) */}
-                                {activeOrder.refundReceipt && (
-                                    <div className="bg-white/95 rounded-xl border border-rose-200 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <img
-                                                src={activeOrder.refundReceipt}
-                                                alt="Refund Transaction Proof"
-                                                onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
-                                                className="w-14 h-14 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
-                                            />
-                                            <div className="min-w-0">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span className="text-xs font-black text-neutral-900">Refund Transaction Proof</span>
-                                                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Proof Sent</span>
-                                                </div>
-                                                <p className="text-[11px] text-neutral-600 leading-snug mt-0.5">
-                                                    Attached screenshot showing the refund transaction reference number.
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
-                                            className="px-3 py-1.5 text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1 shrink-0"
-                                        >
-                                            View Full Proof
-                                        </button>
-                                    </div>
-                                )}
+                                <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
+                                    You requested to cancel Order #{activeOrder.id}. Since this order was paid via GCash (₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}), our restaurant assistant has been notified to send your full refund to your phone number <strong>{activeOrder.phone}</strong>.
+                                </p>
+                                <div className="bg-white/90 border border-amber-200 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                                    <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                                        <span>⏳</span> Awaiting Assistant Refund Transaction Proof
+                                    </span>
+                                    <span className="text-[11px] font-mono font-bold text-neutral-600 bg-neutral-100 px-2 py-1 rounded">
+                                        GCash Target: {activeOrder.phone}
+                                    </span>
+                                </div>
                             </div>
                         )}
+
+                        {/* Order Cancelled / Refunded Banner (Consolidated - Displayed Only Once) */}
+                        {normalizeStatus(activeOrder.status) === 'CANCELLED' && (() => {
+                            const isPaidOnline = (activeOrder.paymentMethod || '').toLowerCase().includes('gcash') || Boolean(activeOrder.paymentReceipt) || (Number(activeOrder.total || 0) > 0 && !String(activeOrder.paymentMethod || '').toLowerCase().includes('cod'));
+                            const hasRefundProof = Boolean(activeOrder.refundReceipt || activeOrder.refundReference);
+
+                            return (
+                                <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-5 sm:p-6 text-rose-950 shadow-md space-y-4 animate-in fade-in">
+                                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                                        <div className="space-y-1">
+                                            <div className="flex items-center gap-2">
+                                                <h4 className="text-base sm:text-lg font-black text-rose-900 tracking-tight">
+                                                    {hasRefundProof
+                                                        ? 'Order Cancelled & Refunded'
+                                                        : (isPaidOnline ? 'Order Cancelled - Refund in Progress' : 'Order Cancelled')}
+                                                </h4>
+                                            </div>
+                                            <p className="text-xs sm:text-sm text-rose-800 leading-relaxed font-medium">
+                                                {hasRefundProof
+                                                    ? `This order was cancelled and a full refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} has been processed by our assistant.`
+                                                    : (isPaidOnline
+                                                        ? `This order was cancelled. Our restaurant assistant is processing your full refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to ${activeOrder.phone}.`
+                                                        : 'This order was cancelled. No further kitchen preparation or payment will be processed.')}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={handleStartNewOrder}
+                                            className="w-full md:w-auto bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs sm:text-sm px-6 py-3 rounded-xl transition-all duration-200 shadow-sm shrink-0 cursor-pointer active:scale-95"
+                                        >
+                                            {hasRefundProof ? 'Make Another Transaction' : 'Start New Order'}
+                                        </button>
+                                    </div>
+
+                                    {/* Refund Proof (Screenshot OR Reference Number) */}
+                                    {(activeOrder.refundReceipt || activeOrder.refundReference) && (
+                                        <div className="bg-white/95 rounded-xl border border-rose-200 p-3.5 space-y-2.5 shadow-2xs">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-xs font-black text-neutral-900 flex items-center gap-1.5">
+                                                    <span>💸</span> Assistant Refund Confirmation
+                                                </span>
+                                                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full">
+                                                    Refund Completed
+                                                </span>
+                                            </div>
+
+                                            {activeOrder.refundReference && (
+                                                <div className="flex items-center justify-between bg-neutral-50 p-2.5 rounded-lg border border-neutral-200 text-xs">
+                                                    <span className="font-semibold text-neutral-600">GCash / Bank Reference Number:</span>
+                                                    <span className="font-mono font-black text-neutral-900">{activeOrder.refundReference}</span>
+                                                </div>
+                                            )}
+
+                                            {activeOrder.refundReceipt && (
+                                                <div className="flex items-center justify-between gap-3 pt-1">
+                                                    <div className="flex items-center gap-3 min-w-0">
+                                                        <img
+                                                            src={activeOrder.refundReceipt}
+                                                            alt="Refund Transaction Proof"
+                                                            onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                            className="w-14 h-14 object-cover rounded-lg border border-neutral-300 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                                                        />
+                                                        <div className="min-w-0">
+                                                            <p className="text-xs font-bold text-neutral-800">Refund Screenshot Proof</p>
+                                                            <p className="text-[11px] text-neutral-500">Transaction photo proof from assistant</p>
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                        className="px-3 py-1.5 text-xs font-extrabold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg cursor-pointer transition-colors shrink-0"
+                                                    >
+                                                        View Full Proof
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })()}
 
                         {/* Order Complete Banner Prompt */}
                         {['COMPLETED', 'DELIVERED', 'SERVED'].includes(normalizeStatus(activeOrder.status)) && (
@@ -4034,25 +4224,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between text-xs text-neutral-500">
-                                            <span>Subtotal</span>
-                                            <span className="font-semibold text-neutral-800">₱{subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                            <span>Order Subtotal</span>
+                                            <span className="font-semibold text-neutral-800">₱{cartOrderSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
-                                            <span>VAT (12%)</span>
-                                            <span className="font-semibold text-neutral-800">₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        <div className="flex justify-between text-xs text-neutral-400">
+                                            <span>Delivery Fee</span>
+                                            <span className="text-neutral-500 italic">Calculated in billing</span>
                                         </div>
-                                        <div className="flex justify-between text-xs text-neutral-500">
-                                            <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                            <span className="font-semibold text-neutral-800">{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
-                                        </div>
-                                        {deliveryDistanceMessage && (
-                                            <p role="status" className="text-[11px] text-amber-700">
-                                                {deliveryDistanceMessage}
-                                            </p>
-                                        )}
                                         <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
                                             <span>Total Amount</span>
-                                            <span className="text-orange-600 font-black">₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                            <span className="text-orange-600 font-black">₱{cartOrderSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>
 

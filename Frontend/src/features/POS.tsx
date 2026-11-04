@@ -621,6 +621,7 @@ export const POS: React.FC = () => {
     const calcVat = typeof order.vat === 'number' ? order.vat : Math.round(calcSubtotal * 0.12)
     const calcDeliveryFee = typeof order.deliveryFee === 'number' ? order.deliveryFee : 50
     const calcTotal = typeof order.total === 'number' ? order.total : Math.round(calcSubtotal + calcVat + calcDeliveryFee)
+    const paymentRef = order.paymentReference || order.payment_reference || order.referenceNumber || order.reference_number || undefined
 
     return {
       orderId: order.id || order.ref,
@@ -632,6 +633,7 @@ export const POS: React.FC = () => {
       deliveryFee: calcDeliveryFee,
       cartItems: itemsList,
       paymentMethod: order.paymentMethod || 'GCash',
+      paymentReference: paymentRef,
       customerName: order.customerName || order.customer || 'Online Customer',
       phone: order.phone || '0917-000-0000',
       address: order.deliveryAddress || order.address || 'Delivery Address',

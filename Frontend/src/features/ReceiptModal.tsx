@@ -9,30 +9,258 @@ interface CartItem {
   quantity: number
 }
 
-interface ReceiptModalProps {
+export interface ReceiptOrderDetails {
+  orderId?: string
+  table?: string
+  type: string
+  total: number
+  subtotal?: number
+  vat?: number
+  deliveryFee?: number
+  cartItems: CartItem[]
+  notes?: string
+  cashReceived?: string
+  change?: number | null
+  paymentMethod?: string
+  paymentReference?: string
+  customerName?: string
+  phone?: string
+  address?: string
+}
+
+export interface ReceiptModalProps {
   isOpen: boolean
   onClose: () => void
   onPrintSuccess?: () => void
-  orderDetails: {
-    orderId?: string
-    table?: string
-    type: string
-    total: number
-    subtotal?: number
-    vat?: number
-    deliveryFee?: number
-    cartItems: CartItem[]
-    cashReceived?: string
-    change?: number | null
-    paymentMethod?: string
-    paymentReference?: string
-    customerName?: string
-    phone?: string
-    address?: string
-  } | null
+  orderDetails: ReceiptOrderDetails | null
+}
+
+export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): string => {
+  if (!orderDetails) return ''
+  const {
+    orderId,
+    table = 'N/A',
+    type,
+    total,
+    subtotal,
+    vat,
+    deliveryFee = 0,
+    cartItems = [],
+    cashReceived,
+    change,
+    paymentMethod = 'Cash',
+    paymentReference,
+    customerName,
+    phone,
+    address,
+  } = orderDetails
+
+  const rawSubtotal = typeof subtotal === 'number'
+    ? subtotal
+    : cartItems.reduce((acc, ci) => {
+        const basePrice = (ci.item as any)?.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+        return acc + basePrice * (ci.quantity || 1)
+      }, 0)
+  const vatAmount = typeof vat === 'number' ? vat : rawSubtotal * 0.12
+  const dateStr = new Date().toLocaleString()
+
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Receipt - Seafudz Ng Bayan</title>
+        <style>
+          @page {
+            size: 80mm auto;
+            margin: 0;
+          }
+          @media print {
+            html, body {
+              width: 80mm;
+              margin: 0 !important;
+              padding: 8px !important;
+            }
+          }
+          body {
+            font-family: 'Courier New', Courier, monospace;
+            width: 280px;
+            margin: 0 auto;
+            padding: 10px;
+            color: #000;
+            font-size: 12px;
+            line-height: 1.4;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-bold { font-weight: bold; }
+          .uppercase { text-transform: uppercase; }
+          .divider { border-top: 1px dashed #000; margin: 8px 0; }
+          .flex-row { display: flex; justify-content: space-between; align-items: center; }
+          .item-table { width: 100%; border-collapse: collapse; margin: 4px 0; }
+          .item-table th { text-align: left; font-size: 10px; font-weight: bold; padding-bottom: 4px; border-bottom: 1px dashed #000; }
+          .item-table td { font-size: 11px; padding: 3px 0; vertical-align: top; }
+          .total-row { font-size: 14px; font-weight: bold; margin-top: 4px; }
+        </style>
+      </head>
+      <body>
+        <div class="text-center">
+          <div class="font-bold uppercase" style="font-size: 15px;">Seafood ng Bayan</div>
+          <div style="font-size: 10px;">RESTAURANT & GRILL</div>
+          <div style="font-size: 11px; margin-top: 2px;">Caloocan City, Metro Manila, Philippines</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div>
+          ${orderId ? `<div class="flex-row"><span>Order Ref:</span><span class="font-bold">${orderId}</span></div>` : ''}
+          <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
+          ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>` : ''}
+          ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${customerName}</span></div>` : ''}
+          ${phone ? `<div class="flex-row"><span>Phone:</span><span>${phone}</span></div>` : ''}
+          ${address ? `<div style="font-size: 10px; margin-top: 2px;"><span>Address: </span><span>${address}</span></div>` : ''}
+          <div class="flex-row" style="margin-top:2px;"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <table class="item-table">
+          <thead>
+            <tr>
+              <th style="width: 55%;">ITEM</th>
+              <th style="width: 15%; text-align: center;">QTY</th>
+              <th style="width: 30%; text-align: right;">PRICE</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cartItems
+              .map(
+                (ci) => `
+              <tr>
+                <td>${ci.item.name}</td>
+                <td class="text-center">x${ci.quantity}</td>
+                <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              </tr>
+            `
+              )
+              .join('')}
+          </tbody>
+        </table>
+
+        <div class="divider"></div>
+
+        <div>
+          <div class="flex-row"><span>Subtotal:</span><span>₱${rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+          <div class="flex-row"><span>VAT (12%):</span><span>₱${vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+          ${deliveryFee > 0 ? `<div class="flex-row"><span>Delivery Fee:</span><span>₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
+          <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div>
+          <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
+          ${paymentReference ? `<div class="flex-row"><span>Reference No:</span><span class="font-bold" style="font-family: monospace;">${paymentReference}</span></div>` : ''}
+          ${paymentMethod === 'Cash' && cashReceived
+            ? `
+            <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+            <div class="flex-row font-bold"><span>Change Due:</span><span>₱${(change !== null && change !== undefined ? Number(change) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+          `
+            : ''
+          }
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="text-center" style="font-size: 11px; margin-top: 8px;">
+          Thank you for dining with us!<br/>
+          Please come again!
+        </div>
+      </body>
+    </html>
+  `
+}
+
+export const executeReceiptPrint = (html: string, onComplete?: () => void) => {
+  if (!html) {
+    onComplete?.()
+    return
+  }
+
+  try {
+    const iframe = document.createElement('iframe')
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+    iframe.style.visibility = 'hidden'
+    document.body.appendChild(iframe)
+
+    const doc = iframe.contentWindow?.document || iframe.contentDocument
+    if (!doc || !iframe.contentWindow) {
+      // Direct window popup fallback
+      const printWindow = window.open('', '_blank')
+      if (printWindow) {
+        printWindow.document.open()
+        printWindow.document.write(html)
+        printWindow.document.close()
+        printWindow.focus()
+        setTimeout(() => {
+          try {
+            printWindow.print()
+          } catch (e) {
+            console.error('Window print error:', e)
+          }
+          printWindow.close()
+          onComplete?.()
+        }, 300)
+      } else {
+        onComplete?.()
+      }
+      return
+    }
+
+    doc.open()
+    doc.write(html)
+    doc.close()
+
+    setTimeout(() => {
+      try {
+        iframe.contentWindow?.focus()
+        iframe.contentWindow?.print()
+      } catch (err) {
+        console.error('Iframe print error:', err)
+      } finally {
+        setTimeout(() => {
+          try {
+            document.body.removeChild(iframe)
+          } catch {}
+          onComplete?.()
+        }, 800)
+      }
+    }, 250)
+  } catch (err) {
+    console.error('executeReceiptPrint failed:', err)
+    onComplete?.()
+  }
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onPrintSuccess, orderDetails }) => {
+  const [isPrinting, setIsPrinting] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen || !orderDetails) return null
 
   const {
@@ -63,133 +291,26 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
   const dateStr = new Date().toLocaleString()
 
   const handlePrint = () => {
-    const printWindow = window.open('', '_blank')
-    if (printWindow) {
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>Print Receipt - Seafudz Ng Bayan</title>
-            <style>
-              @page {
-                size: 80mm auto;
-                margin: 0;
-              }
-              body {
-                font-family: 'Courier New', Courier, monospace;
-                width: 280px;
-                margin: 0 auto;
-                padding: 15px 10px;
-                color: #000;
-                font-size: 12px;
-                line-height: 1.4;
-              }
-              .text-center { text-align: center; }
-              .text-right { text-align: right; }
-              .font-bold { font-weight: bold; }
-              .uppercase { text-transform: uppercase; }
-              .divider { border-top: 1px dashed #000; margin: 8px 0; }
-              .flex-row { display: flex; justify-content: space-between; align-items: center; }
-              .item-table { width: 100%; border-collapse: collapse; margin: 4px 0; }
-              .item-table th { text-align: left; font-size: 10px; font-weight: bold; padding-bottom: 4px; border-bottom: 1px dashed #000; }
-              .item-table td { font-size: 11px; padding: 3px 0; vertical-align: top; }
-              .total-row { font-size: 14px; font-weight: bold; margin-top: 4px; }
-            </style>
-          </head>
-          <body>
-            <div class="text-center">
-              <div class="font-bold uppercase" style="font-size: 15px;">Seafood ng Bayan</div>
-              <div style="font-size: 10px;">RESTAURANT & GRILL</div>
-              <div style="font-size: 11px; margin-top: 2px;">Caloocan City, Metro Manila, Philippines</div>
-            </div>
-
-            <div class="divider"></div>
-
-            <div>
-              ${orderId ? `<div class="flex-row"><span>Order Ref:</span><span class="font-bold">${orderId}</span></div>` : ''}
-              <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
-              ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>` : ''}
-              ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${customerName}</span></div>` : ''}
-              ${phone ? `<div class="flex-row"><span>Phone:</span><span>${phone}</span></div>` : ''}
-              ${address ? `<div style="font-size: 10px; margin-top: 2px;"><span>Address: </span><span>${address}</span></div>` : ''}
-              <div class="flex-row" style="margin-top:2px;"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
-            </div>
-
-            <div class="divider"></div>
-
-            <table class="item-table">
-              <thead>
-                <tr>
-                  <th style="width: 55%;">ITEM</th>
-                  <th style="width: 15%; text-align: center;">QTY</th>
-                  <th style="width: 30%; text-align: right;">PRICE</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${cartItems
-          .map(
-            (ci) => `
-                  <tr>
-                    <td>${ci.item.name}</td>
-                    <td class="text-center">x${ci.quantity}</td>
-                    <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  </tr>
-                `
-          )
-          .join('')}
-              </tbody>
-            </table>
-
-            <div class="divider"></div>
-
-            <div>
-              <div class="flex-row"><span>Subtotal:</span><span>₱${rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-              <div class="flex-row"><span>VAT (12%):</span><span>₱${vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-              ${deliveryFee > 0 ? `<div class="flex-row"><span>Delivery Fee:</span><span>₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>` : ''}
-              <div class="flex-row total-row"><span>TOTAL DUE:</span><span>₱${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-            </div>
-
-            <div class="divider"></div>
-
-            <div>
-              <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
-              ${paymentReference ? `<div class="flex-row"><span>Reference No:</span><span class="font-bold" style="font-family: monospace;">${paymentReference}</span></div>` : ''}
-              ${paymentMethod === 'Cash' && cashReceived
-          ? `
-                <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-                <div class="flex-row font-bold"><span>Change Due:</span><span>₱${(change !== null && change !== undefined ? Number(change) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-              `
-          : ''
-        }
-            </div>
-
-            <div class="divider"></div>
-
-            <div class="text-center" style="font-size: 11px; margin-top: 8px;">
-              Thank you for dining with us!<br/>
-              Please come again!
-            </div>
-
-            <script>
-              window.onload = function() {
-                window.print();
-                setTimeout(function() { window.close(); }, 500);
-              };
-            </script>
-          </body>
-        </html>
-      `)
-      printWindow.document.close()
-    }
-    if (onPrintSuccess) {
-      onPrintSuccess()
-    }
-    onClose()
+    setIsPrinting(true)
+    const html = generateReceiptHtml(orderDetails)
+    executeReceiptPrint(html, () => {
+      setIsPrinting(false)
+      if (onPrintSuccess) {
+        onPrintSuccess()
+      }
+      onClose()
+    })
   }
 
   return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
-      <div className="bg-[#e4dfda] rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-neutral-300 flex flex-col relative animate-scale-up max-h-[95vh] overflow-hidden">
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in"
+      onClick={onClose}
+    >
+      <div
+        className="bg-[#e4dfda] rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-neutral-300 flex flex-col relative animate-scale-up max-h-[95vh] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -360,10 +481,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
           </button>
           <button
             onClick={handlePrint}
+            disabled={isPrinting}
             type="button"
-            className="flex-1 bg-[#ff7a00] hover:bg-[#e66e00] text-white font-bold py-3.5 px-4 rounded-xl transition-all duration-150 active:scale-99 cursor-pointer text-center text-sm shadow-md flex items-center justify-center gap-2"
+            className="flex-1 bg-[#ff7a00] hover:bg-[#e66e00] disabled:opacity-60 text-white font-bold py-3.5 px-4 rounded-xl transition-all duration-150 active:scale-99 cursor-pointer text-center text-sm shadow-md flex items-center justify-center gap-2"
           >
-            Print Receipt
+            <span>🖨️</span>
+            <span>{isPrinting ? 'Printing...' : 'Print Receipt'}</span>
           </button>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
-import { generateTransactionsExcel } from '../services/transactionExportService.js';
+import { generateTransactionsExcel, generateTransactionsPDF } from '../services/transactionExportService.js';
 import { query } from '../config/db.js';
 
 const router = Router();
@@ -116,6 +116,47 @@ router.get('/admin/export/transactions/excel', requireAuth, requireRole(['admin'
     return res.status(500).json({
       success: false,
       message: 'Failed to generate Excel transactions export',
+      error: err.message,
+    });
+  }
+});
+
+/**
+ * GET /api/admin/export/transactions/pdf
+ * Generates and downloads a complete formatted PDF audit report (.pdf).
+ * Restricted to authenticated Admin users only.
+ */
+router.get('/admin/export/transactions/pdf', requireAuth, requireRole(['admin']), async (req, res) => {
+  const adminEmail = req.user?.email || req.user?.username || 'Administrator';
+  const startTime = Date.now();
+
+  try {
+    const { startDate, endDate, period = 'all', channel = 'all' } = req.query;
+
+    console.log(`[ADMIN AUDIT] Historical transactions PDF export initiated by: ${adminEmail} (Scope: ${period}, Channel: ${channel})`);
+
+    const result = await generateTransactionsPDF({
+      startDate,
+      endDate,
+      period,
+      channel,
+      adminEmail,
+    });
+
+    const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[ADMIN AUDIT] PDF export generated in ${duration}s (${result.totalRecords} records, ${result.buffer.byteLength} bytes)`);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+    res.setHeader('X-Total-Records', String(result.totalRecords));
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Total-Records');
+
+    return res.send(Buffer.from(result.buffer));
+  } catch (err) {
+    console.error('[EXPORT PDF ERROR]:', err.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to generate PDF transactions export',
       error: err.message,
     });
   }

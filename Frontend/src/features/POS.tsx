@@ -3,7 +3,7 @@ import { CategoryTabs } from '../components/CategoryTabs'
 import { MenuGrid } from '../components/MenuGrid'
 import { OrderSummary } from '../components/OrderSummary'
 import { SuccessModal } from '../components/SuccessModal'
-import { ReceiptModal } from './ReceiptModal'
+import { ReceiptModal, executeReceiptPrint, generateReceiptHtml } from './ReceiptModal'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import type { CartItem } from '../components/OrderItemRow'
@@ -18,6 +18,7 @@ import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
 import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability } from '../utils/menuAvailability'
+import { checkProductQuantityStandards, getProductQuantityStandard, type FlaggedQuantityItem } from '../utils/bulkOrder'
 
 interface ParsedDishItem {
   name: string
@@ -71,11 +72,25 @@ export const parseOrderDishes = (ord: any): ParsedDishItem[] => {
   return []
 }
 
+export const getOrderCartItems = (ord: any): CartItem[] => {
+  return parseOrderDishes(ord).map((d, idx) => ({
+    item: {
+      id: `dish-${idx}`,
+      name: d.name,
+      description: '',
+      price: d.price,
+      category: 'Seafoods',
+      image: '',
+    },
+    quantity: d.quantity,
+  }))
+}
+
 export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
   const { getEffectivePrice, updatePrice } = useMenuPrices()
-  const { isAvailable } = useMenuAvailability()
+  const { isAvailable, getRemainingServings } = useMenuAvailability()
 
   const { menuItems, refresh: refreshMenuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
@@ -114,6 +129,29 @@ export const POS: React.FC = () => {
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false)
+
+  // Quantity Standards (Bulk Check) for POS cart
+  const cartItemsWithServings = useMemo(() => {
+    return cartItems.map((ci) => {
+      const servings = getRemainingServings(ci.item.id)
+      return {
+        ...ci,
+        id: ci.item.id,
+        productId: ci.item.id,
+        name: ci.item.name,
+        quantity: ci.quantity,
+        remaining_servings: servings,
+        remainingServings: servings,
+      }
+    })
+  }, [cartItems, getRemainingServings])
+
+  const bulkCheck = useMemo(() => {
+    return checkProductQuantityStandards(cartItemsWithServings)
+  }, [cartItemsWithServings])
+
+  // Approved bulk order awaiting cashier payment collection
+  const [approvedOrderForPayment, setApprovedOrderForPayment] = useState<any | null>(null)
 
   // Sub-module navigation state: 'new_order' | 'processing_orders' | 'online_receipts'
   const [activeSubModule, setActiveSubModule] = useState<'new_order' | 'processing_orders' | 'online_receipts'>('new_order')
@@ -179,6 +217,8 @@ export const POS: React.FC = () => {
     customerName?: string
     phone?: string
     address?: string
+    requiresApproval?: boolean
+    flaggedItems?: FlaggedQuantityItem[]
   } | null>(null)
 
   const removeUnavailableItems = () => {
@@ -268,6 +308,15 @@ export const POS: React.FC = () => {
         }
       }
 
+      // Load persistent printed receipts cache
+      const printedSet = new Set<string>()
+      try {
+        const storedPrinted = JSON.parse(localStorage.getItem('seafudz_printed_receipts') || '[]')
+        if (Array.isArray(storedPrinted)) {
+          storedPrinted.forEach((id: string) => printedSet.add(String(id)))
+        }
+      } catch {}
+
       const localStr = localStorage.getItem('seafudz_orders')
       const localParsed = localStr ? JSON.parse(localStr) : []
       const onlineLocal = Array.isArray(localParsed)
@@ -306,11 +355,29 @@ export const POS: React.FC = () => {
           typeStr.includes('on_site') ||
           (o.customer === 'Walk-In' && !o.deliveryAddress)
         )
-        if (o.id && !isPos) mergedMap.set(String(o.id), o)
+        if (o.id && !isPos) {
+          const isPrinted = Boolean(
+            printedSet.has(idStr) ||
+            o.isReceiptPrinted ||
+            (o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+            (o.receipt_status || '').toUpperCase() === 'PRINTED'
+          )
+          mergedMap.set(String(o.id), {
+            ...o,
+            isReceiptPrinted: isPrinted,
+            receiptStatus: isPrinted ? 'PRINTED' : 'UNPRINTED',
+          })
+        }
       })
 
       onlineLocal.forEach((o) => {
         const idStr = String(o.id || o.ref)
+        const isPrinted = Boolean(
+          printedSet.has(idStr) ||
+          o.isReceiptPrinted ||
+          (o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+          (o.receipt_status || '').toUpperCase() === 'PRINTED'
+        )
         if (!mergedMap.has(idStr)) {
           mergedMap.set(idStr, {
             id: idStr,
@@ -319,8 +386,8 @@ export const POS: React.FC = () => {
             phone: o.phone || '0917-000-0000',
             deliveryAddress: o.address || o.deliveryAddress || 'Delivery Address',
             paymentMethod: o.paymentMethod || 'GCash',
-            receiptStatus: o.receiptStatus || (o.isReceiptPrinted ? 'PRINTED' : 'UNPRINTED'),
-            isReceiptPrinted: Boolean(o.isReceiptPrinted || o.receiptStatus === 'PRINTED'),
+            receiptStatus: isPrinted ? 'PRINTED' : 'UNPRINTED',
+            isReceiptPrinted: isPrinted,
             status: (o.status || 'CONFIRMED').toUpperCase(),
             subtotal: o.subtotal || o.total || 0,
             vat: o.vat || 0,
@@ -340,7 +407,7 @@ export const POS: React.FC = () => {
           })
         } else {
           const existing = mergedMap.get(idStr)
-          if (o.isReceiptPrinted || o.receiptStatus === 'PRINTED') {
+          if (isPrinted) {
             existing.isReceiptPrinted = true
             existing.receiptStatus = 'PRINTED'
           }
@@ -576,10 +643,8 @@ export const POS: React.FC = () => {
     setIsReceiptModalOpen(true)
   }
 
-  const handlePrintOnlineReceipt = async (order: any) => {
-    const orderId = order.id || order.ref
-
-    // Immediately mark printed in local state so order moves out of Unprinted list to Printed tab
+  const markOrderAsPrinted = async (orderId: string) => {
+    // 1. Immediately mark printed in local state so order moves out of Unprinted list to Printed tab
     setOnlineReceipts((prev) =>
       prev.map((o) =>
         o.id === orderId || o.ref === orderId
@@ -588,13 +653,17 @@ export const POS: React.FC = () => {
       )
     )
 
+    // 2. Persist to dedicated seafudz_printed_receipts array in localStorage
     try {
-      await fetch(`${API_BASE_URL}/cashier/online-receipts/${orderId}/print`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => {})
+      const stored = JSON.parse(localStorage.getItem('seafudz_printed_receipts') || '[]')
+      const arr = Array.isArray(stored) ? stored : []
+      if (!arr.includes(orderId)) {
+        arr.push(orderId)
+        localStorage.setItem('seafudz_printed_receipts', JSON.stringify(arr))
+      }
     } catch {}
 
+    // 3. Persist to seafudz_orders in localStorage if present
     try {
       const stored = localStorage.getItem('seafudz_orders')
       if (stored) {
@@ -606,12 +675,32 @@ export const POS: React.FC = () => {
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      notifyOrderSync()
     } catch {}
 
-    setLastOrderDetails(handlePrepareReceiptDetails(order))
-    setIsReceiptModalOpen(true)
+    // 4. Update backend PostgreSQL DB & inMemoryOrders
+    try {
+      await fetch(`${API_BASE_URL}/cashier/online-receipts/${orderId}/print`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {})
+    } catch {}
+
+    // 5. Notify cross-tab synchronization
+    notifyOrderSync()
+  }
+
+  const handlePrintOnlineReceipt = async (order: any) => {
+    const orderId = order.id || order.ref
+
+    await markOrderAsPrinted(orderId)
+
+    const details = handlePrepareReceiptDetails(order)
+    setLastOrderDetails(details)
     setPosNotification(`Official Restaurant Receipt printed & recorded for Online Order #${orderId}`)
+
+    // Immediately trigger native print prompt via hidden iframe
+    const html = generateReceiptHtml(details)
+    executeReceiptPrint(html)
   }
 
   const filteredPosOrders = useMemo(() => {
@@ -621,13 +710,13 @@ export const POS: React.FC = () => {
         posStatusFilter === 'all'
           ? true
           : posStatusFilter === 'kitchen'
-          ? ['CONFIRMED', 'IN KITCHEN', 'PREPARING', 'COOKING', 'IN_PROCESS'].includes(s)
+          ? ['CONFIRMED', 'IN KITCHEN', 'PREPARING', 'COOKING', 'IN_PROCESS', 'AWAITING_KITCHEN_APPROVAL', 'APPROVED_BY_KITCHEN'].includes(s)
           : posStatusFilter === 'ready'
           ? ['READY', 'PREPARED', 'READY TO SERVE'].includes(s)
           : posStatusFilter === 'completed'
           ? ['COMPLETED', 'SERVED', 'DELIVERED'].includes(s)
           : posStatusFilter === 'cancelled'
-          ? s === 'CANCELLED'
+          ? ['CANCELLED', 'KITCHEN_REJECTED'].includes(s)
           : true
 
       if (!matchesFilter) return false
@@ -800,6 +889,20 @@ export const POS: React.FC = () => {
 
   const handleAddToCart = (item: MenuItem) => {
     if (!isAvailable(item.id)) return
+
+    const servingsLeft = getRemainingServings(item.id)
+    if (servingsLeft !== null && servingsLeft !== undefined) {
+      if (servingsLeft <= 0) {
+        alert(`Sorry, "${item.name}" is currently out of stock.`)
+        return
+      }
+      const existing = cartItems.find((ci) => ci.item.id === item.id)
+      if (existing && existing.quantity >= servingsLeft) {
+        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${item.name}.`)
+        return
+      }
+    }
+
     const basePrice = item.basePrice || getEffectivePrice(item.id, item.price)
     const effectiveItem: MenuItem = {
       ...item,
@@ -820,6 +923,14 @@ export const POS: React.FC = () => {
   }
 
   const handleIncrement = (itemId: string) => {
+    const servingsLeft = getRemainingServings(itemId)
+    const ci = cartItems.find((c) => c.item.id === itemId)
+    if (servingsLeft !== null && servingsLeft !== undefined && ci) {
+      if (ci.quantity >= servingsLeft) {
+        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci.item.name}.`)
+        return
+      }
+    }
     setCartItems((prevItems) =>
       prevItems.map((ci) =>
         ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci
@@ -838,9 +949,18 @@ export const POS: React.FC = () => {
   }
 
   const handleSetQuantity = (itemId: string, quantity: number) => {
+    let finalQty = Math.max(1, quantity)
+    const servingsLeft = getRemainingServings(itemId)
+    const ci = cartItems.find((c) => c.item.id === itemId)
+    if (servingsLeft !== null && servingsLeft !== undefined) {
+      if (finalQty > servingsLeft) {
+        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci?.item?.name || 'this item'}.`)
+        finalQty = servingsLeft
+      }
+    }
     setCartItems((prevItems) =>
       prevItems.map((ci) =>
-        ci.item.id === itemId ? { ...ci, quantity: Math.max(1, quantity) } : ci
+        ci.item.id === itemId ? { ...ci, quantity: finalQty } : ci
       )
     )
   }
@@ -877,16 +997,139 @@ export const POS: React.FC = () => {
       total: totalWithVat,
       cartItems: [...cartItems],
       notes: orderNotes,
+      requiresApproval: bulkCheck.requiresApproval,
+      flaggedItems: bulkCheck.flaggedItems,
     })
     setIsMobileCartOpen(false)
     setIsSuccessModalOpen(true)
   }
 
   const handleCloseSuccessModal = () => {
+    if (!approvedOrderForPayment) {
+      setCartItems([])
+      setOrderNotes('')
+    }
+    setApprovedOrderForPayment(null)
+    setIsSuccessModalOpen(false)
+    setLastOrderDetails(null)
+  }
+
+  const handleSubmitForKitchenApproval = async () => {
+    if (cartItems.length === 0) return
+    if (hasUnavailableItems) return
+
+    const rawSubtotal = cartItems.reduce((acc, ci) => {
+      const basePrice = ci.item.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+      return acc + basePrice * ci.quantity
+    }, 0)
+    const vat = rawSubtotal * 0.12
+    const total = Math.round(rawSubtotal + vat)
+    const orderId = `POS-${Date.now().toString().slice(-4)}`
+
+    const posOrderPayload = {
+      id: orderId,
+      ref: orderId,
+      isPosOrder: true,
+      status: 'AWAITING_KITCHEN_APPROVAL',
+      orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
+      type: orderType,
+      paymentMethod: 'Pending Kitchen Approval',
+      paymentStatus: 'Unpaid',
+      requiresKitchenApproval: true,
+      requires_kitchen_approval: true,
+      kitchenApprovalStatus: 'PENDING',
+      kitchen_approval_status: 'PENDING',
+      is_bulk: true,
+      isBulk: true,
+      flaggedQuantityItems: bulkCheck.flaggedItems,
+      notes: orderNotes,
+      subtotal: rawSubtotal,
+      vat: Math.round(vat * 100) / 100,
+      deliveryFee: 0,
+      total,
+      cartItems: cartItems.map((ci) => ({
+        productId: ci.item.id,
+        name: ci.item.name,
+        unit_price: ci.item.price,
+        quantity: ci.quantity,
+        notes: orderNotes || null,
+        item: ci.item,
+      })),
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/orders`, {
+        method: 'POST',
+        headers: await getAuthHeaders(),
+        body: JSON.stringify(posOrderPayload),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result.message || 'Could not submit bulk order for Kitchen review.')
+      }
+    } catch (err) {
+      console.error('POS order API error:', err)
+      alert(err instanceof Error ? err.message : 'Could not submit bulk order for Kitchen review.')
+      return
+    }
+
+    const localOrderObj = {
+      id: orderId,
+      ref: orderId,
+      dateTime: new Date().toLocaleString(),
+      type: orderType,
+      status: 'AWAITING_KITCHEN_APPROVAL',
+      paymentStatus: 'Unpaid',
+      customer: 'Walk-In',
+      isPosOrder: true,
+      requiresKitchenApproval: true,
+      requires_kitchen_approval: true,
+      kitchenApprovalStatus: 'PENDING',
+      kitchen_approval_status: 'PENDING',
+      is_bulk: true,
+      isBulk: true,
+      flaggedQuantityItems: bulkCheck.flaggedItems,
+      items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
+      notes: orderNotes,
+      total,
+      paymentMethod: 'Pending Kitchen Approval',
+      cartItems: [...cartItems],
+    }
+
+    try {
+      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+      localStorage.setItem('seafudz_orders', JSON.stringify([localOrderObj, ...existing]))
+      notifyOrderSync()
+    } catch (e) {
+      console.warn('LocalStorage save warning:', e)
+    }
+
     setCartItems([])
     setOrderNotes('')
     setIsSuccessModalOpen(false)
     setLastOrderDetails(null)
+    setPosNotification(`⚠️ High-Quantity Order #${orderId} sent to Kitchen for Quantity Review! Payment will be collected once Kitchen approves.`)
+    setTimeout(() => setPosNotification(null), 6000)
+    setActiveSubModule('processing_orders')
+    fetchPosOrders()
+  }
+
+  const handleOpenPaymentForApprovedOrder = (ord: any) => {
+    const rawSubtotal = ord.subtotal || Math.round((ord.total / 1.12) * 100) / 100
+    const vat = ord.vat || Math.round((ord.total - rawSubtotal) * 100) / 100
+    setApprovedOrderForPayment(ord)
+    setLastOrderDetails({
+      orderId: ord.id || ord.ref,
+      table: ord.table || 'N/A',
+      type: ord.type || ord.orderType || 'Take Out',
+      subtotal: rawSubtotal,
+      vat,
+      total: ord.total,
+      cartItems: getOrderCartItems(ord),
+      notes: ord.notes || '',
+      requiresApproval: false, // Kitchen has ALREADY approved, so proceed to payment collection!
+    })
+    setIsSuccessModalOpen(true)
   }
 
   const handleConfirmPayment = async (
@@ -895,9 +1138,119 @@ export const POS: React.FC = () => {
     paymentMethod: string,
     paymentReference?: string
   ) => {
+    // 1. Handling Payment for an approved bulk order
+    if (approvedOrderForPayment) {
+      const orderId = approvedOrderForPayment.id || approvedOrderForPayment.ref
+      const total = Math.round(approvedOrderForPayment.total)
+      if (paymentMethod === 'Cash') {
+        const parsed = parseFloat(cashReceived)
+        if (!cashReceived.trim() || isNaN(parsed) || parsed < total) {
+          alert('Please input the received cash amount before confirming this order.')
+          return
+        }
+      }
+      if (paymentMethod === 'GCash' && (!paymentReference || !paymentReference.trim())) {
+        alert('GCash Reference Number is required to confirm this order.')
+        return
+      }
+      if (paymentMethod.startsWith('Hybrid') && (!paymentReference || !paymentReference.trim())) {
+        alert('Reference Number is required for Hybrid payment to confirm this order.')
+        return
+      }
+
+      const updatePayload = {
+        status: 'CONFIRMED',
+        paymentStatus: 'Paid',
+        paymentMethod,
+        paymentReference: paymentReference || null,
+        referenceNumber: paymentReference || null,
+        kitchenApprovalStatus: 'APPROVED',
+        kitchen_approval_status: 'APPROVED',
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/orders/${orderId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(await getAuthHeaders()),
+          },
+          body: JSON.stringify(updatePayload),
+        })
+        const result = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(result.message || 'Could not update payment for this order.')
+        }
+      } catch (err) {
+        console.error('Update payment error:', err)
+        alert(err instanceof Error ? err.message : 'Could not update payment for this order.')
+        return
+      }
+
+      try {
+        const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+        const updated = existing.map((o: any) => {
+          if (o.id === orderId || o.ref === orderId) {
+            return {
+              ...o,
+              status: 'CONFIRMED',
+              paymentStatus: 'Paid',
+              paymentMethod,
+              paymentReference: paymentReference || null,
+              referenceNumber: paymentReference || null,
+              kitchenApprovalStatus: 'APPROVED',
+              kitchen_approval_status: 'APPROVED',
+            }
+          }
+          return o
+        })
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+        notifyOrderSync()
+      } catch (e) {
+        console.warn('LocalStorage save warning:', e)
+      }
+
+      const rawSub = approvedOrderForPayment.subtotal || Math.round((total / 1.12) * 100) / 100
+      const vatVal = approvedOrderForPayment.vat || Math.round((total - rawSub) * 100) / 100
+      setLastOrderDetails({
+        orderId,
+        table: approvedOrderForPayment.table || 'N/A',
+        type: approvedOrderForPayment.type || approvedOrderForPayment.orderType || 'Take Out',
+        subtotal: rawSub,
+        vat: vatVal,
+        total,
+        cartItems: getOrderCartItems(approvedOrderForPayment),
+        notes: approvedOrderForPayment.notes || '',
+        cashReceived,
+        change,
+        paymentMethod,
+        paymentReference,
+      })
+
+      setApprovedOrderForPayment(null)
+      setIsSuccessModalOpen(false)
+      setIsReceiptModalOpen(true)
+      fetchPosOrders()
+      return
+    }
     if (hasUnavailableItems) {
       alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
       return
+    }
+
+    const rawSubtotal = cartItems.reduce((acc, ci) => {
+      const basePrice = ci.item.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
+      return acc + basePrice * ci.quantity
+    }, 0)
+    const vat = rawSubtotal * 0.12
+    const total = Math.round(rawSubtotal + vat)
+
+    if (paymentMethod === 'Cash') {
+      const parsed = parseFloat(cashReceived)
+      if (!cashReceived.trim() || isNaN(parsed) || parsed < total) {
+        alert('Please input the received cash amount before confirming this order.')
+        return
+      }
     }
     if (paymentMethod === 'GCash' && (!paymentReference || !paymentReference.trim())) {
       alert('GCash Reference Number is required to confirm this order.')
@@ -916,12 +1269,6 @@ export const POS: React.FC = () => {
       setIsSuccessModalOpen(false)
       return
     }
-    const rawSubtotal = cartItems.reduce((acc, ci) => {
-      const basePrice = ci.item.basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
-      return acc + basePrice * ci.quantity
-    }, 0)
-    const vat = rawSubtotal * 0.12
-    const total = Math.round(rawSubtotal + vat)
     const orderId = `POS-${Date.now().toString().slice(-4)}`
 
     const posOrderPayload = {
@@ -1137,6 +1484,8 @@ export const POS: React.FC = () => {
                 onConfirmOrder={handleConfirmOrder}
                 isItemAvailable={isAvailable}
                 onRemoveUnavailable={removeUnavailableItems}
+                requiresApproval={bulkCheck.requiresApproval}
+                flaggedItems={bulkCheck.flaggedItems}
               />
             </div>
           </div>
@@ -1211,7 +1560,13 @@ export const POS: React.FC = () => {
 
                 {paginatedPosOrders.map((ord, idx) => {
                   const s = (ord.status || '').toUpperCase()
-                  const isCancelled = s === 'CANCELLED'
+                  const appStatus = (ord.kitchen_approval_status || ord.kitchenApprovalStatus || '').toUpperCase()
+                  const reqApp = ord.requires_kitchen_approval === true || ord.requiresKitchenApproval === true
+
+                  const isAwaitingApproval = s === 'AWAITING_KITCHEN_APPROVAL' || (reqApp && appStatus === 'PENDING')
+                  const isKitchenRejected = s === 'KITCHEN_REJECTED' || appStatus === 'REJECTED'
+                  const isApprovedWaitingPayment = (s === 'APPROVED_BY_KITCHEN' || appStatus === 'APPROVED') && String(ord.paymentStatus || '').toLowerCase() !== 'paid' && s !== 'CONFIRMED'
+                  const isCancelled = s === 'CANCELLED' || isKitchenRejected
                   const isCompleted = ['COMPLETED', 'SERVED', 'DELIVERED'].includes(s)
                   const isReady = ['READY', 'PREPARED', 'READY TO SERVE'].includes(s)
                   const isCooking = ['PREPARING', 'COOKING', 'IN_PROCESS'].includes(s)
@@ -1237,21 +1592,36 @@ export const POS: React.FC = () => {
                               <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 truncate" title={`REF: ${String(ord.ref || ord.id || 'N/A')}`}>
                                 REF: {String(ord.ref || ord.id || 'N/A')}
                               </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border ${
-                                  isCancelled
-                                    ? 'bg-neutral-100 text-neutral-600 border-neutral-300'
-                                    : isCompleted
-                                    ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
-                                    : isReady
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 animate-pulse'
-                                    : isCooking
-                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                    : 'bg-amber-50 text-amber-800 border-amber-200'
-                                }`}
-                              >
-                                ● {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In Kitchen'}
-                              </span>
+                              {isAwaitingApproval ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase border bg-amber-50 text-amber-900 border-amber-300 flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                  Awaiting Approval
+                                </span>
+                              ) : isKitchenRejected ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase border bg-rose-50 text-rose-800 border-rose-300">
+                                  ● Declined by Kitchen
+                                </span>
+                              ) : isApprovedWaitingPayment ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase border bg-emerald-50 text-emerald-800 border-emerald-300">
+                                  ✓ Approved by Kitchen
+                                </span>
+                              ) : (
+                                <span
+                                  className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border ${
+                                    isCancelled
+                                      ? 'bg-neutral-100 text-neutral-600 border-neutral-300'
+                                      : isCompleted
+                                      ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
+                                      : isReady
+                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300 animate-pulse'
+                                      : isCooking
+                                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                                  }`}
+                                >
+                                  ● {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In Kitchen'}
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
                               <span className="font-extrabold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
@@ -1270,20 +1640,33 @@ export const POS: React.FC = () => {
                             {dishes.length === 0 ? (
                               <span className="text-xs text-neutral-400 italic">No item details recorded</span>
                             ) : (
-                              dishes.map((d, dIdx) => (
-                                <span
-                                  key={dIdx}
-                                  className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
-                                >
-                                  <span className="truncate max-w-[130px]">{d.name}</span>
-                                  <span className="font-mono font-black text-neutral-900">x{d.quantity}</span>
-                                  {d.price > 0 && (
-                                    <span className="text-neutral-500 font-mono text-[10px]">
-                                      (₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                    </span>
-                                  )}
-                                </span>
-                              ))
+                              dishes.map((d, dIdx) => {
+                                const std = getProductQuantityStandard(d.name)
+                                const isFlaggedDish = d.quantity >= std
+                                return (
+                                  <span
+                                    key={dIdx}
+                                    className={`inline-flex items-center gap-1 border rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
+                                      isFlaggedDish
+                                        ? 'bg-amber-50 border-amber-300 text-amber-900'
+                                        : 'bg-neutral-100 border-neutral-200/70 text-neutral-700'
+                                    }`}
+                                  >
+                                    <span className="truncate max-w-[130px]">{d.name}</span>
+                                    {isFlaggedDish && (
+                                      <span className="text-[9px] bg-red-600 text-white font-black px-1 rounded">
+                                        STD: {std}
+                                      </span>
+                                    )}
+                                    <span className="font-mono font-black text-neutral-900">x{d.quantity}</span>
+                                    {d.price > 0 && (
+                                      <span className="text-neutral-500 font-mono text-[10px]">
+                                        (₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                      </span>
+                                    )}
+                                  </span>
+                                )
+                              })
                             )}
                           </div>
                           {ord.notes && (
@@ -1305,7 +1688,51 @@ export const POS: React.FC = () => {
 
                         {/* Col 4: Cashier Controls / Actions (xl:col-span-3) */}
                         <div className="xl:col-span-3 flex flex-col gap-1.5 justify-center">
-                          {!isCancelled && !isCompleted && (
+                          {isAwaitingApproval ? (
+                            <div className="flex items-center gap-2 flex-wrap xl:justify-end">
+                              <span className="bg-amber-50 text-amber-800 border border-amber-200 font-extrabold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                                Awaiting Kitchen Action
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => promptCancelPosOrder(ord)}
+                                className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
+                              >
+                                <span>❌</span> Cancel
+                              </button>
+                            </div>
+                          ) : isKitchenRejected ? (
+                            <div className="flex items-center gap-2 flex-wrap xl:justify-end">
+                              <span className="bg-rose-50 text-rose-800 border border-rose-200 font-extrabold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1">
+                                <span>❌</span> Declined by Kitchen
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => promptCancelPosOrder(ord)}
+                                className="bg-white hover:bg-neutral-100 text-rose-700 border border-rose-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
+                          ) : isApprovedWaitingPayment ? (
+                            <div className="flex items-center gap-2 flex-wrap xl:justify-end">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPaymentForApprovedOrder(ord)}
+                                className="bg-orange-600 hover:bg-orange-700 text-white font-extrabold px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                              >
+                                <span>💳</span> Collect Payment & Print
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => promptCancelPosOrder(ord)}
+                                className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
+                              >
+                                <span>❌</span> Cancel
+                              </button>
+                            </div>
+                          ) : !isCancelled && !isCompleted ? (
                             <div className="flex items-center gap-2 flex-wrap xl:justify-end">
                               {!isCooking && !isReady ? (
                                 <>
@@ -1343,9 +1770,9 @@ export const POS: React.FC = () => {
                                 </button>
                               ) : null}
                             </div>
-                          )}
+                          ) : null}
 
-                          {isCancelled && (
+                          {isCancelled && !isKitchenRejected && (
                             <div className="text-left xl:text-right text-xs font-bold text-neutral-400 py-0.5">
                               <span className="bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-500 text-[11px]">
                                 Order Cancelled
@@ -1652,6 +2079,8 @@ export const POS: React.FC = () => {
               isItemAvailable={isAvailable}
               onRemoveUnavailable={removeUnavailableItems}
               onClose={() => setIsMobileCartOpen(false)}
+              requiresApproval={bulkCheck.requiresApproval}
+              flaggedItems={bulkCheck.flaggedItems}
             />
           </div>
         </div>
@@ -1661,6 +2090,9 @@ export const POS: React.FC = () => {
         isOpen={isSuccessModalOpen}
         onClose={handleCloseSuccessModal}
         onConfirm={handleConfirmPayment}
+        onSubmitForApproval={handleSubmitForKitchenApproval}
+        requiresApproval={lastOrderDetails?.requiresApproval ?? bulkCheck.requiresApproval}
+        flaggedItems={lastOrderDetails?.flaggedItems ?? bulkCheck.flaggedItems}
         orderDetails={lastOrderDetails}
         hasUnavailableItems={hasUnavailableItems}
         isItemAvailable={isAvailable}
@@ -1671,6 +2103,11 @@ export const POS: React.FC = () => {
         isOpen={isReceiptModalOpen}
         onClose={handleCloseReceiptModal}
         orderDetails={lastOrderDetails}
+        onPrintSuccess={() => {
+          if (lastOrderDetails?.orderId) {
+            void markOrderAsPrinted(lastOrderDetails.orderId)
+          }
+        }}
       />
 
       {/* ADMIN CRUD MODALS */}

@@ -1,6 +1,7 @@
 import React from 'react'
 import { OrderItemRow } from './OrderItemRow'
 import type { CartItem } from './OrderItemRow'
+import type { FlaggedQuantityItem } from '../utils/bulkOrder'
 
 interface OrderSummaryProps {
   cartItems: CartItem[]
@@ -16,6 +17,8 @@ interface OrderSummaryProps {
   onClose?: () => void
   isItemAvailable?: (itemId: string) => boolean
   onRemoveUnavailable?: () => void
+  requiresApproval?: boolean
+  flaggedItems?: FlaggedQuantityItem[]
 }
 
 export const OrderSummary: React.FC<OrderSummaryProps> = ({
@@ -32,6 +35,8 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
   onClose,
   isItemAvailable = () => true,
   onRemoveUnavailable,
+  requiresApproval = false,
+  flaggedItems = [],
 }) => {
   // Calculations: Base Subtotal + 12% VAT = Total (Tax included in display prices)
   const rawSubtotal = cartItems.reduce((acc, item) => {
@@ -152,6 +157,27 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
 
       {/* Pricing Summary Card & Confirm Button */}
       <div className="space-y-3 flex-shrink-0 pt-2 border-t border-neutral-100">
+        {requiresApproval && (
+          <div className="rounded-xl border-2 border-amber-300 bg-amber-50 p-3 text-center space-y-1.5 animate-fade-in">
+            <div className="flex items-center justify-center gap-1.5 text-amber-900 font-extrabold text-xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              Kitchen Review Required
+            </div>
+            <p className="text-[11px] text-amber-800 leading-snug">
+              Order contains items meeting/exceeding kitchen standards. Kitchen review is required before payment can be collected.
+            </p>
+            {flaggedItems && flaggedItems.length > 0 && (
+              <div className="flex flex-wrap gap-1 justify-center pt-0.5">
+                {flaggedItems.map((fi, idx) => (
+                  <span key={idx} className="bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold px-1.5 py-0.5 rounded">
+                    {fi.name}: x{fi.quantity} (STD: {fi.standard})
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="space-y-1.5 text-xs font-medium text-neutral-500">
           <div className="flex items-center justify-between">
             <span>Subtotal</span>
@@ -170,9 +196,13 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
         <button
           onClick={onConfirmOrder}
           disabled={cartItems.length === 0 || unavailableCount > 0}
-          className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white font-semibold py-3 px-5 rounded-xl transition-all shadow-2xs active:scale-[0.99] cursor-pointer text-center text-sm"
+          className={`w-full font-bold py-3 px-5 rounded-xl transition-all shadow-2xs active:scale-[0.99] cursor-pointer text-center text-sm ${
+            requiresApproval
+              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/20'
+              : 'bg-orange-600 hover:bg-orange-700 disabled:bg-neutral-200 disabled:text-neutral-400 disabled:cursor-not-allowed text-white'
+          }`}
         >
-          Confirm Order
+          {requiresApproval ? 'Submit for Kitchen Approval' : 'Confirm Order'}
         </button>
       </div>
     </aside>

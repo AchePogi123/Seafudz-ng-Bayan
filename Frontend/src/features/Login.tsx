@@ -362,8 +362,8 @@ return () => {
     setSuccessMessage('');
     setOtpError('');
 
-    if (!firstName.trim() || !lastName.trim() || !username || !email || !phone || !password || !confirmPassword) {
-      setErrorMessage('Please fill in all required fields.');
+    if (!firstName.trim() || !lastName.trim() || !username || !email || !phone || !address.trim() || !password || !confirmPassword) {
+      setErrorMessage('Please fill in all required fields including your delivery address.');
       return;
     }
 
@@ -1137,7 +1137,7 @@ return () => {
                 <div className="mb-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
                     <label htmlFor="register-address" className="block text-xs font-semibold text-neutral-700">
-                      Delivery address <span className="text-neutral-400 font-normal text-[11px]">(Optional)</span>
+                      Delivery Address <span className="text-[#FF6900] font-bold">*</span>
                     </label>
                     <div className="flex items-center gap-2">
                       <button
@@ -1168,9 +1168,10 @@ return () => {
                   </div>
                   <textarea
                     id="register-address"
+                    required
                     rows={2}
                     disabled={isFindingAddress}
-                    placeholder="Enter your complete delivery address"
+                    placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
                     value={address}
                     onChange={(e) => {
                       setAddress(e.target.value);
@@ -1183,9 +1184,16 @@ return () => {
                       {addressLookupMessage}
                     </p>
                   )}
-                  <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Address lookup uses OpenStreetMap. Please verify the address before ordering.
-                  </p>
+                  {/* 8 km Delivery Radius Policy Details */}
+                  <div className="mt-1.5 p-2.5 rounded-xl bg-orange-50/90 border border-orange-200/80 text-[11px] text-orange-950 flex items-start gap-2">
+                    <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
+                    <div>
+                      <p className="font-bold text-orange-900">Store Delivery Radius Policy (Max 8 km)</p>
+                      <p className="text-orange-800/90 mt-0.5">
+                        Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our Caloocan store. Beyond 8 km, orders cannot be delivered.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Password */}
@@ -1623,7 +1631,7 @@ return () => {
                 <div className="space-y-1.5 text-left">
                   <div className="flex flex-wrap items-center justify-between gap-1">
                     <label htmlFor="mobile-register-address" className="text-xs font-bold text-neutral-800">
-                      Delivery Address <span className="text-neutral-400 font-normal text-[11px]">(Optional)</span>
+                      Delivery Address <span className="text-[#FF6900] font-bold">*</span>
                     </label>
                     <div className="flex items-center gap-1.5">
                       <button
@@ -1654,9 +1662,10 @@ return () => {
                   </div>
                   <textarea
                     id="mobile-register-address"
+                    required
                     rows={2}
                     disabled={isFindingAddress}
-                    placeholder="Enter your complete delivery address"
+                    placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
                     value={address}
                     onChange={(e) => {
                       setAddress(e.target.value);
@@ -1669,9 +1678,16 @@ return () => {
                       {addressLookupMessage}
                     </p>
                   )}
-                  <p className="text-[10px] text-neutral-400">
-                    Address lookup uses OpenStreetMap. Please verify the address before ordering.
-                  </p>
+                  {/* 8 km Delivery Radius Policy Details */}
+                  <div className="mt-1 p-2 rounded-xl bg-orange-50 border border-orange-200/80 text-[11px] text-orange-950 flex items-start gap-1.5 leading-snug">
+                    <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
+                    <div>
+                      <p className="font-bold text-orange-900">Max 8 km Delivery Radius</p>
+                      <p className="text-orange-800/90 mt-0.5">
+                        The store only acknowledges addresses within an <strong>8 km range</strong>. Beyond 8 km, orders cannot be delivered.
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Passwords */}

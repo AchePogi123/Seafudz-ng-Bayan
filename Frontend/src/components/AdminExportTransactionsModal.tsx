@@ -92,7 +92,7 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, isExporting, onClose])
 
-  const handleDownloadExcel = async () => {
+  const handleDownloadPdf = async () => {
     if (isExporting || !isAdmin) return
     setIsExporting(true)
     setNotification(null)
@@ -107,7 +107,7 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
         if (endDate) queryParams.append('endDate', endDate)
       }
 
-      const res = await fetch(`${API_BASE_URL}/admin/export/transactions/excel?${queryParams.toString()}`, {
+      const res = await fetch(`${API_BASE_URL}/admin/export/transactions/pdf?${queryParams.toString()}`, {
         method: 'GET',
         headers,
       })
@@ -118,7 +118,7 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
       }
 
       // Extract filename from Content-Disposition header if available
-      let filename = `seafudz_transactions_export_${new Date().toISOString().slice(0, 10)}.xlsx`
+      let filename = `seafudz_transactions_export_${new Date().toISOString().slice(0, 10)}.pdf`
       const disposition = res.headers.get('content-disposition')
       if (disposition && disposition.includes('filename="')) {
         const match = disposition.match(/filename="(.+?)"/)
@@ -142,7 +142,7 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
     } catch (err: any) {
       setNotification({
         type: 'error',
-        message: err.message || 'Failed to download Excel transactions export.',
+        message: err.message || 'Failed to download PDF transactions export.',
       })
     } finally {
       setIsExporting(false)
@@ -160,11 +160,12 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
         aria-labelledby="export-modal-title"
       >
         {/* Header */}
-        <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 bg-emerald-50/40">
+        <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 bg-rose-50/40">
           <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-600 shrink-0">
+            <div className="w-11 h-11 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 shrink-0">
               <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-6 4h4" />
               </svg>
             </div>
             <div>
@@ -172,12 +173,12 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
                 <h2 id="export-modal-title" className="text-xl font-bold text-slate-900 tracking-tight">
                   Export Historical Transactions
                 </h2>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                  Excel (.xlsx)
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                  PDF (.pdf)
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Download human-readable financial ledgers, itemized dish breakdowns, and customer payment records.
+                Download official financial audit report, itemized dish breakdowns, and customer transaction records.
               </p>
             </div>
           </div>
@@ -205,7 +206,7 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
             <div className="space-y-1">
               <p className="font-semibold text-amber-950">Reporting vs. Disaster Recovery Notice</p>
               <p className="text-amber-800 leading-relaxed font-normal">
-                This export is designed for management auditing, tax reporting, and spreadsheet analysis in Microsoft Excel or Google Sheets. It includes 3 tabs: <strong>Transactions Ledger</strong>, <strong>Itemized Breakdown</strong>, and <strong>Executive Financial Summary</strong>.
+                This export is designed for management auditing, tax reporting, and executive review in PDF format. It includes <strong>Executive Financial Summary</strong>, <strong>Transactions Ledger</strong>, and <strong>Itemized Dish Sales Breakdown</strong>.
               </p>
               <p className="text-amber-800 leading-relaxed font-normal">
                 For complete database disaster recovery, use the <strong>Database Backups (.sql.gz)</strong> snapshots.
@@ -351,9 +352,9 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
 
           <button
             type="button"
-            onClick={() => void handleDownloadExcel()}
+            onClick={() => void handleDownloadPdf()}
             disabled={isExporting || preview?.totalRecords === 0}
-            className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
           >
             {isExporting ? (
               <>
@@ -361,14 +362,15 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                 </svg>
-                <span>Generating Excel Spreadsheet...</span>
+                <span>Generating PDF Document...</span>
               </>
             ) : (
               <>
                 <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-6 4h4" />
                 </svg>
-                <span>Download Excel Ledger (.xlsx)</span>
+                <span>Download PDF Report (.pdf)</span>
               </>
             )}
           </button>

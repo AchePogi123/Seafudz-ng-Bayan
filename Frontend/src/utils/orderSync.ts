@@ -1,5 +1,5 @@
 import { API_BASE_URL } from './api'
-import { applyProductAvailabilityChange } from './menuAvailability'
+import { applyProductAvailabilityChange, applyProductServingsChange } from './menuAvailability'
 import { refreshProductCatalog } from './useProductImages'
 
 const SYNC_KEY = 'seafudz_order_sync_timestamp'
@@ -88,7 +88,11 @@ const initSseConnection = () => {
         const data = JSON.parse(event.data)
         if (data?.type === 'PRODUCT_AVAILABILITY_CHANGED' && data.productId != null) {
           applyProductAvailabilityChange(String(data.productId), Boolean(data.isAvailable))
+          if (data.remainingServings !== undefined) {
+            applyProductServingsChange(String(data.productId), data.remainingServings != null ? Number(data.remainingServings) : null)
+          }
           notifyProductCatalogSync(data)
+          notifyOrderSync()
           return
         }
         if (data?.type === 'PRODUCT_CATALOG_CHANGED') {

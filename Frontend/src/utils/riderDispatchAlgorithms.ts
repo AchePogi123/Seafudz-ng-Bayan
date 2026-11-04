@@ -7,6 +7,9 @@ export interface GeoCoordinate {
 export interface DeliveryJob {
   id: string
   ref: string
+  customerId?: string
+  userId?: string
+  tripId?: string
   customer: string
   phone: string
   address: string

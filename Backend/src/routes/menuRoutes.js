@@ -8,7 +8,7 @@ import {
   isManagedProductImagePath,
   PRODUCT_IMAGE_PREFIX,
 } from '../config/productImageStorage.js';
-import { requireActiveAdmin, requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { requireActiveAdmin, requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { validateAndNormalizeProductImage } from '../utils/validateProductImage.js';
 import { realtimeEmitter } from '../utils/realtimeEvents.js';
 
@@ -232,38 +232,111 @@ router.get('/menu/:id', async (req, res) => {
 });
 
 // PATCH /api/menu/:id/availability - Kitchen and Admin stock control.
-router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), async (req, res) => {
+const handleUpdateAvailability = async (req, res) => {
   const { is_available: isAvailable } = req.body || {};
   if (typeof isAvailable !== 'boolean') {
     return res.status(400).json({ success: false, message: 'is_available must be a boolean.' });
   }
 
   try {
+    const targetId = String(req.params.id);
     const { rows } = await query(
       `UPDATE products
-       SET is_available = $1, updated_at = NOW()
-       WHERE id::text = $2
-       RETURNING id, name, is_available`,
-      [isAvailable, req.params.id]
+       SET is_available = $1,
+           remaining_servings = CASE 
+             WHEN $1 = FALSE THEN 0 
+             WHEN $1 = TRUE AND (remaining_servings IS NULL OR remaining_servings <= 0) THEN NULL 
+             ELSE remaining_servings 
+           END,
+           updated_at = NOW()
+       WHERE id::text = $2 
+          OR LOWER(name) = (SELECT LOWER(name) FROM products WHERE id::text = $2 LIMIT 1)
+          OR LOWER(name) = LOWER($2)
+       RETURNING id, name, is_available, remaining_servings`,
+      [isAvailable, targetId]
     );
     if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Product not found.' });
     }
 
-    const product = rows[0];
-    realtimeEmitter.emit('order_update', {
-      type: 'PRODUCT_AVAILABILITY_CHANGED',
-      productId: String(product.id),
-      productName: product.name,
-      isAvailable: product.is_available,
-      timestamp: Date.now(),
-    });
-    return res.status(200).json({ success: true, data: product });
+    for (const product of rows) {
+      realtimeEmitter.emit('order_update', {
+        type: 'PRODUCT_AVAILABILITY_CHANGED',
+        productId: String(product.id),
+        productName: product.name,
+        isAvailable: product.is_available,
+        remainingServings: product.remaining_servings,
+        timestamp: Date.now(),
+      });
+    }
+
+    const primaryProduct = rows.find((r) => String(r.id) === targetId) || rows[0];
+    return res.status(200).json({ success: true, data: primaryProduct });
   } catch (error) {
     console.error('Error updating product availability:', error);
     return res.status(500).json({ success: false, message: 'Failed to update product availability.' });
   }
-});
+};
+
+router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
+router.patch('/kitchen/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
+
+// PATCH /api/menu/:id/remaining-servings - Kitchen sets manual remaining servings countdown
+const handleUpdateRemainingServings = async (req, res) => {
+  const { remaining_servings } = req.body || {};
+  
+  let servingsValue = null;
+  if (remaining_servings !== null && remaining_servings !== undefined && remaining_servings !== '') {
+    const parsed = parseInt(remaining_servings, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      return res.status(400).json({ success: false, message: 'remaining_servings must be a positive integer or null.' });
+    }
+    servingsValue = parsed;
+  }
+
+  try {
+    const targetId = String(req.params.id);
+    const { rows } = await query(
+      `UPDATE products
+       SET remaining_servings = $1,
+           is_available = CASE 
+             WHEN $1 = 0 THEN FALSE 
+             WHEN $1 > 0 THEN TRUE 
+             ELSE is_available 
+           END,
+           updated_at = NOW()
+       WHERE id::text = $2 
+          OR LOWER(name) = (SELECT LOWER(name) FROM products WHERE id::text = $2 LIMIT 1)
+          OR LOWER(name) = LOWER($2)
+       RETURNING id, name, is_available, remaining_servings, quantity_standard`,
+      [servingsValue, targetId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    for (const product of rows) {
+      realtimeEmitter.emit('order_update', {
+        type: 'PRODUCT_AVAILABILITY_CHANGED',
+        productId: String(product.id),
+        productName: product.name,
+        isAvailable: product.is_available,
+        remainingServings: product.remaining_servings,
+        timestamp: Date.now(),
+      });
+    }
+
+    const primaryProduct = rows.find((r) => String(r.id) === targetId) || rows[0];
+    return res.status(200).json({ success: true, data: primaryProduct });
+  } catch (error) {
+    console.error('Error updating product remaining servings:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update remaining servings.' });
+  }
+};
+
+router.patch('/menu/:id/remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateRemainingServings);
+router.patch('/kitchen/menu/:id/remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateRemainingServings);
 
 // POST /api/menu/:id/image - Replace a product image.
 router.post('/menu/:id/image', requireAuth, requireActiveAdmin, parseImageUpload, async (req, res) => {

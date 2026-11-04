@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
 import { query } from '../config/db.js';
 import { MANILA_TIMEZONE, formatManilaDateTime, getManilaTimestampString } from './backupService.js';
 
@@ -25,15 +26,13 @@ export function formatManilaIso(date) {
 }
 
 /**
- * Builds an Excel workbook containing historical transactions, itemized breakdown,
- * and executive financial summary.
+ * Shared database querying and data normalization for transaction exports
  */
-export async function generateTransactionsExcel({
+export async function fetchHistoricalTransactionsData({
   startDate = null,
   endDate = null,
   period = 'all',
   channel = 'all',
-  adminEmail = 'Administrator',
 } = {}) {
   let dateFilter = '';
   const dateParams = [];
@@ -70,6 +69,19 @@ export async function generateTransactionsExcel({
       channelFilter = ` AND LOWER(o.order_type) IN ('online', 'delivery', 'online customer', 'online order')`;
     }
   }
+
+  const dateRangeLabel =
+    normalizedPeriod === 'today'
+      ? 'Today'
+      : normalizedPeriod === 'week'
+      ? 'This Week'
+      : normalizedPeriod === 'month'
+      ? 'This Month'
+      : normalizedPeriod === 'year'
+      ? 'This Year'
+      : startDate || endDate
+      ? `${startDate || 'Earliest'} to ${endDate || 'Latest'}`
+      : 'All Available Historical Records';
 
   // 1. Fetch Orders with Customer, Cashier, and Delivery details
   const ordersSql = `
@@ -109,16 +121,16 @@ export async function generateTransactionsExcel({
   const orders = ordersRes.rows;
 
   if (orders.length === 0) {
-    // Generate empty workbook with notice
-    const wb = new ExcelJS.Workbook();
-    wb.creator = 'Seafudz ng Bayan POS System';
-    const ws = wb.addWorksheet('Transactions Ledger');
-    ws.addRow(['No historical transactions found matching the selected criteria.']);
-    const buffer = await wb.xlsx.writeBuffer();
     return {
-      buffer,
-      totalRecords: 0,
-      filename: `seafudz_transactions_${getManilaTimestampString()}.xlsx`,
+      orders: [],
+      itemsRes: { rows: [] },
+      paymentsRes: { rows: [] },
+      refundsRes: { rows: [] },
+      itemsByOrder: new Map(),
+      paymentsByOrder: new Map(),
+      refundsByOrder: new Map(),
+      dateRangeLabel,
+      normalizedPeriod,
     };
   }
 
@@ -193,6 +205,47 @@ export async function generateTransactionsExcel({
     refundsByOrder.get(rf.order_id).push(rf);
   });
 
+  return {
+    orders,
+    itemsRes,
+    paymentsRes,
+    refundsRes,
+    itemsByOrder,
+    paymentsByOrder,
+    refundsByOrder,
+    dateRangeLabel,
+    normalizedPeriod,
+  };
+}
+
+/**
+ * Builds an Excel workbook containing historical transactions, itemized breakdown,
+ * and executive financial summary.
+ */
+export async function generateTransactionsExcel({
+  startDate = null,
+  endDate = null,
+  period = 'all',
+  channel = 'all',
+  adminEmail = 'Administrator',
+} = {}) {
+  const data = await fetchHistoricalTransactionsData({ startDate, endDate, period, channel });
+  const { orders, itemsRes, paymentsByOrder, refundsByOrder, itemsByOrder, dateRangeLabel, normalizedPeriod } = data;
+
+  if (orders.length === 0) {
+    // Generate empty workbook with notice
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Seafudz ng Bayan POS System';
+    const ws = wb.addWorksheet('Transactions Ledger');
+    ws.addRow(['No historical transactions found matching the selected criteria.']);
+    const buffer = await wb.xlsx.writeBuffer();
+    return {
+      buffer,
+      totalRecords: 0,
+      filename: `seafudz_transactions_${getManilaTimestampString()}.xlsx`,
+    };
+  }
+
   // Build Excel Workbook
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Seafudz ng Bayan POS System';
@@ -219,18 +272,6 @@ export async function generateTransactionsExcel({
   // Metadata Banner
   ledgerWs.mergeCells('A2:T2');
   const metaCell = ledgerWs.getCell('A2');
-  const dateRangeLabel =
-    normalizedPeriod === 'today'
-      ? 'Today'
-      : normalizedPeriod === 'week'
-      ? 'This Week'
-      : normalizedPeriod === 'month'
-      ? 'This Month'
-      : normalizedPeriod === 'year'
-      ? 'This Year'
-      : startDate || endDate
-      ? `${startDate || 'Earliest'} to ${endDate || 'Latest'}`
-      : 'All Available Historical Records';
 
   metaCell.value = `Period: ${dateRangeLabel} | Generated: ${formatManilaDateTime(new Date())} (Asia/Manila) | Total Orders: ${orders.length} | Exported By: ${adminEmail}`;
   metaCell.font = { name: 'Calibri', size: 10, italic: true, color: { argb: 'FF475569' } };
@@ -343,6 +384,8 @@ export async function generateTransactionsExcel({
     let cancellationStr = 'N/A';
     if (ord.order_status === 'CANCELLED' || ord.cancelled_at) {
       cancellationStr = `Cancelled ${ord.cancelled_at ? formatManilaIso(ord.cancelled_at) : ''} (${ord.customer_resolution_status || 'CANCELLED'})`;
+    } else if (ord.order_status === 'KITCHEN_REJECTED') {
+      cancellationStr = 'Declined by Kitchen (Quantity Exceeded)';
     }
 
     const row = ledgerWs.addRow({
@@ -404,7 +447,7 @@ export async function generateTransactionsExcel({
     statusCell.alignment = { horizontal: 'center', vertical: 'middle' };
     if (ord.order_status === 'COMPLETED') {
       statusCell.font = { color: { argb: 'FF15803D' }, bold: true }; // Green
-    } else if (ord.order_status === 'CANCELLED') {
+    } else if (ord.order_status === 'CANCELLED' || ord.order_status === 'KITCHEN_REJECTED') {
       statusCell.font = { color: { argb: 'FFB91C1C' }, bold: true }; // Red
     }
   });
@@ -593,7 +636,406 @@ export async function generateTransactionsExcel({
   };
 }
 
+/**
+ * Builds an official PDF document containing historical transactions,
+ * financial KPI executive summary, and itemized sales volume.
+ */
+export async function generateTransactionsPDF({
+  startDate = null,
+  endDate = null,
+  period = 'all',
+  channel = 'all',
+  adminEmail = 'Administrator',
+} = {}) {
+  const data = await fetchHistoricalTransactionsData({ startDate, endDate, period, channel });
+  const { orders, itemsRes, paymentsByOrder, refundsByOrder, itemsByOrder, dateRangeLabel, normalizedPeriod } = data;
+
+  const doc = new PDFDocument({
+    size: 'A4',
+    layout: 'landscape',
+    margin: 36,
+    bufferPages: true,
+  });
+
+  const buffers = [];
+  doc.on('data', (chunk) => buffers.push(chunk));
+  const endPromise = new Promise((resolve) => doc.on('end', resolve));
+
+  const margin = 36;
+  const contentWidth = 770;
+  const maxY = 535;
+
+  const channelLabel =
+    channel === 'pos'
+      ? 'POS In-Store'
+      : channel === 'online'
+      ? 'Online Delivery'
+      : 'All Channels';
+
+  if (orders.length === 0) {
+    // Header Banner
+    doc.rect(margin, margin, contentWidth, 54).fill('#0F172A');
+    doc.fillColor('#EA580C').font('Helvetica-Bold').fontSize(16).text('SEAFUDZ NG BAYAN', margin + 14, margin + 10);
+    doc.fillColor('#F8FAFC').font('Helvetica-Bold').fontSize(9).text('HISTORICAL TRANSACTIONS & FINANCIAL AUDIT REPORT', margin + 14, margin + 32);
+
+    doc.fillColor('#94A3B8').font('Helvetica').fontSize(8);
+    doc.text(`Period: ${dateRangeLabel} | Scope: ${channelLabel}`, margin + 450, margin + 10, { width: 306, align: 'right' });
+    doc.text(`Generated: ${formatManilaDateTime(new Date())} (Asia/Manila UTC+8)`, margin + 450, margin + 22, { width: 306, align: 'right' });
+    doc.text(`Exported By: ${adminEmail}`, margin + 450, margin + 34, { width: 306, align: 'right' });
+
+    // Empty state message
+    doc.rect(margin, margin + 74, contentWidth, 120).fillAndStroke('#F8FAFC', '#E2E8F0');
+    doc.fillColor('#475569').font('Helvetica-Bold').fontSize(12).text(
+      'No historical transactions found matching the selected criteria.',
+      margin,
+      margin + 120,
+      { align: 'center', width: contentWidth }
+    );
+    doc.fillColor('#94A3B8').font('Helvetica').fontSize(9).text(
+      `Filters applied: Period [${dateRangeLabel}], Channel [${channelLabel}]`,
+      margin,
+      margin + 140,
+      { align: 'center', width: contentWidth }
+    );
+
+    // Footer
+    doc.strokeColor('#CBD5E1').lineWidth(0.5).moveTo(margin, 560).lineTo(margin + contentWidth, 560).stroke();
+    doc.fillColor('#64748B').font('Helvetica').fontSize(7.5).text(
+      'Seafudz ng Bayan POS System — Official Financial & Transaction Audit Document (Confidential)',
+      margin,
+      566,
+      { width: 500 }
+    );
+    doc.fillColor('#64748B').font('Helvetica-Bold').fontSize(7.5).text(
+      'Page 1 of 1',
+      margin + contentWidth - 150,
+      566,
+      { align: 'right', width: 150 }
+    );
+
+    doc.end();
+    await endPromise;
+    return {
+      buffer: Buffer.concat(buffers),
+      totalRecords: 0,
+      filename: `seafudz_transactions_${getManilaTimestampString()}.pdf`,
+    };
+  }
+
+  // Calculate metrics
+  let runningSubtotal = 0;
+  let runningTax = 0;
+  let runningDelivery = 0;
+  let runningGross = 0;
+  let runningRefunds = 0;
+  let totalUnits = 0;
+
+  orders.forEach((ord) => {
+    runningSubtotal += Number(ord.subtotal) || 0;
+    runningTax += Number(ord.tax) || 0;
+    runningDelivery += Number(ord.delivery_fee) || 0;
+    runningGross += Number(ord.total) || 0;
+
+    const rfs = refundsByOrder.get(ord.order_id) || [];
+    const rfTotal = rfs.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+    runningRefunds += rfTotal;
+
+    const itms = itemsByOrder.get(ord.order_id) || [];
+    totalUnits += itms.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+  });
+
+  const netRevenue = runningGross - runningRefunds;
+  const completedOrders = orders.filter((o) => o.order_status === 'COMPLETED');
+  const cancelledOrders = orders.filter((o) => o.order_status === 'CANCELLED' || o.order_status === 'KITCHEN_REJECTED');
+  const posOrders = orders.filter((o) => (o.order_type || '').toUpperCase().includes('POS') || (o.order_type || '').toUpperCase().includes('ON_SITE') || (o.order_type || '').toUpperCase().includes('WALK'));
+  const deliveryOrders = orders.filter((o) => (o.order_type || '').toUpperCase().includes('ONLINE') || (o.order_type || '').toUpperCase().includes('DELIVERY'));
+
+  // --- Page 1 Header Banner ---
+  doc.rect(margin, margin, contentWidth, 54).fill('#0F172A');
+  doc.fillColor('#EA580C').font('Helvetica-Bold').fontSize(16).text('SEAFUDZ NG BAYAN', margin + 14, margin + 10);
+  doc.fillColor('#F8FAFC').font('Helvetica-Bold').fontSize(9).text('HISTORICAL TRANSACTIONS & FINANCIAL AUDIT REPORT', margin + 14, margin + 32);
+
+  doc.fillColor('#94A3B8').font('Helvetica').fontSize(8);
+  doc.text(`Period: ${dateRangeLabel} | Scope: ${channelLabel}`, margin + 450, margin + 10, { width: 306, align: 'right' });
+  doc.text(`Generated: ${formatManilaDateTime(new Date())} (Asia/Manila UTC+8)`, margin + 450, margin + 22, { width: 306, align: 'right' });
+  doc.text(`Auditor: ${adminEmail}`, margin + 450, margin + 34, { width: 306, align: 'right' });
+
+  // --- Executive KPI Summary Cards ---
+  const kpiY = margin + 64;
+  const kpiW = 146;
+  const kpiH = 44;
+  const kpiGap = 10;
+
+  const kpis = [
+    { title: 'GROSS SALES', value: `PHP ${runningGross.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bg: '#F8FAFC', border: '#E2E8F0', text: '#0F172A' },
+    { title: '12% VAT TAX', value: `PHP ${runningTax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bg: '#F8FAFC', border: '#E2E8F0', text: '#0F172A' },
+    { title: 'DELIVERY FEES', value: `PHP ${runningDelivery.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bg: '#F8FAFC', border: '#E2E8F0', text: '#0F172A' },
+    { title: 'TOTAL REFUNDS', value: `PHP ${runningRefunds.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bg: '#FEF2F2', border: '#FECACA', text: '#B91C1C' },
+    { title: 'NET REVENUE', value: `PHP ${netRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, bg: '#DCFCE7', border: '#86EFAC', text: '#15803D', bold: true },
+  ];
+
+  kpis.forEach((kpi, idx) => {
+    const x = margin + idx * (kpiW + kpiGap);
+    doc.rect(x, kpiY, kpiW, kpiH).fillAndStroke(kpi.bg, kpi.border);
+    doc.fillColor('#64748B').font('Helvetica-Bold').fontSize(7).text(kpi.title, x + 8, kpiY + 8, { width: kpiW - 16 });
+    doc.fillColor(kpi.text).font('Helvetica-Bold').fontSize(10.5).text(kpi.value, x + 8, kpiY + 22, { width: kpiW - 16 });
+  });
+
+  // Secondary Strip
+  const stripY = kpiY + kpiH + 8;
+  doc.rect(margin, stripY, contentWidth, 20).fillAndStroke('#F1F5F9', '#CBD5E1');
+  doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7.5).text(
+    `Total Orders: ${orders.length}   |   Completed: ${completedOrders.length}   |   Cancelled: ${cancelledOrders.length}   |   POS In-Store: ${posOrders.length}   |   Online Delivery: ${deliveryOrders.length}   |   Total Units Sold: ${totalUnits}`,
+    margin + 12,
+    stripY + 5
+  );
+
+  // --- Section 1: Transactions Ledger Table ---
+  let currentY = stripY + 28;
+  doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(10.5).text('1. HISTORICAL TRANSACTIONS LEDGER', margin, currentY);
+  currentY += 15;
+
+  const cols = [
+    { title: 'Order Ref #', key: 'id', width: 130, align: 'left' },
+    { title: 'Date (Manila)', key: 'date', width: 85, align: 'center' },
+    { title: 'Channel', key: 'channel', width: 65, align: 'center' },
+    { title: 'Customer / Dest', key: 'customer', width: 105, align: 'left' },
+    { title: 'Status', key: 'status', width: 75, align: 'center' },
+    { title: 'Ordered Items Summary', key: 'items', width: 160, align: 'left' },
+    { title: 'Payment', key: 'payment', width: 75, align: 'center' },
+    { title: 'Gross Total', key: 'total', width: 75, align: 'right' },
+  ];
+
+  const drawTableHeader = (y) => {
+    doc.rect(margin, y, contentWidth, 20).fill('#1E293B');
+    let curX = margin;
+    cols.forEach((col) => {
+      doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7.5).text(col.title, curX + 4, y + 6, {
+        width: col.width - 8,
+        align: col.align,
+      });
+      curX += col.width;
+    });
+  };
+
+  drawTableHeader(currentY);
+  currentY += 20;
+
+  orders.forEach((ord, idx) => {
+    if (currentY + 20 > maxY) {
+      doc.addPage();
+      currentY = margin;
+      drawTableHeader(currentY);
+      currentY += 20;
+    }
+
+    const items = itemsByOrder.get(ord.order_id) || [];
+    const payments = paymentsByOrder.get(ord.order_id) || [];
+
+    const itemsSummary = items
+      .map((i) => `${i.product_name_snapshot || 'Item'} x${i.quantity || 1}`)
+      .join(', ') || 'No Items';
+
+    const paymentMethods = payments.map((p) => p.payment_method).filter(Boolean);
+    const paymentMethodStr = paymentMethods.length > 0 ? Array.from(new Set(paymentMethods)).join('/') : 'Cash';
+
+    const rawType = (ord.order_type || '').toUpperCase();
+    const isOnline = rawType.includes('ONLINE') || rawType.includes('DELIVERY');
+    const channelLabelStr = isOnline ? 'Online' : 'POS Walk-In';
+
+    const destination = ord.table_id
+      ? `Table ${ord.table_id}`
+      : ord.delivery_address || ord.customer_name || (isOnline ? 'Online Delivery' : 'Counter Walk-In');
+
+    const isEven = idx % 2 === 0;
+    if (isEven) {
+      doc.rect(margin, currentY, contentWidth, 20).fill('#F8FAFC');
+    }
+
+    let statusColor = '#334155';
+    if (ord.order_status === 'COMPLETED') statusColor = '#16A34A';
+    else if (ord.order_status === 'CANCELLED' || ord.order_status === 'KITCHEN_REJECTED') statusColor = '#DC2626';
+    else statusColor = '#D97706';
+
+    const rowData = [
+      { text: ord.order_id, col: cols[0], font: 'Helvetica-Bold' },
+      { text: formatManilaIso(ord.created_at).slice(0, 16), col: cols[1], font: 'Helvetica' },
+      { text: channelLabelStr, col: cols[2], font: 'Helvetica' },
+      { text: destination, col: cols[3], font: 'Helvetica' },
+      { text: ord.order_status, col: cols[4], font: 'Helvetica-Bold', color: statusColor },
+      { text: itemsSummary, col: cols[5], font: 'Helvetica' },
+      { text: paymentMethodStr, col: cols[6], font: 'Helvetica' },
+      { text: `PHP ${(Number(ord.total) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, col: cols[7], font: 'Helvetica-Bold' },
+    ];
+
+    let curX = margin;
+    rowData.forEach((item) => {
+      doc.fillColor(item.color || '#1E293B').font(item.font).fontSize(7.5).text(item.text, curX + 4, currentY + 5, {
+        width: item.col.width - 8,
+        align: item.col.align,
+        lineBreak: false,
+        ellipsis: true,
+      });
+      curX += item.col.width;
+    });
+
+    currentY += 20;
+  });
+
+  // Summary Row for Ledger
+  if (currentY + 22 > maxY) {
+    doc.addPage();
+    currentY = margin;
+  }
+  doc.rect(margin, currentY, contentWidth, 22).fillAndStroke('#FEF08A', '#EAB308');
+  doc.fillColor('#854D0E').font('Helvetica-Bold').fontSize(8);
+  doc.text(`TOTAL AUDIT SUMMARY (${orders.length} orders, ${totalUnits} units)`, margin + 8, currentY + 6);
+  doc.text(`Gross Revenue: PHP ${runningGross.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, currentY + 6, {
+    width: contentWidth - 408,
+    align: 'right',
+  });
+  currentY += 32;
+
+  // --- Section 2: Itemized Product Sales Audit ---
+  const productAggMap = new Map();
+  itemsRes.rows.forEach((it) => {
+    const name = it.product_name_snapshot || 'Product Item';
+    if (!productAggMap.has(name)) {
+      productAggMap.set(name, {
+        name,
+        unitPrice: Number(it.unit_price) || 0,
+        unitsSold: 0,
+        totalSales: 0,
+      });
+    }
+    const agg = productAggMap.get(name);
+    agg.unitsSold += Number(it.quantity) || 0;
+    agg.totalSales += Number(it.subtotal) || 0;
+  });
+
+  const sortedProducts = Array.from(productAggMap.values()).sort((a, b) => b.totalSales - a.totalSales);
+
+  if (sortedProducts.length > 0) {
+    if (currentY + 80 > maxY) {
+      doc.addPage();
+      currentY = margin;
+    }
+
+    doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(10.5).text('2. ITEMIZED PRODUCT & DISH SALES VOLUME AUDIT', margin, currentY);
+    currentY += 15;
+
+    const dishCols = [
+      { title: 'Product Name', width: 270, align: 'left' },
+      { title: 'Unit Price (PHP)', width: 120, align: 'right' },
+      { title: 'Units Sold', width: 110, align: 'right' },
+      { title: 'Total Sales (PHP)', width: 140, align: 'right' },
+      { title: 'Share of Sales', width: 130, align: 'right' },
+    ];
+
+    const drawDishHeader = (y) => {
+      doc.rect(margin, y, contentWidth, 20).fill('#0284C7');
+      let curX = margin;
+      dishCols.forEach((col) => {
+        doc.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(7.5).text(col.title, curX + 6, y + 6, {
+          width: col.width - 12,
+          align: col.align,
+        });
+        curX += col.width;
+      });
+    };
+
+    drawDishHeader(currentY);
+    currentY += 20;
+
+    const totalDishSubtotal = runningSubtotal || 1;
+
+    sortedProducts.forEach((prod, pIdx) => {
+      if (currentY + 20 > maxY) {
+        doc.addPage();
+        currentY = margin;
+        drawDishHeader(currentY);
+        currentY += 20;
+      }
+
+      if (pIdx % 2 === 0) {
+        doc.rect(margin, currentY, contentWidth, 20).fill('#F8FAFC');
+      }
+
+      const sharePct = ((prod.totalSales / totalDishSubtotal) * 100).toFixed(1);
+
+      let curX = margin;
+      const cells = [
+        { text: prod.name, width: dishCols[0].width, align: 'left', font: 'Helvetica-Bold' },
+        { text: `PHP ${prod.unitPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, width: dishCols[1].width, align: 'right', font: 'Helvetica' },
+        { text: `${prod.unitsSold}`, width: dishCols[2].width, align: 'right', font: 'Helvetica' },
+        { text: `PHP ${prod.totalSales.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, width: dishCols[3].width, align: 'right', font: 'Helvetica-Bold' },
+        { text: `${sharePct}%`, width: dishCols[4].width, align: 'right', font: 'Helvetica' },
+      ];
+
+      cells.forEach((cell) => {
+        doc.fillColor('#1E293B').font(cell.font).fontSize(7.5).text(cell.text, curX + 6, currentY + 5, {
+          width: cell.width - 12,
+          align: cell.align,
+          lineBreak: false,
+          ellipsis: true,
+        });
+        curX += cell.width;
+      });
+
+      currentY += 20;
+    });
+
+    // Dishes total row
+    if (currentY + 22 > maxY) {
+      doc.addPage();
+      currentY = margin;
+    }
+    doc.rect(margin, currentY, contentWidth, 22).fillAndStroke('#E0F2FE', '#0284C7');
+    doc.fillColor('#0369A1').font('Helvetica-Bold').fontSize(8);
+    doc.text(`TOTAL PRODUCT LINE ITEMS (${sortedProducts.length} dishes, ${totalUnits} total units)`, margin + 8, currentY + 6);
+    doc.text(`Food & Beverage Subtotal: PHP ${runningSubtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, margin + 400, currentY + 6, {
+      width: contentWidth - 408,
+      align: 'right',
+    });
+  }
+
+  // --- Footers on all pages ---
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    doc.strokeColor('#CBD5E1').lineWidth(0.5).moveTo(margin, 560).lineTo(margin + contentWidth, 560).stroke();
+    doc.fillColor('#64748B').font('Helvetica').fontSize(7.5).text(
+      'Seafudz ng Bayan POS System — Official Financial & Transaction Audit Document (Confidential)',
+      margin,
+      566,
+      { width: 500 }
+    );
+    doc.fillColor('#64748B').font('Helvetica-Bold').fontSize(7.5).text(
+      `Page ${i + 1} of ${range.count}`,
+      margin + contentWidth - 150,
+      566,
+      { align: 'right', width: 150 }
+    );
+  }
+
+  doc.end();
+  await endPromise;
+  const pdfBuffer = Buffer.concat(buffers);
+  const filename = `seafudz_transactions_${dateRangeLabel.replace(/[\s/:]+/g, '_')}_${getManilaTimestampString()}.pdf`;
+
+  return {
+    buffer: pdfBuffer,
+    filename,
+    totalRecords: orders.length,
+    grossRevenue: runningGross,
+    netRevenue,
+    dateRange: dateRangeLabel,
+  };
+}
+
 export default {
   generateTransactionsExcel,
+  generateTransactionsPDF,
+  fetchHistoricalTransactionsData,
   formatManilaIso,
 };

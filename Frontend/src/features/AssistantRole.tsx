@@ -8,10 +8,12 @@ import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 
 export interface OrderItem {
   id?: number | string
+  productId?: string
   name: string
   quantity: number
   price: number
   item_status?: string
+  itemStatus?: string
 }
 
 export interface OnlineOrder {
@@ -28,6 +30,10 @@ export interface OnlineOrder {
   refundReference?: string
   gcashAuthorized?: boolean
   gcash_authorized?: boolean
+  requiresKitchenApproval?: boolean
+  requires_kitchen_approval?: boolean
+  kitchenApprovalStatus?: string
+  kitchen_approval_status?: string
   status: 'pending' | 'flagged' | 'pending_preparation' | 'preparing' | 'assigned' | 'confirmed' | 'ready' | 'out_for_delivery' | 'completed' | 'out_of_stock' | string
   items: OrderItem[]
   outOfStockItems?: any[]
@@ -108,6 +114,7 @@ export const AssistantRole: React.FC = () => {
   // Out-of-Stock Resolution Modal states
   const [isResolveModalOpen, setIsResolveModalOpen] = useState(false)
   const [isSubmittingResolution, setIsSubmittingResolution] = useState(false)
+  const [manualRefundRef, setManualRefundRef] = useState('')
 
   const handleDeleteAssistantOrder = async (orderId: string) => {
     const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete order #${orderId}? This will remove it from the PostgreSQL database.`)
@@ -152,10 +159,38 @@ export const AssistantRole: React.FC = () => {
       return found
     }
     if (lastSelectedOrderRef.current && (lastSelectedOrderRef.current.id === selectedOrderId || lastSelectedOrderRef.current.ref === selectedOrderId)) {
+      const rawSt = (lastSelectedOrderRef.current.status || '').toUpperCase()
+      const appSt = (lastSelectedOrderRef.current.kitchenApprovalStatus || lastSelectedOrderRef.current.kitchen_approval_status || '').toUpperCase()
+      const reqApp = lastSelectedOrderRef.current.requiresKitchenApproval === true || lastSelectedOrderRef.current.requires_kitchen_approval === true
+      if (rawSt === 'AWAITING_KITCHEN_APPROVAL' || rawSt === 'KITCHEN_REJECTED' || appSt === 'PENDING' || (reqApp && appSt !== 'APPROVED')) {
+        lastSelectedOrderRef.current = null
+        return null
+      }
       return lastSelectedOrderRef.current
     }
     return null
   }, [orders, selectedOrderId])
+
+  // Sync manual refund reference number when selected order or modal opens
+  useEffect(() => {
+    if (selectedOrder) {
+      setManualRefundRef(selectedOrder.refundReference || '')
+    } else {
+      setManualRefundRef('')
+    }
+  }, [selectedOrder?.id, isResolveModalOpen])
+
+  // Close Out-of-Stock Resolution modal on Escape key press
+  useEffect(() => {
+    if (!isResolveModalOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsResolveModalOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isResolveModalOpen])
 
   const handleRefundProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -271,6 +306,20 @@ export const AssistantRole: React.FC = () => {
               const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
 
+              // Critical: Orders meeting quantity standards awaiting kitchen approval (or declined by kitchen) must NOT reflect on Assistant
+              const rawStatusUpper = (o.status || '').toUpperCase()
+              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
+              const reqApp = o.requires_kitchen_approval === true || o.requiresKitchenApproval === true
+
+              const isAwaitingOrRejectedByKitchen = rawStatusUpper === 'AWAITING_KITCHEN_APPROVAL'
+                || rawStatusUpper === 'KITCHEN_REJECTED'
+                || appSt === 'PENDING'
+                || (reqApp && appSt !== 'APPROVED')
+
+              if (isAwaitingOrRejectedByKitchen) {
+                return // Only reflect on Assistant AFTER Kitchen approves
+              }
+
               const id = o.id
               combinedMap.set(id, {
                 id,
@@ -285,6 +334,10 @@ export const AssistantRole: React.FC = () => {
                 refundReference: o.refundReference || o.refund_reference,
                 status: normalizeStatusStr(o.status),
                 gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
+                requiresKitchenApproval: o.requiresKitchenApproval ?? o.requires_kitchen_approval,
+                requires_kitchen_approval: o.requires_kitchen_approval ?? o.requiresKitchenApproval,
+                kitchenApprovalStatus: o.kitchenApprovalStatus || o.kitchen_approval_status,
+                kitchen_approval_status: o.kitchen_approval_status || o.kitchenApprovalStatus,
                 items: (o.items || []).map((it: any) => ({
                   id: it.id,
                   name: it.name || it.product_name_snapshot,
@@ -331,6 +384,20 @@ export const AssistantRole: React.FC = () => {
               const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
 
+              // Critical: Orders meeting quantity standards awaiting kitchen approval (or declined by kitchen) must NOT reflect on Assistant
+              const rawStatusUpper = (o.status || '').toUpperCase()
+              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
+              const reqApp = o.requires_kitchen_approval === true || o.requiresKitchenApproval === true
+
+              const isAwaitingOrRejectedByKitchen = rawStatusUpper === 'AWAITING_KITCHEN_APPROVAL'
+                || rawStatusUpper === 'KITCHEN_REJECTED'
+                || appSt === 'PENDING'
+                || (reqApp && appSt !== 'APPROVED')
+
+              if (isAwaitingOrRejectedByKitchen) {
+                return // Only reflect on Assistant AFTER Kitchen approves
+              }
+
               const id = o.id || o.ref
               if (!combinedMap.has(id)) {
                 const rawStatus = normalizeStatusStr(o.status)
@@ -362,6 +429,10 @@ export const AssistantRole: React.FC = () => {
                   refundReference: o.refundReference || o.refund_reference,
                   status: rawStatus,
                   gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
+                  requiresKitchenApproval: o.requiresKitchenApproval ?? o.requires_kitchen_approval,
+                  requires_kitchen_approval: o.requires_kitchen_approval ?? o.requiresKitchenApproval,
+                  kitchenApprovalStatus: o.kitchenApprovalStatus || o.kitchen_approval_status,
+                  kitchen_approval_status: o.kitchen_approval_status || o.kitchenApprovalStatus,
                   items,
                   outOfStockItems: o.outOfStockItems || o.out_of_stock_items || [],
                 customerResolution: o.customerResolution || o.customer_resolution || null,
@@ -628,8 +699,16 @@ export const AssistantRole: React.FC = () => {
       ? Number(selectedOrder.excessAmount)
       : (!isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
 
-    if (customerChoice === 'REPLACE' && cashbackDifference > 0 && !selectedOrder.refundReceipt) {
-      alert('Please attach the Cashback Reference Photo before confirming replacement.')
+    const finalRefundReference = manualRefundRef.trim() || selectedOrder.refundReference || ''
+    const hasProof = Boolean(selectedOrder.refundReceipt || finalRefundReference)
+
+    if (customerChoice === 'REPLACE' && cashbackDifference > 0 && !hasProof) {
+      alert('Please attach a Cashback Reference Photo or enter the Reference Number before confirming replacement.')
+      return
+    }
+
+    if (customerChoice === 'REFUND' && !hasProof) {
+      alert('Please attach a Refund Transaction Screenshot or enter the Reference Number before processing refund.')
       return
     }
 
@@ -646,7 +725,8 @@ export const AssistantRole: React.FC = () => {
         headers,
         body: JSON.stringify({
           resolution,
-          refundReceipt: selectedOrder.refundReceipt,
+          refundReceipt: selectedOrder.refundReceipt || null,
+          refundReference: finalRefundReference || null,
         }),
       })
       const result = await res.json().catch(() => ({}))
@@ -657,13 +737,36 @@ export const AssistantRole: React.FC = () => {
       const updatedTotalAfter = resultOrder.total !== undefined ? resultOrder.total : selectedOrder.total
       const refundPhoto = selectedOrder.refundReceipt || resultOrder.refundReceipt
 
+      // Clean replaced items from items array and add customer replacements
+      const replacements = selectedOrder.customerReplacements || []
+      const cleanedItems = (selectedOrder.items || []).filter((item: any) => {
+        const isReplaced = replacements.some(
+          (r: any) => String(r.oldItemId) === String(item.id) || r.oldItemName === item.name || String(r.oldItemId) === String(item.productId)
+        )
+        return !isReplaced && !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase())
+      })
+      replacements.forEach((r: any) => {
+        if (!cleanedItems.some((ci: any) => ci.name === r.newName || ci.productId === r.newProductId)) {
+          cleanedItems.push({
+            id: `rep-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            productId: r.newProductId,
+            name: r.newName,
+            price: Number(r.newPrice || 0),
+            quantity: Number(r.quantity || 1),
+            itemStatus: 'ACTIVE',
+          })
+        }
+      })
+
       setOrders((prev) => prev.map((order) => order.id === selectedOrder.id
         ? {
           ...order,
           status: nextStatus,
+          items: resolution === 'FULL_REFUND' ? order.items : cleanedItems,
           outOfStockItems: [],
           customerResolutionStatus: 'COMPLETED',
           refundReceipt: refundPhoto,
+          refundReference: finalRefundReference || order.refundReference,
           total: updatedTotalAfter,
           completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : order.completedRefundAmount),
           excessAmount: 0,
@@ -675,9 +778,11 @@ export const AssistantRole: React.FC = () => {
         lastSelectedOrderRef.current = {
           ...lastSelectedOrderRef.current,
           status: nextStatus,
+          items: resolution === 'FULL_REFUND' ? lastSelectedOrderRef.current.items : cleanedItems,
           outOfStockItems: [],
           customerResolutionStatus: 'COMPLETED',
           refundReceipt: refundPhoto,
+          refundReference: finalRefundReference || lastSelectedOrderRef.current.refundReference,
           total: updatedTotalAfter,
           completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : selectedOrder.completedRefundAmount),
           excessAmount: 0,
@@ -691,9 +796,12 @@ export const AssistantRole: React.FC = () => {
             ? {
                 ...order,
                 status: nextStatus.toUpperCase(),
+                items: resolution === 'FULL_REFUND' ? order.items : cleanedItems,
+                cartItems: resolution === 'FULL_REFUND' ? order.cartItems : cleanedItems,
                 outOfStockItems: [],
                 customerResolutionStatus: 'COMPLETED',
                 refundReceipt: refundPhoto,
+                refundReference: finalRefundReference || order.refundReference,
                 total: updatedTotalAfter,
                 completedRefundAmount: resultOrder.completedRefundAmount !== undefined ? resultOrder.completedRefundAmount : (cashbackDifference > 0 ? cashbackDifference : order.completedRefundAmount),
                 excessAmount: 0,
@@ -720,6 +828,14 @@ export const AssistantRole: React.FC = () => {
   const filteredOrders = useMemo(() => {
     return orders.filter((order) => {
       const s = normalizeStatusStr(order.status)
+      const rawSt = (order.status || '').toUpperCase()
+      const appSt = (order.kitchen_approval_status || order.kitchenApprovalStatus || '').toUpperCase()
+      const reqApp = order.requires_kitchen_approval === true || order.requiresKitchenApproval === true
+
+      if (rawSt === 'AWAITING_KITCHEN_APPROVAL' || rawSt === 'KITCHEN_REJECTED' || appSt === 'PENDING' || (reqApp && appSt !== 'APPROVED')) {
+        return false
+      }
+
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
 
       const matchesTab =
@@ -888,28 +1004,36 @@ export const AssistantRole: React.FC = () => {
                         <span
                           className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'out_of_stock'
                             ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
-                            : s === 'gcash_pending_approval'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                              : s === 'gcash_authorized'
-                                ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                                : s === 'receipt_submitted'
-                                  ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                                  : s === 'pending' || s === 'unconfirmed'
-                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                    : s === 'confirmed' || s === 'preparing'
-                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                      : s === 'ready'
-                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                        : s === 'cancelled'
-                                          ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                          : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            : s === 'awaiting_kitchen_approval'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse font-black'
+                              : s === 'kitchen_rejected'
+                                ? 'bg-rose-100 text-rose-900 border border-rose-300 font-black'
+                                : s === 'gcash_pending_approval'
+                                  ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                                  : s === 'gcash_authorized'
+                                    ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                    : s === 'receipt_submitted'
+                                      ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                      : s === 'pending' || s === 'unconfirmed'
+                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                        : s === 'confirmed' || s === 'preparing'
+                                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                          : s === 'ready'
+                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                            : s === 'cancelled'
+                                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                             }`}
                         >
                           ● {s === 'out_of_stock'
                             ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
                               ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
                               : 'Awaiting Customer Choice'
-                            : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled / Refunded' : ord.status}
+                            : s === 'awaiting_kitchen_approval'
+                              ? 'Kitchen Review Needed'
+                              : s === 'kitchen_rejected'
+                                ? 'Declined by Kitchen'
+                                : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? 'Cancelled / Refunded' : ord.status}
                         </span>
                       </div>
 
@@ -1098,34 +1222,44 @@ export const AssistantRole: React.FC = () => {
                     )
                   })()}
 
-                  {/* Cashback / Refund Reference Photo (Viewable whenever reopening the order) */}
-                  {selectedOrder.refundReceipt && (
+                  {/* Cashback / Refund Reference Photo or Manual Ref # (Viewable whenever reopening the order) */}
+                  {(selectedOrder.refundReceipt || selectedOrder.refundReference) && (
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0">
-                        <img
-                          src={selectedOrder.refundReceipt}
-                          alt="Cashback / Refund Proof Preview"
-                          onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
-                          className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
-                        />
+                        {selectedOrder.refundReceipt ? (
+                          <img
+                            src={selectedOrder.refundReceipt}
+                            alt="Cashback / Refund Proof Preview"
+                            onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                            className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-100 rounded-lg border border-slate-200 flex items-center justify-center text-base shrink-0">
+                            🧾
+                          </div>
+                        )}
                         <div className="min-w-0">
                           <p className="text-[11px] font-bold text-neutral-800 truncate">
-                            {selectedOrder.customerResolution === 'REPLACE' ? 'Cashback Reference Photo' : 'Refund Reference Photo'}
+                            {selectedOrder.customerResolution === 'REPLACE' ? 'Cashback Reference' : 'Refund Reference'}
                           </p>
-                          <p className="text-[10px] text-slate-400">
-                            {selectedOrder.completedRefundAmount
+                          <p className="text-[10px] text-slate-500 font-mono truncate">
+                            {selectedOrder.refundReference
+                              ? `Ref: ${selectedOrder.refundReference}`
+                              : selectedOrder.completedRefundAmount
                               ? `₱${Number(selectedOrder.completedRefundAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} refunded`
                               : 'Attached proof screenshot'}
                           </p>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
-                        className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer shrink-0"
-                      >
-                        View
-                      </button>
+                      {selectedOrder.refundReceipt && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                          className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer shrink-0"
+                        >
+                          View
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1342,6 +1476,36 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
+                    if (st === 'AWAITING_KITCHEN_APPROVAL') {
+                      return (
+                        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center space-y-2">
+                          <div className="flex items-center justify-center gap-1.5 text-amber-900 font-extrabold text-xs">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                            Kitchen Review Required
+                          </div>
+                          <p className="text-xs text-amber-800 leading-snug">
+                            This order contains high-quantity items exceeding kitchen standards. The Kitchen team must review and approve quantities before payment authorization.
+                          </p>
+                          <div className="text-[11px] font-bold text-amber-800 bg-amber-100 py-1.5 px-3 rounded-lg inline-block">
+                            Awaiting Kitchen Action
+                          </div>
+                        </div>
+                      )
+                    }
+
+                    if (st === 'KITCHEN_REJECTED') {
+                      return (
+                        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-center space-y-2">
+                          <div className="flex items-center justify-center gap-1.5 text-rose-900 font-extrabold text-xs">
+                            <span>❌</span> Declined by Kitchen
+                          </div>
+                          <p className="text-xs text-rose-800 leading-snug">
+                            Kitchen staff declined this high-quantity order due to ingredient or batch capacity limitations.
+                          </p>
+                        </div>
+                      )
+                    }
+
                     const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD'
                     const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
                     const isAuthorizedToPay = Boolean(selectedOrder.gcashAuthorized || (selectedOrder as any).gcash_authorized || st === 'GCASH_AUTHORIZED')
@@ -1443,23 +1607,17 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    // 4. GCash Order ALREADY Authorized by Assistant (Waiting for customer to complete payment & send receipt)
+                    // 4. GCash Order ALREADY Permitted to Pay (Waiting for customer to complete payment & send receipt)
                     return (
                       <div className="space-y-3">
                         <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 text-center space-y-1">
                           <p className="font-extrabold text-xs text-blue-900 flex items-center justify-center gap-1.5">
-                            <span>✅</span> Customer Authorized to Pay
+                            <span>💳</span> Customer Permitted to Pay
                           </p>
                           <p className="text-[11px] text-blue-700 leading-normal">
-                            Customer has been authorized to pay. Waiting for customer to transfer funds and upload their GCash reference screenshot.
+                            Customer is permitted to pay. Waiting for customer to transfer funds and upload their GCash reference screenshot.
                           </p>
                         </div>
-                        <button
-                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
-                        >
-                          <span>✅ Authorize Customer to Pay Now</span>
-                        </button>
                       </div>
                     )
                   })()}
@@ -1562,13 +1720,13 @@ export const AssistantRole: React.FC = () => {
           ? Number(selectedOrder.excessAmount)
           : (!isRefund && !isCOD && originalPaid > updatedTotal ? Math.round((originalPaid - updatedTotal) * 100) / 100 : 0)
 
-        const isMissingCashbackPhoto = !isRefund && cashbackDifference > 0 && !selectedOrder.refundReceipt
-        const isMissingRefundPhoto = isRefund && !selectedOrder.refundReceipt
-        const isResolutionDisabled = isSubmittingResolution || !canProcessChoice || isMissingCashbackPhoto || isMissingRefundPhoto
+        const isMissingCashbackProof = !isRefund && cashbackDifference > 0 && !(selectedOrder.refundReceipt || manualRefundRef.trim())
+        const isMissingRefundProof = isRefund && !(selectedOrder.refundReceipt || manualRefundRef.trim())
+        const isResolutionDisabled = isSubmittingResolution || !canProcessChoice || isMissingCashbackProof || isMissingRefundProof
 
         return (
           <div
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+            className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 animate-in fade-in"
             onClick={() => setIsResolveModalOpen(false)}
           >
             <div
@@ -1618,7 +1776,7 @@ export const AssistantRole: React.FC = () => {
                     <span className="text-2xl p-2 bg-rose-100 rounded-2xl">💸</span>
                   </div>
 
-                  {/* 2. Customer Phone Number (Without Call and Copy buttons) */}
+                  {/* 2. Customer Phone Number */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5">
                     <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
                       Customer Phone / GCash Number
@@ -1628,15 +1786,15 @@ export const AssistantRole: React.FC = () => {
                     </p>
                   </div>
 
-                  {/* 3. Refund Transaction Screenshot Proof (Showing Refund Ref #) */}
-                  <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 space-y-2.5">
+                  {/* 3. Refund Transaction Proof (Screenshot OR Manual Ref #) */}
+                  <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-3.5 space-y-3">
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-wider text-neutral-500 block">
                           Refund Transaction Proof
                         </span>
                         <span className="text-xs text-neutral-600 font-medium block">
-                          Screenshot showing refund transaction reference number
+                          Attach screenshot <span className="font-bold text-neutral-900">OR</span> enter reference number manually
                         </span>
                       </div>
                       <button
@@ -1673,16 +1831,38 @@ export const AssistantRole: React.FC = () => {
                     ) : (
                       <div
                         onClick={() => refundProofFileInputRef.current?.click()}
-                        className="border-2 border-dashed border-rose-200 hover:border-rose-400 bg-white/60 hover:bg-rose-50/50 rounded-xl p-3.5 text-center cursor-pointer transition-colors"
+                        className="border-2 border-dashed border-rose-200 hover:border-rose-400 bg-white/60 hover:bg-rose-50/50 rounded-xl p-3 text-center cursor-pointer transition-colors"
                       >
-                        <p className="text-xs font-bold text-neutral-700">No refund transaction screenshot attached yet</p>
-                        <p className="text-[10px] text-neutral-400 mt-0.5">Click to attach screenshot showing refund transaction reference number</p>
+                        <p className="text-xs font-bold text-neutral-700">Attach screenshot proof (Optional if typed below)</p>
+                        <p className="text-[10px] text-neutral-400 mt-0.5">Click to upload photo of transaction receipt</p>
                       </div>
                     )}
 
                     {refundProofUploadError && (
                       <p className="text-[11px] font-semibold text-rose-600">{refundProofUploadError}</p>
                     )}
+
+                    {/* Clean Divider */}
+                    <div className="relative flex items-center justify-center my-1">
+                      <div className="border-t border-neutral-200 w-full"></div>
+                      <span className="bg-neutral-50 px-2 text-[9px] font-black uppercase tracking-wider text-neutral-400">
+                        OR ENTER REFERENCE NUMBER MANUALLY
+                      </span>
+                    </div>
+
+                    {/* Manual Reference Input */}
+                    <div>
+                      <label className="text-[10px] font-black uppercase tracking-wider text-neutral-600 block mb-1">
+                        GCash / Bank Reference Number
+                      </label>
+                      <input
+                        type="text"
+                        value={manualRefundRef}
+                        onChange={(e) => setManualRefundRef(e.target.value)}
+                        placeholder="e.g. 1002 9384 1029 or REF-9812498"
+                        className="w-full px-3 py-2 bg-white rounded-xl border border-neutral-300 text-xs font-semibold focus:outline-none focus:border-rose-500 shadow-2xs font-mono placeholder:font-sans placeholder:text-neutral-400"
+                      />
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -1752,16 +1932,16 @@ export const AssistantRole: React.FC = () => {
                             )}
                           </div>
 
-                          {/* Cashback Reference Photo Upload (Required when Cashback is Due) */}
+                          {/* Cashback Reference (Screenshot OR Manual Ref #) */}
                           {cashbackDifference > 0 && (
-                            <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-3.5 space-y-2.5">
+                            <div className="bg-emerald-50/70 border border-emerald-300 rounded-2xl p-3.5 space-y-3">
                               <div className="flex items-center justify-between">
                                 <div>
                                   <span className="text-[10px] font-black uppercase tracking-wider text-emerald-900 block">
-                                    Cashback Reference Photo
+                                    Cashback Reference Proof
                                   </span>
                                   <span className="text-xs text-emerald-950 font-medium block">
-                                    Screenshot showing cashback of ₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sent to customer ({selectedOrder.phone})
+                                    Attach photo <span className="font-bold text-emerald-900">OR</span> enter reference number manually (₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} sent to {selectedOrder.phone})
                                   </span>
                                 </div>
                                 <button
@@ -1798,16 +1978,38 @@ export const AssistantRole: React.FC = () => {
                               ) : (
                                 <div
                                   onClick={() => refundProofFileInputRef.current?.click()}
-                                  className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-white/70 hover:bg-emerald-50/60 rounded-xl p-3.5 text-center cursor-pointer transition-colors"
+                                  className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-white/70 hover:bg-emerald-50/60 rounded-xl p-3 text-center cursor-pointer transition-colors"
                                 >
-                                  <p className="text-xs font-bold text-emerald-900">No cashback reference photo attached yet</p>
-                                  <p className="text-[10px] text-emerald-700 mt-0.5">Click to attach screenshot showing cashback transaction reference number</p>
+                                  <p className="text-xs font-bold text-emerald-900">Attach screenshot photo (Optional if typed below)</p>
+                                  <p className="text-[10px] text-emerald-700 mt-0.5">Click to upload photo of transaction receipt</p>
                                 </div>
                               )}
 
                               {refundProofUploadError && (
                                 <p className="text-[11px] font-semibold text-rose-600">{refundProofUploadError}</p>
                               )}
+
+                              {/* Clean Divider */}
+                              <div className="relative flex items-center justify-center my-1">
+                                <div className="border-t border-emerald-200 w-full"></div>
+                                <span className="bg-emerald-50/70 px-2 text-[9px] font-black uppercase tracking-wider text-emerald-700">
+                                  OR ENTER REFERENCE NUMBER MANUALLY
+                                </span>
+                              </div>
+
+                              {/* Manual Reference Input */}
+                              <div>
+                                <label className="text-[10px] font-black uppercase tracking-wider text-emerald-900 block mb-1">
+                                  Cashback Reference Number
+                                </label>
+                                <input
+                                  type="text"
+                                  value={manualRefundRef}
+                                  onChange={(e) => setManualRefundRef(e.target.value)}
+                                  placeholder="e.g. 1002 9384 1029 or REF-9812498"
+                                  className="w-full px-3 py-2 bg-white rounded-xl border border-emerald-300 text-xs font-semibold focus:outline-none focus:border-emerald-600 shadow-2xs font-mono placeholder:font-sans placeholder:text-neutral-400"
+                                />
+                              </div>
                             </div>
                           )}
                         </>
@@ -1871,14 +2073,14 @@ export const AssistantRole: React.FC = () => {
 
               {/* Action Buttons */}
               <div className="space-y-2 pt-2 border-t border-neutral-100">
-                {isMissingCashbackPhoto && (
+                {isMissingCashbackProof && (
                   <p className="text-[11px] font-bold text-rose-600 text-center animate-pulse">
-                    * Please attach the Cashback Reference Photo before confirming replacement.
+                    * Please attach a cashback photo OR type the reference number before confirming replacement.
                   </p>
                 )}
-                {isMissingRefundPhoto && (
+                {isMissingRefundProof && (
                   <p className="text-[11px] font-bold text-rose-600 text-center animate-pulse">
-                    * Please attach the Refund Transaction Proof before processing the refund.
+                    * Please attach a refund screenshot OR type the reference number before processing the refund.
                   </p>
                 )}
                 <div className="flex gap-2">

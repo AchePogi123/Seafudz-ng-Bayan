@@ -21,7 +21,7 @@ export const MenuGrid: React.FC<MenuGridProps> = ({
   allowPriceEdit = false,
   onUpdatePrice,
 }) => {
-  const { isAvailable, toggleAvailability } = useMenuAvailability()
+  const { isAvailable, toggleAvailability, getRemainingServings } = useMenuAvailability()
   const { getEffectivePrice, updatePrice } = useMenuPrices()
 
   // Use passed items if available; otherwise fallback to the client menu
@@ -78,6 +78,7 @@ export const MenuGrid: React.FC<MenuGridProps> = ({
                 item={item}
                 onAddToCart={onAddToCart}
                 isAvailable={available}
+                remainingServings={getRemainingServings(item.id)}
                 onToggleAvailability={handleToggle}
                 showAvailabilityToggle={showAvailabilityToggle}
                 allowPriceEdit={allowPriceEdit}

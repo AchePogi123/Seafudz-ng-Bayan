@@ -10,10 +10,11 @@ const router = Router();
 router.get('/rider/deliveries', optionalAuth, async (req, res) => {
   try {
     const sql = `
-      SELECT o.id, o.order_type, o.status AS order_status, o.total, o.created_at,
-             d.id AS delivery_id, d.delivery_address, COALESCE(d.status, 'PENDING') AS status,
+      SELECT o.id, o.order_type, o.status AS order_status, o.status AS status, o.total, o.created_at,
+             d.id AS delivery_id, d.delivery_address, COALESCE(d.status, 'PENDING') AS delivery_status,
              c.fullname AS customer_name, c.phone AS customer_phone,
              e.fullname AS rider_name, d.rider_id,
+             o.receipt_status, o.is_receipt_printed,
              COALESCE(
                json_agg(
                  json_build_object(
@@ -33,8 +34,10 @@ router.get('/rider/deliveries', optionalAuth, async (req, res) => {
       LEFT JOIN employees e ON d.rider_id = e.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
-      WHERE UPPER(o.order_type) = 'ONLINE' OR d.id IS NOT NULL
-      GROUP BY o.id, d.id, d.delivery_address, d.status, d.rider_id, c.fullname, c.phone, e.fullname
+      WHERE (UPPER(o.order_type) = 'ONLINE' OR d.id IS NOT NULL)
+        AND (o.is_receipt_printed = TRUE OR o.receipt_status = 'PRINTED')
+        AND (UPPER(o.status) IN ('READY', 'OUT_FOR_DELIVERY'))
+      GROUP BY o.id, o.status, d.id, d.delivery_address, d.status, d.rider_id, c.fullname, c.phone, e.fullname
       ORDER BY o.created_at DESC
     `;
     let dbRows = [];
@@ -51,8 +54,13 @@ router.get('/rider/deliveries', optionalAuth, async (req, res) => {
     inMemoryOrders.forEach((order, id) => {
       const isOnline = (order.order_type || 'ONLINE').toUpperCase() === 'ONLINE' || Boolean(order.delivery_address || order.customer_name || order.customer);
       if (isOnline) {
-        const existing = mergedMap.get(id) || {};
+        const isPrinted = Boolean(order.is_receipt_printed || order.isReceiptPrinted || order.receipt_status === 'PRINTED' || order.receiptStatus === 'PRINTED');
+        if (!isPrinted) return;
+
         const normStatus = normalizeFlowStatus(order.status);
+        if (!['READY', 'OUT_FOR_DELIVERY'].includes(normStatus)) return;
+
+        const existing = mergedMap.get(id) || {};
         mergedMap.set(id, {
           id: id,
           order_type: order.order_type || existing.order_type || 'ONLINE',
@@ -189,7 +197,7 @@ export async function handleRiderStatusUpdate(req, res) {
       
       // Update deliveries status in DB and associate rider
       let dbDeliveryStatus = 'PENDING';
-      if (nextStatus === 'OUT_FOR_DELIVERY') dbDeliveryStatus = 'IN_TRANSIT';
+      if (nextStatus === 'OUT_FOR_DELIVERY') dbDeliveryStatus = 'OUT_FOR_DELIVERY';
       else if (nextStatus === 'COMPLETED') dbDeliveryStatus = 'DELIVERED';
 
       let riderEmployeeId = req.user?.id || req.body?.riderId || req.body?.employeeId || null;
@@ -221,8 +229,19 @@ export async function handleRiderStatusUpdate(req, res) {
         );
       }
 
-      if (rows && rows.length > 0 && !updatedOrder) {
-        updatedOrder = formatOrderResponse(rows[0]);
+      if (rows && rows.length > 0) {
+        const existing = inMemoryOrders.get(id) || {};
+        const enriched = {
+          ...existing,
+          ...rows[0],
+          status: nextStatus,
+          riderName: (riderName && riderName !== 'Kuya Mark Reyes' ? riderName : (nextStatus === 'OUT_FOR_DELIVERY' ? 'Rider Alex Ramos' : (existing.riderName || 'Rider Alex Ramos'))),
+          riderPhone: riderPhone || existing.riderPhone || '0917-888-9999',
+          riderCashReceived: finalRiderMoney !== undefined ? finalRiderMoney : existing.riderCashReceived,
+          updated_at: new Date().toISOString(),
+        };
+        inMemoryOrders.set(id, enriched);
+        updatedOrder = formatOrderResponse(enriched);
       }
     } catch (dbErr) {
       console.warn('DB update note (Rider Flow):', dbErr.message);

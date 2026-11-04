@@ -1254,6 +1254,16 @@ export const AccMan: React.FC = () => {
                                                 onChange={(e) => handleProfileChange('address', e.target.value)}
                                                 className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
                                             />
+                                            {/* Store Delivery Policy Notice (Max 8 km) */}
+                                            <div className="mt-1 flex items-start gap-2 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
+                                                <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
+                                                <div>
+                                                    <p className="font-bold text-orange-900 text-[11px]">Store Delivery Radius Policy (Max 8 km)</p>
+                                                    <p className="text-[11px] text-orange-800 leading-snug">
+                                                        Deliveries are only acknowledged within an <strong>8 km road range</strong> from our Caloocan flagship store. Beyond 8 km, orders cannot be delivered.
+                                                    </p>
+                                                </div>
+                                            </div>
                                             {relocateMessage && (
                                                 <p className="text-xs text-neutral-500 mt-0.5">
                                                     {relocateMessage}

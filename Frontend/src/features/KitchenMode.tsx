@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
-import { getActiveUser } from '../cryptography/cryptoSession'
+import { getActiveUser, getStoredSessionToken } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
-import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
+import { notifyOrderSync, subscribeOrderSync, notifyProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
-import { useMenuAvailability } from '../utils/menuAvailability'
+import { useMenuAvailability, applyProductAvailabilityChange, applyProductServingsChange, PRODUCT_ALIASES } from '../utils/menuAvailability'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
+import { getProductQuantityStandard } from '../utils/bulkOrder'
 
 interface OrderItem {
   id?: number
@@ -55,6 +56,14 @@ export const KitchenMode: React.FC = () => {
   const [stockCategory, setStockCategory] = useState('All Menu')
   const [stockError, setStockError] = useState('')
 
+  // Kitchen Quantity Standards & Approvals state
+  const [approvalOrders, setApprovalOrders] = useState<any[]>([])
+  const [isProcessingApproval, setIsProcessingApproval] = useState<string | null>(null)
+  const [servingsMap, setServingsMap] = useState<Record<string, number | null>>({})
+  const [servingsInputs, setServingsInputs] = useState<Record<string, string>>({})
+  const [savingServingsId, setSavingServingsId] = useState<string | null>(null)
+  const [servingsSuccessId, setServingsSuccessId] = useState<string | null>(null)
+
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingKitchenOrder, setEditingKitchenOrder] = useState<any | null>(null)
@@ -92,11 +101,24 @@ export const KitchenMode: React.FC = () => {
           const orderType = (o.type || o.order_type || '').toLowerCase()
           const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
 
+          // Critical: Orders awaiting kitchen quantity approval or rejected MUST NEVER appear in the cooking queue
+          const isApprovalPending = rawStatus === 'AWAITING_KITCHEN_APPROVAL'
+            || rawStatus === 'KITCHEN_REJECTED'
+            || o.kitchen_approval_status === 'PENDING'
+            || o.kitchenApprovalStatus === 'PENDING'
+            || (o.requires_kitchen_approval === true && o.kitchen_approval_status !== 'APPROVED')
+            || (o.requiresKitchenApproval === true && o.kitchenApprovalStatus !== 'APPROVED')
+
+          if (isApprovalPending) {
+            return false
+          }
+
           // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant (status becomes CONFIRMED)
           const unconfirmedStatuses = [
             'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
             'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
+            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED',
+            'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
           ]
           if (rawStatus === 'CANCELLED' || rawStatus === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
             return false
@@ -110,7 +132,8 @@ export const KitchenMode: React.FC = () => {
           if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(rawStatus)) mappedStatus = 'Preparing'
           else if (['READY', 'PREPARED'].includes(rawStatus)) mappedStatus = 'Ready'
           else if (['COMPLETED', 'SERVED', 'DELIVERED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(rawStatus)) mappedStatus = 'Completed'
-          else mappedStatus = 'Confirmed'
+          else if (['CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN'].includes(rawStatus)) mappedStatus = 'Confirmed'
+          else mappedStatus = rawStatus
 
           const customerName = typeof o.customer === 'string' && o.customer.trim()
             ? o.customer.trim()
@@ -124,22 +147,53 @@ export const KitchenMode: React.FC = () => {
           const calcTotal = parseFloat(o.total || 0)
 
           let parsedItems: OrderItem[] = []
+          const replacements = Array.isArray(o.customerReplacements) ? o.customerReplacements : (Array.isArray(o.customer_replacements) ? o.customer_replacements : [])
+          const isItemReplaced = (itemId: any, itemName: any, prodId: any) => {
+            return replacements.some((r: any) =>
+              (r.oldItemId !== undefined && String(r.oldItemId) === String(itemId)) ||
+              (r.oldItemId !== undefined && String(r.oldItemId) === String(prodId)) ||
+              (r.oldItemName && String(r.oldItemName).trim().toLowerCase() === String(itemName).trim().toLowerCase())
+            )
+          }
+
           if (Array.isArray(o.cartItems) && o.cartItems.length > 0) {
-            parsedItems = o.cartItems.map((ci: any) => ({
-              id: ci.id,
-              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
-              name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Food Item',
-              quantity: Number(ci.quantity || 1),
-              price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
-            }))
+            parsedItems = o.cartItems
+              .filter((ci: any) => {
+                const st = String(ci.item_status || ci.itemStatus || '').toUpperCase()
+                if (['REPLACED', 'REFUNDED', 'CANCELLED'].includes(st)) return false
+                const name = ci.item?.name || ci.name || ci.product_name_snapshot || ''
+                const id = ci.id || ci.item?.id
+                const prodId = ci.productId || ci.product_id
+                if (isItemReplaced(id, name, prodId)) return false
+                return true
+              })
+              .map((ci: any) => ({
+                id: ci.id,
+                productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
+                name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Food Item',
+                quantity: Number(ci.quantity || 1),
+                price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
+                itemStatus: ci.item_status || ci.itemStatus || 'ACTIVE',
+              }))
           } else if (Array.isArray(o.items) && o.items.length > 0) {
-            parsedItems = o.items.map((ci: any) => ({
-              id: ci.id,
-              productId: ci.productId || ci.product_id || ci.item?.id || ci.id,
-              name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Food Item',
-              quantity: Number(ci.quantity || 1),
-              price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
-            }))
+            parsedItems = o.items
+              .filter((i: any) => {
+                const st = String(i.item_status || i.itemStatus || '').toUpperCase()
+                if (['REPLACED', 'REFUNDED', 'CANCELLED'].includes(st)) return false
+                const name = i.name || i.product_name_snapshot || ''
+                const id = i.id
+                const prodId = i.productId || i.product_id
+                if (isItemReplaced(id, name, prodId)) return false
+                return true
+              })
+              .map((i: any) => ({
+                id: i.id,
+                productId: i.productId || i.product_id || i.item?.id || i.id,
+                name: i.name || i.product_name_snapshot || 'Food Item',
+                quantity: Number(i.quantity || 1),
+                price: parseFloat(i.unit_price || i.price || 0),
+                itemStatus: i.item_status || i.itemStatus || 'ACTIVE',
+              }))
           } else if (typeof o.items === 'string' && o.items.trim()) {
             parsedItems = o.items.split(',').map((part: string, idx: number) => {
               const match = part.trim().match(/^(.*?)(?:\s+x(\d+))?$/)
@@ -196,10 +250,23 @@ export const KitchenMode: React.FC = () => {
                 const orderType = (o.order_type || o.type || '').toLowerCase()
                 const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || (o.id && String(o.id).startsWith('SFB-'))
 
+                // Critical: Orders awaiting kitchen quantity approval or rejected MUST NEVER appear in the cooking queue
+                const isApprovalPending = raw === 'AWAITING_KITCHEN_APPROVAL'
+                  || raw === 'KITCHEN_REJECTED'
+                  || o.kitchen_approval_status === 'PENDING'
+                  || o.kitchenApprovalStatus === 'PENDING'
+                  || (o.requires_kitchen_approval === true && o.kitchen_approval_status !== 'APPROVED')
+                  || (o.requiresKitchenApproval === true && o.kitchenApprovalStatus !== 'APPROVED')
+
+                if (isApprovalPending) {
+                  return false
+                }
+
                 const unconfirmedStatuses = [
                   'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
                   'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-                  'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED'
+                  'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED',
+                  'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
                 ]
                 if (raw === 'CANCELLED' || raw === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(raw))) {
                   return false
@@ -212,7 +279,8 @@ export const KitchenMode: React.FC = () => {
                 if (['PREPARING', 'COOKING', 'IN_PROCESS'].includes(raw)) norm = 'Preparing'
                 else if (['READY', 'PREPARED'].includes(raw)) norm = 'Ready'
                 else if (['COMPLETED', 'SERVED', 'DELIVERED', 'CUSTOMER RECEIVED', 'OUT_FOR_DELIVERY', 'OUT FOR DELIVERY', 'DISPATCHED', 'IN_TRANSIT'].includes(raw)) norm = 'Completed'
-                else norm = 'Confirmed'
+                else if (['CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN'].includes(raw)) norm = 'Confirmed'
+                else norm = raw
 
                 const customerName = typeof o.customer === 'string' && o.customer.trim()
                   ? o.customer.trim()
@@ -235,14 +303,16 @@ export const KitchenMode: React.FC = () => {
                   status: norm,
                   customer: customerName,
                   total: calcTotal,
-                  items: (o.items || []).map((item: any) => ({
-                    id: item.id,
-                    productId: item.product_id || item.productId,
-                    name: item.name || item.product_name_snapshot || 'Food Item',
-                    quantity: item.quantity || 1,
-                    price: parseFloat(item.unit_price || item.price || 0),
-                    itemStatus: item.item_status || item.itemStatus || 'ACTIVE',
-                  })),
+                  items: (o.items || [])
+                    .filter((item: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase()))
+                    .map((item: any) => ({
+                      id: item.id,
+                      productId: item.product_id || item.productId,
+                      name: item.name || item.product_name_snapshot || 'Food Item',
+                      quantity: item.quantity || 1,
+                      price: parseFloat(item.unit_price || item.price || 0),
+                      itemStatus: item.item_status || item.itemStatus || 'ACTIVE',
+                    })),
                   notes: o.notes || '',
                   createdAt: o.created_at || new Date().toISOString(),
                 }
@@ -273,37 +343,383 @@ export const KitchenMode: React.FC = () => {
         if (!existingApi) {
           mergedMap.set(localItem.id, localItem)
         } else {
-          // If local order has modified dishes or notes, update the kitchen ticket
-          if (Array.isArray(localItem.items) && localItem.items.length > 0) {
+          // If local order has modified dishes or notes, only set items from local if API had no items
+          if ((!existingApi.items || existingApi.items.length === 0) && Array.isArray(localItem.items) && localItem.items.length > 0) {
             existingApi.items = localItem.items
           }
-          if (localItem.notes !== undefined) {
+          if (localItem.notes !== undefined && !existingApi.notes) {
             existingApi.notes = localItem.notes
           }
-          if (localItem.total !== undefined && localItem.total > 0) {
+          if ((!existingApi.total || existingApi.total === 0) && localItem.total !== undefined && localItem.total > 0) {
             existingApi.total = localItem.total
           }
-          if (localItem.category) {
+          if (localItem.category && !existingApi.category) {
             existingApi.category = localItem.category
           }
         }
       })
 
-      setOrders(Array.from(mergedMap.values()))
+      const sanitizedOrders = Array.from(mergedMap.values()).map((ord) => ({
+        ...ord,
+        items: (ord.items || []).filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase())),
+      }))
+      setOrders(sanitizedOrders)
     } finally {
       isFetchingRef.current = false
     }
   }
 
+  const normalizeOrderId = (val: any): string => {
+    if (!val) return ''
+    return String(val).replace(/^#/, '').trim().toLowerCase()
+  }
+
+  const fetchApprovals = async () => {
+    try {
+      let apiApprovals: any[] = []
+      try {
+        const res = await fetch(`${API_BASE_URL}/kitchen/approvals`)
+        if (res.ok) {
+          const json = await res.json()
+          apiApprovals = Array.isArray(json.data) ? json.data : []
+        }
+      } catch (err) {
+        console.warn('Backend note (kitchen approvals):', err)
+      }
+
+      // Gather IDs that are already APPROVED, REJECTED, or CONFIRMED/COOKING
+      const approvedOrResolvedIds = new Set<string>()
+      const localApprovals: any[] = []
+
+      try {
+        const stored = localStorage.getItem('seafudz_orders')
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          if (Array.isArray(parsed)) {
+            parsed.forEach((o: any) => {
+              const st = (o.status || '').toUpperCase()
+              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
+              const idClean = normalizeOrderId(o.id)
+              const refClean = normalizeOrderId(o.ref)
+
+              if (
+                appSt === 'APPROVED' ||
+                appSt === 'REJECTED' ||
+                st === 'APPROVED_BY_KITCHEN' ||
+                st === 'KITCHEN_REJECTED' ||
+                st === 'GCASH_AUTHORIZED' ||
+                st === 'PENDING_COD' ||
+                st === 'CONFIRMED' ||
+                st === 'PREPARING' ||
+                st === 'COOKING' ||
+                st === 'READY' ||
+                st === 'COMPLETED'
+              ) {
+                if (idClean) approvedOrResolvedIds.add(idClean)
+                if (refClean) approvedOrResolvedIds.add(refClean)
+              } else if (st === 'AWAITING_KITCHEN_APPROVAL' || appSt === 'PENDING') {
+                localApprovals.push(o)
+              }
+            })
+          }
+        }
+      } catch {}
+
+      // Filter out any orders that are already approved, rejected, or cooking
+      const filteredApiApprovals = apiApprovals.filter((a: any) => {
+        const idClean = normalizeOrderId(a.id)
+        const refClean = normalizeOrderId(a.ref)
+        const appSt = (a.kitchen_approval_status || a.kitchenApprovalStatus || '').toUpperCase()
+        const st = (a.status || '').toUpperCase()
+
+        if (appSt === 'APPROVED' || appSt === 'REJECTED') return false
+        if (['KITCHEN_REJECTED', 'CANCELLED', 'CONFIRMED', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'APPROVED_BY_KITCHEN'].includes(st)) return false
+        if (idClean && approvedOrResolvedIds.has(idClean)) return false
+        if (refClean && approvedOrResolvedIds.has(refClean)) return false
+        return true
+      })
+
+      // Merge local approvals that are not yet in filteredApiApprovals
+      const seen = new Set(filteredApiApprovals.map((a: any) => normalizeOrderId(a.id || a.ref)))
+      for (const loc of localApprovals) {
+        const locKey = normalizeOrderId(loc.id || loc.ref)
+        if (locKey && !seen.has(locKey) && !approvedOrResolvedIds.has(locKey)) {
+          filteredApiApprovals.push(loc)
+          seen.add(locKey)
+        }
+      }
+
+      setApprovalOrders(filteredApiApprovals)
+    } catch (err) {
+      console.warn('Error fetching kitchen approvals:', err)
+    }
+  }
+
+  const fetchMenuServings = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/menu`)
+      if (res.ok) {
+        const json = await res.json()
+        if (Array.isArray(json.data)) {
+          const map: Record<string, number | null> = {}
+          const inputs: Record<string, string> = {}
+          for (const item of json.data) {
+            const servings = item.remaining_servings ?? null
+            const strVal = item.remaining_servings != null ? String(item.remaining_servings) : ''
+            map[item.id] = servings
+            inputs[item.id] = strVal
+            const aliasId = PRODUCT_ALIASES[item.id]
+            if (aliasId) {
+              map[aliasId] = servings
+              inputs[aliasId] = strVal
+            }
+          }
+          setServingsMap(map)
+          setServingsInputs(inputs)
+        }
+      }
+    } catch {}
+  }
+
+  const handleApproveQuantities = async (orderId: string) => {
+    setIsProcessingApproval(orderId)
+    const targetCleanId = normalizeOrderId(orderId)
+
+    // 1. Optimistically remove from approvalOrders immediately
+    setApprovalOrders((prev) =>
+      prev.filter((o) => {
+        const idClean = normalizeOrderId(o.id)
+        const refClean = normalizeOrderId(o.ref)
+        return idClean !== targetCleanId && refClean !== targetCleanId
+      })
+    )
+
+    // 2. Update local storage seafudz_orders immediately
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.map((o: any) => {
+          const idClean = normalizeOrderId(o.id)
+          const refClean = normalizeOrderId(o.ref)
+          if (idClean === targetCleanId || refClean === targetCleanId) {
+            const isCod = String(o.paymentMethod || o.payment_method || '').toUpperCase().includes('COD')
+            return {
+              ...o,
+              status: isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED',
+              gcashAuthorized: !isCod,
+              gcash_authorized: !isCod,
+              kitchenApprovalStatus: 'APPROVED',
+              kitchen_approval_status: 'APPROVED',
+            }
+          }
+          return o
+        })
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+    } catch {}
+
+    // 3. Update active customer orders in localStorage
+    try {
+      const updateActiveItem = (key: string) => {
+        const raw = localStorage.getItem(key)
+        if (!raw) return
+        try {
+          const obj = JSON.parse(raw)
+          const idClean = normalizeOrderId(obj.id)
+          const refClean = normalizeOrderId(obj.ref)
+          if (idClean === targetCleanId || refClean === targetCleanId) {
+            const isCod = String(obj.paymentMethod || obj.payment_method || '').toUpperCase().includes('COD')
+            obj.status = isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'
+            obj.gcashAuthorized = !isCod
+            obj.gcash_authorized = !isCod
+            obj.kitchenApprovalStatus = 'APPROVED'
+            obj.kitchen_approval_status = 'APPROVED'
+            localStorage.setItem(key, JSON.stringify(obj))
+          }
+        } catch {}
+      }
+
+      updateActiveItem('seafudz_active_online_order')
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith('seafudz_active_online_order')) {
+          updateActiveItem(k)
+        }
+      }
+    } catch {}
+
+    // 4. Notify backend API
+    try {
+      await fetch(`${API_BASE_URL}/kitchen/orders/${encodeURIComponent(orderId)}/approve-quantities`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {})
+    } catch {}
+
+    // 5. Synchronize and notify all listeners
+    await fetchApprovals()
+    await fetchKitchenOrders(true)
+    notifyOrderSync()
+    setIsProcessingApproval(null)
+  }
+
+  const handleRejectQuantities = async (orderId: string) => {
+    const reason = window.prompt(
+      'Provide a reason for declining this high-quantity order (optional):',
+      'Order exceeds kitchen preparation capacity at this time.'
+    )
+    if (reason === null) return
+
+    setIsProcessingApproval(orderId)
+    const targetCleanId = normalizeOrderId(orderId)
+
+    // 1. Optimistically remove from approvalOrders immediately
+    setApprovalOrders((prev) =>
+      prev.filter((o) => {
+        const idClean = normalizeOrderId(o.id)
+        const refClean = normalizeOrderId(o.ref)
+        return idClean !== targetCleanId && refClean !== targetCleanId
+      })
+    )
+
+    // 2. Update local storage seafudz_orders
+    try {
+      const stored = localStorage.getItem('seafudz_orders')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        const updated = parsed.map((o: any) => {
+          const idClean = normalizeOrderId(o.id)
+          const refClean = normalizeOrderId(o.ref)
+          if (idClean === targetCleanId || refClean === targetCleanId) {
+            return {
+              ...o,
+              status: 'KITCHEN_REJECTED',
+              kitchenApprovalStatus: 'REJECTED',
+              kitchen_approval_status: 'REJECTED',
+              rejectionReason: reason,
+            }
+          }
+          return o
+        })
+        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+      }
+    } catch {}
+
+    // 3. Update active customer orders in localStorage
+    try {
+      const updateActiveItem = (key: string) => {
+        const raw = localStorage.getItem(key)
+        if (!raw) return
+        try {
+          const obj = JSON.parse(raw)
+          const idClean = normalizeOrderId(obj.id)
+          const refClean = normalizeOrderId(obj.ref)
+          if (idClean === targetCleanId || refClean === targetCleanId) {
+            obj.status = 'KITCHEN_REJECTED'
+            obj.kitchenApprovalStatus = 'REJECTED'
+            obj.kitchen_approval_status = 'REJECTED'
+            obj.rejectionReason = reason
+            localStorage.setItem(key, JSON.stringify(obj))
+          }
+        } catch {}
+      }
+
+      updateActiveItem('seafudz_active_online_order')
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith('seafudz_active_online_order')) {
+          updateActiveItem(k)
+        }
+      }
+    } catch {}
+
+    // 4. Notify backend API
+    try {
+      await fetch(`${API_BASE_URL}/kitchen/orders/${encodeURIComponent(orderId)}/reject-quantities`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      }).catch(() => {})
+    } catch {}
+
+    await fetchApprovals()
+    await fetchKitchenOrders(true)
+    notifyOrderSync()
+    setIsProcessingApproval(null)
+  }
+
+  const handleSaveRemainingServings = async (productId: string) => {
+    const rawVal = servingsInputs[productId]
+    const numVal = rawVal === '' || rawVal === undefined ? null : parseInt(rawVal, 10)
+    if (numVal !== null && (isNaN(numVal) || numVal < 0)) {
+      alert('Please enter a valid non-negative number of servings, or leave blank for no limit.')
+      return
+    }
+
+    setSavingServingsId(productId)
+    try {
+      const activeUser = getActiveUser()
+      const isStaff = activeUser && ['kitchen', 'admin', 'cashier', 'assistant'].includes((activeUser.role || '').toLowerCase())
+      const token = isStaff ? (activeUser.sessionToken || getStoredSessionToken()) : null
+
+      const res = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(productId)}/remaining-servings`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ remaining_servings: numVal }),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        const newServings = json.data?.remaining_servings ?? null
+        const aliasId = PRODUCT_ALIASES[productId]
+        setServingsMap((prev) => {
+          const next = { ...prev, [productId]: newServings }
+          if (aliasId) next[aliasId] = newServings
+          return next
+        })
+        setServingsInputs((prev) => {
+          const next = { ...prev, [productId]: newServings != null ? String(newServings) : '' }
+          if (aliasId) next[aliasId] = newServings != null ? String(newServings) : ''
+          return next
+        })
+        applyProductServingsChange(productId, newServings)
+        if (json.data?.is_available !== undefined) {
+          applyProductAvailabilityChange(productId, Boolean(json.data.is_available))
+        } else if (newServings !== null && newServings > 0) {
+          applyProductAvailabilityChange(productId, true)
+        }
+        setServingsSuccessId(productId)
+        setTimeout(() => setServingsSuccessId((prev) => (prev === productId ? null : prev)), 2000)
+        notifyOrderSync()
+        notifyProductCatalogSync()
+      } else {
+        const errJson = await res.json().catch(() => null)
+        alert(errJson?.message || 'Could not update remaining servings.')
+      }
+    } catch {
+      alert('Network error. Could not update remaining servings.')
+    } finally {
+      setSavingServingsId(null)
+    }
+  }
+
   useEffect(() => {
     void fetchKitchenOrders()
+    void fetchApprovals()
+    void fetchMenuServings()
 
     const unsubscribe = subscribeOrderSync(() => {
       void fetchKitchenOrders(true)
+      void fetchApprovals()
+      void fetchMenuServings()
     })
 
     const pollTimer = setInterval(() => {
       void fetchKitchenOrders()
+      void fetchApprovals()
     }, 2000)
 
     return () => {
@@ -401,18 +817,24 @@ export const KitchenMode: React.FC = () => {
 
     // 3. Persist update in Express Backend API
     try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
+      const res1 = await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: normalizedTarget }),
       })
-      await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
+      if (!res1.ok) {
+        console.warn(`[KITCHEN] /kitchen/orders/${id}/status returned ${res1.status}`)
+      }
+      const res2 = await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: normalizedTarget }),
       })
-    } catch {
-      /* fallback silent */
+      if (!res2.ok) {
+        console.warn(`[KITCHEN] /user-flow/orders/${id}/status returned ${res2.status}`)
+      }
+    } catch (err) {
+      console.warn('[KITCHEN] Note on updating status with backend:', err)
     }
   }
 
@@ -517,8 +939,37 @@ export const KitchenMode: React.FC = () => {
 
   const handleSetProductAvailability = async (productId: string, available: boolean) => {
     setStockError('')
+    const aliasId = PRODUCT_ALIASES[productId]
+    if (available) {
+      setServingsMap((prev) => {
+        const next = { ...prev, [productId]: null }
+        if (aliasId) next[aliasId] = null
+        return next
+      })
+      setServingsInputs((prev) => {
+        const next = { ...prev, [productId]: '' }
+        if (aliasId) next[aliasId] = ''
+        return next
+      })
+    } else {
+      setServingsMap((prev) => {
+        const next = { ...prev, [productId]: 0 }
+        if (aliasId) next[aliasId] = 0
+        return next
+      })
+      setServingsInputs((prev) => {
+        const next = { ...prev, [productId]: '0' }
+        if (aliasId) next[aliasId] = '0'
+        return next
+      })
+    }
     const updated = await setAvailability(productId, available)
-    if (!updated) setStockError('Could not update stock. Check your connection and kitchen/admin access.')
+    if (!updated) {
+      setStockError('Could not update stock. Check your connection and kitchen/admin access.')
+    } else {
+      notifyOrderSync()
+      notifyProductCatalogSync()
+    }
   }
 
   const queueOrders = useMemo(
@@ -553,12 +1004,15 @@ export const KitchenMode: React.FC = () => {
       <div className="w-full flex flex-col gap-4 sm:gap-6">
         <NavbarKitchen />
 
-        <div className="flex items-center justify-between bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
+          <div className="flex items-center gap-3">
             <h1 className="text-base sm:text-lg font-extrabold text-neutral-900">Kitchen Display Board</h1>
-            <span className="text-[11px] bg-orange-50 text-orange-700 font-bold px-2.5 py-0.5 rounded-full border border-orange-100 hidden xs:inline">
-              Live Queue
-            </span>
+            {approvalOrders.length > 0 && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                {approvalOrders.length} Awaiting Approval
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -566,7 +1020,7 @@ export const KitchenMode: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setIsStockDrawerOpen(true)}
-                className="relative flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100"
+                className="relative flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 cursor-pointer"
               >
                 <span>📋 Manage Item Stock</span>
                 <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-black text-white">
@@ -598,10 +1052,149 @@ export const KitchenMode: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 items-start">
-          {/* Queue Column */}
-          <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
+        {/* 3 Sections Live Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
+          {/* Section 1: Large Orders Column */}
+          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-amber-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
+            <div className="flex items-center justify-between pb-3.5 border-b border-amber-100 mb-4 shrink-0">
+              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                Large Orders
+              </h2>
+              <span className="bg-amber-100 text-amber-800 font-semibold text-xs px-2.5 py-1 rounded-full">
+                {approvalOrders.length} Awaiting
+              </span>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
+              {approvalOrders.length === 0 ? (
+                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none text-center p-4">
+                  <p className="text-xs font-medium">No large orders awaiting review</p>
+                </div>
+              ) : (
+                approvalOrders.map((order) => {
+                  const itemsList: any[] = Array.isArray(order.items)
+                    ? order.items
+                    : Array.isArray(order.cartItems)
+                    ? order.cartItems
+                    : typeof order.items === 'string'
+                    ? JSON.parse(order.items || '[]')
+                    : []
+                  const flaggedList: any[] = Array.isArray(order.flagged_quantity_items)
+                    ? order.flagged_quantity_items
+                    : typeof order.flagged_quantity_items === 'string'
+                    ? JSON.parse(order.flagged_quantity_items || '[]')
+                    : []
+
+                  const isProcessing = isProcessingApproval === order.id
+                  const customerName = order.customer_name || order.customerName || order.customer || 'Customer'
+                  const orderType = order.order_type || order.type || 'Delivery'
+                  const paymentMethod = order.payment_method || order.paymentMethod || 'GCASH'
+
+                  return (
+                    <div
+                      key={order.id}
+                      className="bg-amber-50/40 hover:bg-amber-50/70 rounded-xl p-4 border border-amber-200 transition-all flex flex-col justify-between shadow-2xs"
+                    >
+                      <div>
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <span className="text-xs font-mono font-bold text-amber-900">
+                              Order #{order.id}
+                            </span>
+                            <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
+                              {customerName}
+                            </div>
+                            <div className="text-[11px] text-neutral-500 font-medium">
+                              {order.customer_phone ? `${order.customer_phone} • ` : ''}{orderType}
+                            </div>
+                          </div>
+                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                            {paymentMethod}
+                          </span>
+                        </div>
+
+                        <div className="my-2.5 space-y-1.5 border-t border-b border-amber-200/60 py-2.5">
+                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400 block mb-1">
+                            Ordered Items & Standards
+                          </span>
+                          {itemsList.map((item: any, idx: number) => {
+                            const std = getProductQuantityStandard(item.name || '')
+                            const isFlagged = flaggedList.some(
+                              (f: any) =>
+                                (f.name && item.name && f.name.toLowerCase().trim() === item.name.toLowerCase().trim()) ||
+                                (f.product_id && (f.product_id === item.productId || f.product_id === item.product_id))
+                            ) || (std !== null && item.quantity >= std)
+
+                            return (
+                              <div
+                                key={idx}
+                                className={`flex items-center justify-between text-xs p-1.5 rounded-lg ${
+                                  isFlagged
+                                    ? 'bg-amber-100/90 border border-amber-300 text-amber-950 font-bold'
+                                    : 'text-neutral-700 font-medium'
+                                }`}
+                              >
+                                <span className="truncate pr-2">{item.name}</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {isFlagged && (
+                                    <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.2 rounded">
+                                      STD: {std ?? '—'}
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
+                                      isFlagged ? 'bg-amber-800 text-white' : 'bg-neutral-200 text-neutral-800'
+                                    }`}
+                                  >
+                                    x{item.quantity}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+
+                        {order.notes && (
+                          <div className="bg-white/80 border border-amber-200 rounded-xl p-2 text-xs text-amber-900 mb-2.5">
+                            <span className="font-bold">Note: </span>
+                            {order.notes}
+                          </div>
+                        )}
+
+                        <div className="text-right text-xs font-bold text-neutral-600 mb-3">
+                          Total: <span className="text-neutral-900 font-black">₱{parseFloat(order.total || 0).toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 pt-2 border-t border-amber-200">
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => void handleApproveQuantities(order.id || order.ref)}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg text-xs transition-colors cursor-pointer shadow-xs"
+                        >
+                          {isProcessing ? 'Processing...' : '✓ Approve'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isProcessing}
+                          onClick={() => void handleRejectQuantities(order.id || order.ref)}
+                          className="bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 border border-rose-200 font-bold py-2.5 px-3 rounded-lg text-xs transition-colors cursor-pointer"
+                        >
+                          ✕ Decline
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </section>
+
+          {/* Section 2: Queue Column */}
+          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
+            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4 shrink-0">
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-neutral-400"></span>
                 Kitchen Queue
@@ -611,7 +1204,7 @@ export const KitchenMode: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex-1 space-y-3">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
               {queueOrders.length === 0 ? (
                 <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
                   <p className="text-xs font-medium">No queued orders</p>
@@ -643,7 +1236,9 @@ export const KitchenMode: React.FC = () => {
                       </div>
 
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items.map((item, idx) => (
+                        {order.items
+                          .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
+                          .map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
                             <span>{item.name}</span>
                             <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
@@ -684,8 +1279,8 @@ export const KitchenMode: React.FC = () => {
           </section>
 
           {/* Processing Column */}
-          <section className="bg-white rounded-2xl p-5 border border-neutral-200/80 shadow-2xs flex flex-col min-h-[480px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4">
+          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
+            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4 shrink-0">
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-orange-600"></span>
                 On Processing
@@ -695,7 +1290,7 @@ export const KitchenMode: React.FC = () => {
               </span>
             </div>
 
-            <div className="flex-1 space-y-3">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
               {processingOrders.length === 0 ? (
                 <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
                   <p className="text-xs font-medium">No orders in preparation</p>
@@ -727,7 +1322,9 @@ export const KitchenMode: React.FC = () => {
                       </div>
 
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items.map((item, idx) => (
+                        {order.items
+                          .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
+                          .map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
                             <span>{item.name}</span>
                             <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
@@ -846,7 +1443,9 @@ export const KitchenMode: React.FC = () => {
               <div>
                 <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Order Items</h4>
                 <div className="bg-[#faf9f6] rounded-xl border border-neutral-200/80 p-3.5">
-                  {selectedOrder.items.map((item, idx) => (
+                  {selectedOrder.items
+                    .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
+                    .map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center py-1.5 text-xs font-semibold">
                       <span>{item.name}</span>
                       <span className="bg-neutral-200 px-2 py-0.5 rounded font-bold">x{item.quantity}</span>
@@ -957,30 +1556,70 @@ export const KitchenMode: React.FC = () => {
               {filteredStockItems.map((item) => {
                 const available = isAvailable(item.id)
                                 return (
-                  <article key={item.id} style={{ contain: "content" }} className={`flex items-center gap-3 rounded-2xl border bg-white p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${available ? "border-slate-200" : "border-rose-300 bg-rose-50/20"}`}>
-                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-20 sm:w-20">
-                      <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                  <article key={item.id} style={{ contain: "content" }} className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border bg-white p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${available ? "border-slate-200" : "border-rose-300 bg-rose-50/20"}`}>
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-20 sm:w-20">
+                        <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">{item.category}</span>
+                        <h3 className="truncate text-sm font-black text-slate-900 sm:text-base">{item.name}</h3>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-black tracking-wider ${available ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                            {available ? "🟢 IN STOCK" : "🔴 OUT OF STOCK"}
+                          </span>
+                          {servingsMap[item.id] !== undefined && servingsMap[item.id] !== null && (
+                            <span className="inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-black bg-blue-50 text-blue-700 border border-blue-200">
+                              {servingsMap[item.id]} servings left
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">{item.category}</span>
-                      <h3 className="truncate text-sm font-black text-slate-900 sm:text-base">{item.name}</h3>
-                      <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-[9px] font-black tracking-wider ${available ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
-                        {available ? "🟢 IN STOCK" : "🔴 OUT OF STOCK"}
-                      </span>
+
+                    <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <div className="flex flex-col items-end">
+                          <span className="text-[9px] font-bold text-neutral-400">Servings:</span>
+                          <input
+                            type="number"
+                            min="0"
+                            placeholder="∞"
+                            title="Remaining servings before automatic 86"
+                            value={servingsInputs[item.id] ?? ''}
+                            onChange={(e) => setServingsInputs((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                            className="w-16 px-1.5 py-1 text-xs border border-neutral-300 rounded-lg text-right font-bold focus:ring-1 focus:ring-orange-500 focus:outline-none"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={savingServingsId === item.id}
+                          onClick={() => void handleSaveRemainingServings(item.id)}
+                          className={`px-2 py-1 text-xs font-bold rounded-lg border transition-all duration-150 cursor-pointer mt-3 disabled:opacity-50 disabled:cursor-not-allowed ${
+                            servingsSuccessId === item.id
+                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
+                              : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-300'
+                          }`}
+                          title="Set remaining available servings"
+                        >
+                          {savingServingsId === item.id ? '...' : servingsSuccessId === item.id ? '✓' : 'Set'}
+                        </button>
+                      </div>
+
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={available}
+                        aria-label={`${available ? "Mark" : "Set"} ${item.name} ${available ? "out of stock" : "in stock"}`}
+                        onClick={() => void handleSetProductAvailability(item.id, !available)}
+                        className={`relative inline-flex h-9 w-[76px] shrink-0 cursor-pointer items-center rounded-full p-1 transition-colors duration-200 ease-in-out focus:outline-none select-none shadow-inner active:scale-95 ${available ? "bg-emerald-600" : "bg-rose-600"}`}
+                      >
+                        <span className={`absolute text-[10px] font-black tracking-wider text-white transition-opacity duration-200 pointer-events-none select-none ${available ? "left-2.5 opacity-100" : "right-2.5 opacity-100"}`}>
+                          {available ? "ON" : "86"}
+                        </span>
+                        <span className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ease-in-out ${available ? "translate-x-[40px]" : "translate-x-0"}`} />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={available}
-                      aria-label={`${available ? "Mark" : "Set"} ${item.name} ${available ? "out of stock" : "in stock"}`}
-                      onClick={() => void handleSetProductAvailability(item.id, !available)}
-                      className={`relative inline-flex h-9 w-[76px] shrink-0 cursor-pointer items-center rounded-full p-1 transition-colors duration-200 ease-in-out focus:outline-none select-none shadow-inner active:scale-95 ${available ? "bg-emerald-600" : "bg-rose-600"}`}
-                    >
-                      <span className={`absolute text-[10px] font-black tracking-wider text-white transition-opacity duration-200 pointer-events-none select-none ${available ? "left-2.5 opacity-100" : "right-2.5 opacity-100"}`}>
-                        {available ? "ON" : "86"}
-                      </span>
-                      <span className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ease-in-out ${available ? "translate-x-[40px]" : "translate-x-0"}`} />
-                    </button>
                   </article>
                 )
               })}
@@ -1015,7 +1654,9 @@ export const KitchenMode: React.FC = () => {
               </p>
 
               <div className="space-y-2">
-                {outOfStockOrder.items.map((item, idx) => {
+                {outOfStockOrder.items
+                  .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
+                  .map((item, idx) => {
                   const itemId = item.id || idx + 1
                   const isSelected = selectedOosItemIds.includes(itemId)
                   return (

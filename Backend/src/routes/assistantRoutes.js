@@ -3,6 +3,7 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse, calculateFinancialLedger } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
+import { deductOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 const router = Router();
 
@@ -138,6 +139,8 @@ router.get('/assistant/orders', optionalAuth, async (req, res) => {
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
       WHERE UPPER(o.order_type) = 'ONLINE'
+        AND UPPER(o.status) NOT IN ('AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED')
+        AND UPPER(COALESCE(o.kitchen_approval_status, 'APPROVED')) NOT IN ('PENDING', 'REJECTED')
       GROUP BY o.id, c.fullname, c.phone, c.delivery_address, p_pay.payment_method, p_pay.status
       ORDER BY o.created_at DESC
     `;
@@ -224,6 +227,13 @@ router.patch('/assistant/orders/:id/verify', optionalAuth, async (req, res) => {
       ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()
     `, [id]);
 
+    // 4. Atomically deduct remaining servings (at CONFIRMED only)
+    try {
+      await deductOrderRemainingServings(client, id);
+    } catch (servErr) {
+      console.warn('[SERVINGS] Assistant verify deduction note:', servErr.message);
+    }
+
     await client.query('COMMIT');
     client.release();
 
@@ -251,7 +261,29 @@ router.patch('/assistant/orders/:id/verify', optionalAuth, async (req, res) => {
 router.patch('/assistant/orders/:id/authorize-gcash', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    let order = inMemoryOrders.get(id) || { id };
+    let order = inMemoryOrders.get(id);
+
+    let currentStatus = normalizeFlowStatus(order?.status);
+    let appStatus = order?.kitchen_approval_status || order?.kitchenApprovalStatus;
+    if (!order?.status) {
+      try {
+        const { rows } = await query(`SELECT status, kitchen_approval_status FROM orders WHERE id = $1`, [id]);
+        if (rows.length > 0) {
+          currentStatus = normalizeFlowStatus(rows[0].status);
+          appStatus = rows[0].kitchen_approval_status || appStatus;
+        }
+      } catch {}
+    }
+
+    // Prevent authorization if order is awaiting kitchen approval
+    if (currentStatus === 'AWAITING_KITCHEN_APPROVAL' || appStatus === 'PENDING') {
+      return res.status(409).json({
+        success: false,
+        message: 'This order is currently awaiting Kitchen capacity approval before payment can be authorized.',
+      });
+    }
+
+    if (!order) order = { id };
 
     order.gcashAuthorized = true;
     order.status = 'GCASH_AUTHORIZED';
@@ -285,7 +317,29 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
     const { id } = req.params;
     const { paymentReceipt, paymentReference, referenceNumber } = req.body;
     const refNum = (paymentReference || referenceNumber || '').toString().trim() || undefined;
-    let order = inMemoryOrders.get(id) || { id };
+    let order = inMemoryOrders.get(id);
+
+    let currentStatus = normalizeFlowStatus(order?.status);
+    let appStatus = order?.kitchen_approval_status || order?.kitchenApprovalStatus;
+    if (!order?.status) {
+      try {
+        const { rows } = await query(`SELECT status, kitchen_approval_status FROM orders WHERE id = $1`, [id]);
+        if (rows.length > 0) {
+          currentStatus = normalizeFlowStatus(rows[0].status);
+          appStatus = rows[0].kitchen_approval_status || appStatus;
+        }
+      } catch {}
+    }
+
+    // Prevent upload if order is still awaiting kitchen approval
+    if (currentStatus === 'AWAITING_KITCHEN_APPROVAL' || appStatus === 'PENDING') {
+      return res.status(409).json({
+        success: false,
+        message: 'This order is currently awaiting Kitchen capacity approval before payment proof can be uploaded.',
+      });
+    }
+
+    if (!order) order = { id };
 
     if (paymentReceipt) order.paymentReceipt = paymentReceipt;
     if (refNum) {
@@ -437,7 +491,28 @@ router.patch('/assistant/orders/:id/attach-proof', optionalAuth, async (req, res
 router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    let order = inMemoryOrders.get(id) || { id };
+    let order = inMemoryOrders.get(id);
+
+    let currentStatus = normalizeFlowStatus(order?.status);
+    let appStatus = order?.kitchen_approval_status || order?.kitchenApprovalStatus;
+    if (!order?.status) {
+      try {
+        const { rows } = await query(`SELECT status, kitchen_approval_status FROM orders WHERE id = $1`, [id]);
+        if (rows.length > 0) {
+          currentStatus = normalizeFlowStatus(rows[0].status);
+          appStatus = rows[0].kitchen_approval_status || appStatus;
+        }
+      } catch {}
+    }
+
+    if (currentStatus === 'AWAITING_KITCHEN_APPROVAL' || appStatus === 'PENDING') {
+      return res.status(409).json({
+        success: false,
+        message: 'This order is currently awaiting Kitchen capacity approval before payment can be verified.',
+      });
+    }
+
+    if (!order) order = { id };
 
     order.status = 'CONFIRMED';
     order.receiptStatus = 'APPROVED';
@@ -470,37 +545,56 @@ router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, r
     inMemoryOrders.set(id, order);
 
     try {
-      await query(
-        `INSERT INTO orders (id, order_type, status, created_at, payment_reference, payment_receipt)
-         VALUES ($1, 'ONLINE', 'CONFIRMED', NOW(), $2, $3)
-         ON CONFLICT (id) DO UPDATE SET 
-           status = 'CONFIRMED', 
-           payment_reference = COALESCE(NULLIF($2, ''), orders.payment_reference), 
-           payment_receipt = COALESCE($3, orders.payment_receipt),
-           updated_at = NOW()`,
-        [id, paymentRef, paymentRec]
-      );
-      await query(
-        `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
-         ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
-        [id]
-      );
-      await query(
-        `UPDATE payments
-         SET status = 'PAID', paid_at = NOW(),
-             reference_number = COALESCE(NULLIF($2, ''), reference_number),
-             payment_receipt = COALESCE($3, payment_receipt),
-             updated_at = NOW()
-         WHERE order_id = $1`,
-        [id, paymentRef, paymentRec]
-      );
-      const payCheck = await query(`SELECT id FROM payments WHERE order_id = $1`, [id]);
-      if (payCheck.rows.length === 0) {
-        await query(
-          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, paid_at, updated_at)
-           VALUES ($1, 'GCASH', (SELECT COALESCE(total, 0) FROM orders WHERE id = $1), 'PAID', $2, $3, NOW(), NOW())`,
+      const pool = await getDbPool();
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `INSERT INTO orders (id, order_type, status, created_at, payment_reference, payment_receipt)
+           VALUES ($1, 'ONLINE', 'CONFIRMED', NOW(), $2, $3)
+           ON CONFLICT (id) DO UPDATE SET 
+             status = 'CONFIRMED', 
+             payment_reference = COALESCE(NULLIF($2, ''), orders.payment_reference), 
+             payment_receipt = COALESCE($3, orders.payment_receipt),
+             updated_at = NOW()`,
           [id, paymentRef, paymentRec]
         );
+        await client.query(
+          `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
+           ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+          [id]
+        );
+        await client.query(
+          `UPDATE payments
+           SET status = 'PAID', paid_at = NOW(),
+               reference_number = COALESCE(NULLIF($2, ''), reference_number),
+               payment_receipt = COALESCE($3, payment_receipt),
+               updated_at = NOW()
+           WHERE order_id = $1`,
+          [id, paymentRef, paymentRec]
+        );
+        const payCheck = await client.query(`SELECT id FROM payments WHERE order_id = $1`, [id]);
+        if (payCheck.rows.length === 0) {
+          await client.query(
+            `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, paid_at, updated_at)
+             VALUES ($1, 'GCASH', (SELECT COALESCE(total, 0) FROM orders WHERE id = $1), 'PAID', $2, $3, NOW(), NOW())`,
+            [id, paymentRef, paymentRec]
+          );
+        }
+
+        // Atomically deduct remaining servings upon reaching CONFIRMED
+        try {
+          await deductOrderRemainingServings(client, id);
+        } catch (servErr) {
+          console.warn('[SERVINGS] verify-receipt deduction note:', servErr.message);
+        }
+
+        await client.query('COMMIT');
+      } catch (dbErr) {
+        await client.query('ROLLBACK');
+        throw dbErr;
+      } finally {
+        client.release();
       }
     } catch (err) {
       console.warn('DB update note (Verify Receipt):', err.message);
@@ -557,7 +651,28 @@ router.patch('/assistant/orders/:id/reject-receipt', optionalAuth, async (req, r
 router.patch('/assistant/orders/:id/confirm-cod', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    let order = inMemoryOrders.get(id) || { id };
+    let order = inMemoryOrders.get(id);
+
+    let currentStatus = normalizeFlowStatus(order?.status);
+    let appStatus = order?.kitchen_approval_status || order?.kitchenApprovalStatus;
+    if (!order?.status) {
+      try {
+        const { rows } = await query(`SELECT status, kitchen_approval_status FROM orders WHERE id = $1`, [id]);
+        if (rows.length > 0) {
+          currentStatus = normalizeFlowStatus(rows[0].status);
+          appStatus = rows[0].kitchen_approval_status || appStatus;
+        }
+      } catch {}
+    }
+
+    if (currentStatus === 'AWAITING_KITCHEN_APPROVAL' || appStatus === 'PENDING') {
+      return res.status(409).json({
+        success: false,
+        message: 'This order is currently awaiting Kitchen capacity approval before COD can be confirmed.',
+      });
+    }
+
+    if (!order) order = { id };
 
     order.status = 'CONFIRMED';
     order.updated_at = new Date().toISOString();
@@ -565,12 +680,31 @@ router.patch('/assistant/orders/:id/confirm-cod', optionalAuth, async (req, res)
     inMemoryOrders.set(id, order);
 
     try {
-      await query(`UPDATE orders SET status = 'CONFIRMED', updated_at = NOW() WHERE id = $1`, [id]);
-      await query(
-        `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
-         ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
-        [id]
-      );
+      const pool = await getDbPool();
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`UPDATE orders SET status = 'CONFIRMED', updated_at = NOW() WHERE id = $1`, [id]);
+        await client.query(
+          `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
+           ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+          [id]
+        );
+
+        // Atomically deduct remaining servings upon reaching CONFIRMED
+        try {
+          await deductOrderRemainingServings(client, id);
+        } catch (servErr) {
+          console.warn('[SERVINGS] confirm-cod deduction note:', servErr.message);
+        }
+
+        await client.query('COMMIT');
+      } catch (dbErr) {
+        await client.query('ROLLBACK');
+        throw dbErr;
+      } finally {
+        client.release();
+      }
     } catch (err) {
       console.warn('DB update note (Confirm COD):', err.message);
     }
@@ -781,6 +915,7 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
           await client.query(
             `UPDATE orders
              SET subtotal = $2, tax = $3, total = $4, status = 'CONFIRMED',
+                 servings_deducted = FALSE,
                  customer_resolution_status = 'COMPLETED', updated_at = NOW()
              WHERE id = $1`,
             [id, updatedSubtotal, updatedVat, updatedTotal]
@@ -797,6 +932,13 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
              updated_at = NOW()`,
             [id]
           );
+
+          // Atomically deduct remaining servings for replacements upon reaching CONFIRMED
+          try {
+            await deductOrderRemainingServings(client, id);
+          } catch (servErr) {
+            console.warn('[SERVINGS] replacement resolution deduction note:', servErr.message);
+          }
         }
 
         const finalP = await client.query(`SELECT * FROM payments WHERE order_id = $1`, [id]);
@@ -860,7 +1002,7 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
           replacementForItemId: replacement.oldItemId,
         });
       });
-      order.items = currentItems;
+      order.items = currentItems.filter((i) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()));
       order.status = 'CONFIRMED';
       order.customerResolution = 'REPLACE';
       order.customer_resolution = 'REPLACE';
@@ -1017,13 +1159,25 @@ export async function handleAssistantStatusUpdate(req, res) {
         [nextStatus, id]
       );
 
-      // If order confirmed, create a kitchen queue entry
+      // If order confirmed, create a kitchen queue entry and deduct remaining servings
       if (nextStatus === 'CONFIRMED') {
-        await query(
-          `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
-           ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
-          [id]
-        );
+        const pool = await getDbPool();
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            `INSERT INTO kitchen_orders (order_id, status) VALUES ($1, 'PENDING')
+             ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()`,
+            [id]
+          );
+          await deductOrderRemainingServings(client, id);
+          await client.query('COMMIT');
+        } catch (servErr) {
+          try { await client.query('ROLLBACK'); } catch {}
+          console.warn('[SERVINGS] handleAssistantStatusUpdate deduction note:', servErr.message);
+        } finally {
+          client.release();
+        }
       }
 
       if (rows.length > 0 && !updatedOrder) {

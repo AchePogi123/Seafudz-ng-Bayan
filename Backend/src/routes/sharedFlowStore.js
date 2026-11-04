@@ -1,4 +1,6 @@
 // Central In-Memory Store Fallback for backend order flow
+import { checkProductQuantityStandards } from '../utils/bulkOrder.js';
+
 export const inMemoryOrders = new Map();
 
 /**
@@ -9,6 +11,8 @@ export function normalizeFlowStatus(rawStatus) {
   if (!rawStatus) return 'PENDING';
   const upper = String(rawStatus).toUpperCase().trim();
   
+  if (['APPROVED_BY_KITCHEN', 'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_APPROVAL', 'PENDING_KITCHEN_APPROVAL'].includes(upper)) return upper === 'APPROVED_BY_KITCHEN' ? 'APPROVED_BY_KITCHEN' : 'AWAITING_KITCHEN_APPROVAL';
+  if (['KITCHEN_REJECTED', 'DECLINED_BY_KITCHEN'].includes(upper)) return 'KITCHEN_REJECTED';
   if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD'].includes(upper)) return upper;
   if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING';
   if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED';
@@ -194,9 +198,27 @@ export function formatOrderResponse(row) {
   const paymentReceiptFromPayments = payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.payment_receipt
     || payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.paymentReceipt;
 
+  const standardCheck = checkProductQuantityStandards(formattedItems);
+  const requiresKitchenApproval = row.requires_kitchen_approval !== null && row.requires_kitchen_approval !== undefined
+    ? Boolean(row.requires_kitchen_approval)
+    : (row.requiresKitchenApproval !== undefined
+        ? Boolean(row.requiresKitchenApproval)
+        : Boolean(normStatus === 'AWAITING_KITCHEN_APPROVAL' || (standardCheck.requiresApproval && !['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED', 'GCASH_AUTHORIZED', 'PENDING_COD'].includes(normStatus))));
+  const kitchenApprovalStatus = row.kitchen_approval_status || row.kitchenApprovalStatus || (
+    normStatus === 'AWAITING_KITCHEN_APPROVAL' ? 'PENDING' : 
+    (normStatus === 'KITCHEN_REJECTED' ? 'REJECTED' : 
+    (requiresKitchenApproval && ['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normStatus) ? 'APPROVED' : 'NONE'))
+  );
+
   return {
     id: row.id,
     ref: row.id,
+    customerId: row.customer_id || row.customerId || undefined,
+    userId: row.customer_id || row.customerId || undefined,
+    customer_id: row.customer_id || row.customerId || undefined,
+    orderType: row.order_type || row.orderType || 'ONLINE',
+    order_type: row.order_type || row.orderType || 'ONLINE',
+    type: row.order_type || row.orderType || 'Delivery',
     customerName: row.customer_name || row.customerName || 'Online Customer',
     customer: row.customer_name || row.customerName || 'Online Customer',
     phone: row.customer_phone || row.phone || '0917-000-0000',
@@ -232,8 +254,15 @@ export function formatOrderResponse(row) {
     isReceiptPrinted: isReceiptPrinted,
     is_receipt_printed: isReceiptPrinted,
     rejectionReason: row.rejection_reason || row.rejectionReason || '',
-    isBulk: false,
-    is_bulk: false,
+    requiresKitchenApproval,
+    requires_kitchen_approval: requiresKitchenApproval,
+    kitchenApprovalStatus,
+    kitchen_approval_status: kitchenApprovalStatus,
+    flaggedQuantityItems: standardCheck.flaggedItems,
+    servingsDeducted: Boolean(row.servings_deducted || row.servingsDeducted),
+    servings_deducted: Boolean(row.servings_deducted || row.servingsDeducted),
+    isBulk: Boolean(row.is_bulk || row.isBulk || standardCheck.requiresApproval || requiresKitchenApproval),
+    is_bulk: Boolean(row.is_bulk || row.isBulk || standardCheck.requiresApproval || requiresKitchenApproval),
     notes: row.notes || '',
     items: formattedItems,
     subtotal: parseFloat(row.subtotal || 0),

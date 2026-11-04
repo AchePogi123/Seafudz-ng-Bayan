@@ -1,15 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import type { CartItem } from './OrderItemRow'
+import type { FlaggedQuantityItem } from '../utils/bulkOrder'
 
 interface SuccessModalProps {
   isOpen: boolean
   onClose: () => void
   onConfirm: (cashReceived: string, change: number | null, paymentMethod: string, paymentReference?: string) => void
+  onSubmitForApproval?: () => void
+  requiresApproval?: boolean
+  flaggedItems?: FlaggedQuantityItem[]
   orderDetails: {
     table?: string
     type: string
     total: number
     cartItems: CartItem[]
+    requiresApproval?: boolean
+    flaggedItems?: FlaggedQuantityItem[]
   } | null
   hasUnavailableItems?: boolean
   isItemAvailable?: (itemId: string) => boolean
@@ -20,6 +26,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   isOpen,
   onClose,
   onConfirm,
+  onSubmitForApproval,
+  requiresApproval = false,
+  flaggedItems = [],
   orderDetails,
   hasUnavailableItems = false,
   isItemAvailable = () => true,
@@ -38,6 +47,8 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   const [hybridWalletType, setHybridWalletType] = useState<'GCash' | 'Maya'>('GCash')
 
   const totalAmount = orderDetails ? Math.round(orderDetails.total) : 0
+  const isAwaitingKitchen = Boolean(requiresApproval || orderDetails?.requiresApproval)
+  const activeFlaggedItems = flaggedItems.length > 0 ? flaggedItems : (orderDetails?.flaggedItems || [])
 
   // Reset inputs when modal opens/closes
   useEffect(() => {
@@ -54,6 +65,16 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
       return () => clearTimeout(timer)
     }
   }, [isOpen])
+
+  // Close modal on Escape key press
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, onClose])
 
   // Calculate change derived from cashReceived and totalAmount for pure Cash
   const change = useMemo(() => {
@@ -73,6 +94,11 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   const hybridBalanceRemaining = Math.max(0, totalAmount - hybridTotalEntered)
   const isHybridComplete = Math.abs(hybridTotalEntered - totalAmount) < 0.01
 
+  const parsedCash = parseFloat(cashReceived)
+  const isCashInvalid = paymentMethod === 'Cash' && (
+    !cashReceived.trim() || isNaN(parsedCash) || parsedCash < totalAmount
+  )
+
   if (!isOpen || !orderDetails) return null
 
   const handlePresetClick = (amount: number) => {
@@ -81,7 +107,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
 
   const isSubmitDisabled = Boolean(
     hasUnavailableItems ||
-    (paymentMethod === 'Cash' && cashReceived !== '' && parseFloat(cashReceived) < totalAmount) ||
+    isCashInvalid ||
     (paymentMethod === 'GCash' && !gcashRefNumber.trim()) ||
     (paymentMethod === 'Hybrid' && (!isHybridComplete || !hybridRefNumber.trim()))
   )
@@ -96,13 +122,20 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
       if (!gcashRefNumber.trim()) return
       onConfirm('', null, 'GCash', gcashRefNumber.trim())
     } else {
+      if (isCashInvalid) return
       onConfirm(cashReceived, change, paymentMethod)
     }
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 flex flex-col relative animate-scale-up max-h-[92vh] overflow-y-auto custom-scrollbar">
+    <div
+      onClick={onClose}
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-fade-in"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 flex flex-col relative animate-scale-up max-h-[92vh] overflow-y-auto custom-scrollbar"
+      >
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -115,18 +148,69 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           </svg>
         </button>
 
-        {/* Check Icon Badge */}
-        <div className="w-14 h-14 bg-emerald-100/70 rounded-full flex items-center justify-center mb-3 mx-auto mt-1">
-          <svg className="w-7 h-7 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
+        {/* Modal Header */}
+        {isAwaitingKitchen ? (
+          <>
+            <div className="w-14 h-14 bg-amber-100/80 rounded-full flex items-center justify-center mb-3 mx-auto mt-1 border border-amber-300">
+              <span className="text-2xl select-none">⚠️</span>
+            </div>
+            <h2 className="text-2xl font-black text-neutral-900 text-center tracking-tight">Kitchen Review Required</h2>
+            <p className="text-xs text-amber-800 font-semibold mt-1 text-center">
+              Large Order • {orderDetails.type}
+            </p>
 
-        {/* Header Title */}
-        <h2 className="text-2xl font-black text-neutral-900 text-center tracking-tight">Order Confirmed!</h2>
-        <p className="text-xs text-neutral-400 font-semibold mt-1 text-center">
-          Order #A123 • {orderDetails.type}
-        </p>
+            {/* Amber Alert Box matching Assistant Role */}
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center space-y-2 my-4 animate-fade-in">
+              <div className="flex items-center justify-center gap-1.5 text-amber-900 font-extrabold text-xs">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                Kitchen Review Required
+              </div>
+              <p className="text-xs text-amber-800 leading-snug">
+                This order contains high-quantity items exceeding kitchen standards. The Kitchen team must review and approve quantities before payment authorization.
+              </p>
+              <div className="text-[11px] font-bold text-amber-800 bg-amber-100 py-1.5 px-3 rounded-lg inline-block">
+                Awaiting Kitchen Action
+              </div>
+            </div>
+
+            {/* Flagged Items with Standards */}
+            {activeFlaggedItems.length > 0 && (
+              <div className="bg-neutral-50 rounded-2xl p-3 border border-neutral-200 mb-4 space-y-1.5 text-left">
+                <div className="text-[10px] font-black uppercase tracking-wider text-neutral-400">
+                  Items Exceeding Standards:
+                </div>
+                {activeFlaggedItems.map((fi, idx) => (
+                  <div key={idx} className="flex items-center justify-between text-xs text-neutral-800 font-bold bg-white p-2 rounded-xl border border-neutral-200/80">
+                    <span className="truncate pr-2">{fi.name}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-[9px] font-black bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded">
+                        STD: {fi.standard}
+                      </span>
+                      <span className="text-xs font-mono font-black bg-neutral-900 text-white px-2 py-0.5 rounded-md">
+                        x{fi.quantity}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Check Icon Badge */}
+            <div className="w-14 h-14 bg-emerald-100/70 rounded-full flex items-center justify-center mb-3 mx-auto mt-1">
+              <svg className="w-7 h-7 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            {/* Header Title */}
+            <h2 className="text-2xl font-black text-neutral-900 text-center tracking-tight">Order Confirmed!</h2>
+            <p className="text-xs text-neutral-400 font-semibold mt-1 text-center">
+              Order #A123 • {orderDetails.type}
+            </p>
+          </>
+        )}
         {hasUnavailableItems && (
           <div className="mt-4 rounded-xl border border-rose-300 bg-rose-50 p-3 text-center text-xs font-bold text-rose-800">
             An item in your cart was just marked Out of Stock by the kitchen. Remove it before payment.
@@ -143,7 +227,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
         )}
 
         {/* Payment Method Selector Tabs */}
-        <div className="grid grid-cols-3 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
+        {!isAwaitingKitchen && (
+          <>
+          <div className="grid grid-cols-3 gap-1.5 bg-neutral-100/70 p-1.5 rounded-2xl my-5 border border-neutral-100">
           {(['Cash', 'GCash', 'Hybrid'] as const).map((method) => (
             <button
               key={method}
@@ -327,13 +413,20 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
                 ))}
             </div>
 
-            {/* Alert for Insufficient cash */}
-            {cashReceived && change === null && parseFloat(cashReceived) < totalAmount && (
+            {/* Alert for empty or Insufficient cash */}
+            {!cashReceived.trim() && (
+              <p className="text-[11px] font-bold text-amber-600 flex items-center gap-1 pt-1">
+                * Please input received cash or tap a quick preset before confirming.
+              </p>
+            )}
+            {cashReceived.trim() && change === null && parseFloat(cashReceived) < totalAmount && (
               <p className="text-[11px] font-bold text-rose-600 flex items-center gap-1 pt-1">
-                Cash received is less than total amount (₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                * Cash received is less than total amount (₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
               </p>
             )}
           </div>
+        )}
+        </>
         )}
 
         {/* Location & Details Card */}
@@ -349,7 +442,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             </span>
           </div>
           <div className="pt-2.5 border-t border-neutral-200/60 flex justify-between items-center font-bold text-emerald-600">
-            <span className="text-xs font-bold">Amount Paid</span>
+            <span className="text-xs font-bold">{isAwaitingKitchen ? 'Estimated Total Due' : 'Amount Paid'}</span>
             <span className="text-base font-black">₱{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
           </div>
         </div>
@@ -380,17 +473,30 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
           >
             Cancel
           </button>
-          <button
-            onClick={handleConfirm}
-            disabled={isSubmitDisabled}
-            className={`flex-2 text-white font-bold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md ${
-              isSubmitDisabled
-                ? 'bg-neutral-300 cursor-not-allowed shadow-none'
-                : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/25'
-            }`}
-          >
-            {paymentMethod === 'Hybrid' ? 'Confirm Hybrid & Print' : 'Confirm & Print'}
-          </button>
+          {isAwaitingKitchen ? (
+            <button
+              onClick={() => {
+                onSubmitForApproval?.()
+              }}
+              type="button"
+              className="flex-2 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md shadow-amber-500/25 flex items-center justify-center gap-2"
+            >
+              <span>📋</span>
+              <span>Submit Ticket to Kitchen</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleConfirm}
+              disabled={isSubmitDisabled}
+              className={`flex-2 text-white font-bold py-3.5 px-6 rounded-2xl transition-all active:scale-98 cursor-pointer text-center text-sm shadow-md ${
+                isSubmitDisabled
+                  ? 'bg-neutral-300 cursor-not-allowed shadow-none'
+                  : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/25'
+              }`}
+            >
+              {paymentMethod === 'Hybrid' ? 'Confirm Hybrid & Print' : 'Confirm & Print'}
+            </button>
+          )}
         </div>
       </div>
     </div>

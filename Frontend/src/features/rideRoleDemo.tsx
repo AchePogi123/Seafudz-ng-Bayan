@@ -128,60 +128,116 @@ export const isOrderCompleted = (status?: string): boolean => {
   return s === 'completed' || s === 'delivered' || s === 'served' || s === 'cancelled'
 }
 
+/**
+ * Robust parser for order timestamps supporting:
+ * - ISO strings (e.g., "2026-11-04T12:25:58.394Z")
+ * - PostgreSQL timestamps (e.g., "2026-10-31 17:33:24.227264+00")
+ * - Numeric epoch milliseconds or seconds
+ * - Time strings without dates (e.g., "08:30 PM", "8:30:15 PM") resolved to current day
+ * - 'Just now' resolved to Date.now()
+ */
+export const parseOrderTimestamp = (val?: string | number | null): number | null => {
+  if (!val) return null
+  if (typeof val === 'number') return isNaN(val) ? null : val
+  const str = String(val).trim()
+  if (!str) return null
+  if (str.toLowerCase() === 'just now') return Date.now()
+
+  // Epoch numeric string (10 to 13 digits)
+  if (/^\d{10,13}$/.test(str)) {
+    const num = Number(str)
+    if (!isNaN(num)) return num < 10000000000 ? num * 1000 : num
+  }
+
+  const parsed = Date.parse(str)
+  if (!isNaN(parsed)) return parsed
+
+  // Time-only strings like "08:30 PM" or "8:30:15 PM"
+  const timeMatch = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i)
+  if (timeMatch) {
+    let hours = parseInt(timeMatch[1], 10)
+    const minutes = parseInt(timeMatch[2], 10)
+    const seconds = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0
+    const ampm = timeMatch[4]?.toUpperCase()
+    if (ampm === 'PM' && hours < 12) hours += 12
+    if (ampm === 'AM' && hours === 12) hours = 0
+    const d = new Date()
+    d.setHours(hours, minutes, seconds, 0)
+    return d.getTime()
+  }
+
+  return null
+}
+
 export const areOrdersCompanion = (a: DeliveryJob, b: DeliveryJob): boolean => {
   if (a.id === b.id) return true
 
   const statusA = String(a.status || '').toLowerCase().trim()
   const statusB = String(b.status || '').toLowerCase().trim()
 
-  // CRITICAL RULE: The ONLY orders that combine are those actively preparing or pending delivery!
-  // Completed or cancelled orders MUST NEVER combine or accumulate history orders.
-  const activeCombinable = ['ready', 'preparing', 'out for delivery']
-  if (!activeCombinable.includes(statusA) || !activeCombinable.includes(statusB)) {
-    return false
-  }
-
-  // Active status compatibility:
-  // Both orders actively in kitchen ('ready' or 'preparing') can combine, or both already 'out for delivery'
-  const isKitchenActiveA = statusA === 'ready' || statusA === 'preparing'
-  const isKitchenActiveB = statusB === 'ready' || statusB === 'preparing'
-  if (!((isKitchenActiveA && isKitchenActiveB) || statusA === statusB)) {
-    return false
-  }
-
-  // Timestamp check: Only combine orders placed contemporaneously (within 60 minutes of each other)
-  const timeA = Date.parse(a.createdAt || '')
-  const timeB = Date.parse(b.createdAt || '')
-  if (!isNaN(timeA) && !isNaN(timeB)) {
-    if (Math.abs(timeA - timeB) > 60 * 60 * 1000) {
+  // CRITICAL SPECIFICATION:
+  // 1. Orders will ONLY combine if they both finish in the same time (both are 'ready').
+  // 2. If the rider marks the first order as "start delivery" (out for delivery), the last order will remain in queue in rider's list and will NOT combine into the first order.
+  // 3. Orders already 'out for delivery' will only stay combined if they were dispatched together on the same trip.
+  if (statusA === 'ready' && statusB === 'ready') {
+    // Both finished & ready at the store - valid to combine if customer, location, and name match!
+  } else if (statusA === 'out for delivery' && statusB === 'out for delivery') {
+    // Both are out for delivery - must have been dispatched together on the exact same trip
+    if (!a.tripId || !b.tripId || a.tripId !== b.tripId) {
       return false
     }
+  } else {
+    // Any other combination (e.g., ready vs out for delivery, or preparing) NEVER combines!
+    return false
   }
 
+  // Timestamp check: STRICT RULE - Only combine orders placed contemporaneously (within 60 minutes of each other).
+  // If either timestamp cannot be resolved, fail-safe to FALSE so historical/unverified orders NEVER combine.
+  const timeA = parseOrderTimestamp(a.createdAt)
+  const timeB = parseOrderTimestamp(b.createdAt)
+  if (timeA === null || timeB === null) {
+    return false
+  }
+  if (Math.abs(timeA - timeB) > 60 * 60 * 1000) {
+    return false
+  }
+
+  // 1. User ID check (customerId / userId / phone as account identifier)
+  const userA = String(a.customerId || a.userId || '').trim().toLowerCase()
+  const userB = String(b.customerId || b.userId || '').trim().toLowerCase()
+  const phoneA = normalizePhoneKey(a.phone)
+  const phoneB = normalizePhoneKey(b.phone)
+  const hasMatchingUserId = Boolean(userA && userB && userA === userB)
+  const hasMatchingPhone = Boolean(phoneA.length >= 7 && phoneB.length >= 7 && phoneA === phoneB)
+  const userMatches = hasMatchingUserId || hasMatchingPhone
+  if (!userMatches) return false
+
+  // 2. Location check (delivery address / coordinates)
   const addrA = normalizeAddressKey(a.address)
   const addrB = normalizeAddressKey(b.address)
   if (!addrA || !addrB) return false
-
-  // Address match (exact or substring/containment)
   const addrMatches = addrA === addrB || addrA.includes(addrB) || addrB.includes(addrA)
-  if (!addrMatches) return false
+  const coordMatches = Boolean(
+    a.coord && b.coord &&
+    Number.isFinite(a.coord.lat) && Number.isFinite(b.coord.lat) &&
+    Math.abs(a.coord.lat - b.coord.lat) < 0.003 &&
+    Math.abs(a.coord.lng - b.coord.lng) < 0.003
+  )
+  const locationMatches = addrMatches || coordMatches
+  if (!locationMatches) return false
 
-  // Phone match (valid >= 7 digits)
-  const phoneA = normalizePhoneKey(a.phone)
-  const phoneB = normalizePhoneKey(b.phone)
-  const hasValidPhone = phoneA.length >= 7 && phoneB.length >= 7
-  if (hasValidPhone && phoneA === phoneB) return true
-
-  // Customer name match (non-generic)
+  // 3. Name check (customer name)
   const nameA = normalizeCustomerKey(a.customer)
   const nameB = normalizeCustomerKey(b.customer)
   const isGeneric = (n: string) =>
     !n || n === 'onlinecustomer' || n === 'walkin' || n === 'customer' || n === 'guest'
-  if (nameA && nameB && nameA === nameB && !isGeneric(nameA)) {
-    return true
-  }
+  const nameMatches = Boolean(
+    (nameA && nameB && nameA === nameB && !isGeneric(nameA)) ||
+    (hasMatchingUserId && isGeneric(nameA) && isGeneric(nameB))
+  )
+  if (!nameMatches) return false
 
-  return false
+  return true
 }
 
 export interface DeliveryBundle {
@@ -202,6 +258,10 @@ export interface DeliveryBundle {
   isMixedPayment: boolean
   latestCreatedAt: string
   primaryOrder: DeliveryJob
+  readyCount: number
+  preparingCount: number
+  allReady: boolean
+  hasPreparing: boolean
 }
 
 export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryBundle[] {
@@ -257,12 +317,26 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
     let latestTime = 0
     let latestCreatedAtStr = primary.createdAt || ''
     group.forEach((o) => {
-      const t = Date.parse(o.createdAt || '')
-      if (!isNaN(t) && t > latestTime) {
+      const t = parseOrderTimestamp(o.createdAt || '')
+      if (t !== null && t > latestTime) {
         latestTime = t
         latestCreatedAtStr = o.createdAt || ''
       }
     })
+
+    const readyCount = group.filter((o) => String(o.status).toLowerCase() === 'ready').length
+    const outForDeliveryCount = group.filter((o) => String(o.status).toLowerCase() === 'out for delivery').length
+    const allOutForDelivery = outForDeliveryCount === group.length
+    const allReady = readyCount === group.length
+
+    let bundleStatus = primary.status
+    if (allOutForDelivery) {
+      bundleStatus = 'Out for Delivery'
+    } else {
+      bundleStatus = 'Ready'
+    }
+    const hasPreparing = false
+    const preparingCount = 0
 
     const bundleKey = group.map((o) => o.id).sort().join('___')
 
@@ -272,7 +346,7 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
       customer: primary.customer,
       phone: primary.phone,
       address: primary.address,
-      status: primary.status,
+      status: bundleStatus,
       roadDistanceKm,
       orders: group,
       totalCombinedAmount,
@@ -284,6 +358,10 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
       isMixedPayment,
       latestCreatedAt: latestCreatedAtStr,
       primaryOrder: primary,
+      readyCount,
+      preparingCount,
+      allReady,
+      hasPreparing,
     })
   }
 
@@ -384,12 +462,28 @@ export const RideRoleDemo: React.FC = () => {
         if (saved) hiddenSet = new Set(JSON.parse(saved))
       } catch {}
 
+      let printedReceiptsSet = new Set<string>()
+      try {
+        const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
+        if (savedPrinted) printedReceiptsSet = new Set(JSON.parse(savedPrinted))
+      } catch {}
+
+      let tripMap: Record<string, string> = {}
+      try {
+        const savedTrips = localStorage.getItem('seafudz_rider_dispatch_trips')
+        if (savedTrips) tripMap = JSON.parse(savedTrips)
+      } catch {}
+
+      let realOrdersCount = 0
+      const finishedOrderIds = new Set<string>()
+
       // 1. Read from backend API FIRST (Online Delivery Orders ONLY - Central Truth)
       try {
         const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
         if (res.ok) {
           const data = await res.json()
           if (Array.isArray(data.data)) {
+            realOrdersCount = data.data.length
             data.data.forEach((o: any) => {
               const orderType = (o.order_type || o.type || '').toLowerCase()
               const isPos = Boolean(
@@ -406,24 +500,50 @@ export const RideRoleDemo: React.FC = () => {
               if (hiddenSet.has(id)) return
 
               const rawStatus = (o.status || '').toUpperCase()
+
+              // Once an order is completed, delivered, served, or cancelled, record it as finished and exclude from active rider queue
+              const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
+              if (finishedStatuses.includes(rawStatus) || isOrderCompleted(rawStatus)) {
+                if (id) finishedOrderIds.add(id)
+                if (o.ref) finishedOrderIds.add(o.ref)
+                return
+              }
+
+              // Age cutoff: Any food order created > 12 hours ago is historical and must never appear as an active delivery job
+              const orderTs = parseOrderTimestamp(o.createdAt || o.created_at || o.dateTime)
+              if (orderTs !== null && Date.now() - orderTs > 12 * 60 * 60 * 1000) {
+                if (id) finishedOrderIds.add(id)
+                if (o.ref) finishedOrderIds.add(o.ref)
+                return
+              }
+
+              // Strict User Flow Requirement: Official restaurant receipt from POS Cashier MUST be printed
+              // before the online delivery order reflects on the Rider dispatch queue.
+              const isReceiptPrinted = Boolean(
+                o.isReceiptPrinted === true ||
+                o.is_receipt_printed === true ||
+                o.receiptStatus === 'PRINTED' ||
+                o.receipt_status === 'PRINTED' ||
+                printedReceiptsSet.has(id) ||
+                (o.ref && printedReceiptsSet.has(o.ref))
+              )
+              if (!isReceiptPrinted) return
+
               const unconfirmedStatuses = [
                 'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
                 'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT',
+                'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
               ]
               if (unconfirmedStatuses.includes(rawStatus)) return
-              // Once an order is completed, delivered, served, or cancelled, it is gone from the rider side!
-              const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
-              if (finishedStatuses.includes(rawStatus)) return
 
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') {
                 displayStatus = 'Out for Delivery'
               } else if (rawStatus === 'READY') {
                 displayStatus = 'Ready'
-              } else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') {
-                displayStatus = 'Preparing'
               } else {
+                // Must be marked as finished by kitchen (READY or OUT_FOR_DELIVERY) to appear on Rider board!
                 return
               }
 
@@ -439,19 +559,25 @@ export const RideRoleDemo: React.FC = () => {
                 ? Number(o.rider_cash_received)
                 : (o.riderCashReceived != null ? Number(o.riderCashReceived) : undefined)
 
+              const resolvedCreatedAt = o.createdAt || o.created_at || (o.dateTime && !isNaN(Date.parse(o.dateTime)) ? o.dateTime : new Date().toISOString())
+              const tripId = tripMap[id] || (o.ref ? tripMap[o.ref] : undefined)
+
               combinedMap.set(id, {
                 id,
                 ref: id,
+                customerId: o.customerId || o.customer_id || o.userId || undefined,
+                userId: o.userId || o.customerId || o.customer_id || undefined,
+                tripId,
                 customer: o.customer || o.customerName || 'Online Customer',
                 phone: o.phone || '0917-000-0000',
                 address,
-                items: o.items || [],
+                items: (Array.isArray(o.items) ? o.items : []).filter((i: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase())),
                 total: o.total || 0,
                 deliveryFee: o.deliveryFee == null && o.delivery_fee == null
                   ? undefined
                   : Number(o.deliveryFee ?? o.delivery_fee),
                 status: displayStatus,
-                createdAt: o.createdAt || new Date().toISOString(),
+                createdAt: resolvedCreatedAt,
                 paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
@@ -467,6 +593,21 @@ export const RideRoleDemo: React.FC = () => {
         if (local) {
           const parsed = JSON.parse(local)
           if (Array.isArray(parsed)) {
+            // Sanitize localStorage: Mark any orders completed on backend as COMPLETED so they cannot resurrect
+            let hasSanitized = false
+            parsed.forEach((item: any) => {
+              const iId = item.id || item.ref
+              if (iId && finishedOrderIds.has(iId) && !isOrderCompleted(item.status)) {
+                item.status = 'COMPLETED'
+                hasSanitized = true
+              }
+            })
+            if (hasSanitized) {
+              try {
+                localStorage.setItem('seafudz_orders', JSON.stringify(parsed))
+              } catch {}
+            }
+
             parsed.forEach((o: any) => {
               const orderType = (o.type || o.order_type || '').toLowerCase()
               const isPos = Boolean(
@@ -480,43 +621,75 @@ export const RideRoleDemo: React.FC = () => {
               if (isPos) return
 
               const id = o.id || o.ref
-              if (!id || hiddenSet.has(id) || hiddenSet.has(o.ref) || combinedMap.has(id)) return
+              if (!id || hiddenSet.has(id) || (o.ref && hiddenSet.has(o.ref)) || combinedMap.has(id)) return
+
+              // Strict guard: If backend marked this order as finished/completed/cancelled, skip it!
+              if (finishedOrderIds.has(id) || (o.ref && finishedOrderIds.has(o.ref))) return
+
+              // Age cutoff: Any food order created > 12 hours ago is historical and must never appear as an active delivery job
+              const orderTs = parseOrderTimestamp(o.createdAt || o.created_at || o.dateTime)
+              if (orderTs !== null && Date.now() - orderTs > 12 * 60 * 60 * 1000) {
+                return
+              }
+
+              // Strict User Flow Requirement: Official restaurant receipt from POS Cashier MUST be printed
+              // before the online delivery order reflects on the Rider dispatch queue.
+              const isReceiptPrinted = Boolean(
+                o.isReceiptPrinted === true ||
+                o.is_receipt_printed === true ||
+                o.receiptStatus === 'PRINTED' ||
+                o.receipt_status === 'PRINTED' ||
+                printedReceiptsSet.has(id) ||
+                (o.ref && printedReceiptsSet.has(o.ref))
+              )
+              if (!isReceiptPrinted) return
 
               const rawStatus = (o.status || '').toUpperCase()
               const unconfirmedStatuses = [
                 'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
                 'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT'
+                'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT',
+                'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
               ]
               if (unconfirmedStatuses.includes(rawStatus)) return
 
               // Once an order is completed, delivered, served, or cancelled, it is gone from the rider side!
               const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
-              if (finishedStatuses.includes(rawStatus)) return
+              if (finishedStatuses.includes(rawStatus) || isOrderCompleted(rawStatus)) return
 
               let displayStatus = 'Ready'
               if (rawStatus === 'OUT_FOR_DELIVERY') {
                 displayStatus = 'Out for Delivery'
               } else if (rawStatus === 'READY') {
                 displayStatus = 'Ready'
-              } else if (rawStatus === 'PREPARING' || rawStatus === 'CONFIRMED') {
-                displayStatus = 'Preparing'
               } else {
                 return
               }
 
-              const items = Array.isArray(o.cartItems)
-                ? o.cartItems.map((ci: any) => ({
-                    name: ci.item?.name || ci.name || 'Seafood Dish',
-                    quantity: ci.quantity || 1,
+              let items: Array<{ name: string; quantity: number }> = []
+              if (Array.isArray(o.items) && o.items.length > 0) {
+                items = o.items
+                  .filter((i: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()))
+                  .map((i: any) => ({
+                    name: i.name || i.product_name_snapshot || i.item?.name || 'Seafood Dish',
+                    quantity: Number(i.quantity || 1),
                   }))
-                : (o.items || '').split(',').map((part: string) => {
-                    const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
-                    return {
-                      name: match ? match[1].trim() : part.trim(),
-                      quantity: match ? parseInt(match[2], 10) : 1,
-                    }
-                  })
+              } else if (Array.isArray(o.cartItems) && o.cartItems.length > 0) {
+                items = o.cartItems
+                  .filter((ci: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(ci.item_status || ci.itemStatus || '').toUpperCase()))
+                  .map((ci: any) => ({
+                    name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Seafood Dish',
+                    quantity: Number(ci.quantity || 1),
+                  }))
+              } else if (typeof o.items === 'string' && o.items.trim()) {
+                items = o.items.split(',').map((part: string) => {
+                  const match = part.trim().match(/^(.*?)\s*x(\d+)$/)
+                  return {
+                    name: match ? match[1].trim() : part.trim(),
+                    quantity: match ? parseInt(match[2], 10) : 1,
+                  }
+                })
+              }
 
               const address = o.address || 'Monumento, Caloocan'
               const latitude = o.deliveryLatitude ?? o.delivery_latitude
@@ -530,9 +703,15 @@ export const RideRoleDemo: React.FC = () => {
                 ? Number(o.rider_cash_received)
                 : (o.riderCashReceived != null ? Number(o.riderCashReceived) : undefined)
 
+              const resolvedCreatedAt = o.createdAt || o.created_at || (o.dateTime && !isNaN(Date.parse(o.dateTime)) ? o.dateTime : new Date().toISOString())
+              const tripId = tripMap[id] || (o.ref ? tripMap[o.ref] : undefined)
+
               combinedMap.set(id, {
                 id,
                 ref: id,
+                customerId: o.customerId || o.customer_id || o.userId || undefined,
+                userId: o.userId || o.customerId || o.customer_id || undefined,
+                tripId,
                 customer: o.customer || 'Online Customer',
                 phone: o.phone || '0917-000-0000',
                 address,
@@ -542,7 +721,7 @@ export const RideRoleDemo: React.FC = () => {
                   ? undefined
                   : Number(o.deliveryFee ?? o.delivery_fee),
                 status: displayStatus,
-                createdAt: o.dateTime || 'Just now',
+                createdAt: resolvedCreatedAt,
                 paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
@@ -554,7 +733,8 @@ export const RideRoleDemo: React.FC = () => {
         console.warn('Rider LocalStorage note:', e)
       }
 
-      if (import.meta.env.DEV) {
+      // Only inject mock dev demo fixtures if there are NO real orders anywhere in the system
+      if (import.meta.env.DEV && combinedMap.size === 0 && realOrdersCount === 0) {
         let demoStatuses: Record<string, DeliveryJob['status']> = {}
         try {
           demoStatuses = JSON.parse(localStorage.getItem(DEMO_ORDER_STATUS_KEY) || '{}')
@@ -796,6 +976,16 @@ export const RideRoleDemo: React.FC = () => {
   // Handle bundle start delivery
   const handleStartBundleDelivery = async (bundle: DeliveryBundle) => {
     setPaymentError(null)
+    const tripId = `TRIP-${bundle.bundleKey}-${Date.now()}`
+    try {
+      const savedTrips = JSON.parse(localStorage.getItem('seafudz_rider_dispatch_trips') || '{}')
+      bundle.orders.forEach((o) => {
+        savedTrips[o.id] = tripId
+        if (o.ref) savedTrips[o.ref] = tripId
+      })
+      localStorage.setItem('seafudz_rider_dispatch_trips', JSON.stringify(savedTrips))
+    } catch {}
+
     const updates = bundle.orders.map((o) => ({
       orderId: o.id,
       newStatus: 'Out for Delivery' as const,
@@ -805,6 +995,22 @@ export const RideRoleDemo: React.FC = () => {
       bundle.isBundle
         ? `Started combined delivery for ${bundle.orders.length} orders to ${bundle.customer}!`
         : `Started delivery for order #${bundle.primaryOrder.ref}!`
+    )
+  }
+
+  // Handle dispatching only the packages that are currently Ready (when some are still cooking)
+  const handleStartReadyPackagesOnly = async (bundle: DeliveryBundle) => {
+    setPaymentError(null)
+    const readyOrders = bundle.orders.filter((o) => String(o.status).toLowerCase() === 'ready')
+    if (readyOrders.length === 0) return
+
+    const updates = readyOrders.map((o) => ({
+      orderId: o.id,
+      newStatus: 'Out for Delivery' as const,
+    }))
+    await handleUpdateOrdersStatus(updates)
+    setNotification(
+      `Dispatched ${readyOrders.length} ready package(s) for ${bundle.customer}. Remaining cooking order(s) will be delivered once finished.`
     )
   }
 
@@ -851,6 +1057,14 @@ export const RideRoleDemo: React.FC = () => {
     })
 
     await handleUpdateOrdersStatus(updates)
+    try {
+      const savedTrips = JSON.parse(localStorage.getItem('seafudz_rider_dispatch_trips') || '{}')
+      bundle.orders.forEach((o) => {
+        delete savedTrips[o.id]
+        if (o.ref) delete savedTrips[o.ref]
+      })
+      localStorage.setItem('seafudz_rider_dispatch_trips', JSON.stringify(savedTrips))
+    } catch {}
     // Close modal once order is delivered so it is cleared from rider's view
     setCustomerDetailsOrder(null)
     setNotification(
@@ -929,7 +1143,7 @@ export const RideRoleDemo: React.FC = () => {
           return !isOrderCompleted(b.status)
         }
         if (activeTab === 'Ready') {
-          return b.status.toLowerCase() === 'ready'
+          return b.status.toLowerCase() === 'ready' || (b.isBundle && b.readyCount > 0)
         }
         if (activeTab === 'Out for Delivery') {
           return b.status.toLowerCase() === 'out for delivery'
@@ -961,10 +1175,8 @@ export const RideRoleDemo: React.FC = () => {
       return list.sort((a, b) => (a.roadDistanceKm ?? Infinity) - (b.roadDistanceKm ?? Infinity))
     }
     return list.sort((a, b) => {
-      const aTime = Date.parse(a.latestCreatedAt || '')
-      const bTime = Date.parse(b.latestCreatedAt || '')
-      if (!Number.isFinite(aTime)) return Number.isFinite(bTime) ? 1 : 0
-      if (!Number.isFinite(bTime)) return -1
+      const aTime = parseOrderTimestamp(a.latestCreatedAt || '') ?? 0
+      const bTime = parseOrderTimestamp(b.latestCreatedAt || '') ?? 0
       return bTime - aTime
     })
   }, [bundledDeliveries, activeTab, searchQuery, hiddenOrderIds, sortBy])
@@ -1160,13 +1372,17 @@ export const RideRoleDemo: React.FC = () => {
                             <span
                               className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
                                 bundle.status === 'Ready'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                   : bundle.status === 'Out for Delivery'
                                   ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : bundle.hasPreparing && bundle.readyCount > 0
+                                  ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
                               }`}
                             >
-                              ● {bundle.status}
+                              ● {bundle.hasPreparing && bundle.readyCount > 0
+                                ? `${bundle.readyCount} Ready • ${bundle.preparingCount} Cooking`
+                                : bundle.status}
                             </span>
                             <button
                               type="button"
@@ -1212,6 +1428,15 @@ export const RideRoleDemo: React.FC = () => {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                    ord.status === 'Ready'
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : ord.status === 'Out for Delivery'
+                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}>
+                                    {ord.status === 'Ready' ? '✓ Ready' : ord.status === 'Out for Delivery' ? '🛵 Transit' : '🔥 Cooking'}
+                                  </span>
                                   <span className="font-bold text-neutral-800 text-[11px]">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                   <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${ordIsCod ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
                                     {ordIsCod ? 'COD' : 'GCash'}
@@ -1490,10 +1715,23 @@ export const RideRoleDemo: React.FC = () => {
                             <span className="text-[10px] font-mono font-bold text-neutral-500">{ord.ref}</span>
                           </div>
                         </div>
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${ordPayInfo.badgeClass}`}>
-                          <span>{ordPayInfo.icon}</span>
-                          <span>{ordPayInfo.label}</span>
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
+                              ord.status === 'Ready'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : ord.status === 'Out for Delivery'
+                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            ● {ord.status === 'Ready' ? 'Ready for Pickup' : ord.status === 'Out for Delivery' ? 'In Transit' : 'Cooking in Kitchen'}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${ordPayInfo.badgeClass}`}>
+                            <span>{ordPayInfo.icon}</span>
+                            <span>{ordPayInfo.label}</span>
+                          </span>
+                        </div>
                       </div>
 
                       {/* Items */}
@@ -1633,6 +1871,44 @@ export const RideRoleDemo: React.FC = () => {
                       Start Delivery {activeBundle.isBundle ? `(${activeBundle.orders.length} Orders Combined)` : ''}
                     </span>
                   </button>
+                </div>
+              )}
+
+              {/* Preparing status: Either cooking in kitchen, or partially ready */}
+              {activeBundle.status === 'Preparing' && (
+                <div className="space-y-3 pt-1">
+                  {activeBundle.readyCount > 0 ? (
+                    <>
+                      <div className="rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-xs text-amber-950 flex items-start gap-2.5">
+                        <span className="text-base shrink-0">🍳</span>
+                        <div>
+                          <p className="font-bold text-amber-900">
+                            Partial Ready ({activeBundle.readyCount} of {activeBundle.orders.length} Packages Ready)
+                          </p>
+                          <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
+                            {activeBundle.readyCount} package is packed and ready for pickup at the counter, while {activeBundle.preparingCount} package is still cooking in the kitchen. You can wait for the kitchen to finish so both packages travel together, or dispatch the ready package now.
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleStartReadyPackagesOnly(activeBundle)}
+                        className="w-full rounded-xl bg-amber-600 hover:bg-amber-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span>
+                          Dispatch Ready Package Only ({activeBundle.readyCount} Ready)
+                        </span>
+                      </button>
+                    </>
+                  ) : (
+                    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs text-neutral-600 flex items-center gap-2.5">
+                      <span className="text-lg shrink-0">⏳</span>
+                      <span>The kitchen is currently cooking this customer's order. Once marked Ready by the kitchen, you can start delivery.</span>
+                    </div>
+                  )}
                 </div>
               )}
 

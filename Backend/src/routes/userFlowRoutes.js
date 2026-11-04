@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { query } from '../config/db.js';
+import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse, calculateFinancialLedger } from './sharedFlowStore.js';
 import { handleAssistantStatusUpdate } from './assistantRoutes.js';
 import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
 import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
 import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
+import { restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 import { realtimeEmitter, emitOrderUpdate } from '../utils/realtimeEvents.js';
 
@@ -51,9 +52,11 @@ router.get('/user-flow/orders', async (req, res) => {
     let dbOrders = [];
     try {
       const { rows } = await query(`
-        SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+        SELECT o.id, COALESCE(o.order_type, 'ONLINE') AS order_type, o.customer_id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
                o.delivery_latitude, o.delivery_longitude,
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
+               o.requires_kitchen_approval, o.kitchen_approval_status, o.servings_deducted,
+               o.receipt_status, o.is_receipt_printed, o.receipt_printed_at,
                o.created_at, o.updated_at,
                c.fullname AS customer_name, c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
@@ -90,7 +93,7 @@ router.get('/user-flow/orders', async (req, res) => {
         ) d ON o.id = d.order_id
         LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname, r_emp.phone
+        GROUP BY o.id, o.customer_id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname, r_emp.phone
         ORDER BY o.created_at DESC
       `);
       dbOrders = rows;
@@ -121,12 +124,44 @@ router.get('/user-flow/orders', async (req, res) => {
         const mergedMethod = dbOrder.paymentMethod || existing.paymentMethod || 'GCash';
         const mergedLedger = calculateFinancialLedger(mergedPayments, mergedRefunds, mergedTotal, mergedMethod);
 
+        const validExistingCustomer = existing.customerName && existing.customerName !== 'Online Customer' ? existing.customerName : null;
+        const validExistingAddress = existing.address && existing.address !== 'Delivery Address' && existing.address !== 'Standard Delivery Address' ? existing.address : null;
+        const validExistingPhone = existing.phone && existing.phone !== '0917-000-0000' ? existing.phone : null;
+        const validExistingItems = Array.isArray(existing.items) && existing.items.length > 0 ? existing.items : null;
+        const validExistingTotal = existing.total !== undefined && Number(existing.total) > 0 ? Number(existing.total) : null;
+
+        const dbTime = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+        const memTime = (existing.updated_at || existing.updatedAt) ? new Date(existing.updated_at || existing.updatedAt).getTime() : 0;
+        const effectiveStatus = (memTime > dbTime && existing.status)
+          ? normalizeFlowStatus(existing.status)
+          : normalizeFlowStatus(row.status || existing.status);
+
+        const isPrinted = Boolean(
+          dbOrder.isReceiptPrinted ||
+          dbOrder.is_receipt_printed ||
+          existing.isReceiptPrinted ||
+          existing.is_receipt_printed ||
+          row.is_receipt_printed ||
+          row.receipt_status === 'PRINTED'
+        );
+        const receiptStatus = isPrinted ? 'PRINTED' : (dbOrder.receiptStatus || existing.receiptStatus || row.receipt_status || 'UNPRINTED');
+
         mergedMap.set(row.id, {
           ...dbOrder,
-          ...existing,
+          isReceiptPrinted: isPrinted,
+          is_receipt_printed: isPrinted,
+          receiptStatus: receiptStatus,
+          receipt_status: receiptStatus,
+          customerName: validExistingCustomer || dbOrder.customerName,
+          customer: validExistingCustomer || dbOrder.customer,
+          phone: validExistingPhone || dbOrder.phone,
+          address: validExistingAddress || dbOrder.address,
+          deliveryAddress: validExistingAddress || dbOrder.deliveryAddress,
+          items: validExistingItems || dbOrder.items,
+          total: validExistingTotal !== null ? validExistingTotal : dbOrder.total,
           payments: mergedPayments,
           refunds: mergedRefunds,
-          status: normalizeFlowStatus(existing.status || row.status),
+          status: effectiveStatus,
           outOfStockItems: dbOrder.outOfStockItems.length > 0 ? dbOrder.outOfStockItems : existing.outOfStockItems || [],
           customerResolution: dbOrder.customerResolution || existing.customerResolution || null,
           customerResolutionStatus: dbOrder.customerResolutionStatus !== 'NONE'
@@ -140,6 +175,9 @@ router.get('/user-flow/orders', async (req, res) => {
           paymentReceipt: existing.paymentReceipt || dbOrder.paymentReceipt || undefined,
           paymentReference: existing.paymentReference || dbOrder.paymentReference || existing.referenceNumber || dbOrder.referenceNumber || undefined,
           referenceNumber: existing.referenceNumber || dbOrder.referenceNumber || existing.paymentReference || dbOrder.paymentReference || undefined,
+          riderName: existing.riderName || dbOrder.riderName,
+          riderPhone: existing.riderPhone || dbOrder.riderPhone,
+          riderCashReceived: existing.riderCashReceived !== undefined ? existing.riderCashReceived : dbOrder.riderCashReceived,
           financialStatus: mergedLedger.financialStatus,
           netConfirmedPaid: mergedLedger.netConfirmedPaid,
           grossConfirmedPaid: mergedLedger.grossConfirmedPaid,
@@ -147,7 +185,6 @@ router.get('/user-flow/orders', async (req, res) => {
           pendingRefundAmount: mergedLedger.pendingRefundAmount,
           additionalRequired: mergedLedger.additionalRequired,
           excessAmount: mergedLedger.excessAmount,
-          total: mergedTotal,
         });
       }
     });
@@ -742,6 +779,19 @@ async function executeOrderCancellation(id) {
       [id]
     );
   } catch (e) {}
+
+  // Restore any deducted remaining servings if cancelled before prep
+  try {
+    const pool = await getDbPool();
+    const client = await pool.connect();
+    try {
+      await restoreOrderRemainingServings(client, id);
+    } finally {
+      client.release();
+    }
+  } catch (restErr) {
+    console.warn('[SERVINGS] Order cancellation servings restoration note:', restErr.message);
+  }
 
   const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCELLED' } : { id, status: 'CANCELLED' });
   const formattedResponse = formatOrderResponse(activeOrderObj);

@@ -1,6 +1,6 @@
 import { HeroBoat } from '../components/HeroBoat'
 import { DrawnWaves } from '../components/DrawnWaves'
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { CLIENT_CATEGORIES } from '../components/MenuCard'
@@ -27,6 +27,8 @@ interface CartItem {
 
 interface OnlineOrderState {
     id: string
+    customerId?: string
+    userId?: string
     customerName: string
     phone: string
     address: string
@@ -427,8 +429,39 @@ export const OnlineCustomer: React.FC = () => {
     const userProfileName = currentUser?.fullname || currentUser?.username || 'Guest'
 
     // Availability & Price sync
-    const { isAvailable } = useMenuAvailability()
+    const { isAvailable, getRemainingServings } = useMenuAvailability()
     const { getEffectivePrice } = useMenuPrices()
+
+    // Minimal Modern Stock / Servings Notice Modal State
+    const [stockNotice, setStockNotice] = useState<{
+        title?: string
+        itemName?: string
+        servingsLeft?: number | null
+        message: string
+    } | null>(null)
+
+    const showStockNotice = useCallback((itemName: string, servingsLeft: number | null, message?: string) => {
+        setStockNotice({
+            title: servingsLeft === 0 ? 'Out of Stock' : 'Portion Limit Reached',
+            itemName,
+            servingsLeft,
+            message: message || (servingsLeft === 0
+                ? `Sorry, "${itemName}" is currently out of stock.`
+                : `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${itemName}.`),
+        })
+    }, [])
+
+    // Close stock notice modal on Escape key press
+    useEffect(() => {
+        if (!stockNotice) return
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                setStockNotice(null)
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [stockNotice])
 
     const isFetchingOrderRef = useRef(false)
     const lastFetchTimeRef = useRef(0)
@@ -763,7 +796,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         setIsVerificationModalOpen(false)
                         setIsWaitingModalOpen(false)
                         setIsCartDrawerOpen(true)
-                        alert(`⚠️ Notice: "${affected.item.name}" was just removed from the menu by the restaurant and has been removed from your cart. You cannot continue the order with this item.`)
+                        showStockNotice(affected.item.name, 0, `"${affected.item.name}" was just removed from the menu by the restaurant and has been removed from your cart.`)
                         return prev.filter((ci) => ci.item.id !== affected.item.id)
                     }
                     return prev
@@ -772,7 +805,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         })
 
         return () => unsubscribe()
-    }, [refreshMenuItems])
+    }, [refreshMenuItems, showStockNotice])
 
     // Keep cart clean against current menuItems
     useEffect(() => {
@@ -784,7 +817,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 setIsVerificationModalOpen(false)
                 setIsWaitingModalOpen(false)
                 const names = removed.map((ci) => ci.item.name).join(', ')
-                alert(`⚠️ Notice: ${names} is no longer available on the menu and has been removed from your cart.`)
+                showStockNotice(names, 0, `${names} is no longer available on the menu and has been removed from your cart.`)
                 return prev.filter((ci) => activeIds.has(ci.item.id))
             }
             return prev
@@ -1582,6 +1615,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
 
+        const servingsLeft = getRemainingServings(item.id)
+        if (servingsLeft !== null && servingsLeft !== undefined) {
+            if (servingsLeft <= 0) {
+                showStockNotice(item.name, 0, `Sorry, "${item.name}" is currently out of stock.`)
+                return
+            }
+            const existing = cartItems.find((ci) => ci.item.id === item.id)
+            if (existing && existing.quantity >= servingsLeft) {
+                showStockNotice(item.name, servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${item.name}.`)
+                return
+            }
+        }
+
         if (e) {
             triggerDeliverAnimation(e, item.image || item.bundledImage)
         } else {
@@ -1606,8 +1652,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const handleIncrement = (itemId: string, e?: React.MouseEvent) => {
+        const servingsLeft = getRemainingServings(itemId)
+        const ci = cartItems.find((c) => c.item.id === itemId)
+        if (servingsLeft !== null && servingsLeft !== undefined && ci) {
+            if (ci.quantity >= servingsLeft) {
+                showStockNotice(ci.item.name, servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci.item.name}.`)
+                return
+            }
+        }
+
         if (e) {
-            const ci = cartItems.find((c) => c.item.id === itemId)
             triggerDeliverAnimation(e, ci?.item.image || ci?.item.bundledImage)
         } else {
             setIsCartBumping(true)
@@ -1627,8 +1681,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const handleSetQuantity = (itemId: string, quantity: number) => {
+        const servingsLeft = getRemainingServings(itemId)
+        const ci = cartItems.find((c) => c.item.id === itemId)
+        let safeQuantity = Math.max(1, quantity)
+        if (servingsLeft !== null && servingsLeft !== undefined && safeQuantity > servingsLeft) {
+            showStockNotice(ci?.item.name || 'this item', servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci?.item.name || 'this item'}.`)
+            safeQuantity = servingsLeft
+        }
+
         setCartItems((prev) =>
-            prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: Math.max(1, quantity) } : ci))
+            prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: safeQuantity } : ci))
         )
     }
 
@@ -1740,11 +1802,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             const orderPayload = {
                 type: 'Delivery',
+                customerId: currentUser?.id || undefined,
+                userId: currentUser?.id || undefined,
                 customerName: customerName.trim(),
                 phone: phone.trim(),
                 deliveryAddress: combinedAddress,
-                deliveryLatitude: addressCoordinates?.lat,
-                deliveryLongitude: addressCoordinates?.lng,
+                deliveryLatitude: deliveryDestination?.lat ?? addressCoordinates?.lat,
+                deliveryLongitude: deliveryDestination?.lng ?? addressCoordinates?.lng,
                 paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 paymentReference: gcashRefNumber.trim() || undefined,
@@ -1802,13 +1866,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             const newOrder: OnlineOrderState & { type: string; customer: string; deliveryAddress: string } = {
                 id: newOrderId,
                 type: 'Delivery',
+                customerId: serverOrder?.customerId || serverOrder?.customer_id || currentUser?.id || undefined,
+                userId: serverOrder?.userId || serverOrder?.customerId || currentUser?.id || undefined,
                 customerName: serverOrder?.customerName || serverOrder?.customer_name || customerName,
                 customer: serverOrder?.customerName || serverOrder?.customer_name || customerName,
                 phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
                 address: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
                 deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
-                deliveryLatitude: serverOrder?.deliveryLatitude ?? addressCoordinates?.lat,
-                deliveryLongitude: serverOrder?.deliveryLongitude ?? addressCoordinates?.lng,
+                deliveryLatitude: serverOrder?.deliveryLatitude ?? (deliveryDestination?.lat ?? addressCoordinates?.lat),
+                deliveryLongitude: serverOrder?.deliveryLongitude ?? (deliveryDestination?.lng ?? addressCoordinates?.lng),
                 paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
@@ -1819,7 +1885,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 total: serverOrder?.total ?? total,
                 status: (serverOrder?.status || initialStatus).toUpperCase(),
                 gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized),
-                createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                createdAt: serverOrder?.created_at || serverOrder?.createdAt || new Date().toISOString(),
             }
 
             pendingOrderSubmissionRef.current = null
@@ -2001,7 +2067,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const renderProductCard = (item: MenuItem & { basePrice?: number }) => {
-        const available = isAvailable(item.id)
+        const servingsLeft = getRemainingServings(item.id)
+        const available = isAvailable(item.id) && (servingsLeft === null || servingsLeft === undefined || servingsLeft > 0)
         const cartItem = cartItems.find((ci) => ci.item.id === item.id)
         return (
             <div
@@ -2021,9 +2088,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
                         }`}
                     />
-                    <span className="absolute top-3 right-3 sm:top-4 sm:right-4 bg-white/95 text-neutral-800 text-xs sm:text-sm font-bold px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full border border-neutral-200/60 shadow-xs">
-                        {item.category}
-                    </span>
+                    <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5">
+                        {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
+                            <span className="bg-amber-500 text-white text-[10px] sm:text-xs font-black px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full shadow-xs flex items-center gap-1 animate-pulse">
+                                🔥 {servingsLeft} left
+                            </span>
+                        )}
+                        <span className="bg-white/95 text-neutral-800 text-xs sm:text-sm font-bold px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full border border-neutral-200/60 shadow-xs">
+                            {item.category}
+                        </span>
+                    </div>
 
                     {!available && (
                         <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">
@@ -2478,25 +2552,51 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <textarea
                                         required
                                         rows={2}
-                                        readOnly={Boolean(address.trim())}
                                         disabled={isFindingAddress}
-                                        placeholder={address.trim() ? '' : 'No address set. Click Relocate to detect your location.'}
+                                        placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
                                         value={address}
                                         onChange={(e) => {
-                                            if (!address.trim()) {
-                                                setAddress(e.target.value)
-                                            }
+                                            setAddress(e.target.value)
+                                            setAddressCoordinates(null)
+                                            setAddressLookupMessage('')
                                         }}
-                                        className={`border rounded-xl px-4 py-2.5 text-sm transition-colors resize-none ${
-                                            address.trim()
-                                                ? 'bg-neutral-50/80 text-neutral-700 border-neutral-200 cursor-default select-text focus:outline-none'
-                                                : 'border-neutral-200 focus:outline-none focus:border-orange-500'
-                                        }`}
+                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm transition-colors resize-none bg-white text-neutral-800 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 placeholder:text-neutral-400"
                                     />
                                     {addressLookupMessage && (
                                         <p role="status" className="text-xs text-neutral-500">
                                             {addressLookupMessage}
                                         </p>
+                                    )}
+
+                                    {/* Store Delivery Policy Notice (Max 8 km) */}
+                                    <div className="mt-1 flex items-start gap-2.5 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
+                                        <svg className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        </svg>
+                                        <div className="space-y-0.5">
+                                            <p className="font-bold text-orange-900 text-[11px] uppercase tracking-wide">Store Delivery Radius Policy (Max 8 km)</p>
+                                            <p className="text-[11px] text-orange-800 leading-snug">
+                                                Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our restaurant in Caloocan. Beyond 8 km, our riders cannot deliver.
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Real-time distance status feedback */}
+                                    {deliveryDistanceKm !== null && (
+                                        <div className="mt-1">
+                                            {deliveryDistanceKm <= 8 ? (
+                                                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                                                    <span>✓</span>
+                                                    <span>Address is within delivery range ({deliveryDistanceKm.toFixed(1)} km) • Delivery fee: ₱{deliveryFee?.toFixed(2) ?? '50.00'}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold">
+                                                    <span>⚠️</span>
+                                                    <span>Outside 8 km delivery coverage ({deliveryDistanceKm.toFixed(1)} km). Store cannot deliver to this address.</span>
+                                                </div>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
 
@@ -2579,10 +2679,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || hasUnavailableCartItems || hasDeletedCartItems}
+                                        disabled={isSubmittingOrder || hasUnavailableCartItems || hasDeletedCartItems || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        {isSubmittingOrder ? 'Submitting Order...' : 'Confirm & Submit Order'}
+                                        {isSubmittingOrder
+                                            ? 'Submitting Order...'
+                                            : (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null
+                                                ? 'Outside 8 km Delivery Zone'
+                                                : 'Confirm & Submit Order'}
                                     </button>
                                     <button
                                         type="button"
@@ -2639,11 +2743,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
                                     <div className="flex justify-between text-xs text-neutral-500">
                                         <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                        <span>{deliveryFee === null ? 'Unavailable' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</span>
+                                        <span className={deliveryFee === null ? 'text-rose-600 font-bold' : ''}>
+                                            {deliveryFee === null ? 'Unavailable (Beyond 8 km)' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                        </span>
                                     </div>
                                     {deliveryDistanceMessage && (
-                                        <p role="status" className="text-[11px] text-amber-700">
-                                            {deliveryDistanceMessage}
+                                        <p role="status" className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1">
+                                            ⚠️ {deliveryDistanceMessage}
                                         </p>
                                     )}
                                     <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
@@ -3542,20 +3648,34 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 <div className="pt-1">
                                                     <h5 className="text-xs font-bold text-neutral-700 uppercase tracking-wider mb-2">Dishes Ordered</h5>
                                                     <div className="bg-neutral-50 rounded-xl border border-neutral-100 divide-y divide-neutral-100 overflow-hidden">
-                                                        {(activeOrder.items || []).map((ci: any, idx: number) => {
-                                                            const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
-                                                            const qty = ci.quantity || 1
-                                                            const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
-                                                            return (
-                                                                <div key={idx} className="px-3.5 py-2.5 flex items-center justify-between gap-3">
-                                                                    <div className="flex items-center gap-2.5 min-w-0">
-                                                                        <span className="w-6 h-6 rounded-md bg-orange-100 text-orange-700 flex items-center justify-center text-[10px] font-black shrink-0">{qty}×</span>
-                                                                        <span className="text-xs font-semibold text-neutral-800 truncate">{name}</span>
-                                                                    </div>
-                                                                    <span className="text-xs font-bold text-neutral-900 whitespace-nowrap">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                                </div>
-                                                            )
-                                                        })}
+                                                        {(() => {
+                                                            const replacements = activeOrder.customerReplacements || []
+                                                            const isReplaced = (ci: any) => {
+                                                                const st = String(ci.item_status || ci.itemStatus || '').toUpperCase()
+                                                                if (['REPLACED', 'REFUNDED', 'CANCELLED'].includes(st)) return true
+                                                                const name = ci.name || ci.product_name_snapshot || ci.item?.name || ''
+                                                                return replacements.some((r: any) =>
+                                                                    (r.oldItemId !== undefined && String(r.oldItemId) === String(ci.id)) ||
+                                                                    (r.oldItemName && String(r.oldItemName).trim().toLowerCase() === name.trim().toLowerCase())
+                                                                )
+                                                            }
+                                                            return (activeOrder.items || [])
+                                                                .filter((ci: any) => !isReplaced(ci))
+                                                                .map((ci: any, idx: number) => {
+                                                                    const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
+                                                                    const qty = ci.quantity || 1
+                                                                    const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
+                                                                    return (
+                                                                        <div key={idx} className="px-3.5 py-2.5 flex items-center justify-between gap-3">
+                                                                            <div className="flex items-center gap-2.5 min-w-0">
+                                                                                <span className="w-6 h-6 rounded-md bg-orange-100 text-orange-700 flex items-center justify-center text-[10px] font-black shrink-0">{qty}×</span>
+                                                                                <span className="text-xs font-semibold text-neutral-800 truncate">{name}</span>
+                                                                            </div>
+                                                                            <span className="text-xs font-bold text-neutral-900 whitespace-nowrap">₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                                        </div>
+                                                                    )
+                                                                })
+                                                        })()}
                                                     </div>
                                                 </div>
                                             </div>
@@ -4346,6 +4466,75 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 Close
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Minimal & Modern Stock Limit / Servings Notice Modal */}
+            {stockNotice && (
+                <div
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 animate-in fade-in duration-150"
+                    onClick={() => setStockNotice(null)}
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="stock-notice-modal-title"
+                >
+                    <div
+                        className="relative bg-white rounded-3xl max-w-sm w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 text-center flex flex-col items-center animate-in zoom-in-95 duration-150"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Top-Right Dismiss '✕' Button */}
+                        <button
+                            type="button"
+                            onClick={() => setStockNotice(null)}
+                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-400 hover:text-neutral-700 flex items-center justify-center text-xs font-bold transition-all cursor-pointer"
+                            aria-label="Close modal"
+                        >
+                            ✕
+                        </button>
+
+                        {/* Minimal Icon */}
+                        <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center mb-3.5 shadow-2xs">
+                            <svg
+                                className="w-6 h-6 stroke-current"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                strokeWidth="2.2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            >
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="12" y1="8" x2="12" y2="12" />
+                                <line x1="12" y1="16" x2="12.01" y2="16" />
+                            </svg>
+                        </div>
+
+                        {/* Modal Title */}
+                        <h3 id="stock-notice-modal-title" className="text-base sm:text-lg font-black text-neutral-900 tracking-tight">
+                            {stockNotice.title || 'Portion Limit Reached'}
+                        </h3>
+
+                        {/* Message Description */}
+                        <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed mt-2 font-medium">
+                            {stockNotice.message}
+                        </p>
+
+                        {/* Portion Counter Badge if available */}
+                        {stockNotice.servingsLeft !== undefined && stockNotice.servingsLeft !== null && stockNotice.servingsLeft > 0 && (
+                            <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-bold">
+                                <span>🔥</span>
+                                <span>Maximum {stockNotice.servingsLeft} portion{stockNotice.servingsLeft === 1 ? '' : 's'} available</span>
+                            </div>
+                        )}
+
+                        {/* Modern Action Button */}
+                        <button
+                            type="button"
+                            onClick={() => setStockNotice(null)}
+                            className="mt-5 w-full bg-neutral-900 hover:bg-neutral-800 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl text-xs sm:text-sm transition-all cursor-pointer shadow-sm"
+                        >
+                            Understood
+                        </button>
                     </div>
                 </div>
             )}

@@ -3,6 +3,8 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
+import { checkProductQuantityStandards } from '../utils/bulkOrder.js';
+import { deductOrderRemainingServings, restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 const router = Router();
 
@@ -30,7 +32,7 @@ export async function assertItemsAvailable(client, items) {
     .filter(Boolean)
     .map((name) => String(name).toLowerCase());
   const { rows } = await client.query(
-    `SELECT id::text AS id, name, is_available, is_active
+    `SELECT id::text AS id, name, is_available, is_active, remaining_servings
      FROM products
      WHERE id::text = ANY($1::text[]) OR LOWER(name) = ANY($2::text[])
      FOR SHARE`,
@@ -45,7 +47,23 @@ export async function assertItemsAvailable(client, items) {
     if (!product) throw outOfStockError(name);
     if (product.is_active === false) throw itemDeletedError(name);
     if (!product.is_available) throw outOfStockError(name);
+
+    if (product.remaining_servings !== null && product.remaining_servings !== undefined) {
+      const remaining = Number(product.remaining_servings);
+      if (remaining <= 0) {
+        throw outOfStockError(name);
+      }
+      const requestedQty = Number(item.quantity) || 1;
+      if (requestedQty > remaining) {
+        const err = new Error(`Only ${remaining} serving${remaining === 1 ? '' : 's'} remaining for ${name}. Please reduce quantity.`);
+        err.statusCode = 409;
+        err.code = 'INSUFFICIENT_SERVINGS';
+        throw err;
+      }
+    }
   }
+
+  return rows;
 }
 
 // GET /api/orders - Get orders with pagination, search, and filtering (Staff only)
@@ -294,7 +312,39 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     }
 
     await client.query('BEGIN');
-    await assertItemsAvailable(client, cartItems);
+    const availableProducts = await assertItemsAvailable(client, cartItems);
+
+    const normalizedCartItems = cartItems.map((ci) => {
+      const pId = String(ci.item?.id || ci.productId || ci.id || '');
+      const pName = String(ci.item?.name || ci.name || '');
+      const prod = availableProducts.find(
+        (r) => r.id === pId || r.name.toLowerCase() === pName.toLowerCase()
+      );
+      const rawServ = prod && prod.remaining_servings !== null && prod.remaining_servings !== undefined
+        ? Number(prod.remaining_servings)
+        : (ci.remaining_servings !== undefined ? ci.remaining_servings : ci.item?.remaining_servings);
+      return {
+        ...ci,
+        id: pId,
+        product_id: pId,
+        name: pName,
+        quantity: Number(ci.quantity) || 1,
+        remaining_servings: rawServ !== undefined ? rawServ : null,
+        remainingServings: rawServ !== undefined ? rawServ : null,
+      };
+    });
+
+    const standardCheck = checkProductQuantityStandards(normalizedCartItems);
+    const requiresKitchenApproval = req.body.requires_kitchen_approval === true ||
+      req.body.requiresKitchenApproval === true ||
+      String(req.body.status || '').toUpperCase() === 'AWAITING_KITCHEN_APPROVAL' ||
+      standardCheck.requiresApproval;
+
+    const posStatus = requiresKitchenApproval
+      ? 'AWAITING_KITCHEN_APPROVAL'
+      : (req.body.status ? req.body.status.toUpperCase() : 'CONFIRMED');
+
+    const kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
 
     const orderNumber = req.body.id || req.body.ref || `ORD-${Date.now().toString().slice(-6)}`;
     const subtotal = cartItems.reduce((acc, ci) => {
@@ -307,17 +357,18 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
 
     const normalizedOrderType = (type === 'ONLINE' || type === 'Delivery' || orderType === 'ONLINE') ? 'ONLINE' : 'ON_SITE';
 
-    const posStatus = req.body.status ? req.body.status.toUpperCase() : 'CONFIRMED';
     const orderSql = `
       INSERT INTO orders (
         id, customer_id, cashier_id, assistant_id, table_id,
         order_type, status, subtotal, tax, delivery_fee, total, notes,
-        payment_reference, payment_method
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        payment_reference, payment_method, requires_kitchen_approval, kitchen_approval_status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       ON CONFLICT (id) DO UPDATE SET
         payment_reference = COALESCE(EXCLUDED.payment_reference, orders.payment_reference),
         payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
         status = EXCLUDED.status,
+        requires_kitchen_approval = EXCLUDED.requires_kitchen_approval,
+        kitchen_approval_status = EXCLUDED.kitchen_approval_status,
         updated_at = NOW()
       RETURNING *
     `;
@@ -337,6 +388,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       notes || null,
       finalPaymentRef,
       paymentMethod || 'CASH',
+      requiresKitchenApproval,
+      kitchenApprovalStatus,
     ]);
 
     const createdOrder = orderRes.rows[0];
@@ -367,21 +420,22 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
 
     // Insert payment record
     const finalPaymentMethod = paymentMethod || 'CASH';
+    const paymentStatus = requiresKitchenApproval ? 'PENDING' : 'PAID';
 
     const paymentSql = `
       INSERT INTO payments (order_id, payment_method, amount, status, reference_number, paid_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      VALUES ($1, $2, $3, $4, $5, ${requiresKitchenApproval ? 'NULL' : 'NOW()'})
     `;
     await client.query(paymentSql, [
       createdOrder.id,
       finalPaymentMethod,
       totalAmount,
-      'PAID',
+      paymentStatus,
       finalPaymentRef,
     ]);
 
-    // Create kitchen order ticket for POS and on-site orders
-    if (normalizedOrderType !== 'ONLINE' || req.body.isPosOrder) {
+    // Create kitchen order ticket for POS and on-site orders (only if already approved / ready)
+    if ((normalizedOrderType !== 'ONLINE' || req.body.isPosOrder) && !requiresKitchenApproval) {
       const kitchenSql = `
         INSERT INTO kitchen_orders (order_id, status, updated_at)
         VALUES ($1, 'PENDING', NOW())
@@ -403,31 +457,71 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       ]);
     }
 
-    inMemoryOrders.set(createdOrder.id, {
+    const inMemPayload = {
       id: createdOrder.id,
       ref: createdOrder.id,
       customerName: 'Walk-In Customer',
       customer: 'Walk-In Customer',
       type: createdOrder.order_type === 'ONLINE' ? 'Delivery' : 'POS Order',
       orderType: createdOrder.order_type,
-      status: createdOrder.status || 'CONFIRMED',
+      status: createdOrder.status || posStatus,
+      requires_kitchen_approval: requiresKitchenApproval,
+      requiresKitchenApproval,
+      kitchen_approval_status: kitchenApprovalStatus,
+      kitchenApprovalStatus,
+      is_bulk: requiresKitchenApproval,
+      isBulk: requiresKitchenApproval,
+      flagged_quantity_items: standardCheck.flaggedItems,
+      flaggedQuantityItems: standardCheck.flaggedItems,
+      items: cartItems.map((ci) => ({
+        id: ci.item ? ci.item.id : (ci.id || ci.productId),
+        product_id: ci.item ? ci.item.id : (ci.id || ci.productId),
+        name: ci.item ? ci.item.name : ci.name,
+        quantity: ci.quantity || 1,
+        price: ci.item ? ci.item.price : (ci.price || 0),
+      })),
       total: totalAmount,
       subtotal,
       vat: tax,
       paymentMethod: finalPaymentMethod,
       paymentReference: finalPaymentRef,
       referenceNumber: finalPaymentRef,
+      payment_status: paymentStatus,
+      paymentStatus,
       created_at: createdOrder.created_at || new Date().toISOString(),
       updated_at: createdOrder.updated_at || new Date().toISOString(),
-    });
+    };
+    inMemoryOrders.set(createdOrder.id, inMemPayload);
+
+    // Atomically deduct remaining servings for on-site POS orders (status is CONFIRMED)
+    if (createdOrder.status === 'CONFIRMED') {
+      try {
+        await deductOrderRemainingServings(client, createdOrder.id);
+      } catch (servErr) {
+        console.warn('[SERVINGS] POS deduction note:', servErr.message);
+      }
+    }
 
     await client.query('COMMIT');
     client.release();
 
+    const formattedOrder = formatOrderResponse(inMemPayload);
+    emitOrderUpdate(formattedOrder);
+
     return res.status(201).json({
       success: true,
       message: 'Order created successfully in database',
-      data: createdOrder,
+      data: {
+        ...createdOrder,
+        requires_kitchen_approval: requiresKitchenApproval,
+        requiresKitchenApproval,
+        kitchen_approval_status: kitchenApprovalStatus,
+        kitchenApprovalStatus,
+        is_bulk: requiresKitchenApproval,
+        isBulk: requiresKitchenApproval,
+        flagged_quantity_items: standardCheck.flaggedItems,
+        flaggedQuantityItems: standardCheck.flaggedItems,
+      },
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -493,6 +587,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       deliveryFee,
       total,
       type,
+      orderType,
       table,
       paymentReference,
       referenceNumber,
@@ -501,6 +596,11 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
     } = req.body;
     const finalRef = (paymentReference || referenceNumber || '').toString().trim() || null;
     const finalReceipt = paymentReceipt !== undefined ? paymentReceipt : undefined;
+
+    const rawType = (orderType || type || '').toString().trim().toUpperCase();
+    const normalizedOrderType = rawType
+      ? ((rawType === 'ONLINE' || rawType === 'DELIVERY') ? 'ONLINE' : 'ON_SITE')
+      : null;
 
     // Check if order is already being processed or prepared in the kitchen
     const nonModifiableKitchenStatuses = [
@@ -555,18 +655,43 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
     };
     inMemoryOrders.set(id, updatedInMemory);
 
-    // 2. Persist in PostgreSQL DB
+    // 2. Persist in PostgreSQL DB with transactional servings reconciliation
+    let updatedProducts = [];
+    let pool;
+    let client;
     try {
+      pool = await getDbPool();
+      client = await pool.connect();
+      await client.query('BEGIN');
+
       const calcTotal = total !== undefined ? total : (subtotal || 0) + (vat || 0) + (deliveryFee || 0);
 
-      const checkExists = await query('SELECT id FROM orders WHERE id = $1', [id]);
+      const checkExists = await client.query('SELECT id, status, servings_deducted FROM orders WHERE id = $1 FOR UPDATE', [id]);
+      console.log(`[PUT /orders/${id}] checkExists:`, checkExists.rows, 'items count:', items?.length);
+      
+      // If order already exists and items are being modified, restore previous deducted servings first
+      if (checkExists.rows.length > 0 && Array.isArray(items) && items.length > 0) {
+        try {
+          const restRes = await restoreOrderRemainingServings(client, id);
+          console.log(`[PUT /orders/${id}] restRes:`, restRes);
+          if (restRes?.updatedProducts?.length) {
+            updatedProducts.push(...restRes.updatedProducts);
+          }
+        } catch (restErr) {
+          console.warn('[SERVINGS] Order modification restore servings note:', restErr.message);
+        }
+      }
+
+      const reqKitchenApproval = req.body.requiresKitchenApproval ?? req.body.requires_kitchen_approval;
+      const reqKitchenApprovalStatus = req.body.kitchenApprovalStatus || req.body.kitchen_approval_status;
+
       if (checkExists.rows.length === 0) {
-        await query(
-          `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, payment_reference, payment_method, payment_receipt, updated_at)
-           VALUES ($1, COALESCE($2, 'ON_SITE'), COALESCE($3, 'CONFIRMED'), $4, $5, $6, $7, $8, $9, $10, $11, NOW())`,
+        await client.query(
+          `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, payment_reference, payment_method, payment_receipt, requires_kitchen_approval, kitchen_approval_status, updated_at)
+           VALUES ($1, COALESCE($2, 'ON_SITE'), COALESCE($3, 'CONFIRMED'), $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, FALSE), COALESCE($13, 'NONE'), NOW())`,
           [
             id,
-            type || 'ON_SITE',
+            normalizedOrderType || 'ON_SITE',
             status ? status.toUpperCase() : 'CONFIRMED',
             subtotal !== undefined && subtotal !== null ? subtotal : 0,
             vat !== undefined && vat !== null ? vat : 0,
@@ -576,16 +701,18 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
             finalRef,
             paymentMethod || null,
             finalReceipt || null,
+            reqKitchenApproval !== undefined ? Boolean(reqKitchenApproval) : null,
+            reqKitchenApprovalStatus || null,
           ]
         );
-        await query(
+        await client.query(
           `INSERT INTO kitchen_orders (order_id, status, updated_at)
            VALUES ($1, 'PENDING', NOW())
            ON CONFLICT (order_id) DO NOTHING`,
           [id]
         );
       } else {
-        await query(
+        await client.query(
           `UPDATE orders
            SET status = COALESCE($1, status),
                subtotal = COALESCE($2, subtotal),
@@ -597,6 +724,8 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
                payment_reference = COALESCE($9, payment_reference),
                payment_method = COALESCE($10, payment_method),
                payment_receipt = COALESCE($11, payment_receipt),
+               requires_kitchen_approval = COALESCE($12, requires_kitchen_approval),
+               kitchen_approval_status = COALESCE($13, kitchen_approval_status),
                updated_at = NOW()
            WHERE id = $8`,
           [
@@ -606,47 +735,104 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
             deliveryFee || null,
             calcTotal || null,
             notes || null,
-            type || null,
+            normalizedOrderType,
             id,
             finalRef,
             paymentMethod || null,
             finalReceipt || null,
+            reqKitchenApproval !== undefined ? Boolean(reqKitchenApproval) : null,
+            reqKitchenApprovalStatus || null,
           ]
         );
       }
 
       // If items provided, recreate order_items in DB
       if (Array.isArray(items) && items.length > 0) {
-        await query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+        await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
         for (const item of items) {
           const itemName = item.name || item.product_name_snapshot || 'Item';
           const qty = item.quantity || 1;
           const price = item.price || item.unit_price || 0;
           const prodId = item.productId || item.product_id || null;
-          await query(
+          await client.query(
             `INSERT INTO order_items (order_id, product_id, product_name_snapshot, quantity, unit_price, subtotal)
              VALUES ($1, $2, $3, $4, $5, $6)`,
             [id, prodId, itemName, qty, price, qty * price]
           );
         }
+
+        // Atomically deduct servings for the new items of the modified order (if active / confirmed)
+        const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
+        if (effectiveStatus !== 'CANCELLED' && effectiveStatus !== 'AWAITING_KITCHEN_APPROVAL') {
+          try {
+            const deductRes = await deductOrderRemainingServings(client, id);
+            console.log(`[PUT /orders/${id}] deductRes:`, deductRes);
+            if (deductRes?.updatedProducts?.length) {
+              updatedProducts.push(...deductRes.updatedProducts);
+            }
+          } catch (deductErr) {
+            console.warn('[SERVINGS] Order modification deduction note:', deductErr.message);
+          }
+        }
+      } else {
+        // If items not re-sent but order status transitioned to CONFIRMED, ensure servings are deducted
+        const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
+        if (effectiveStatus === 'CONFIRMED') {
+          try {
+            const deductRes = await deductOrderRemainingServings(client, id);
+            if (deductRes?.updatedProducts?.length) {
+              updatedProducts.push(...deductRes.updatedProducts);
+            }
+          } catch (deductErr) {
+            console.warn('[SERVINGS] Order confirmation deduction note:', deductErr.message);
+          }
+          try {
+            await client.query(`
+              INSERT INTO kitchen_orders (order_id, status, updated_at)
+              VALUES ($1, 'PENDING', NOW())
+              ON CONFLICT (order_id) DO UPDATE SET status = 'PENDING', updated_at = NOW()
+            `, [id]);
+          } catch (kErr) {
+            console.warn('[KITCHEN] Ticket insert note:', kErr.message);
+          }
+        }
       }
 
       // Update payment record if payment method/status/ref/receipt supplied
       if (paymentMethod || paymentStatus || finalRef || finalReceipt) {
-        await query(
-          `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())
-           ON CONFLICT (order_id) DO UPDATE SET
-             payment_method = EXCLUDED.payment_method,
-             status = EXCLUDED.status,
-             reference_number = COALESCE(EXCLUDED.reference_number, payments.reference_number),
-             payment_receipt = COALESCE(EXCLUDED.payment_receipt, payments.payment_receipt),
-             updated_at = NOW()`,
-          [id, paymentMethod || 'Cash', calcTotal || 0, paymentStatus || 'COMPLETED', finalRef, finalReceipt || null]
-        ).catch(() => { });
+        const normPayStatus = (paymentStatus === 'PAID' || paymentStatus === 'COMPLETED' || paymentStatus === 'Paid') ? 'PAID' : (paymentStatus || 'PAID');
+        const payCheck = await client.query('SELECT id FROM payments WHERE order_id = $1 ORDER BY created_at DESC LIMIT 1', [id]);
+        if (payCheck.rows.length === 0) {
+          await client.query(
+            `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, paid_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+            [id, paymentMethod || 'Cash', calcTotal || 0, normPayStatus, finalRef, finalReceipt || null]
+          );
+        } else {
+          await client.query(
+            `UPDATE payments
+             SET payment_method = COALESCE($2, payment_method),
+                 amount = $3,
+                 status = $4,
+                 reference_number = COALESCE($5, reference_number),
+                 payment_receipt = COALESCE($6, payment_receipt),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [payCheck.rows[0].id, paymentMethod || 'Cash', calcTotal || 0, normPayStatus, finalRef, finalReceipt || null]
+          );
+        }
       }
+
+      await client.query('COMMIT');
     } catch (dbErr) {
-      console.warn('DB update order note:', dbErr.message);
+      if (client) {
+        try { await client.query('ROLLBACK'); } catch {}
+      }
+      console.error('[PUT /orders/:id] DB update order ERROR:', dbErr);
+    } finally {
+      if (client) {
+        client.release();
+      }
     }
 
     console.log(`[UPDATE] Order ${id} updated in DB and memory`);
@@ -658,6 +844,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       success: true,
       message: `Order ${id} updated successfully`,
       data: updatedInMemory,
+      updatedProducts,
     });
   } catch (error) {
     console.error('Error updating order:', error);
@@ -785,10 +972,10 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     }
 
     const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
-    const initialStatus = initialPaymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL';
     const normalizedItems = rawItems.map(item => {
       const quantity = Number(item.quantity) || 1;
       const price = Number(item.price ?? item.unit_price ?? 0);
+      const rawServings = item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings;
       return {
         id: item.id || item.product_id || item.productId || 'item-1',
         product_id: item.product_id || item.productId || item.id || null,
@@ -797,8 +984,31 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         price,
         subtotal: Math.round(price * quantity * 100) / 100,
         specialNote: item.specialNote || item.notes || '',
+        remaining_servings: rawServings !== undefined ? rawServings : undefined,
+        remainingServings: rawServings !== undefined ? rawServings : undefined,
       };
     });
+
+    const rawOrderType = (req.body.orderType || req.body.type || '').toString().trim().toUpperCase();
+    const isPos = Boolean(
+      req.body.isPosOrder ||
+      req.body.is_pos_order ||
+      (requestedOrderId && String(requestedOrderId).startsWith('POS-')) ||
+      rawOrderType.includes('DINE') ||
+      rawOrderType.includes('TAKE') ||
+      rawOrderType.includes('ON_SITE')
+    );
+
+    // Check individual product quantities against standards
+    let standardCheck = checkProductQuantityStandards(normalizedItems);
+    let requiresKitchenApproval = standardCheck.requiresApproval;
+    const isCod = initialPaymentMethod === 'COD';
+    // If order is below standards or covered by estimated servings, permit customer/cashier to pay immediately
+    let initialStatus = requiresKitchenApproval
+      ? 'AWAITING_KITCHEN_APPROVAL'
+      : (isPos ? (req.body.status || 'CONFIRMED') : (isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
+    let kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
+    let isGcashAuthorized = !requiresKitchenApproval && !isCod && !isPos;
 
     const orderRecord = {
       id: orderId,
@@ -818,13 +1028,25 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       referenceNumber: req.body.referenceNumber || req.body.paymentReference || undefined,
       payment_receipt: req.body.paymentReceipt || undefined,
       paymentReceipt: req.body.paymentReceipt || undefined,
-      gcash_authorized: false,
-      gcashAuthorized: false,
+      gcash_authorized: isGcashAuthorized,
+      gcashAuthorized: isGcashAuthorized,
       status: initialStatus,
       receipt_status: 'NONE',
       receiptStatus: 'NONE',
-      is_bulk: false,
-      isBulk: false,
+      requires_kitchen_approval: requiresKitchenApproval,
+      requiresKitchenApproval,
+      kitchen_approval_status: kitchenApprovalStatus,
+      kitchenApprovalStatus,
+      flagged_quantity_items: standardCheck.flaggedItems,
+      flaggedQuantityItems: standardCheck.flaggedItems,
+      servings_deducted: false,
+      servingsDeducted: false,
+      is_bulk: requiresKitchenApproval,
+      isBulk: requiresKitchenApproval,
+      isPosOrder: isPos,
+      is_pos_order: isPos,
+      orderType: isPos ? 'ON_SITE' : 'ONLINE',
+      order_type: isPos ? 'ON_SITE' : 'ONLINE',
       notes: notes || '',
       customer_resolution: null,
       customerResolution: null,
@@ -851,11 +1073,12 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         await client.query('BEGIN');
 
         // 1. Verify availability of order items inside transaction
+        let productRows = [];
         try {
-          await assertItemsAvailable(client, normalizedItems);
+          productRows = await assertItemsAvailable(client, normalizedItems);
         } catch (itemErr) {
           await client.query('ROLLBACK');
-          if (itemErr.code === 'ITEM_OUT_OF_STOCK' || itemErr.code === 'ITEM_DELETED') {
+          if (itemErr.code === 'ITEM_OUT_OF_STOCK' || itemErr.code === 'ITEM_DELETED' || itemErr.code === 'INSUFFICIENT_SERVINGS') {
             return res.status(409).json({ success: false, error: itemErr.code, message: itemErr.message });
           }
           console.error('Could not validate item availability:', itemErr.message);
@@ -864,6 +1087,42 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             error: 'INVENTORY_VALIDATION_UNAVAILABLE',
             message: 'Could not verify item availability. Please try again.',
           });
+        }
+
+        // 1b. Authoritatively link remaining_servings from database products
+        // When kitchen has set estimated servings, portion capacity is already verified and approved.
+        if (Array.isArray(productRows) && productRows.length > 0) {
+          for (const item of normalizedItems) {
+            const prod = productRows.find(
+              (r) => r.id === String(item.product_id) || r.name.toLowerCase() === String(item.name).toLowerCase()
+            );
+            if (prod) {
+              item.remaining_servings = prod.remaining_servings !== null && prod.remaining_servings !== undefined
+                ? Number(prod.remaining_servings)
+                : null;
+              item.remainingServings = item.remaining_servings;
+            }
+          }
+
+          standardCheck = checkProductQuantityStandards(normalizedItems);
+          requiresKitchenApproval = standardCheck.requiresApproval;
+          initialStatus = requiresKitchenApproval
+            ? 'AWAITING_KITCHEN_APPROVAL'
+            : (isPos ? (req.body.status || 'CONFIRMED') : (isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
+          kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
+          isGcashAuthorized = !requiresKitchenApproval && !isCod && !isPos;
+
+          orderRecord.requires_kitchen_approval = requiresKitchenApproval;
+          orderRecord.requiresKitchenApproval = requiresKitchenApproval;
+          orderRecord.kitchen_approval_status = kitchenApprovalStatus;
+          orderRecord.kitchenApprovalStatus = kitchenApprovalStatus;
+          orderRecord.gcash_authorized = isGcashAuthorized;
+          orderRecord.gcashAuthorized = isGcashAuthorized;
+          orderRecord.status = initialStatus;
+          orderRecord.is_bulk = requiresKitchenApproval;
+          orderRecord.isBulk = requiresKitchenApproval;
+          orderRecord.flagged_quantity_items = standardCheck.flaggedItems;
+          orderRecord.flaggedQuantityItems = standardCheck.flaggedItems;
         }
 
         // 2. Resolve customer_id safely
@@ -932,19 +1191,25 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
         orderRecord.customer_id = validCustomerId;
 
+        const dbOrderType = isPos ? 'ON_SITE' : 'ONLINE';
+
         await client.query(
           `INSERT INTO orders (
              id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes,
-             created_at, delivery_latitude, delivery_longitude, payment_method, payment_reference, payment_receipt
+             created_at, delivery_latitude, delivery_longitude, payment_method, payment_reference, payment_receipt,
+             requires_kitchen_approval, kitchen_approval_status, servings_deducted
            )
-           VALUES ($1, $2, 'ONLINE', $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13)
+           VALUES ($1, $2, $16, $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13, $14, $15, FALSE)
            ON CONFLICT (id) DO UPDATE SET
+             order_type = EXCLUDED.order_type,
              status = EXCLUDED.status,
              delivery_latitude = COALESCE(EXCLUDED.delivery_latitude, orders.delivery_latitude),
              delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, orders.delivery_longitude),
              payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
              payment_reference = COALESCE(EXCLUDED.payment_reference, orders.payment_reference),
-             payment_receipt = COALESCE(EXCLUDED.payment_receipt, orders.payment_receipt)`,
+             payment_receipt = COALESCE(EXCLUDED.payment_receipt, orders.payment_receipt),
+             requires_kitchen_approval = EXCLUDED.requires_kitchen_approval,
+             kitchen_approval_status = EXCLUDED.kitchen_approval_status`,
           [
             orderId,
             validCustomerId,
@@ -956,19 +1221,24 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             initialStatus,
             deliveryLatitude,
             deliveryLongitude,
-            initialPaymentMethod,
+            isPos ? (req.body.paymentMethod || 'Paid (POS)') : initialPaymentMethod,
             orderRecord.paymentReference || null,
             orderRecord.paymentReceipt || null,
+            requiresKitchenApproval,
+            kitchenApprovalStatus,
+            dbOrderType,
           ]
         );
-        await client.query(
-          `INSERT INTO deliveries (order_id, delivery_address, status)
-           VALUES ($1, $2, 'PENDING')
-           ON CONFLICT (order_id) DO UPDATE SET
-             delivery_address = EXCLUDED.delivery_address,
-             updated_at = NOW()`,
-          [orderId, cleanAddress]
-        );
+        if (!isPos) {
+          await client.query(
+            `INSERT INTO deliveries (order_id, delivery_address, status)
+             VALUES ($1, $2, 'PENDING')
+             ON CONFLICT (order_id) DO UPDATE SET
+               delivery_address = EXCLUDED.delivery_address,
+               updated_at = NOW()`,
+            [orderId, cleanAddress]
+          );
+        }
 
         const existingItems = await client.query(
           `SELECT id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes
@@ -989,22 +1259,34 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           }
         }
 
+        const posPaymentStatus = (requiresKitchenApproval || initialStatus === 'AWAITING_KITCHEN_APPROVAL') ? 'PENDING' : 'PAID';
+        const finalPaymentMethod = req.body.paymentMethod || (initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH');
         const existingPayments = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [orderId]);
         if (existingPayments.rows.length === 0) {
           await client.query(
             `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
-             VALUES ($1, $2, $3, 'PENDING', $4, $5, NOW())`,
-            [orderId, initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH', calcTotal, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+            [orderId, isPos ? finalPaymentMethod : (initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH'), calcTotal, isPos ? posPaymentStatus : 'PENDING', orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
           );
         } else {
           await client.query(
             `UPDATE payments 
              SET reference_number = COALESCE($2, reference_number), 
                  payment_receipt = COALESCE($3, payment_receipt),
+                 status = COALESCE($4, status),
                  updated_at = NOW()
              WHERE order_id = $1`,
-            [orderId, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
+            [orderId, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null, isPos ? posPaymentStatus : 'PENDING']
           );
+        }
+
+        // Deduct servings atomically for items configured with remaining servings countdown
+        if (initialStatus === 'CONFIRMED') {
+          try {
+            await deductOrderRemainingServings(client, orderId);
+          } catch (servErr) {
+            console.warn('[SERVINGS] Note during order creation deduction:', servErr.message);
+          }
         }
 
         await client.query('COMMIT');
@@ -1033,12 +1315,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       }
       inMemoryOrders.set(orderId, orderRecord);
     } catch (poolErr) {
-      console.error('Database connection unavailable:', poolErr.message);
-      return res.status(503).json({
-        success: false,
-        error: 'DATABASE_UNAVAILABLE',
-        message: 'Order service is temporarily unavailable. Please try again.',
-      });
+      console.warn('Database connection unavailable, falling back to in-memory store:', poolErr.message);
+      inMemoryOrders.set(orderId, orderRecord);
     }
 
     const formatted = formatOrderResponse(orderRecord);
@@ -1073,6 +1351,7 @@ export async function handleGetCustomerFlowOrder(req, res) {
       const { rows } = await query(`
         SELECT o.id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
+               o.receipt_status, o.is_receipt_printed, o.receipt_printed_at,
                o.created_at, o.updated_at,
                c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
                COALESCE(r_emp.fullname, NULL) AS rider_name,
@@ -1164,7 +1443,10 @@ router.get('/cashier/online-receipts', async (req, res) => {
     try {
       const { rows } = await query(`
         SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
-               'UNPRINTED' AS receipt_status, o.created_at, o.updated_at,
+               COALESCE(o.receipt_status, 'UNPRINTED') AS receipt_status,
+               COALESCE(o.is_receipt_printed, FALSE) AS is_receipt_printed,
+               o.receipt_printed_at,
+               o.created_at, o.updated_at,
                COALESCE(c.fullname, 'Online Customer') AS customer_name,
                c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
@@ -1237,10 +1519,16 @@ router.get('/cashier/online-receipts', async (req, res) => {
         mergedMap.set(row.id, formatOrderResponse(row));
       } else {
         const existing = mergedMap.get(row.id);
+        const isPrinted = Boolean(
+          existing.isReceiptPrinted ||
+          row.is_receipt_printed ||
+          row.receipt_status === 'PRINTED' ||
+          existing.receiptStatus === 'PRINTED'
+        );
         mergedMap.set(row.id, {
           ...existing,
-          receiptStatus: existing.receiptStatus || row.receipt_status || 'UNPRINTED',
-          isReceiptPrinted: existing.isReceiptPrinted || row.receipt_status === 'PRINTED',
+          receiptStatus: isPrinted ? 'PRINTED' : 'UNPRINTED',
+          isReceiptPrinted: isPrinted,
         });
       }
     });
@@ -1316,29 +1604,28 @@ router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
 
     let updatedOrder = null;
 
-    if (inMemoryOrders.has(id)) {
-      const rec = inMemoryOrders.get(id);
-      rec.receipt_status = 'PRINTED';
-      rec.receiptStatus = 'PRINTED';
-      rec.is_receipt_printed = true;
-      rec.isReceiptPrinted = true;
-      rec.receipt_printed_at = new Date().toISOString();
-      inMemoryOrders.set(id, rec);
-      updatedOrder = formatOrderResponse(rec);
-    }
+    const rec = inMemoryOrders.get(id) || { id, status: 'CONFIRMED' };
+    rec.receipt_status = 'PRINTED';
+    rec.receiptStatus = 'PRINTED';
+    rec.is_receipt_printed = true;
+    rec.isReceiptPrinted = true;
+    rec.receipt_printed_at = new Date().toISOString();
+    inMemoryOrders.set(id, rec);
+    updatedOrder = formatOrderResponse(rec);
 
     try {
       await query(
-        `UPDATE orders SET receipt_status = 'PRINTED', updated_at = NOW() WHERE id = $1`,
+        `UPDATE orders SET receipt_status = 'PRINTED', is_receipt_printed = TRUE, receipt_printed_at = NOW(), updated_at = NOW() WHERE id = $1`,
         [id]
-      ).catch(() => { });
+      );
 
       const { rows } = await query(`SELECT * FROM orders WHERE id = $1`, [id]);
-      if (rows.length > 0 && !updatedOrder) {
+      if (rows.length > 0) {
         updatedOrder = formatOrderResponse({
           ...rows[0],
           receipt_status: 'PRINTED',
           is_receipt_printed: true,
+          receipt_printed_at: new Date().toISOString(),
         });
       }
     } catch (dbErr) {
@@ -1357,6 +1644,7 @@ router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
     }
 
     console.log(`🧾 [Cashier Receipt] Official receipt printed for online order ${id}`);
+    emitOrderUpdate({ ...updatedOrder, type: 'ONLINE_RECEIPT_PRINTED' });
 
     return res.status(200).json({
       success: true,

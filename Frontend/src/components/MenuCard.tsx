@@ -377,6 +377,7 @@ export interface MenuCardProps {
   item: MenuItem
   onAddToCart: (item: MenuItem) => void
   isAvailable?: boolean
+  remainingServings?: number | null
   onToggleAvailability?: (item: MenuItem) => void
   showAvailabilityToggle?: boolean
   allowPriceEdit?: boolean
@@ -387,11 +388,13 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   item,
   onAddToCart,
   isAvailable = true,
+  remainingServings,
   onToggleAvailability,
   showAvailabilityToggle = false,
   allowPriceEdit = false,
   onUpdatePrice,
 }) => {
+  const effectiveAvailable = isAvailable && (remainingServings === null || remainingServings === undefined || remainingServings > 0)
   const currentRole = getActiveUser()?.role?.toLowerCase()
   const canManageAvailability = currentRole === 'kitchen' || currentRole === 'admin'
   const canEditPrice = currentRole === 'admin'
@@ -418,7 +421,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
 
   return (
     <div
-      className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col h-full overflow-hidden group ${!isAvailable
+      className={`bg-white rounded-2xl border transition-all duration-200 flex flex-col h-full overflow-hidden group ${!effectiveAvailable
         ? 'border-rose-200 bg-neutral-50/70 opacity-90'
         : 'border-neutral-200/80 shadow-2xs hover:shadow-md hover:border-orange-200'
         }`}
@@ -429,7 +432,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           src={item.image}
           fallbackSrc={item.bundledImage}
           alt={item.name}
-          className={`w-full h-full object-cover transition-transform duration-300 ease-out ${!isAvailable
+          className={`w-full h-full object-cover transition-transform duration-300 ease-out ${!effectiveAvailable
             ? 'grayscale-[75%] opacity-60 contrast-125'
             : 'group-hover:scale-105'
             }`}
@@ -440,8 +443,15 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           {item.category}
         </span>
 
+        {/* Remaining Servings Badge (when limited) */}
+        {effectiveAvailable && remainingServings !== null && remainingServings !== undefined && remainingServings > 0 && (
+          <span className="absolute top-2.5 right-2.5 bg-amber-500 text-white font-black text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md shadow-xs flex items-center gap-1 animate-pulse">
+            🔥 {remainingServings} left
+          </span>
+        )}
+
         {/* Unavailable Banner if item is out of stock */}
-        {!isAvailable && (
+        {!effectiveAvailable && (
           <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
             <span className="bg-rose-600 text-white font-extrabold text-[11px] sm:text-xs uppercase tracking-widest px-3 py-1 rounded-lg shadow-md border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
               UNAVAILABLE / SOLD OUT
@@ -455,7 +465,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
         <div>
           <div className="flex items-start justify-between gap-2">
             <h3
-              className={`font-bold text-sm sm:text-base line-clamp-1 transition-colors ${!isAvailable
+              className={`font-bold text-sm sm:text-base line-clamp-1 transition-colors ${!effectiveAvailable
                 ? 'text-neutral-500 line-through'
                 : 'text-neutral-900 group-hover:text-orange-600'
                 }`}
@@ -504,7 +514,7 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           ) : (
             <div className="flex items-center gap-1.5 group/price">
               <span
-                className={`font-extrabold text-base sm:text-lg shrink-0 ${!isAvailable ? 'text-neutral-400' : 'text-neutral-900'
+                className={`font-extrabold text-base sm:text-lg shrink-0 ${!effectiveAvailable ? 'text-neutral-400' : 'text-neutral-900'
                   }`}
               >
                 ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -534,18 +544,18 @@ export const MenuCard: React.FC<MenuCardProps> = ({
                   e.stopPropagation()
                   onToggleAvailability(item)
                 }}
-                title={isAvailable ? 'Click to mark this product as Unavailable' : 'Click to make this product Available'}
-                className={`text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all cursor-pointer active:scale-95 flex items-center gap-1 shadow-2xs ${isAvailable
+                title={effectiveAvailable ? 'Click to mark this product as Unavailable' : 'Click to make this product Available'}
+                className={`text-[11px] font-bold px-2 py-1.5 rounded-lg border transition-all cursor-pointer active:scale-95 flex items-center gap-1 shadow-2xs ${effectiveAvailable
                   ? 'bg-neutral-50 hover:bg-rose-50 text-neutral-600 hover:text-rose-700 border-neutral-200 hover:border-rose-300'
                   : 'bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border-emerald-300'
                   }`}
               >
-                <span>{isAvailable ? 'Out of Stock' : 'Set Available'}</span>
+                <span>{effectiveAvailable ? 'Out of Stock' : 'Set Available'}</span>
               </button>
             )}
 
             {/* + Add to Cart Button (Available only) */}
-            {isAvailable ? (
+            {effectiveAvailable ? (
               <button
                 onClick={() => onAddToCart(item)}
                 className="flex items-center gap-1 text-xs font-bold text-orange-600 hover:text-white bg-orange-50 hover:bg-orange-600 active:scale-95 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"

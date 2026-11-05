@@ -65,6 +65,12 @@ export const KitchenMode: React.FC = () => {
   const [savingServingsId, setSavingServingsId] = useState<string | null>(null)
   const [servingsSuccessId, setServingsSuccessId] = useState<string | null>(null)
 
+  // Multiple selection for 86 board bulk servings
+  const [selectedStockProductIds, setSelectedStockProductIds] = useState<Set<string>>(new Set())
+  const [bulkServingsInput, setBulkServingsInput] = useState<string>('')
+  const [isBulkSavingServings, setIsBulkSavingServings] = useState<boolean>(false)
+  const [bulkServingsSuccess, setBulkServingsSuccess] = useState<boolean>(false)
+
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingKitchenOrder, setEditingKitchenOrder] = useState<any | null>(null)
@@ -711,6 +717,153 @@ export const KitchenMode: React.FC = () => {
       alert('Network error. Could not update remaining servings.')
     } finally {
       setSavingServingsId(null)
+    }
+  }
+
+  const toggleSelectStockProduct = (productId: string) => {
+    setSelectedStockProductIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(productId)) {
+        next.delete(productId)
+      } else {
+        next.add(productId)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectAllFiltered = () => {
+    const allFilteredIds = filteredStockItems.map((item) => item.id)
+    const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedStockProductIds.has(id))
+    
+    setSelectedStockProductIds((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        allFilteredIds.forEach((id) => next.delete(id))
+      } else {
+        allFilteredIds.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const handleBatchSaveRemainingServings = async () => {
+    if (selectedStockProductIds.size === 0) {
+      alert('Please select at least one dish first.')
+      return
+    }
+
+    const rawVal = bulkServingsInput.trim()
+    const numVal = rawVal === '' ? null : parseInt(rawVal, 10)
+    if (numVal !== null && (isNaN(numVal) || numVal < 0)) {
+      alert('Remaining servings must be a positive number, 0, or blank for unlimited.')
+      return
+    }
+
+    const productIdsArray = Array.from(selectedStockProductIds)
+    setIsBulkSavingServings(true)
+
+    try {
+      const token = localStorage.getItem('token')
+      const res = await fetch(`${API_BASE_URL}/menu/batch-remaining-servings`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          productIds: productIdsArray,
+          remaining_servings: numVal,
+        }),
+      })
+
+      if (res.ok) {
+        // Update local maps
+        setServingsMap((prev) => {
+          const next = { ...prev }
+          productIdsArray.forEach((id) => {
+            next[id] = numVal
+            const alias = PRODUCT_ALIASES[id]
+            if (alias) next[alias] = numVal
+          })
+          return next
+        })
+
+        setServingsInputs((prev) => {
+          const next = { ...prev }
+          productIdsArray.forEach((id) => {
+            next[id] = numVal != null ? String(numVal) : ''
+            const alias = PRODUCT_ALIASES[id]
+            if (alias) next[alias] = numVal != null ? String(numVal) : ''
+          })
+          return next
+        })
+
+        productIdsArray.forEach((id) => {
+          applyProductServingsChange(id, numVal)
+          if (numVal === 0) {
+            applyProductAvailabilityChange(id, false)
+          } else if (numVal !== null && numVal > 0) {
+            applyProductAvailabilityChange(id, true)
+          }
+        })
+
+        setBulkServingsSuccess(true)
+        setTimeout(() => setBulkServingsSuccess(false), 2500)
+        notifyOrderSync()
+        notifyProductCatalogSync()
+      } else {
+        // Fallback: update individually in parallel if batch endpoint returns non-ok
+        let anySuccess = false
+        await Promise.all(
+          productIdsArray.map(async (id) => {
+            try {
+              const individualRes = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(id)}/remaining-servings`, {
+                method: 'PATCH',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify({ remaining_servings: numVal }),
+              })
+              if (individualRes.ok) {
+                anySuccess = true
+                applyProductServingsChange(id, numVal)
+              }
+            } catch {
+              // ignore individual error
+            }
+          })
+        )
+
+        if (anySuccess) {
+          setServingsMap((prev) => {
+            const next = { ...prev }
+            productIdsArray.forEach((id) => {
+              next[id] = numVal
+            })
+            return next
+          })
+          setServingsInputs((prev) => {
+            const next = { ...prev }
+            productIdsArray.forEach((id) => {
+              next[id] = numVal != null ? String(numVal) : ''
+            })
+            return next
+          })
+          setBulkServingsSuccess(true)
+          setTimeout(() => setBulkServingsSuccess(false), 2500)
+          notifyOrderSync()
+          notifyProductCatalogSync()
+        } else {
+          const errJson = await res.json().catch(() => null)
+          alert(errJson?.message || 'Could not batch update remaining servings.')
+        }
+      }
+    } catch {
+      alert('Network error. Could not batch update remaining servings.')
+    } finally {
+      setIsBulkSavingServings(false)
     }
   }
 
@@ -1539,12 +1692,90 @@ export const KitchenMode: React.FC = () => {
               {stockError && <p role="alert" className="text-xs font-bold text-rose-700">{stockError}</p>}
             </div>
 
+            {/* Bulk Selection & Batch Servings Toolbar */}
+            <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 sm:px-7">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredStockItems.length > 0 &&
+                      filteredStockItems.every((item) => selectedStockProductIds.has(item.id))
+                    }
+                    onChange={toggleSelectAllFiltered}
+                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                  />
+                  <span>
+                    {selectedStockProductIds.size === 0
+                      ? `Select all (${filteredStockItems.length})`
+                      : `${selectedStockProductIds.size} dish${selectedStockProductIds.size > 1 ? 'es' : ''} selected`}
+                  </span>
+                </label>
+
+                {selectedStockProductIds.size > 0 && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStockProductIds(new Set())}
+                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline cursor-pointer mr-1"
+                    >
+                      Deselect all
+                    </button>
+                    <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1 shadow-xs">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Est. Servings:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        placeholder="∞"
+                        title="Bulk remaining servings (leave blank for unlimited)"
+                        value={bulkServingsInput}
+                        onChange={(e) => setBulkServingsInput(e.target.value)}
+                        className="w-14 px-1.5 py-0.5 text-xs border border-slate-200 rounded-md text-right font-bold focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={isBulkSavingServings}
+                        onClick={() => void handleBatchSaveRemainingServings()}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer disabled:opacity-50 ${
+                          bulkServingsSuccess
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                        }`}
+                      >
+                        {isBulkSavingServings ? 'Applying...' : bulkServingsSuccess ? '✓ Applied!' : `Apply to Selected (${selectedStockProductIds.size})`}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="flex-1 space-y-2.5 overflow-y-auto p-4 sm:p-6 overscroll-contain">
               {filteredStockItems.map((item) => {
                 const available = isAvailable(item.id)
-                                return (
-                  <article key={item.id} style={{ contain: "content" }} className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border bg-white p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${available ? "border-slate-200" : "border-rose-300 bg-rose-50/20"}`}>
+                const isSelected = selectedStockProductIds.has(item.id)
+                return (
+                  <article
+                    key={item.id}
+                    style={{ contain: "content" }}
+                    className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${
+                      isSelected
+                        ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30"
+                        : available
+                        ? "border-slate-200 bg-white"
+                        : "border-rose-300 bg-rose-50/20"
+                    }`}
+                  >
                     <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
+                      <div className="flex items-center shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectStockProduct(item.id)}
+                          aria-label={`Select ${item.name}`}
+                          className="h-4.5 w-4.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        />
+                      </div>
                       <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-20 sm:w-20">
                         <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                       </div>

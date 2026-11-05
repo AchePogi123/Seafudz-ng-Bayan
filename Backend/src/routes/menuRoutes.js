@@ -281,6 +281,64 @@ const handleUpdateAvailability = async (req, res) => {
 router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
 router.patch('/kitchen/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
 
+// PATCH /api/menu/batch-remaining-servings - Kitchen sets remaining servings for multiple products at once
+const handleBatchUpdateRemainingServings = async (req, res) => {
+  const { productIds, remaining_servings } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'productIds must be a non-empty array of product IDs.' });
+  }
+
+  let servingsValue = null;
+  if (remaining_servings !== null && remaining_servings !== undefined && remaining_servings !== '') {
+    const parsed = parseInt(remaining_servings, 10);
+    if (isNaN(parsed) || parsed < 0) {
+      return res.status(400).json({ success: false, message: 'remaining_servings must be a positive integer or null.' });
+    }
+    servingsValue = parsed;
+  }
+
+  const cleanIds = productIds.map((id) => String(id).trim()).filter(Boolean);
+  if (cleanIds.length === 0) {
+    return res.status(400).json({ success: false, message: 'No valid product IDs provided.' });
+  }
+
+  try {
+    const { rows } = await query(
+      `UPDATE products
+       SET remaining_servings = $1,
+           is_available = CASE 
+             WHEN $1 = 0 THEN FALSE 
+             WHEN $1 > 0 THEN TRUE 
+             ELSE is_available 
+           END,
+           updated_at = NOW()
+       WHERE id::text = ANY($2::text[])
+          OR LOWER(name) IN (SELECT LOWER(name) FROM products WHERE id::text = ANY($2::text[]))
+       RETURNING id, name, is_available, remaining_servings, quantity_standard`,
+      [servingsValue, cleanIds]
+    );
+
+    for (const product of rows) {
+      realtimeEmitter.emit('order_update', {
+        type: 'PRODUCT_AVAILABILITY_CHANGED',
+        productId: String(product.id),
+        productName: product.name,
+        isAvailable: product.is_available,
+        remainingServings: product.remaining_servings,
+        timestamp: Date.now(),
+      });
+    }
+
+    return res.status(200).json({ success: true, count: rows.length, data: rows });
+  } catch (error) {
+    console.error('Error batch updating product remaining servings:', error);
+    return res.status(500).json({ success: false, message: 'Failed to batch update remaining servings.' });
+  }
+};
+
+router.patch('/menu/batch-remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleBatchUpdateRemainingServings);
+router.patch('/kitchen/menu/batch-remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleBatchUpdateRemainingServings);
+
 // PATCH /api/menu/:id/remaining-servings - Kitchen sets manual remaining servings countdown
 const handleUpdateRemainingServings = async (req, res) => {
   const { remaining_servings } = req.body || {};

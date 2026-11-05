@@ -499,6 +499,8 @@ const getCategoryPillData = (cat: string) => {
     return { label: cat }
 }
 
+const distanceCache = new Map<string, { km: number; message: string; coords: Coordinates }>()
+
 export const OnlineCustomer: React.FC = () => {
     const navigate = useNavigate()
     const location = useLocation()
@@ -1628,82 +1630,113 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [cartItems, getEffectivePrice])
     const [typedCoordinates, setTypedCoordinates] = useState<Coordinates | null>(null)
     const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
+    const calculationSeqRef = useRef(0)
 
     useEffect(() => {
-        const controller = new AbortController()
-        const timer = window.setTimeout(async () => {
-            const cleanAddress = address.trim()
-            if (!cleanAddress) {
-                setTypedCoordinates(null)
-                setDeliveryDistanceKm(null)
+        const seq = ++calculationSeqRef.current
+        const cleanAddress = address.trim()
+        const lookupKey = cleanAddress.toLowerCase()
+
+        if (!cleanAddress) {
+            setTypedCoordinates(null)
+            setDeliveryDistanceKm(null)
+            setIsCalculatingDeliveryFee(false)
+            setIsGeocodingAddress(false)
+            setDeliveryDistanceMessage('')
+            return
+        }
+
+        // Fast in-memory cache check when manually typed
+        if (!addressCoordinates) {
+            const cached = distanceCache.get(lookupKey)
+            if (cached) {
+                setTypedCoordinates(cached.coords)
+                setDeliveryDistanceKm(cached.km)
+                setDeliveryDistanceMessage(cached.message)
                 setIsCalculatingDeliveryFee(false)
-                setDeliveryDistanceMessage('')
+                setIsGeocodingAddress(false)
                 return
             }
+        }
 
-            setIsCalculatingDeliveryFee(true)
-            setDeliveryDistanceMessage('Verifying address location…')
+        setIsCalculatingDeliveryFee(true)
+        setDeliveryDistanceMessage('Verifying address location…')
 
-            // 1. Resolve destination coordinates: GPS first, then calibrated local dictionary, then OpenStreetMap Nominatim
-            let targetCoords: Coordinates | null = addressCoordinates
+        const controller = new AbortController()
+        const timer = window.setTimeout(async () => {
+            if (seq !== calculationSeqRef.current) return
 
-            if (!targetCoords) {
-                const localMatch = matchKnownLocation(cleanAddress)
-                if (localMatch) {
-                    targetCoords = { lat: localMatch.lat, lng: localMatch.lng }
-                } else {
-                    try {
+            try {
+                // 1. Resolve destination coordinates: GPS first, then calibrated local dictionary, then OpenStreetMap Nominatim
+                let targetCoords: Coordinates | null = addressCoordinates
+
+                if (!targetCoords) {
+                    const localMatch = matchKnownLocation(cleanAddress)
+                    if (localMatch) {
+                        targetCoords = { lat: localMatch.lat, lng: localMatch.lng }
+                    } else {
                         setIsGeocodingAddress(true)
-                        const osmCoord = await forwardGeocodeAddress(cleanAddress, controller.signal)
-                        if (controller.signal.aborted) return
-                        targetCoords = osmCoord
-                    } catch {
-                        // ignore network error
-                    } finally {
-                        if (!controller.signal.aborted) {
-                            setIsGeocodingAddress(false)
+                        try {
+                            const osmCoord = await forwardGeocodeAddress(cleanAddress, controller.signal)
+                            if (seq !== calculationSeqRef.current) return
+                            targetCoords = osmCoord
+                        } catch {
+                            // network or timeout handled
+                        } finally {
+                            if (seq === calculationSeqRef.current) {
+                                setIsGeocodingAddress(false)
+                            }
                         }
                     }
                 }
-            }
 
-            if (controller.signal.aborted) return
+                if (seq !== calculationSeqRef.current) return
 
-            if (!targetCoords) {
-                setTypedCoordinates(null)
-                setDeliveryDistanceKm(null)
-                setDeliveryDistanceMessage('Could not locate this address. Please include your city or barangay, or tap Relocate.')
-                setIsCalculatingDeliveryFee(false)
-                return
-            }
+                if (!targetCoords) {
+                    setTypedCoordinates(null)
+                    setDeliveryDistanceKm(null)
+                    setDeliveryDistanceMessage('Could not locate this address. Please include your city or barangay, or tap Relocate.')
+                    return
+                }
 
-            setTypedCoordinates(targetCoords)
+                setTypedCoordinates(targetCoords)
 
-            // 2. Query real driving road distance via OSRM
-            try {
+                // 2. Query real driving road distance via OSRM
                 const origin = SEAFUDZ_FLAGSHIP_STORE
                 const distances = await fetchRoadDistances(origin, [{ id: 'checkout', coord: targetCoords }], controller.signal)
-                if (controller.signal.aborted) return
+                if (seq !== calculationSeqRef.current) return
 
                 const routeDistance = distances.get('checkout')
-                setDeliveryDistanceKm(routeDistance ?? null)
-                setDeliveryDistanceMessage(
-                    routeDistance === undefined
-                        ? 'Road distance calculation unavailable. Please verify your address.'
-                        : routeDistance > 8
-                            ? `This address is approximately ${routeDistance.toFixed(1)} km away. Delivery is available only within our 8 km road limit.`
-                            : ''
-                )
+                if (routeDistance === undefined) {
+                    setDeliveryDistanceKm(null)
+                    setDeliveryDistanceMessage('Road route unavailable for this address. Please verify.')
+                } else {
+                    const msg = routeDistance > 8
+                        ? `This address is approximately ${routeDistance.toFixed(1)} km away. Delivery is available only within our 8 km road limit.`
+                        : ''
+                    setDeliveryDistanceKm(routeDistance)
+                    setDeliveryDistanceMessage(msg)
+
+                    if (!addressCoordinates) {
+                        distanceCache.set(lookupKey, {
+                            km: routeDistance,
+                            message: msg,
+                            coords: targetCoords,
+                        })
+                    }
+                }
             } catch {
-                if (controller.signal.aborted) return
-                setDeliveryDistanceKm(null)
-                setDeliveryDistanceMessage('Road distance unavailable. Please retry before placing the order.')
+                if (seq === calculationSeqRef.current) {
+                    setDeliveryDistanceKm(null)
+                    setDeliveryDistanceMessage('Road distance calculation timed out. Please retry or tap Relocate.')
+                }
             } finally {
-                if (!controller.signal.aborted) {
+                if (seq === calculationSeqRef.current) {
                     setIsCalculatingDeliveryFee(false)
+                    setIsGeocodingAddress(false)
                 }
             }
-        }, 500)
+        }, 350)
 
         return () => {
             window.clearTimeout(timer)

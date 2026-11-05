@@ -31,6 +31,37 @@ export async function reverseGeocodeCoordinates({ lat, lng }: Coordinates): Prom
   return data.display_name
 }
 
+function createTimeoutSignal(signal?: AbortSignal, timeoutMs = 4000): { combinedSignal: AbortSignal; cleanup: () => void } {
+  const timeoutCtrl = new AbortController()
+  const timer = setTimeout(() => timeoutCtrl.abort(new Error('Network timeout')), timeoutMs)
+
+  if (!signal) {
+    return {
+      combinedSignal: timeoutCtrl.signal,
+      cleanup: () => clearTimeout(timer),
+    }
+  }
+
+  const mainCtrl = new AbortController()
+  if (signal.aborted) {
+    mainCtrl.abort(signal.reason)
+  }
+  const onParentAbort = () => mainCtrl.abort(signal.reason)
+  const onTimeout = () => mainCtrl.abort(timeoutCtrl.signal.reason)
+
+  signal.addEventListener('abort', onParentAbort)
+  timeoutCtrl.signal.addEventListener('abort', onTimeout)
+
+  return {
+    combinedSignal: mainCtrl.signal,
+    cleanup: () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onParentAbort)
+      timeoutCtrl.signal.removeEventListener('abort', onTimeout)
+    },
+  }
+}
+
 export async function forwardGeocodeAddress(
   addressText: string,
   signal?: AbortSignal
@@ -50,13 +81,15 @@ export async function forwardGeocodeAddress(
     addressdetails: '1',
   })
 
+  const { combinedSignal, cleanup } = createTimeoutSignal(signal, 4000)
+
   try {
     const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
       headers: {
         Accept: 'application/json',
         'User-Agent': 'Seafudz-ng-Bayan/1.0',
       },
-      signal,
+      signal: combinedSignal,
     })
     if (!response.ok) return null
 
@@ -73,6 +106,8 @@ export async function forwardGeocodeAddress(
     return { lat, lng }
   } catch {
     return null
+  } finally {
+    cleanup()
   }
 }
 
@@ -94,22 +129,29 @@ export async function fetchRoadDistances(
       destinations: destinationIndexes,
       annotations: 'distance',
     })
-    const response = await fetch(
-      `${OSRM_BASE_URL}/table/v1/driving/${coordinates}?${params}`,
-      { signal }
-    )
-    if (!response.ok) throw new Error('Road-route lookup is temporarily unavailable.')
 
-    const data = await response.json()
-    if (data.code !== 'Ok' || !Array.isArray(data.distances?.[0])) {
-      throw new Error('The road-routing service returned no distances.')
+    const { combinedSignal, cleanup } = createTimeoutSignal(signal, 4000)
+
+    try {
+      const response = await fetch(
+        `${OSRM_BASE_URL}/table/v1/driving/${coordinates}?${params}`,
+        { signal: combinedSignal }
+      )
+      if (!response.ok) throw new Error('Road-route lookup is temporarily unavailable.')
+
+      const data = await response.json()
+      if (data.code !== 'Ok' || !Array.isArray(data.distances?.[0])) {
+        throw new Error('The road-routing service returned no distances.')
+      }
+
+      batch.forEach((destination, index) => {
+        const distanceMeters = data.distances[0][index]
+        if (typeof distanceMeters !== 'number') return
+        distancesById.set(destination.id, distanceMeters / 1000)
+      })
+    } finally {
+      cleanup()
     }
-
-    batch.forEach((destination, index) => {
-      const distanceMeters = data.distances[0][index]
-      if (typeof distanceMeters !== 'number') return
-      distancesById.set(destination.id, distanceMeters / 1000)
-    })
   }
 
   return distancesById

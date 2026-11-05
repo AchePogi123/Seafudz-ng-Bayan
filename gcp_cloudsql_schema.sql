@@ -155,6 +155,7 @@ CREATE TABLE orders (
         CHECK (customer_resolution_status IN ('NONE', 'AWAITING_CUSTOMER', 'PENDING_ASSISTANT', 'COMPLETED')),
     customer_replacements JSONB NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(customer_replacements) = 'array'),
+    delivery_proof TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -243,6 +244,7 @@ CREATE TABLE deliveries (
     assigned_at TIMESTAMPTZ,
     picked_up_at TIMESTAMPTZ,
     delivered_at TIMESTAMPTZ,
+    delivery_proof TEXT,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

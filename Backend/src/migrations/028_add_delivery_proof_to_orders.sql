@@ -8,3 +8,4 @@ ALTER TABLE orders
 
 ALTER TABLE deliveries
   ADD COLUMN IF NOT EXISTS delivery_proof TEXT;
+

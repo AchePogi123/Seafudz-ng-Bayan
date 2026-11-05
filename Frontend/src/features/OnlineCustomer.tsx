@@ -2757,9 +2757,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </span>
                                                         <div className="flex items-center gap-1.5 mt-0.5">
                                                             {isStandardMet ? (
-                                                                <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-900 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">
-                                                                    <span>⚠️</span>
-                                                                    <span>Standard met ({standard}+)</span>
+                                                                <span className="text-[10px] font-semibold text-neutral-500">
+                                                                    Standard met ({standard}+)
                                                                 </span>
                                                             ) : (
                                                                 <span className="text-[10px] text-neutral-400 font-medium">
@@ -4157,9 +4156,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                     </p>
                                                                     <div className="flex items-center gap-1.5 mt-0.5">
                                                                         {isStandardMet ? (
-                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 border border-amber-300 text-amber-900 px-1.5 py-0.5 text-[10px] font-black">
-                                                                                <span>⚠️</span>
-                                                                                <span>Standard met ({standard}+)</span>
+                                                                            <span className="text-[10px] font-semibold text-neutral-500">
+                                                                                Standard met ({standard}+)
                                                                             </span>
                                                                         ) : (
                                                                             <span className="text-[10px] font-semibold text-neutral-400">
@@ -4267,9 +4265,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {cartItems.length > 0 && (
                                 <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
                                     {hasQuantityStandardMet && (
-                                        <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-300/80 px-3 py-2 text-amber-900">
-                                            <span className="shrink-0 text-sm">⚠️</span>
-                                            <p className="font-bold text-[11px] leading-tight">
+                                        <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-neutral-600 text-center">
+                                            <p className="font-medium text-[11px] leading-tight">
                                                 Quantity standard met · Kitchen review required before payment
                                             </p>
                                         </div>

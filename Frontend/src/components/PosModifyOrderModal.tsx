@@ -4,6 +4,7 @@ import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useMenuAvailability, applyProductServingsChange } from '../utils/menuAvailability'
 import { CLIENT_CATEGORIES, CLIENT_MENU_ITEMS, type MenuItem } from './MenuCard'
 import { checkProductQuantityStandards } from '../utils/bulkOrder'
+import { NoticeModal } from './NoticeModal'
 
 export interface PosModifyOrderModalProps {
   isOpen: boolean
@@ -55,6 +56,11 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
   const [tableNumber, setTableNumber] = useState('')
   const [notes, setNotes] = useState('')
   const [items, setItems] = useState<EditableItem[]>([])
+
+  const [noticeModal, setNoticeModal] = useState<{ title?: string; message: string } | null>(null)
+  const showNotice = useCallback((message: string, title?: string) => {
+    setNoticeModal({ message, title: title || 'Notice' })
+  }, [])
 
   const bulkCheck = useMemo(() => {
     return checkProductQuantityStandards(
@@ -338,7 +344,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
     if (it) {
       const servingsLeft = getRemainingServings(it.productId)
       if (servingsLeft !== null && servingsLeft !== undefined && it.quantity >= servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${it.name}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${it.name}.`, 'Portion Limit Reached')
         return
       }
     }
@@ -379,12 +385,12 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
     const servingsLeft = getRemainingServings(menuItem.id)
     if (servingsLeft !== null && servingsLeft !== undefined) {
       if (servingsLeft <= 0) {
-        alert(`Sorry, "${menuItem.name}" is currently out of stock.`)
+        showNotice(`Sorry, "${menuItem.name}" is currently out of stock.`, 'Out of Stock')
         return
       }
       const existing = items.find((it) => it.productId === menuItem.id)
       if (existing && existing.quantity >= servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${menuItem.name}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${menuItem.name}.`, 'Portion Limit Reached')
         return
       }
     }
@@ -430,11 +436,11 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
     const currentQty = items[index]?.quantity || 1
     if (servingsLeft !== null && servingsLeft !== undefined) {
       if (servingsLeft <= 0) {
-        alert(`Sorry, "${replacement.name}" is currently out of stock.`)
+        showNotice(`Sorry, "${replacement.name}" is currently out of stock.`, 'Out of Stock')
         return
       }
       if (currentQty > servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${replacement.name}. Quantity adjusted to ${servingsLeft}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${replacement.name}. Quantity adjusted to ${servingsLeft}.`, 'Portion Limit Reached')
       }
     }
 
@@ -1481,6 +1487,14 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
           )}
         </div>
       </div>
+
+      {/* Minimal Modern Notice Modal */}
+      <NoticeModal
+        isOpen={Boolean(noticeModal)}
+        title={noticeModal?.title}
+        message={noticeModal?.message || ''}
+        onClose={() => setNoticeModal(null)}
+      />
     </div>
   )
 }

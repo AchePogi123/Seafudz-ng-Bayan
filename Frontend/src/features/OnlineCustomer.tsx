@@ -4773,13 +4773,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             ✕
                         </button>
 
-                        {/* Minimal Icon */}
-                        <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 text-amber-600 flex items-center justify-center mb-3.5 shadow-2xs">
+                        {/* Minimal Icon - No color */}
+                        <div className="w-11 h-11 rounded-full bg-neutral-100 border border-neutral-200/80 text-neutral-700 flex items-center justify-center mb-3.5">
                             <svg
-                                className="w-6 h-6 stroke-current"
+                                className="w-5 h-5 stroke-current"
                                 viewBox="0 0 24 24"
                                 fill="none"
-                                strokeWidth="2.2"
+                                strokeWidth="2"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                             >
@@ -4790,19 +4790,18 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         </div>
 
                         {/* Modal Title */}
-                        <h3 id="stock-notice-modal-title" className="text-base sm:text-lg font-black text-neutral-900 tracking-tight">
+                        <h3 id="stock-notice-modal-title" className="text-base font-bold text-neutral-900 tracking-tight">
                             {stockNotice.title || 'Portion Limit Reached'}
                         </h3>
 
                         {/* Message Description */}
-                        <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed mt-2 font-medium">
+                        <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed mt-2 font-normal">
                             {stockNotice.message}
                         </p>
 
-                        {/* Portion Counter Badge if available */}
+                        {/* Portion Counter Badge if available - Neutral styling, No emoji */}
                         {stockNotice.servingsLeft !== undefined && stockNotice.servingsLeft !== null && stockNotice.servingsLeft > 0 && (
-                            <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200/80 text-[11px] font-bold">
-                                <span>🔥</span>
+                            <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200 text-[11px] font-semibold">
                                 <span>Maximum {stockNotice.servingsLeft} portion{stockNotice.servingsLeft === 1 ? '' : 's'} available</span>
                             </div>
                         )}
@@ -4811,7 +4810,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         <button
                             type="button"
                             onClick={() => setStockNotice(null)}
-                            className="mt-5 w-full bg-neutral-900 hover:bg-neutral-800 active:scale-[0.98] text-white font-bold py-3 px-4 rounded-xl text-xs sm:text-sm transition-all cursor-pointer shadow-sm"
+                            className="mt-5 w-full bg-neutral-900 hover:bg-neutral-800 active:scale-[0.98] text-white font-semibold py-2.5 px-4 rounded-xl text-xs sm:text-sm transition cursor-pointer shadow-xs"
                         >
                             Understood
                         </button>

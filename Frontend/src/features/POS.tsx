@@ -16,6 +16,7 @@ import { AdminCreateTransactionModal } from '../components/AdminCreateTransactio
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
 import { CancelConfirmModal } from '../components/CancelConfirmModal'
+import { NoticeModal } from '../components/NoticeModal'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { checkProductQuantityStandards, getProductQuantityStandard, type FlaggedQuantityItem } from '../utils/bulkOrder'
@@ -95,6 +96,12 @@ export const POS: React.FC = () => {
   const { menuItems, refresh: refreshMenuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
 
+  // Minimal Modern Notice Popup Modal State
+  const [noticeModal, setNoticeModal] = useState<{ title?: string; message: string } | null>(null)
+  const showNotice = useCallback((message: string, title?: string) => {
+    setNoticeModal({ message, title: title || 'Notice' })
+  }, [])
+
   // Listen for real-time menu catalog changes (e.g. deletion of a product by admin)
   useEffect(() => {
     return subscribeProductCatalogSync((detail) => {
@@ -102,14 +109,14 @@ export const POS: React.FC = () => {
         setCartItems((prev) => {
           const matched = prev.find((ci) => ci.item.id === detail.productId)
           if (matched) {
-            alert(`The item "${detail.productName || matched.item.name}" was just removed from the menu by the admin and has been removed from your current order.`)
+            showNotice(`The item "${detail.productName || matched.item.name}" was just removed from the menu by the admin and has been removed from your current order.`, 'Item Removed')
             return prev.filter((ci) => ci.item.id !== detail.productId)
           }
           return prev
         })
       }
     })
-  }, [])
+  }, [showNotice])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All Menu')
@@ -451,7 +458,7 @@ export const POS: React.FC = () => {
     const s = (ord.status || '').toUpperCase()
     const isCookingOrLater = ['PREPARING', 'COOKING', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s)
     if (isCookingOrLater) {
-      alert('This order is already being prepared/cooked in the kitchen and can no longer be cancelled.')
+      showNotice('This order is already being prepared/cooked in the kitchen and can no longer be cancelled.', 'Cancellation Unavailable')
       return
     }
     setOrderToCancel(ord)
@@ -472,7 +479,7 @@ export const POS: React.FC = () => {
 
       const resData = await res.json().catch(() => ({}))
       if (!res.ok && resData.message) {
-        alert(resData.message)
+        showNotice(resData.message, 'Cancellation Failed')
         fetchPosOrders()
         setIsCancellingOrder(false)
         setOrderToCancel(null)
@@ -505,7 +512,7 @@ export const POS: React.FC = () => {
       const s = (targetOrder.status || '').toUpperCase()
       const isReady = ['READY', 'PREPARED', 'READY TO SERVE'].includes(s)
       if (!isReady) {
-        alert('Cannot mark order as served yet. Please wait for the kitchen to mark the order as Done / Ready.')
+        showNotice('Cannot mark order as served yet. Please wait for the kitchen to mark the order as Done / Ready.', 'Order Not Ready')
         return
       }
     }
@@ -900,12 +907,12 @@ export const POS: React.FC = () => {
     const servingsLeft = getRemainingServings(item.id)
     if (servingsLeft !== null && servingsLeft !== undefined) {
       if (servingsLeft <= 0) {
-        alert(`Sorry, "${item.name}" is currently out of stock.`)
+        showNotice(`Sorry, "${item.name}" is currently out of stock.`, 'Out of Stock')
         return
       }
       const existing = cartItems.find((ci) => ci.item.id === item.id)
       if (existing && existing.quantity >= servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${item.name}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${item.name}.`, 'Portion Limit Reached')
         return
       }
     }
@@ -934,7 +941,7 @@ export const POS: React.FC = () => {
     const ci = cartItems.find((c) => c.item.id === itemId)
     if (servingsLeft !== null && servingsLeft !== undefined && ci) {
       if (ci.quantity >= servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci.item.name}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci.item.name}.`, 'Portion Limit Reached')
         return
       }
     }
@@ -961,7 +968,7 @@ export const POS: React.FC = () => {
     const ci = cartItems.find((c) => c.item.id === itemId)
     if (servingsLeft !== null && servingsLeft !== undefined) {
       if (finalQty > servingsLeft) {
-        alert(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci?.item?.name || 'this item'}.`)
+        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci?.item?.name || 'this item'}.`, 'Portion Limit Reached')
         finalQty = servingsLeft
       }
     }
@@ -984,7 +991,7 @@ export const POS: React.FC = () => {
     const deletedInCart = cartItems.filter((ci) => !activeItemIds.has(ci.item.id))
     if (deletedInCart.length > 0) {
       const names = deletedInCart.map((ci) => ci.item.name).join(', ')
-      alert(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`)
+      showNotice(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`, 'Items Unavailable')
       setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
       return
     }
@@ -1076,7 +1083,7 @@ export const POS: React.FC = () => {
       }
     } catch (err) {
       console.error('POS order API error:', err)
-      alert(err instanceof Error ? err.message : 'Could not submit bulk order for Kitchen review.')
+      showNotice(err instanceof Error ? err.message : 'Could not submit bulk order for Kitchen review.', 'Order Error')
       return
     }
 
@@ -1152,16 +1159,16 @@ export const POS: React.FC = () => {
       if (paymentMethod === 'Cash') {
         const parsed = parseFloat(cashReceived)
         if (!cashReceived.trim() || isNaN(parsed) || parsed < total) {
-          alert('Please input the received cash amount before confirming this order.')
+          showNotice('Please input the received cash amount before confirming this order.', 'Payment Required')
           return
         }
       }
       if (paymentMethod === 'GCash' && (!paymentReference || !paymentReference.trim())) {
-        alert('GCash Reference Number is required to confirm this order.')
+        showNotice('GCash Reference Number is required to confirm this order.', 'Reference Required')
         return
       }
       if (paymentMethod.startsWith('Hybrid') && (!paymentReference || !paymentReference.trim())) {
-        alert('Reference Number is required for Hybrid payment to confirm this order.')
+        showNotice('Reference Number is required for Hybrid payment to confirm this order.', 'Reference Required')
         return
       }
 
@@ -1190,7 +1197,7 @@ export const POS: React.FC = () => {
         }
       } catch (err) {
         console.error('Update payment error:', err)
-        alert(err instanceof Error ? err.message : 'Could not update payment for this order.')
+        showNotice(err instanceof Error ? err.message : 'Could not update payment for this order.', 'Payment Failed')
         return
       }
 
@@ -1241,7 +1248,7 @@ export const POS: React.FC = () => {
       return
     }
     if (hasUnavailableItems) {
-      alert('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.')
+      showNotice('An item in your cart was just marked Out of Stock by the kitchen. Remove unavailable items before payment.', 'Item Unavailable')
       return
     }
 
@@ -1255,23 +1262,23 @@ export const POS: React.FC = () => {
     if (paymentMethod === 'Cash') {
       const parsed = parseFloat(cashReceived)
       if (!cashReceived.trim() || isNaN(parsed) || parsed < total) {
-        alert('Please input the received cash amount before confirming this order.')
+        showNotice('Please input the received cash amount before confirming this order.', 'Payment Required')
         return
       }
     }
     if (paymentMethod === 'GCash' && (!paymentReference || !paymentReference.trim())) {
-      alert('GCash Reference Number is required to confirm this order.')
+      showNotice('GCash Reference Number is required to confirm this order.', 'Reference Required')
       return
     }
     if (paymentMethod.startsWith('Hybrid') && (!paymentReference || !paymentReference.trim())) {
-      alert('Reference Number is required for Hybrid payment to confirm this order.')
+      showNotice('Reference Number is required for Hybrid payment to confirm this order.', 'Reference Required')
       return
     }
     const activeItemIds = new Set(menuItems.map((m) => m.id))
     const deletedInCart = cartItems.filter((ci) => !activeItemIds.has(ci.item.id))
     if (deletedInCart.length > 0) {
       const names = deletedInCart.map((ci) => ci.item.name).join(', ')
-      alert(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`)
+      showNotice(`The following item(s) are no longer on the menu: ${names}. They have been removed from the order.`, 'Items Unavailable')
       setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
       setIsSuccessModalOpen(false)
       return
@@ -1312,7 +1319,7 @@ export const POS: React.FC = () => {
       const result = await response.json().catch(() => ({}))
       if (!response.ok) {
         if (response.status === 409 || result.error === 'ITEM_DELETED' || result.error === 'ITEM_OUT_OF_STOCK') {
-          alert(result.message || 'An item in this order is no longer available or was removed from the menu.')
+          showNotice(result.message || 'An item in this order is no longer available or was removed from the menu.', 'Item Unavailable')
           void refreshMenuItems()
           setIsSuccessModalOpen(false)
           return
@@ -1321,7 +1328,7 @@ export const POS: React.FC = () => {
       }
     } catch (err) {
       console.error('POS order API error:', err)
-      alert(err instanceof Error ? err.message : 'Could not create the POS order. Please try again.')
+      showNotice(err instanceof Error ? err.message : 'Could not create the POS order. Please try again.', 'Order Error')
       return
     }
 
@@ -2220,6 +2227,14 @@ export const POS: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Minimal Modern Notice Modal */}
+      <NoticeModal
+        isOpen={Boolean(noticeModal)}
+        title={noticeModal?.title}
+        message={noticeModal?.message || ''}
+        onClose={() => setNoticeModal(null)}
+      />
     </div>
   )
 }

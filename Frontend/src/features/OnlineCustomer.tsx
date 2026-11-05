@@ -18,6 +18,7 @@ import {
     geocodeAddress,
     SEAFUDZ_FLAGSHIP_STORE,
 } from '../utils/riderDispatchAlgorithms'
+import { getProductQuantityStandard, checkProductQuantityStandards } from '../utils/bulkOrder'
 
 interface CartItem {
     item: MenuItem
@@ -781,6 +782,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         const activeItemIds = new Set(menuItems.map((m) => m.id))
         setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
     }
+
+    const { requiresApproval: hasQuantityStandardMet } = useMemo(() => {
+        return checkProductQuantityStandards(cartItems)
+    }, [cartItems])
 
     // Real-time catalog subscription: sync added/deleted products instantly without page refresh
     useEffect(() => {
@@ -2126,6 +2131,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 🔥 {servingsLeft} left
                             </span>
                         )}
+                        <span className="bg-white/95 text-neutral-600 text-[10px] sm:text-xs font-bold px-2.5 py-1 sm:px-3 sm:py-1 rounded-full border border-neutral-200/60 shadow-xs" title={`Quantity standard: ${getProductQuantityStandard(item.id || item.name)}`}>
+                            Std: {getProductQuantityStandard(item.id || item.name)}
+                        </span>
                         <span className="bg-white/95 text-neutral-800 text-xs sm:text-sm font-bold px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full border border-neutral-200/60 shadow-xs">
                             {item.category}
                         </span>
@@ -2737,24 +2745,42 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </h3>
 
                                 <div className="divide-y divide-neutral-50 max-h-[300px] overflow-y-auto pr-1">
-                                    {cartItems.map((ci) => (
-                                        <div key={ci.item.id} className={`py-3 first:pt-0 ${isAvailable(ci.item.id) ? '' : 'rounded-lg bg-rose-50 px-2'}`}>
-                                            <div className="flex justify-between text-sm">
-                                                <span className="font-medium text-neutral-700">
-                                                    {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
-                                                </span>
-                                                <span className="font-bold text-neutral-800">
-                                                    ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                </span>
+                                    {cartItems.map((ci) => {
+                                        const standard = getProductQuantityStandard(ci.item.id || ci.item.name)
+                                        const isStandardMet = ci.quantity >= standard
+                                        return (
+                                            <div key={ci.item.id} className={`py-3 first:pt-0 ${!isAvailable(ci.item.id) ? 'rounded-lg bg-rose-50 px-2' : isStandardMet ? 'rounded-lg bg-amber-50/60 px-2' : ''}`}>
+                                                <div className="flex justify-between items-start text-sm">
+                                                    <div className="min-w-0 pr-2">
+                                                        <span className="font-medium text-neutral-700">
+                                                            {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
+                                                        </span>
+                                                        <div className="flex items-center gap-1.5 mt-0.5">
+                                                            {isStandardMet ? (
+                                                                <span className="inline-flex items-center gap-1 text-[10px] font-black text-amber-900 bg-amber-100 border border-amber-300 rounded px-1.5 py-0.5">
+                                                                    <span>⚠️</span>
+                                                                    <span>Standard met ({standard}+)</span>
+                                                                </span>
+                                                            ) : (
+                                                                <span className="text-[10px] text-neutral-400 font-medium">
+                                                                    Std: {standard}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <span className="font-bold text-neutral-800 shrink-0">
+                                                        ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                                {!isAvailable(ci.item.id) && (
+                                                    <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">Out of Stock</span>
+                                                )}
+                                                {ci.specialNote && (
+                                                    <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
+                                                )}
                                             </div>
-                                            {!isAvailable(ci.item.id) && (
-                                                <span className="mt-1 inline-flex rounded-full bg-rose-600 px-2.5 py-1 text-[9px] font-black uppercase tracking-wide text-white">Out of Stock</span>
-                                            )}
-                                            {ci.specialNote && (
-                                                <p className="text-xs text-orange-500 italic mt-0.5">Note: "{ci.specialNote}"</p>
-                                            )}
-                                        </div>
-                                    ))}
+                                        )
+                                    })}
                                 </div>
 
                                 {orderNotes && (
@@ -4099,96 +4125,116 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
                                 ) : (
                                     <div className="space-y-3.5 divide-y divide-neutral-100">
-                                        {cartItems.map((ci) => (
-                                            <div
-                                                key={ci.item.id}
-                                                className={`pt-3.5 first:pt-0 ${
-                                                    isAvailable(ci.item.id)
-                                                        ? ''
-                                                        : 'rounded-2xl border border-rose-300 bg-rose-50 p-3'
-                                                }`}
-                                            >
-                                                <div className="flex items-center gap-3.5">
-                                                    {/* Item picture */}
-                                                    <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-neutral-100 shrink-0 border border-neutral-100 shadow-2xs">
-                                                        <ProductImage
-                                                            src={ci.item.image}
-                                                            fallbackSrc={ci.item.bundledImage}
-                                                            alt={ci.item.name}
-                                                            className="w-full h-full object-cover"
-                                                        />
+                                        {cartItems.map((ci) => {
+                                            const standard = getProductQuantityStandard(ci.item.id || ci.item.name)
+                                            const isStandardMet = ci.quantity >= standard
+                                            return (
+                                                <div
+                                                    key={ci.item.id}
+                                                    className={`pt-3.5 first:pt-0 ${
+                                                        !isAvailable(ci.item.id)
+                                                            ? 'rounded-2xl border border-rose-300 bg-rose-50 p-3'
+                                                            : isStandardMet
+                                                                ? 'rounded-2xl border border-amber-300/80 bg-amber-50/40 p-3'
+                                                                : ''
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-3.5">
+                                                        {/* Item picture */}
+                                                        <div className="w-18 h-18 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-neutral-100 shrink-0 border border-neutral-100 shadow-2xs">
+                                                            <ProductImage
+                                                                src={ci.item.image}
+                                                                fallbackSrc={ci.item.bundledImage}
+                                                                alt={ci.item.name}
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                        </div>
+
+                                                        {/* Info & Quantity */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-start justify-between gap-2">
+                                                                <div className="min-w-0">
+                                                                    <p className="font-bold text-neutral-800 text-sm sm:text-base leading-snug truncate">
+                                                                        {ci.item.name}
+                                                                    </p>
+                                                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                                                        {isStandardMet ? (
+                                                                            <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 border border-amber-300 text-amber-900 px-1.5 py-0.5 text-[10px] font-black">
+                                                                                <span>⚠️</span>
+                                                                                <span>Standard met ({standard}+)</span>
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-[10px] font-semibold text-neutral-400">
+                                                                                Std: {standard}
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setCartItems((prev) => prev.filter((c) => c.item.id !== ci.item.id))}
+                                                                    className="text-neutral-400 hover:text-rose-600 transition-colors p-1 cursor-pointer shrink-0 rounded-lg hover:bg-rose-50"
+                                                                    title="Remove item"
+                                                                >
+                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                                                    </svg>
+                                                                </button>
+                                                            </div>
+                                                            {!isAvailable(ci.item.id) && (
+                                                                <span className="mt-0.5 inline-flex rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
+                                                                    Out of Stock
+                                                                </span>
+                                                            )}
+                                                            <div className="flex items-center justify-between mt-2.5">
+                                                                <p className="text-sm text-orange-600 font-extrabold">
+                                                                    ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </p>
+                                                                <CartQuantityControl
+                                                                    quantity={ci.quantity}
+                                                                    onIncrement={() => handleIncrement(ci.item.id)}
+                                                                    onDecrement={() => handleDecrement(ci.item.id)}
+                                                                    onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
+                                                                />
+                                                            </div>
+                                                        </div>
                                                     </div>
 
-                                                    {/* Info & Quantity */}
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <p className="font-bold text-neutral-800 text-sm sm:text-base leading-snug truncate">
-                                                                {ci.item.name}
-                                                            </p>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setCartItems((prev) => prev.filter((c) => c.item.id !== ci.item.id))}
-                                                                className="text-neutral-400 hover:text-rose-600 transition-colors p-1 cursor-pointer shrink-0 rounded-lg hover:bg-rose-50"
-                                                                title="Remove item"
-                                                            >
-                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                                                                </svg>
-                                                            </button>
-                                                        </div>
-                                                        {!isAvailable(ci.item.id) && (
-                                                            <span className="mt-0.5 inline-flex rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
-                                                                Out of Stock
-                                                            </span>
+                                                    {/* Instruction Note */}
+                                                    <div className="mt-2.5 bg-neutral-50 rounded-xl p-2 sm:p-2.5">
+                                                        {editingNoteItemId === ci.item.id ? (
+                                                            <div className="flex gap-2">
+                                                                <input
+                                                                    type="text"
+                                                                    value={tempNote}
+                                                                    onChange={(e) => setTempNote(e.target.value)}
+                                                                    placeholder="e.g. less spicy, sauce on side..."
+                                                                    className="text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-orange-500"
+                                                                />
+                                                                <button
+                                                                    onClick={() => handleSaveNote(ci.item.id)}
+                                                                    className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:bg-orange-600 transition-colors"
+                                                                >
+                                                                    Save
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center justify-between text-xs">
+                                                                <p className="text-neutral-500 italic text-[11px] leading-tight truncate">
+                                                                    {ci.specialNote ? `"${ci.specialNote}"` : 'No special requests'}
+                                                                </p>
+                                                                <button
+                                                                    onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
+                                                                    className="text-orange-600 hover:text-orange-700 font-bold text-[11px] cursor-pointer shrink-0 ml-2"
+                                                                >
+                                                                    {ci.specialNote ? 'Edit note' : '+ Add Note'}
+                                                                </button>
+                                                            </div>
                                                         )}
-                                                        <div className="flex items-center justify-between mt-2.5">
-                                                            <p className="text-sm text-orange-600 font-extrabold">
-                                                                ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                            </p>
-                                                            <CartQuantityControl
-                                                                quantity={ci.quantity}
-                                                                onIncrement={() => handleIncrement(ci.item.id)}
-                                                                onDecrement={() => handleDecrement(ci.item.id)}
-                                                                onSetQuantity={(q) => handleSetQuantity(ci.item.id, q)}
-                                                            />
-                                                        </div>
                                                     </div>
                                                 </div>
-
-                                                {/* Instruction Note */}
-                                                <div className="mt-2.5 bg-neutral-50 rounded-xl p-2 sm:p-2.5">
-                                                    {editingNoteItemId === ci.item.id ? (
-                                                        <div className="flex gap-2">
-                                                            <input
-                                                                type="text"
-                                                                value={tempNote}
-                                                                onChange={(e) => setTempNote(e.target.value)}
-                                                                placeholder="e.g. less spicy, sauce on side..."
-                                                                className="text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-orange-500"
-                                                            />
-                                                            <button
-                                                                onClick={() => handleSaveNote(ci.item.id)}
-                                                                className="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer hover:bg-orange-600 transition-colors"
-                                                            >
-                                                                Save
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex items-center justify-between text-xs">
-                                                            <p className="text-neutral-500 italic text-[11px] leading-tight truncate">
-                                                                {ci.specialNote ? `"${ci.specialNote}"` : 'No special requests'}
-                                                            </p>
-                                                            <button
-                                                                onClick={() => handleStartEditingNote(ci.item.id, ci.specialNote)}
-                                                                className="text-orange-600 hover:text-orange-700 font-bold text-[11px] cursor-pointer shrink-0 ml-2"
-                                                            >
-                                                                {ci.specialNote ? 'Edit note' : '+ Add Note'}
-                                                            </button>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
+                                            )
+                                        })}
                                     </div>
                                 )}
 
@@ -4222,6 +4268,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {/* Footer Summary & Checkout */}
                             {cartItems.length > 0 && (
                                 <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
+                                    {hasQuantityStandardMet && (
+                                        <div className="flex items-center gap-2 rounded-xl bg-amber-50 border border-amber-300/80 px-3 py-2 text-amber-900">
+                                            <span className="shrink-0 text-sm">⚠️</span>
+                                            <p className="font-bold text-[11px] leading-tight">
+                                                Quantity standard met · Kitchen review required before payment
+                                            </p>
+                                        </div>
+                                    )}
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between text-xs text-neutral-500">
                                             <span>Order Subtotal</span>

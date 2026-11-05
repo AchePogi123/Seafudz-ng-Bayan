@@ -513,7 +513,12 @@ export const RideRoleDemo: React.FC = () => {
       let printedReceiptsSet = new Set<string>()
       try {
         const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
-        if (savedPrinted) printedReceiptsSet = new Set(JSON.parse(savedPrinted))
+        if (savedPrinted) {
+          const arr = JSON.parse(savedPrinted)
+          if (Array.isArray(arr)) {
+            printedReceiptsSet = new Set(arr.filter((x: any) => typeof x === 'string' && x.trim().length > 0).map((x: string) => x.trim()))
+          }
+        }
       } catch {}
 
       let tripMap: Record<string, string> = {}
@@ -567,13 +572,15 @@ export const RideRoleDemo: React.FC = () => {
 
               // Strict User Flow Requirement: Official restaurant receipt from POS Cashier MUST be printed
               // before the online delivery order reflects on the Rider dispatch queue.
+              const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
+              const hasPrintedRef = Boolean(o.ref && String(o.ref).trim() && printedReceiptsSet.has(String(o.ref).trim()))
               const isReceiptPrinted = Boolean(
                 o.isReceiptPrinted === true ||
                 o.is_receipt_printed === true ||
-                o.receiptStatus === 'PRINTED' ||
-                o.receipt_status === 'PRINTED' ||
-                printedReceiptsSet.has(id) ||
-                (o.ref && printedReceiptsSet.has(o.ref))
+                String(o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+                String(o.receipt_status || '').toUpperCase() === 'PRINTED' ||
+                hasPrintedId ||
+                hasPrintedRef
               )
               if (!isReceiptPrinted) return
 
@@ -683,13 +690,15 @@ export const RideRoleDemo: React.FC = () => {
 
               // Strict User Flow Requirement: Official restaurant receipt from POS Cashier MUST be printed
               // before the online delivery order reflects on the Rider dispatch queue.
+              const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
+              const hasPrintedRef = Boolean(o.ref && String(o.ref).trim() && printedReceiptsSet.has(String(o.ref).trim()))
               const isReceiptPrinted = Boolean(
                 o.isReceiptPrinted === true ||
                 o.is_receipt_printed === true ||
-                o.receiptStatus === 'PRINTED' ||
-                o.receipt_status === 'PRINTED' ||
-                printedReceiptsSet.has(id) ||
-                (o.ref && printedReceiptsSet.has(o.ref))
+                String(o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+                String(o.receipt_status || '').toUpperCase() === 'PRINTED' ||
+                hasPrintedId ||
+                hasPrintedRef
               )
               if (!isReceiptPrinted) return
 

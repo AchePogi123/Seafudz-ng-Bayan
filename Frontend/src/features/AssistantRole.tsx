@@ -39,6 +39,8 @@ export interface OnlineOrder {
   items: OrderItem[]
   outOfStockItems?: any[]
   receiptStatus?: string
+  isReceiptPrinted?: boolean
+  is_receipt_printed?: boolean
   rejectionReason?: string
   customerResolution?: 'REFUND' | 'REPLACE' | null
   customerResolutionStatus?: string
@@ -498,6 +500,17 @@ export const AssistantRole: React.FC = () => {
     try {
       const combinedMap = new Map<string, OnlineOrder>()
 
+      let printedReceiptsSet = new Set<string>()
+      try {
+        const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
+        if (savedPrinted) {
+          const arr = JSON.parse(savedPrinted)
+          if (Array.isArray(arr)) {
+            printedReceiptsSet = new Set(arr.filter((x: any) => typeof x === 'string' && x.trim().length > 0).map((x: string) => x.trim()))
+          }
+        }
+      } catch {}
+
       // 1. Read from backend API FIRST (Online Delivery Orders ONLY - Central Truth)
       try {
         const res = await fetch(`${API_BASE_URL}/user-flow/orders`)
@@ -524,6 +537,17 @@ export const AssistantRole: React.FC = () => {
               }
 
               const id = o.id
+              const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
+              const hasPrintedRef = Boolean(o.ref && String(o.ref).trim() && printedReceiptsSet.has(String(o.ref).trim()))
+              const isReceiptPrinted = Boolean(
+                o.isReceiptPrinted === true ||
+                o.is_receipt_printed === true ||
+                String(o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+                String(o.receipt_status || '').toUpperCase() === 'PRINTED' ||
+                hasPrintedId ||
+                hasPrintedRef
+              )
+
               combinedMap.set(id, {
                 id,
                 ref: id,
@@ -536,6 +560,9 @@ export const AssistantRole: React.FC = () => {
                 refundReceipt: o.refundReceipt || o.refund_receipt,
                 refundReference: o.refundReference || o.refund_reference,
                 status: normalizeStatusStr(o.status),
+                isReceiptPrinted,
+                is_receipt_printed: isReceiptPrinted,
+                receiptStatus: isReceiptPrinted ? 'PRINTED' : (o.receiptStatus || o.receipt_status || 'UNPRINTED'),
                 gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                 requiresKitchenApproval: o.requiresKitchenApproval ?? o.requires_kitchen_approval,
                 requires_kitchen_approval: o.requires_kitchen_approval ?? o.requiresKitchenApproval,
@@ -602,6 +629,17 @@ export const AssistantRole: React.FC = () => {
               }
 
               const id = o.id || o.ref
+              const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
+              const hasPrintedRef = Boolean(o.ref && String(o.ref).trim() && printedReceiptsSet.has(String(o.ref).trim()))
+              const isReceiptPrinted = Boolean(
+                o.isReceiptPrinted === true ||
+                o.is_receipt_printed === true ||
+                String(o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+                String(o.receipt_status || '').toUpperCase() === 'PRINTED' ||
+                hasPrintedId ||
+                hasPrintedRef
+              )
+
               if (!combinedMap.has(id)) {
                 const rawStatus = normalizeStatusStr(o.status)
                 const items: OrderItem[] = Array.isArray(o.cartItems)
@@ -631,6 +669,9 @@ export const AssistantRole: React.FC = () => {
                   refundReceipt: o.refundReceipt || o.refund_receipt,
                   refundReference: o.refundReference || o.refund_reference,
                   status: rawStatus,
+                  isReceiptPrinted,
+                  is_receipt_printed: isReceiptPrinted,
+                  receiptStatus: isReceiptPrinted ? 'PRINTED' : (o.receiptStatus || o.receipt_status || 'UNPRINTED'),
                   gcashAuthorized: Boolean(o.gcashAuthorized || o.gcash_authorized || (o.status || '').toUpperCase() === 'GCASH_AUTHORIZED'),
                   requiresKitchenApproval: o.requiresKitchenApproval ?? o.requires_kitchen_approval,
                   requires_kitchen_approval: o.requires_kitchen_approval ?? o.requiresKitchenApproval,
@@ -656,9 +697,13 @@ export const AssistantRole: React.FC = () => {
                 const localResStatus = o.customerResolutionStatus || o.customer_resolution_status
                 const localReceipt = o.paymentReceipt || o.receiptImage || o.receipt
                 const localRef = o.paymentReference || o.paymentRef
+                const mergedPrinted = Boolean(existing.isReceiptPrinted || isReceiptPrinted)
 
                 combinedMap.set(id, {
                   ...existing,
+                  isReceiptPrinted: mergedPrinted,
+                  is_receipt_printed: mergedPrinted,
+                  receiptStatus: mergedPrinted ? 'PRINTED' : (existing.receiptStatus || 'UNPRINTED'),
                   customerResolution: existing.customerResolution || localRes || null,
                   customerResolutionStatus: (existing.customerResolutionStatus && existing.customerResolutionStatus !== 'NONE')
                     ? existing.customerResolutionStatus
@@ -1029,6 +1074,17 @@ export const AssistantRole: React.FC = () => {
   }
 
   const filteredOrders = useMemo(() => {
+    let printedReceiptsSet = new Set<string>()
+    try {
+      const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
+      if (savedPrinted) {
+        const arr = JSON.parse(savedPrinted)
+        if (Array.isArray(arr)) {
+          printedReceiptsSet = new Set(arr.filter((x: any) => typeof x === 'string' && x.trim().length > 0).map((x: string) => x.trim()))
+        }
+      }
+    } catch {}
+
     return orders.filter((order) => {
       const s = normalizeStatusStr(order.status)
       const rawSt = (order.status || '').toUpperCase()
@@ -1042,13 +1098,24 @@ export const AssistantRole: React.FC = () => {
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
       const isCancellationRefundNeeded = s === 'cancel_requested' || (s === 'cancelled' && (order.paymentMethod || '').toLowerCase().includes('gcash') && !order.refundReceipt && !order.refundReference)
 
+      const hasPrintedId = Boolean(order.id && String(order.id).trim() && printedReceiptsSet.has(String(order.id).trim()))
+      const hasPrintedRef = Boolean(order.ref && String(order.ref).trim() && printedReceiptsSet.has(String(order.ref).trim()))
+      const isPrinted = Boolean(
+        order.isReceiptPrinted === true ||
+        (order as any).is_receipt_printed === true ||
+        String(order.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+        String((order as any).receipt_status || '').toUpperCase() === 'PRINTED' ||
+        hasPrintedId ||
+        hasPrintedRef
+      )
+
       const matchesTab =
         activeTab === 'pending'
           ? (!isConfirmedOrLater || isCancellationRefundNeeded)
           : activeTab === 'kitchen'
-            ? s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock'
+            ? (s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock' || (s === 'ready' && !isPrinted))
             : activeTab === 'dispatch'
-              ? s === 'ready' || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'
+              ? ((s === 'ready' && isPrinted) || s === 'out_for_delivery' || s === 'assigned' || s === 'completed')
               : true
 
       if (!matchesTab) return false
@@ -1198,6 +1265,11 @@ export const AssistantRole: React.FC = () => {
                 paginatedOrders.map((ord) => {
                   const isSelected = selectedOrderId === ord.id
                   const s = normalizeStatusStr(ord.status)
+                  const isCardPrinted = Boolean(
+                    ord.isReceiptPrinted === true ||
+                    (ord as any).is_receipt_printed === true ||
+                    String(ord.receiptStatus || '').toUpperCase() === 'PRINTED'
+                  )
                   const deliveryFee = Number(ord.deliveryFee ?? 0)
                   const priceBeforeDelivery = Math.max(0, Number(ord.total || 0) - deliveryFee)
 
@@ -1237,7 +1309,9 @@ export const AssistantRole: React.FC = () => {
                                           : s === 'confirmed' || s === 'preparing'
                                             ? 'bg-blue-50 text-blue-700 border border-blue-200'
                                             : s === 'ready'
-                                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                              ? !isCardPrinted
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold'
+                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                               : s === 'cancelled'
                                                 ? 'bg-rose-100 text-rose-800 border border-rose-300'
                                                 : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
@@ -1255,6 +1329,10 @@ export const AssistantRole: React.FC = () => {
                                 ? 'Kitchen Review Needed'
                                 : s === 'kitchen_rejected'
                                   ? 'Declined by Kitchen'
+                                  : s === 'ready'
+                                    ? !isCardPrinted
+                                      ? 'Kitchen Done • Awaiting POS Receipt'
+                                      : 'Ready for Rider Dispatch'
                                   : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? (ord.refundReceipt || ord.refundReference ? 'Cancelled & Refunded' : 'Cancelled') : ord.status}
                           </span>
                           <button
@@ -1817,7 +1895,58 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'ASSIGNED', 'COMPLETED'].includes(st)
+                    if (st === 'READY') {
+                      let printedReceiptsSet = new Set<string>()
+                      try {
+                        const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
+                        if (savedPrinted) {
+                          const arr = JSON.parse(savedPrinted)
+                          if (Array.isArray(arr)) {
+                            printedReceiptsSet = new Set(arr.filter((x: any) => typeof x === 'string' && x.trim().length > 0).map((x: string) => x.trim()))
+                          }
+                        }
+                      } catch {}
+
+                      const hasPrintedId = Boolean(selectedOrder.id && String(selectedOrder.id).trim() && printedReceiptsSet.has(String(selectedOrder.id).trim()))
+                      const hasPrintedRef = Boolean(selectedOrder.ref && String(selectedOrder.ref).trim() && printedReceiptsSet.has(String(selectedOrder.ref).trim()))
+                      const isSelectedPrinted = Boolean(
+                        selectedOrder.isReceiptPrinted === true ||
+                        selectedOrder.is_receipt_printed === true ||
+                        String(selectedOrder.receiptStatus || '').toUpperCase() === 'PRINTED' ||
+                        hasPrintedId ||
+                        hasPrintedRef
+                      )
+
+                      if (!isSelectedPrinted) {
+                        return (
+                          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center space-y-2 shadow-xs">
+                            <div className="flex items-center justify-center gap-1.5 text-amber-900 font-extrabold text-xs">
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+                              Awaiting Cashier POS Receipt Print
+                            </div>
+                            <p className="text-xs text-amber-800 leading-snug">
+                              Kitchen preparation is finished! The official restaurant receipt must be printed by the Cashier under <strong>Online Receipts</strong> in POS before this order can proceed to rider dispatch.
+                            </p>
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div className="w-full bg-emerald-50 text-emerald-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-emerald-300 shadow-xs">
+                          🛵 Ready for Rider Dispatch (Official Receipt Printed)
+                        </div>
+                      )
+                    }
+
+                    if (st === 'OUT_FOR_DELIVERY') {
+                      return (
+                        <div className="w-full bg-blue-50 text-blue-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-blue-300 shadow-xs">
+                          🛵 Out for Delivery with Rider
+                        </div>
+                      )
+                    }
+
+                    const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'ASSIGNED', 'COMPLETED'].includes(st)
 
                     if (isConfirmedOrLater) {
                       return (

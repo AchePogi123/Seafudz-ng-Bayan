@@ -132,6 +132,7 @@ export const POS: React.FC = () => {
   }, [menuItems, storedCartItems])
   const hasUnavailableItems = cartItems.some((ci) => !isAvailable(ci.item.id))
   const [orderType, setOrderType] = useState('Take Out')
+  const [customerName, setCustomerName] = useState('')
   const [orderNotes, setOrderNotes] = useState('')
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
@@ -1006,6 +1007,7 @@ export const POS: React.FC = () => {
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
+      customerName: customerName.trim() || 'Walk-In',
       subtotal: rawSubtotal,
       vat,
       total: totalWithVat,
@@ -1022,6 +1024,7 @@ export const POS: React.FC = () => {
     if (!approvedOrderForPayment) {
       setCartItems([])
       setOrderNotes('')
+      setCustomerName('')
     }
     setApprovedOrderForPayment(null)
     setIsSuccessModalOpen(false)
@@ -1039,10 +1042,15 @@ export const POS: React.FC = () => {
     const vat = rawSubtotal * 0.12
     const total = Math.round(rawSubtotal + vat)
     const orderId = `POS-${Date.now().toString().slice(-4)}`
+    const finalCustomerName = customerName.trim() || 'Walk-In'
 
     const posOrderPayload = {
       id: orderId,
       ref: orderId,
+      customerName: finalCustomerName,
+      customer_name: finalCustomerName,
+      customer: finalCustomerName,
+      name: finalCustomerName,
       isPosOrder: true,
       status: 'AWAITING_KITCHEN_APPROVAL',
       orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
@@ -1094,7 +1102,10 @@ export const POS: React.FC = () => {
       type: orderType,
       status: 'AWAITING_KITCHEN_APPROVAL',
       paymentStatus: 'Unpaid',
-      customer: 'Walk-In',
+      customer: finalCustomerName,
+      customerName: finalCustomerName,
+      customer_name: finalCustomerName,
+      name: finalCustomerName,
       isPosOrder: true,
       requiresKitchenApproval: true,
       requires_kitchen_approval: true,
@@ -1120,6 +1131,7 @@ export const POS: React.FC = () => {
 
     setCartItems([])
     setOrderNotes('')
+    setCustomerName('')
     setIsSuccessModalOpen(false)
     setLastOrderDetails(null)
     setPosNotification(`⚠️ High-Quantity Order #${orderId} sent to Kitchen for Quantity Review! Payment will be collected once Kitchen approves.`)
@@ -1131,11 +1143,14 @@ export const POS: React.FC = () => {
   const handleOpenPaymentForApprovedOrder = (ord: any) => {
     const rawSubtotal = ord.subtotal || Math.round((ord.total / 1.12) * 100) / 100
     const vat = ord.vat || Math.round((ord.total - rawSubtotal) * 100) / 100
+    const ordCust = ord.customerName || ord.customer_name || ord.customer || ord.name || ''
+    setCustomerName(ordCust !== 'Walk-In' && ordCust !== 'Walk-In Customer' ? ordCust : '')
     setApprovedOrderForPayment(ord)
     setLastOrderDetails({
       orderId: ord.id || ord.ref,
       table: ord.table || 'N/A',
       type: ord.type || ord.orderType || 'Take Out',
+      customerName: ordCust || 'Walk-In',
       subtotal: rawSubtotal,
       vat,
       total: ord.total,
@@ -1201,12 +1216,16 @@ export const POS: React.FC = () => {
         return
       }
 
+      const finalCustName = customerName.trim() || approvedOrderForPayment.customerName || approvedOrderForPayment.customer_name || approvedOrderForPayment.customer || lastOrderDetails?.customerName || 'Walk-In'
+
       try {
         const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
         const updated = existing.map((o: any) => {
           if (o.id === orderId || o.ref === orderId) {
             return {
               ...o,
+              customer: finalCustName,
+              customerName: finalCustName,
               status: 'CONFIRMED',
               paymentStatus: 'Paid',
               paymentMethod,
@@ -1230,6 +1249,7 @@ export const POS: React.FC = () => {
         orderId,
         table: approvedOrderForPayment.table || 'N/A',
         type: approvedOrderForPayment.type || approvedOrderForPayment.orderType || 'Take Out',
+        customerName: finalCustName,
         subtotal: rawSub,
         vat: vatVal,
         total,
@@ -1284,10 +1304,15 @@ export const POS: React.FC = () => {
       return
     }
     const orderId = `POS-${Date.now().toString().slice(-4)}`
+    const finalCustName = customerName.trim() || lastOrderDetails?.customerName || 'Walk-In'
 
     const posOrderPayload = {
       id: orderId,
       ref: orderId,
+      customerName: finalCustName,
+      customer_name: finalCustName,
+      customer: finalCustName,
+      name: finalCustName,
       isPosOrder: true,
       status: 'CONFIRMED',
       orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
@@ -1340,7 +1365,10 @@ export const POS: React.FC = () => {
       type: orderType,
       status: 'CONFIRMED',
       paymentStatus: 'Paid',
-      customer: 'Walk-In',
+      customer: finalCustName,
+      customerName: finalCustName,
+      customer_name: finalCustName,
+      name: finalCustName,
       isPosOrder: true,
       items: cartItems.map((ci) => `${ci.item.name} x${ci.quantity}`).join(', '),
       notes: orderNotes,
@@ -1362,6 +1390,7 @@ export const POS: React.FC = () => {
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
+      customerName: finalCustName,
       subtotal: rawSubtotal,
       vat,
       total,
@@ -1382,6 +1411,7 @@ export const POS: React.FC = () => {
     setIsReceiptModalOpen(false)
     setCartItems([])
     setOrderNotes('')
+    setCustomerName('')
     setOrderType('Take Out')
     setLastOrderDetails(null)
   }
@@ -1489,6 +1519,8 @@ export const POS: React.FC = () => {
                 cartItems={cartItems}
                 orderType={orderType}
                 setOrderType={setOrderType}
+                customerName={customerName}
+                setCustomerName={setCustomerName}
                 orderNotes={orderNotes}
                 setOrderNotes={setOrderNotes}
                 onIncrement={handleIncrement}
@@ -1639,6 +1671,8 @@ export const POS: React.FC = () => {
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
                               <span className="font-extrabold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
+                              <span>•</span>
+                              <span className="font-bold text-neutral-700">{String(ord.customerName || ord.customer_name || ord.customer || ord.name || 'Walk-In')}</span>
                               <span>•</span>
                               <span>Placed {String(ord.dateTime || 'Just now')}</span>
                             </div>
@@ -2103,6 +2137,8 @@ export const POS: React.FC = () => {
               cartItems={cartItems}
               orderType={orderType}
               setOrderType={setOrderType}
+              customerName={customerName}
+              setCustomerName={setCustomerName}
               orderNotes={orderNotes}
               setOrderNotes={setOrderNotes}
               onIncrement={handleIncrement}
@@ -2127,6 +2163,8 @@ export const POS: React.FC = () => {
         onSubmitForApproval={handleSubmitForKitchenApproval}
         requiresApproval={lastOrderDetails?.requiresApproval ?? bulkCheck.requiresApproval}
         flaggedItems={lastOrderDetails?.flaggedItems ?? bulkCheck.flaggedItems}
+        customerName={customerName}
+        setCustomerName={setCustomerName}
         orderDetails={lastOrderDetails}
         hasUnavailableItems={hasUnavailableItems}
         isItemAvailable={isAvailable}

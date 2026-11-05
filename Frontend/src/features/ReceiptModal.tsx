@@ -50,10 +50,12 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
     change,
     paymentMethod = 'Cash',
     paymentReference: rawPaymentRef,
-    customerName,
+    customerName: rawCustomerName,
     phone,
     address,
   } = orderDetails
+
+  const customerName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
 
   const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 
@@ -278,10 +280,12 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
     change,
     paymentMethod = 'Cash',
     paymentReference: rawPaymentRef,
-    customerName,
+    customerName: rawCustomerName,
     phone,
     address,
   } = orderDetails
+
+  const customerName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
 
   const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 

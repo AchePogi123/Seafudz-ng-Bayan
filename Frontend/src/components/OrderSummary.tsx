@@ -7,6 +7,8 @@ interface OrderSummaryProps {
   cartItems: CartItem[]
   orderType: string
   setOrderType: (type: string) => void
+  customerName?: string
+  setCustomerName?: (name: string) => void
   orderNotes: string
   setOrderNotes: (notes: string) => void
   onIncrement: (itemId: string) => void
@@ -25,6 +27,8 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
   cartItems,
   orderType,
   setOrderType,
+  customerName = '',
+  setCustomerName,
   orderNotes,
   setOrderNotes,
   onIncrement,
@@ -70,8 +74,8 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
         )}
       </div>
 
-      {/* Selectors - Single Full Width Container */}
-      <div className="mb-4 flex-shrink-0">
+      {/* Selectors - Type and Customer Name */}
+      <div className="mb-4 flex-shrink-0 grid grid-cols-2 gap-2.5">
         <div>
           <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">
             Type
@@ -91,6 +95,19 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
               </svg>
             </div>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wider mb-1">
+            Name
+          </label>
+          <input
+            type="text"
+            placeholder="Customer name"
+            value={customerName}
+            onChange={(e) => setCustomerName && setCustomerName(e.target.value)}
+            className="w-full bg-neutral-50 hover:bg-neutral-100/80 text-neutral-800 rounded-xl px-3 py-2 text-xs font-semibold border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 placeholder:text-neutral-400 placeholder:font-normal"
+          />
         </div>
       </div>
 

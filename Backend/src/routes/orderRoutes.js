@@ -316,6 +316,36 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     }
 
     await client.query('BEGIN');
+
+    // Resolve or provision customer for POS/On-site orders
+    let validCustomerId = customerId || null;
+    const candidateCustomer = (req.body.customerName || req.body.customer_name || req.body.name || req.body.customer || '').trim();
+    if (!validCustomerId && candidateCustomer && candidateCustomer.toLowerCase() !== 'walk-in' && candidateCustomer.toLowerCase() !== 'walk-in customer') {
+      try {
+        const custRes = await client.query('SELECT id FROM customers WHERE LOWER(fullname) = LOWER($1) LIMIT 1', [candidateCustomer]);
+        if (custRes.rows.length > 0) {
+          validCustomerId = custRes.rows[0].id;
+        } else {
+          const safeEmail = `${candidateCustomer.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'customer'}_${Date.now()}@guest.seafudz.ph`;
+          const insertCustRes = await client.query(
+            `INSERT INTO customers (fullname, email, phone, delivery_address)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (email) DO UPDATE SET
+               fullname = EXCLUDED.fullname,
+               updated_at = NOW()
+             RETURNING id`,
+            [candidateCustomer, safeEmail, req.body.phone || null, req.body.deliveryAddress || null]
+          );
+          if (insertCustRes.rows.length > 0) {
+            validCustomerId = insertCustRes.rows[0].id;
+          }
+        }
+      } catch (custErr) {
+        console.warn('Customer provision error in POST /orders:', custErr);
+      }
+    }
+    const finalCustomerName = candidateCustomer || (validCustomerId ? 'Customer' : 'Walk-In');
+
     const availableProducts = await assertItemsAvailable(client, cartItems);
 
     const normalizedCartItems = cartItems.map((ci) => {
@@ -379,7 +409,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
 
     const orderRes = await client.query(orderSql, [
       orderNumber,
-      customerId || null,
+      validCustomerId || null,
       cashierId || null,
       assistantId || null,
       tableId || null,
@@ -464,8 +494,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     const inMemPayload = {
       id: createdOrder.id,
       ref: createdOrder.id,
-      customerName: 'Walk-In Customer',
-      customer: 'Walk-In Customer',
+      customerName: finalCustomerName,
+      customer: finalCustomerName,
+      customer_name: finalCustomerName,
       type: createdOrder.order_type === 'ONLINE' ? 'Delivery' : 'POS Order',
       orderType: createdOrder.order_type,
       status: createdOrder.status || posStatus,
@@ -517,6 +548,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       message: 'Order created successfully in database',
       data: {
         ...createdOrder,
+        customerName: finalCustomerName,
+        customer: finalCustomerName,
+        customer_name: finalCustomerName,
         requires_kitchen_approval: requiresKitchenApproval,
         requiresKitchenApproval,
         kitchen_approval_status: kitchenApprovalStatus,

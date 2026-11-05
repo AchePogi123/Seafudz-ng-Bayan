@@ -9,7 +9,10 @@ interface SuccessModalProps {
   onSubmitForApproval?: () => void
   requiresApproval?: boolean
   flaggedItems?: FlaggedQuantityItem[]
+  customerName?: string
+  setCustomerName?: (name: string) => void
   orderDetails: {
+    customerName?: string
     table?: string
     type: string
     total: number
@@ -29,6 +32,8 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
   onSubmitForApproval,
   requiresApproval = false,
   flaggedItems = [],
+  customerName = '',
+  setCustomerName,
   orderDetails,
   hasUnavailableItems = false,
   isItemAvailable = () => true,
@@ -208,6 +213,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             <h2 className="text-2xl font-black text-neutral-900 text-center tracking-tight">Order Confirmed!</h2>
             <p className="text-xs text-neutral-400 font-semibold mt-1 text-center">
               Order #A123 • {orderDetails.type}
+              {(customerName || orderDetails.customerName) ? ` • ${customerName || orderDetails.customerName}` : ''}
             </p>
           </>
         )}
@@ -431,6 +437,20 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
 
         {/* Location & Details Card */}
         <div className="bg-neutral-50/90 rounded-2xl p-4 sm:p-4.5 w-full mb-4 border border-neutral-100 space-y-2.5">
+          <div className="flex justify-between items-center text-xs font-bold text-neutral-500">
+            <span>Name</span>
+            {setCustomerName ? (
+              <input
+                type="text"
+                placeholder="Walk-In Customer"
+                value={customerName || orderDetails.customerName || ''}
+                onChange={(e) => setCustomerName(e.target.value)}
+                className="text-right text-neutral-900 font-bold text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-orange-500 max-w-[170px]"
+              />
+            ) : (
+              <span className="text-neutral-900 font-bold">{customerName || orderDetails.customerName || 'Walk-In'}</span>
+            )}
+          </div>
           <div className="flex justify-between text-xs font-bold text-neutral-500">
             <span>Location</span>
             <span className="text-neutral-900 font-bold">{orderDetails.table}</span>

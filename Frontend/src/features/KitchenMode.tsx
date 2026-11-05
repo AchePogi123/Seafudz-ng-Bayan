@@ -59,6 +59,7 @@ export const KitchenMode: React.FC = () => {
   // Kitchen Quantity Standards & Approvals state
   const [approvalOrders, setApprovalOrders] = useState<any[]>([])
   const [isProcessingApproval, setIsProcessingApproval] = useState<string | null>(null)
+  const [expandedApprovalOrders, setExpandedApprovalOrders] = useState<Record<string, boolean>>({})
   const [servingsMap, setServingsMap] = useState<Record<string, number | null>>({})
   const [servingsInputs, setServingsInputs] = useState<Record<string, string>>({})
   const [savingServingsId, setSavingServingsId] = useState<string | null>(null)
@@ -1077,16 +1078,19 @@ export const KitchenMode: React.FC = () => {
                   const customerName = order.customer_name || order.customerName || order.customer || 'Customer'
                   const orderType = order.order_type || order.type || 'Delivery'
                   const paymentMethod = order.payment_method || order.paymentMethod || 'GCASH'
+                  const isCod = String(paymentMethod).toUpperCase().includes('COD')
+                  const isExpanded = Boolean(expandedApprovalOrders[order.id])
+                  const displayedItems = isExpanded || itemsList.length <= 3 ? itemsList : itemsList.slice(0, 3)
 
                   return (
                     <div
                       key={order.id}
-                      className="bg-amber-50/40 hover:bg-amber-50/70 rounded-xl p-4 border border-amber-200 transition-all flex flex-col justify-between shadow-2xs"
+                      className="bg-white hover:border-neutral-300 rounded-xl p-4 border border-neutral-200 transition-all flex flex-col justify-between shadow-2xs"
                     >
                       <div>
                         <div className="flex items-start justify-between mb-2">
                           <div>
-                            <span className="text-xs font-mono font-bold text-amber-900">
+                            <span className="text-xs font-mono font-bold text-neutral-500">
                               Order #{order.id}
                             </span>
                             <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
@@ -1096,16 +1100,22 @@ export const KitchenMode: React.FC = () => {
                               {order.customer_phone ? `${order.customer_phone} • ` : ''}{orderType}
                             </div>
                           </div>
-                          <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                          <span
+                            className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                              isCod
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-blue-50 text-blue-700 border-blue-200'
+                            }`}
+                          >
                             {paymentMethod}
                           </span>
                         </div>
 
-                        <div className="my-2.5 space-y-1.5 border-t border-b border-amber-200/60 py-2.5">
+                        <div className="my-2.5 space-y-1.5 border-t border-b border-neutral-200 py-2.5">
                           <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400 block mb-1">
                             Ordered Items & Standards
                           </span>
-                          {itemsList.map((item: any, idx: number) => {
+                          {displayedItems.map((item: any, idx: number) => {
                             const std = getProductQuantityStandard(item.name || '')
                             const isFlagged = flaggedList.some(
                               (f: any) =>
@@ -1116,34 +1126,36 @@ export const KitchenMode: React.FC = () => {
                             return (
                               <div
                                 key={idx}
-                                className={`flex items-center justify-between text-xs p-1.5 rounded-lg ${
-                                  isFlagged
-                                    ? 'bg-amber-100/90 border border-amber-300 text-amber-950 font-bold'
-                                    : 'text-neutral-700 font-medium'
-                                }`}
+                                className="flex items-center justify-between text-xs p-2 rounded-lg bg-neutral-50 border border-neutral-200 text-neutral-800 font-medium"
                               >
-                                <span className="truncate pr-2">{item.name}</span>
-                                <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="truncate pr-2 font-semibold text-neutral-900">{item.name}</span>
+                                <div className="flex items-center gap-2 shrink-0">
                                   {isFlagged && (
-                                    <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.2 rounded">
+                                    <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
                                       STD: {std ?? '—'}
                                     </span>
                                   )}
-                                  <span
-                                    className={`px-1.5 py-0.5 rounded text-[11px] font-black ${
-                                      isFlagged ? 'bg-amber-800 text-white' : 'bg-neutral-200 text-neutral-800'
-                                    }`}
-                                  >
+                                  <span className="text-base sm:text-lg font-black text-neutral-900 px-2 py-0.5 rounded bg-neutral-200/90 tracking-tight">
                                     x{item.quantity}
                                   </span>
                                 </div>
                               </div>
                             )
                           })}
+
+                          {itemsList.length > 3 && (
+                            <button
+                              type="button"
+                              onClick={() => setExpandedApprovalOrders((prev) => ({ ...prev, [order.id]: !prev[order.id] }))}
+                              className="w-full text-center py-1.5 text-xs font-bold text-neutral-600 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer mt-1"
+                            >
+                              {isExpanded ? 'Show less' : 'View all orders'}
+                            </button>
+                          )}
                         </div>
 
                         {order.notes && (
-                          <div className="bg-white/80 border border-amber-200 rounded-xl p-2 text-xs text-amber-900 mb-2.5">
+                          <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-2 text-xs text-neutral-700 mb-2.5">
                             <span className="font-bold">Note: </span>
                             {order.notes}
                           </div>
@@ -1154,12 +1166,12 @@ export const KitchenMode: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="flex gap-2 pt-2 border-t border-amber-200">
+                      <div className="flex gap-2 pt-2 border-t border-neutral-200">
                         <button
                           type="button"
                           disabled={isProcessing}
                           onClick={() => void handleApproveQuantities(order.id || order.ref)}
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg text-xs transition-colors cursor-pointer shadow-xs"
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 sm:py-2 rounded-lg text-xs transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1"
                         >
                           {isProcessing ? 'Processing...' : '✓ Approve'}
                         </button>
@@ -1167,7 +1179,7 @@ export const KitchenMode: React.FC = () => {
                           type="button"
                           disabled={isProcessing}
                           onClick={() => void handleRejectQuantities(order.id || order.ref)}
-                          className="bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 border border-rose-200 font-bold py-2.5 px-3 rounded-lg text-xs transition-colors cursor-pointer"
+                          className="flex-1 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 border border-rose-200 font-bold py-1.5 sm:py-2 rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center gap-1"
                         >
                           ✕ Decline
                         </button>

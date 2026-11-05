@@ -445,8 +445,8 @@ export const MenuCard: React.FC<MenuCardProps> = ({
 
         {/* Remaining Servings Badge (when limited) - Lower Right of picture */}
         {effectiveAvailable && remainingServings !== null && remainingServings !== undefined && remainingServings > 0 && (
-          <span className="absolute bottom-2.5 right-2.5 z-10 bg-amber-500 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider px-2.5 py-1 rounded-lg shadow-md flex items-center gap-1.5 animate-pulse">
-            🔥 {remainingServings} left
+          <span className="absolute bottom-2.5 right-2.5 z-10 bg-amber-500 text-white font-extrabold text-sm sm:text-base uppercase tracking-wider px-3.5 py-1.5 rounded-xl shadow-md flex items-center justify-center animate-pulse">
+            {remainingServings} left
           </span>
         )}
 

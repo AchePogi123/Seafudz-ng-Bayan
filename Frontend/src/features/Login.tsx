@@ -5,6 +5,7 @@ import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
 import { reverseGeocodeCoordinates, type Coordinates } from '../utils/locationServices';
+import { validatePhilippinePhone } from '../utils/phoneValidation';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
@@ -107,6 +108,24 @@ return () => {
     if (emailError) setEmailError('');
   };
   const [phone, setPhone] = useState('');
+  const [phoneError, setPhoneError] = useState('');
+
+  const handlePhoneChange = (val: string) => {
+    setPhone(val);
+    if (phoneError) setPhoneError('');
+  };
+
+  const handlePhoneBlur = () => {
+    if (phone.trim()) {
+      const check = validatePhilippinePhone(phone);
+      if (!check.isValid) {
+        setPhoneError(check.message || 'Invalid phone number');
+      } else if (check.normalized) {
+        setPhone(check.normalized);
+        setPhoneError('');
+      }
+    }
+  };
   const [address, setAddress] = useState('');
   const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null);
   const [isFindingAddress, setIsFindingAddress] = useState(false);
@@ -367,6 +386,19 @@ return () => {
       return;
     }
 
+    const phoneCheck = validatePhilippinePhone(phone);
+    if (!phoneCheck.isValid) {
+      const msg = phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).';
+      setPhoneError(msg);
+      setErrorMessage(msg);
+      alert(msg);
+      return;
+    }
+
+    if (phoneCheck.normalized) {
+      setPhone(phoneCheck.normalized);
+    }
+
     if (password !== confirmPassword) {
       setErrorMessage('Passwords do not match.');
       return;
@@ -595,6 +627,7 @@ return () => {
       setEmail('');
       setEmailError('');
       setPhone('');
+      setPhoneError('');
       setAddress('');
       setAddressCoordinates(null);
       setAddressLookupMessage('');
@@ -1119,18 +1152,35 @@ return () => {
 
                 {/* Phone */}
                 <div className="mb-2.5">
-                  <label htmlFor="register-phone" className="block mb-1.5 text-xs font-semibold text-neutral-700">
-                    Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label htmlFor="register-phone" className="block text-xs font-semibold text-neutral-700">
+                      Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    <span className="text-[11px] text-neutral-400">9 digits after 09</span>
+                  </div>
                   <input
                     id="register-phone"
                     type="tel"
                     placeholder="09XXXXXXXXX"
                     required
-                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    maxLength={13}
+                    className={`w-full py-3 px-3.5 rounded-xl border font-sans text-sm font-medium placeholder-neutral-400 focus:outline-none transition-all box-border ${
+                      phoneError
+                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
+                        : 'border-[#eadfd7] bg-[#fcfaf8] text-neutral-800 hover:border-[#d8b9a5] focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10'
+                    }`}
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    onBlur={handlePhoneBlur}
                   />
+                  {phoneError && (
+                    <div className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start text-xs text-red-700">
+                      <svg className="w-4 h-4 text-red-500 shrink-0 mr-1.5 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <span>{phoneError}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Delivery Address with "Use my current location" */}
@@ -1618,14 +1668,26 @@ return () => {
                 </div>
 
                 {/* Phone */}
-                <input
-                  type="tel"
-                  placeholder="Phone number (e.g. 09XXXXXXXXX)"
-                  required
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                />
+                {/* Phone */}
+                <div>
+                  <input
+                    type="tel"
+                    placeholder="Phone number (e.g. 09XXXXXXXXX)"
+                    required
+                    maxLength={13}
+                    value={phone}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    onBlur={handlePhoneBlur}
+                    className={`w-full h-11 px-3.5 rounded-xl border text-xs font-medium placeholder-neutral-400 bg-white focus:outline-none box-border ${
+                      phoneError
+                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500'
+                        : 'border-neutral-200 text-neutral-800 focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10'
+                    }`}
+                  />
+                  {phoneError && (
+                    <p className="mt-1 text-[11px] text-red-600 font-medium">{phoneError}</p>
+                  )}
+                </div>
 
                 {/* Delivery Address with "Use my current location" */}
                 <div className="space-y-1.5 text-left">

@@ -19,6 +19,7 @@ import {
     SEAFUDZ_FLAGSHIP_STORE,
 } from '../utils/riderDispatchAlgorithms'
 import { getProductQuantityStandard, checkProductQuantityStandards } from '../utils/bulkOrder'
+import { validatePhilippinePhone } from '../utils/phoneValidation'
 
 interface CartItem {
     item: MenuItem
@@ -1769,6 +1770,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
             return
         }
+        const phoneCheck = validatePhilippinePhone(phone)
+        if (!phoneCheck.isValid) {
+            alert(phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).')
+            return
+        }
         if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
             alert(deliveryDistanceKm === null
                 ? 'The road distance could not be verified. Please try again before ordering.'
@@ -1819,6 +1825,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
         if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
             alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
+            return
+        }
+        const phoneCheck = validatePhilippinePhone(phone)
+        if (!phoneCheck.isValid) {
+            alert(phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).')
             return
         }
         if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
@@ -2137,8 +2148,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                     {/* Lower-Right Remaining Servings Badge */}
                     {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
-                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-amber-500 text-white text-xs sm:text-sm font-extrabold uppercase tracking-wider px-2.5 py-1 sm:px-3 sm:py-1 rounded-lg shadow-md flex items-center gap-1.5 animate-pulse">
-                            🔥 {servingsLeft} left
+                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-amber-500 text-white text-sm sm:text-base font-extrabold uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-md flex items-center justify-center animate-pulse">
+                            {servingsLeft} left
                         </span>
                     )}
 

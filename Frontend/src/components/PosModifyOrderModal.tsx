@@ -1049,7 +1049,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
                           ) : (
                             servingsLeft !== null && servingsLeft !== undefined && (
                               <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1 py-0.5 rounded">
-                                🔥 {servingsLeft} left
+                                {servingsLeft} left
                               </span>
                             )
                           )}

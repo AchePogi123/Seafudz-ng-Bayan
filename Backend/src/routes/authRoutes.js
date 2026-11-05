@@ -2157,6 +2157,17 @@ router.post('/auth/register', async (req, res) => {
     }
 
     const cleanPhone = phone ? phone.trim() : null;
+    if (cleanPhone) {
+      let digits = cleanPhone.replace(/\D/g, '');
+      if (digits.startsWith('63') && digits.length >= 11) digits = digits.slice(2);
+      const sub = digits.startsWith('09') ? digits.slice(2) : (digits.startsWith('9') && digits.length === 10 ? digits.slice(1) : digits);
+      if (sub.length !== 9) {
+        return res.status(400).json({
+          success: false,
+          message: 'Phone number must have exactly 9 digits excluding 09 (e.g. 09XXXXXXXXX).',
+        });
+      }
+    }
     const cleanAddress = address ? address.trim() : null;
 
     const sql = `

@@ -87,6 +87,8 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
              COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS reference_number,
              COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS payment_receipt,
              COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS "paymentReceipt",
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS delivery_proof,
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS "deliveryProof",
              COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
              p_pay.status AS payment_status,
              COUNT(*) OVER() AS full_count,
@@ -178,7 +180,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       }
     }
 
-    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
+    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
 
     const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;
@@ -233,6 +235,8 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
              COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p_pay.reference_number, '')) AS reference_number,
              COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS payment_receipt,
              COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p_pay.payment_receipt, '')) AS "paymentReceipt",
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS delivery_proof,
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS "deliveryProof",
              COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
              r_emp.fullname AS rider_name,
              p_pay.status AS payment_status,
@@ -268,7 +272,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
       WHERE o.id = $1
-      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, d.rider_cash_received, r_emp.fullname
+      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, d.rider_cash_received, d.delivery_proof, r_emp.fullname
     `;
     const { rows } = await query(sql, [id]);
 

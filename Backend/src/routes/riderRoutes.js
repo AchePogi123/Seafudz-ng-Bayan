@@ -148,7 +148,8 @@ router.patch('/rider/deliveries/:id/status', optionalAuth, async (req, res) => {
 export async function handleRiderStatusUpdate(req, res) {
   try {
     const { id } = req.params;
-    const { status, riderName, riderPhone, riderCashReceived, moneyReceived } = req.body;
+    const { status, riderName, riderPhone, riderCashReceived, moneyReceived, deliveryProof, delivery_proof, proofOfDelivery } = req.body;
+    const finalDeliveryProof = deliveryProof || delivery_proof || proofOfDelivery || null;
     const finalRiderMoney = riderCashReceived !== undefined && riderCashReceived !== null && riderCashReceived !== ''
       ? Number(riderCashReceived)
       : (moneyReceived !== undefined && moneyReceived !== null && moneyReceived !== '' ? Number(moneyReceived) : undefined);
@@ -163,6 +164,10 @@ export async function handleRiderStatusUpdate(req, res) {
       if (riderName) existing.riderName = riderName;
       if (riderPhone) existing.riderPhone = riderPhone;
       if (finalRiderMoney !== undefined) existing.riderCashReceived = finalRiderMoney;
+      if (finalDeliveryProof) {
+        existing.deliveryProof = finalDeliveryProof;
+        existing.delivery_proof = finalDeliveryProof;
+      }
       inMemoryOrders.set(id, existing);
       updatedOrder = formatOrderResponse(existing);
     } else {
@@ -172,6 +177,8 @@ export async function handleRiderStatusUpdate(req, res) {
         riderName: (riderName && riderName !== 'Kuya Mark Reyes' ? riderName : (nextStatus === 'OUT_FOR_DELIVERY' ? 'Rider Alex Ramos' : undefined)),
         riderPhone: riderPhone || (nextStatus === 'OUT_FOR_DELIVERY' ? '0917-888-9999' : undefined),
         riderCashReceived: finalRiderMoney,
+        deliveryProof: finalDeliveryProof,
+        delivery_proof: finalDeliveryProof,
         updated_at: new Date().toISOString()
       };
       inMemoryOrders.set(id, newEntry);
@@ -180,20 +187,17 @@ export async function handleRiderStatusUpdate(req, res) {
 
     // Update PostgreSQL Database
     try {
-      let rows;
-      if (finalRiderMoney !== undefined) {
-        const res = await query(
-          `UPDATE orders SET status = $1, rider_cash_received = $2, updated_at = NOW() WHERE id = $3 RETURNING *`,
-          [nextStatus, finalRiderMoney, id]
-        );
-        rows = res.rows;
-      } else {
-        const res = await query(
-          `UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
-          [nextStatus, id]
-        );
-        rows = res.rows;
-      }
+      const res = await query(
+        `UPDATE orders SET
+           status = $1,
+           rider_cash_received = COALESCE($2, rider_cash_received),
+           delivery_proof = COALESCE($3, delivery_proof),
+           updated_at = NOW()
+         WHERE id = $4
+         RETURNING *`,
+        [nextStatus, finalRiderMoney !== undefined ? finalRiderMoney : null, finalDeliveryProof, id]
+      );
+      const rows = res.rows;
       
       // Update deliveries status in DB and associate rider
       let dbDeliveryStatus = 'PENDING';
@@ -212,20 +216,30 @@ export async function handleRiderStatusUpdate(req, res) {
       }
 
       const delRes = await query(
-        `UPDATE deliveries SET status = $1, rider_id = COALESCE($2, rider_id, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'), rider_cash_received = COALESCE($3, rider_cash_received), updated_at = NOW() WHERE order_id = $4 RETURNING *`,
-        [dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null, id]
+        `UPDATE deliveries SET
+           status = $1,
+           rider_id = COALESCE($2, rider_id, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33'),
+           rider_cash_received = COALESCE($3, rider_cash_received),
+           delivery_proof = COALESCE($4, delivery_proof),
+           delivered_at = CASE WHEN $1 = 'DELIVERED' THEN NOW() ELSE delivered_at END,
+           updated_at = NOW()
+         WHERE order_id = $5
+         RETURNING *`,
+        [dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null, finalDeliveryProof, id]
       );
 
       if (delRes.rows.length === 0) {
         await query(
-          `INSERT INTO deliveries (order_id, delivery_address, status, rider_id, rider_cash_received, updated_at)
-           VALUES ($1, 'Standard Delivery Address', $2, $3, $4, NOW())
+          `INSERT INTO deliveries (order_id, delivery_address, status, rider_id, rider_cash_received, delivery_proof, delivered_at, updated_at)
+           VALUES ($1, 'Standard Delivery Address', $2, $3, $4, $5, CASE WHEN $2 = 'DELIVERED' THEN NOW() ELSE NULL END, NOW())
            ON CONFLICT (order_id) DO UPDATE SET
              status = EXCLUDED.status,
              rider_id = COALESCE(EXCLUDED.rider_id, deliveries.rider_id),
              rider_cash_received = COALESCE(EXCLUDED.rider_cash_received, deliveries.rider_cash_received),
+             delivery_proof = COALESCE(EXCLUDED.delivery_proof, deliveries.delivery_proof),
+             delivered_at = CASE WHEN EXCLUDED.status = 'DELIVERED' THEN NOW() ELSE deliveries.delivered_at END,
              updated_at = NOW()`,
-          [id, dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null]
+          [id, dbDeliveryStatus, riderEmployeeId, finalRiderMoney !== undefined ? finalRiderMoney : null, finalDeliveryProof]
         );
       }
 

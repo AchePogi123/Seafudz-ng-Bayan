@@ -13,6 +13,41 @@ import {
   type DeliveryJob,
 } from '../utils/riderDispatchAlgorithms'
 
+function compressImageToBase64(file: File, maxDim = 1200, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = reject
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onerror = reject
+      img.onload = () => {
+        let { width, height } = img
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width)
+            width = maxDim
+          } else {
+            width = Math.round((width * maxDim) / height)
+            height = maxDim
+          }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          resolve(e.target?.result as string)
+          return
+        }
+        ctx.drawImage(img, 0, 0, width, height)
+        resolve(canvas.toDataURL('image/jpeg', quality))
+      }
+      img.src = e.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
 const RIDER_START_LOCATION = SEAFUDZ_FLAGSHIP_STORE
 const DEMO_ORDER_STATUS_KEY = 'seafudz_rider_demo_order_statuses'
 const RIDER_DEMO_ORDERS: DeliveryJob[] = [
@@ -262,6 +297,7 @@ export interface DeliveryBundle {
   preparingCount: number
   allReady: boolean
   hasPreparing: boolean
+  deliveryProof?: string
 }
 
 export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryBundle[] {
@@ -362,6 +398,7 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
       preparingCount,
       allReady,
       hasPreparing,
+      deliveryProof: group.find((o) => o.deliveryProof)?.deliveryProof,
     })
   }
 
@@ -384,6 +421,17 @@ export const RideRoleDemo: React.FC = () => {
   const [sortBy, setSortBy] = useState<'proximity' | 'newest'>('proximity')
   const [riderReceivedAmount, setRiderReceivedAmount] = useState<string>('')
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [deliveryProofImage, setDeliveryProofImage] = useState<string | null>(null)
+  const [deliveryProofError, setDeliveryProofError] = useState<string | null>(null)
+  const [isProcessingDeliveryProof, setIsProcessingDeliveryProof] = useState<boolean>(false)
+  const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDeliveryProofImage(null)
+    setDeliveryProofError(null)
+    setRiderReceivedAmount('')
+    setPaymentError(null)
+  }, [customerDetailsOrder?.id])
 
   const riderLocation = RIDER_START_LOCATION
 
@@ -581,6 +629,7 @@ export const RideRoleDemo: React.FC = () => {
                 paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
+                deliveryProof: o.deliveryProof || o.delivery_proof || undefined,
               })
             })
           }
@@ -725,6 +774,7 @@ export const RideRoleDemo: React.FC = () => {
                 paymentMethod: o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
                 coord,
                 riderCashReceived: riderCashRec,
+                deliveryProof: o.deliveryProof || o.delivery_proof || undefined,
               })
             })
           }
@@ -803,7 +853,7 @@ export const RideRoleDemo: React.FC = () => {
 
   // Unified status updater supporting batch updates for bundled companion orders
   const handleUpdateOrdersStatus = async (
-    updates: Array<{ orderId: string; newStatus: 'Out for Delivery' | 'Completed'; moneyReceived?: number }>
+    updates: Array<{ orderId: string; newStatus: 'Out for Delivery' | 'Completed'; moneyReceived?: number; deliveryProof?: string }>
   ) => {
     const updateMap = new Map(updates.map((u) => [u.orderId, u]))
 
@@ -840,6 +890,8 @@ export const RideRoleDemo: React.FC = () => {
             rider_phone: riderPhone,
             riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : o.riderCashReceived,
             rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : o.rider_cash_received,
+            deliveryProof: u.deliveryProof || o.deliveryProof,
+            delivery_proof: u.deliveryProof || o.delivery_proof,
           }
         }
         return o
@@ -862,6 +914,8 @@ export const RideRoleDemo: React.FC = () => {
               rider_name: riderName,
               rider_phone: riderPhone,
               riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : activeObj.riderCashReceived,
+              deliveryProof: u.deliveryProof || activeObj.deliveryProof,
+              delivery_proof: u.deliveryProof || activeObj.delivery_proof,
             })
           )
         }
@@ -887,6 +941,8 @@ export const RideRoleDemo: React.FC = () => {
                     status: apiStatus,
                     riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : o.riderCashReceived,
                     rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : o.rider_cash_received,
+                    deliveryProof: u.deliveryProof || o.deliveryProof,
+                    delivery_proof: u.deliveryProof || o.delivery_proof,
                   }
                 }
                 return o
@@ -905,6 +961,8 @@ export const RideRoleDemo: React.FC = () => {
                   rider_phone: riderPhone,
                   riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : parsed.riderCashReceived,
                   rider_cash_received: u.moneyReceived !== undefined ? u.moneyReceived : parsed.rider_cash_received,
+                  deliveryProof: u.deliveryProof || parsed.deliveryProof,
+                  delivery_proof: u.deliveryProof || parsed.delivery_proof,
                 }))
               }
             }
@@ -927,6 +985,9 @@ export const RideRoleDemo: React.FC = () => {
             body: JSON.stringify({
               status: apiStatus,
               riderCashReceived: u.moneyReceived,
+              deliveryProof: u.deliveryProof,
+              delivery_proof: u.deliveryProof,
+              proofOfDelivery: u.deliveryProof,
               riderName,
               riderPhone,
               riderId: currentUser?.id || 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a33',
@@ -951,6 +1012,7 @@ export const RideRoleDemo: React.FC = () => {
               ...d,
               status: u.newStatus,
               riderCashReceived: u.moneyReceived !== undefined ? u.moneyReceived : d.riderCashReceived,
+              deliveryProof: u.deliveryProof || d.deliveryProof,
             }
           }
           return d
@@ -1016,6 +1078,11 @@ export const RideRoleDemo: React.FC = () => {
 
   // Handle bundle complete delivery
   const handleCompleteBundleDelivery = async (bundle: DeliveryBundle) => {
+    if (!deliveryProofImage) {
+      setDeliveryProofError('Proof of delivery photo is required. Please capture or upload a photo showing the delivered items to complete delivery.')
+      return
+    }
+
     if (bundle.hasCod) {
       if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
         setPaymentError(`Please enter the COD cash amount received (or tap "Exact ₱${bundle.codAmountToCollect.toFixed(2)}").`)
@@ -1033,6 +1100,7 @@ export const RideRoleDemo: React.FC = () => {
     }
 
     setPaymentError(null)
+    setDeliveryProofError(null)
     const parsedReceived = bundle.hasCod ? parseFloat(riderReceivedAmount) : 0
 
     const codOrders = bundle.orders.filter((o) => isCodOrder(o))
@@ -1047,16 +1115,20 @@ export const RideRoleDemo: React.FC = () => {
           orderId: order.id,
           newStatus: 'Completed' as const,
           moneyReceived: allocated,
+          deliveryProof: deliveryProofImage,
         }
       }
       return {
         orderId: order.id,
         newStatus: 'Completed' as const,
         moneyReceived: 0,
+        deliveryProof: deliveryProofImage,
       }
     })
 
     await handleUpdateOrdersStatus(updates)
+    setDeliveryProofImage(null)
+    setDeliveryProofError(null)
     try {
       const savedTrips = JSON.parse(localStorage.getItem('seafudz_rider_dispatch_trips') || '{}')
       bundle.orders.forEach((o) => {
@@ -1069,8 +1141,8 @@ export const RideRoleDemo: React.FC = () => {
     setCustomerDetailsOrder(null)
     setNotification(
       bundle.isBundle
-        ? `All ${bundle.orders.length} orders delivered to ${bundle.customer}! Delivery completed.`
-        : `Order #${bundle.primaryOrder.ref} delivered & completed!`
+        ? `All ${bundle.orders.length} orders delivered to ${bundle.customer}! Delivery proof recorded.`
+        : `Order #${bundle.primaryOrder.ref} delivered with proof photo!`
     )
   }
 
@@ -1995,19 +2067,6 @@ export const RideRoleDemo: React.FC = () => {
                           </div>
                         )}
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => void handleCompleteBundleDelivery(activeBundle)}
-                        className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span>
-                          Mark {activeBundle.isBundle ? `Both Delivered & Paid` : `Delivered & Paid`}
-                        </span>
-                      </button>
                     </>
                   ) : (
                     <>
@@ -2046,20 +2105,150 @@ export const RideRoleDemo: React.FC = () => {
                           </span>
                         </div>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => void handleCompleteBundleDelivery(activeBundle)}
-                        className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                        </svg>
-                        <span>
-                          Mark {activeBundle.isBundle ? `Both Delivered` : `Delivered`}
-                        </span>
-                      </button>
                     </>
+                  )}
+
+                  {/* Required Proof of Delivery Photo Section */}
+                  <div className={`rounded-2xl border p-3.5 space-y-2.5 transition-all ${deliveryProofError ? 'border-red-400 bg-red-50/50' : 'border-neutral-200 bg-neutral-50/70'}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm">📸</span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
+                          Proof of Delivery Photo
+                        </span>
+                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white shadow-2xs">
+                          Required
+                        </span>
+                      </div>
+                      {deliveryProofImage && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeliveryProofImage(null)
+                            setDeliveryProofError(null)
+                          }}
+                          className="text-[11px] font-bold text-rose-600 hover:text-rose-700 cursor-pointer"
+                        >
+                          ✕ Remove
+                        </button>
+                      )}
+                    </div>
+
+                    {deliveryProofImage ? (
+                      <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-neutral-200">
+                        <img
+                          src={deliveryProofImage}
+                          alt="Delivery Proof"
+                          onClick={() => setPreviewProofModalUrl(deliveryProofImage)}
+                          className="w-16 h-16 object-cover rounded-lg border border-neutral-200 cursor-pointer hover:opacity-85 shadow-2xs shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1">
+                            <span>✓</span> Delivery Photo Attached
+                          </p>
+                          <p className="text-[11px] text-neutral-500 truncate">Tap image to zoom or tap Retake</p>
+                          <label className="mt-1 inline-block text-[11px] font-bold text-blue-600 hover:text-blue-700 cursor-pointer underline">
+                            Retake Photo
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0]
+                                if (!file) return
+                                try {
+                                  setIsProcessingDeliveryProof(true)
+                                  setDeliveryProofError(null)
+                                  const base64 = await compressImageToBase64(file)
+                                  setDeliveryProofImage(base64)
+                                } catch {
+                                  setDeliveryProofError('Failed to process image. Please try again.')
+                                } finally {
+                                  setIsProcessingDeliveryProof(false)
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-neutral-300 hover:border-emerald-500 rounded-xl p-4 cursor-pointer bg-white hover:bg-emerald-50/30 transition-all text-center group">
+                        {isProcessingDeliveryProof ? (
+                          <div className="flex items-center gap-2 text-xs font-bold text-neutral-600">
+                            <span className="animate-spin text-sm">⏳</span>
+                            <span>Processing photo...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="w-10 h-10 rounded-full bg-neutral-100 group-hover:bg-emerald-100 text-neutral-600 group-hover:text-emerald-700 flex items-center justify-center text-lg mb-1.5 transition-colors">
+                              📷
+                            </div>
+                            <span className="text-xs font-bold text-neutral-800 group-hover:text-emerald-700">
+                              Take Photo / Upload Delivery Proof
+                            </span>
+                            <span className="text-[10px] text-neutral-400 mt-0.5">
+                              Snap a photo of the handed-over package at customer's location
+                            </span>
+                          </>
+                        )}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0]
+                            if (!file) return
+                            try {
+                              setIsProcessingDeliveryProof(true)
+                              setDeliveryProofError(null)
+                              const base64 = await compressImageToBase64(file)
+                              setDeliveryProofImage(base64)
+                            } catch {
+                              setDeliveryProofError('Failed to process image. Please try again.')
+                            } finally {
+                              setIsProcessingDeliveryProof(false)
+                            }
+                          }}
+                        />
+                      </label>
+                    )}
+
+                    {deliveryProofError && (
+                      <p className="text-xs font-bold text-red-600 flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                        <span>{deliveryProofError}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Complete Delivery Action Button */}
+                  <button
+                    type="button"
+                    disabled={!deliveryProofImage || isProcessingDeliveryProof}
+                    onClick={() => void handleCompleteBundleDelivery(activeBundle)}
+                    className={`w-full rounded-xl px-4 py-3 text-sm font-bold text-white transition-all active:scale-98 text-center flex items-center justify-center gap-2 ${
+                      !deliveryProofImage || isProcessingDeliveryProof
+                        ? 'bg-neutral-300 cursor-not-allowed text-neutral-500 shadow-none'
+                        : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-md'
+                    }`}
+                    title={!deliveryProofImage ? 'Proof of delivery photo is required before marking delivered' : ''}
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>
+                      Mark {activeBundle.isBundle ? (activeBundle.hasCod ? `Both Delivered & Paid` : `Both Delivered`) : (activeBundle.hasCod ? `Delivered & Paid` : `Delivered`)}
+                    </span>
+                  </button>
+                  {!deliveryProofImage && (
+                    <p className="text-[11px] text-amber-700 text-center font-semibold flex items-center justify-center gap-1">
+                      <span>⚠️</span>
+                      <span>Attach delivery proof photo above to unlock completion</span>
+                    </p>
                   )}
                 </div>
               )}
@@ -2098,6 +2287,41 @@ export const RideRoleDemo: React.FC = () => {
                     <span>Delivery Status:</span>
                     <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
                   </div>
+
+                  {(activeBundle.deliveryProof || deliveryProofImage) && (
+                    <div className="pt-2 border-t border-neutral-200/60 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-neutral-700 flex items-center gap-1.5">
+                          <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
+                          </svg>
+                          Proof of Delivery Photo:
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewProofModalUrl(activeBundle.deliveryProof || deliveryProofImage)}
+                          className="text-[11px] font-bold text-emerald-700 hover:underline"
+                        >
+                          View Full Image
+                        </button>
+                      </div>
+                      <div
+                        onClick={() => setPreviewProofModalUrl(activeBundle.deliveryProof || deliveryProofImage)}
+                        className="relative w-full h-28 rounded-xl overflow-hidden border border-neutral-200 cursor-pointer group bg-neutral-900/5 hover:opacity-95 transition"
+                      >
+                        <img
+                          src={activeBundle.deliveryProof || deliveryProofImage || ''}
+                          alt="Delivery Proof"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
+                          <span className="bg-black/70 text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+                            🔍 Click to Zoom
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2124,6 +2348,52 @@ export const RideRoleDemo: React.FC = () => {
         onClose={() => setEditingRiderOrder(null)}
         onSave={() => void fetchDeliveries(true)}
       />
+
+      {/* Proof of Delivery Image Preview Modal */}
+      {previewProofModalUrl && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in duration-200"
+          onClick={() => setPreviewProofModalUrl(null)}
+        >
+          <div 
+            className="relative max-w-2xl w-full max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 bg-neutral-900 text-white border-b border-neutral-800">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <h3 className="text-sm font-bold">Proof of Delivery Photo</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewProofModalUrl(null)}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-3 bg-neutral-950 flex items-center justify-center overflow-auto max-h-[75vh]">
+              <img
+                src={previewProofModalUrl}
+                alt="Proof of Delivery Full Preview"
+                className="max-w-full max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+            <div className="p-3 bg-neutral-100 border-t border-neutral-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPreviewProofModalUrl(null)}
+                className="px-4 py-2 text-xs font-bold text-neutral-700 bg-white border border-neutral-300 rounded-lg hover:bg-neutral-50 shadow-xs cursor-pointer"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

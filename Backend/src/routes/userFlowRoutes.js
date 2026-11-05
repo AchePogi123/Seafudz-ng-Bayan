@@ -63,6 +63,8 @@ router.get('/user-flow/orders', async (req, res) => {
                COALESCE(o.payment_method, 'ONLINE') AS payment_method,
                COALESCE(NULLIF(o.payment_reference, ''), (SELECT p.reference_number FROM payments p WHERE p.order_id = o.id AND p.reference_number IS NOT NULL AND p.reference_number != '' ORDER BY p.created_at DESC LIMIT 1), '') AS payment_reference,
                COALESCE(NULLIF(o.payment_receipt, ''), (SELECT p.payment_receipt FROM payments p WHERE p.order_id = o.id AND p.payment_receipt IS NOT NULL AND p.payment_receipt != '' ORDER BY p.created_at DESC LIMIT 1), '') AS payment_receipt,
+               COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, ''), '') AS delivery_proof,
+               COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, ''), '') AS "deliveryProof",
                COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
                d.rider_id,
                r_emp.fullname AS rider_name,

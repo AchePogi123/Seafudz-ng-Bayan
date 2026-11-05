@@ -248,6 +248,8 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
              COALESCE(NULLIF(o.payment_reference, ''), NULLIF(p.reference_number, '')) AS "referenceNumber",
              COALESCE(NULLIF(o.payment_receipt, ''), NULLIF(p.payment_receipt, '')) AS "paymentReceipt",
              COALESCE(o.rider_cash_received, d.rider_cash_received) AS "riderCashReceived",
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS "deliveryProof",
+             COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS delivery_proof,
              o.total AS "totalAmount",
              o.status AS "status"
       FROM orders o
@@ -257,7 +259,7 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
         ORDER BY order_id, created_at DESC
       ) p ON o.id = p.order_id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, rider_cash_received
+        SELECT DISTINCT ON (order_id) order_id, rider_cash_received, delivery_proof
         FROM deliveries
         ORDER BY order_id, created_at DESC
       ) d ON o.id = d.order_id

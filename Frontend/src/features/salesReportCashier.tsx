@@ -26,6 +26,7 @@ export interface LiveTransaction {
   paymentReference?: string
   referenceNumber?: string
   paymentReceipt?: string
+  deliveryProof?: string
   status?: string
   itemsList?: OrderItemDetail[]
   customerPhone?: string
@@ -319,6 +320,12 @@ const SalesReportCashier: React.FC = () => {
         (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.payment_receipt || p.paymentReceipt)?.payment_receipt),
         (dbO.payments && Array.isArray(dbO.payments) && dbO.payments.slice().reverse().find((p: any) => p.payment_receipt || p.paymentReceipt)?.paymentReceipt)
       ),
+      deliveryProof: readString(
+        dbO.delivery_proof,
+        dbO.deliveryProof,
+        (dbO.deliveries && Array.isArray(dbO.deliveries) && dbO.deliveries.find((d: any) => d.delivery_proof || d.deliveryProof)?.delivery_proof),
+        (dbO.deliveries && Array.isArray(dbO.deliveries) && dbO.deliveries.find((d: any) => d.delivery_proof || d.deliveryProof)?.deliveryProof)
+      ),
       status: readString(dbO.status) || 'Completed',
     }
   }, [])
@@ -520,6 +527,7 @@ const SalesReportCashier: React.FC = () => {
                 : (order.rider_cash_received !== undefined && order.rider_cash_received !== null ? Number(order.rider_cash_received) : undefined),
               riderName: readString(order.riderName, order.rider_name) || undefined,
               paymentReceipt: readString(order.paymentReceipt, order.payment_receipt) || undefined,
+              deliveryProof: readString(order.deliveryProof, order.delivery_proof) || undefined,
             }
             orderMap.set(tx.id, tx)
           })
@@ -553,6 +561,7 @@ const SalesReportCashier: React.FC = () => {
                 paymentReference: dbO.paymentReference || existing?.paymentReference,
                 referenceNumber: dbO.referenceNumber || existing?.referenceNumber || dbO.paymentReference || existing?.paymentReference,
                 paymentReceipt: dbO.paymentReceipt || existing?.paymentReceipt,
+                deliveryProof: dbO.deliveryProof || existing?.deliveryProof,
               })
             }
           })
@@ -1046,9 +1055,23 @@ const SalesReportCashier: React.FC = () => {
                           ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td className="py-3 px-4 text-center">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                            {tx.status || 'Completed'}
-                          </span>
+                          <div className="flex flex-col items-center gap-1">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                              {tx.status || 'Completed'}
+                            </span>
+                            {tx.deliveryProof && (
+                              <span
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100"
+                                title="Proof of delivery attached (click to view)"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setPreviewReceiptUrl(tx.deliveryProof || null)
+                                }}
+                              >
+                                <span>📷</span> Proof
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-center print:hidden">
                           <button
@@ -1383,6 +1406,36 @@ const SalesReportCashier: React.FC = () => {
                 </div>
               )}
 
+              {/* Delivery Proof Photo Card */}
+              {selectedTransaction.deliveryProof && (
+                <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-left">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <img
+                      src={selectedTransaction.deliveryProof}
+                      alt="Proof of Delivery"
+                      onClick={() => setPreviewReceiptUrl(selectedTransaction.deliveryProof || null)}
+                      className="w-12 h-12 object-cover rounded-xl border border-blue-300 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-blue-950">Proof of Delivery Photo</span>
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white px-2 py-0.5 rounded-full">
+                          Verified
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-blue-700/90 truncate">Captured by rider upon order completion</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewReceiptUrl(selectedTransaction.deliveryProof || null)}
+                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer shadow-2xs shrink-0 transition-colors"
+                  >
+                    View Picture
+                  </button>
+                </div>
+              )}
+
               {/* Ordered Items List */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
@@ -1557,7 +1610,11 @@ const SalesReportCashier: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-full flex items-center justify-between pb-2 border-b border-slate-100">
-              <span className="text-xs font-black text-slate-800 uppercase tracking-wider">GCash Transaction Proof Screenshot</span>
+              <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                {selectedTransaction?.deliveryProof === previewReceiptUrl
+                  ? 'Rider Proof of Delivery Photo'
+                  : 'Transaction Proof Screenshot'}
+              </span>
               <button
                 type="button"
                 onClick={() => setPreviewReceiptUrl(null)}

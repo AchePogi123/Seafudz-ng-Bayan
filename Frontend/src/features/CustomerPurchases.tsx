@@ -38,6 +38,8 @@ interface CustomerOrder {
   paymentReference?: string
   referenceNumber?: string
   paymentReceipt?: string
+  deliveryProof?: string
+  delivery_proof?: string
   refundReceipt?: string
   refundReference?: string
   notes?: string
@@ -1004,6 +1006,23 @@ export const CustomerPurchases: React.FC = () => {
                       onClick={() => setPreviewImage(selectedOrder.paymentReceipt || null)}
                       className="w-20 h-20 object-cover rounded-xl border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity"
                     />
+                  </div>
+                )}
+                {(selectedOrder.deliveryProof || selectedOrder.delivery_proof) && (
+                  <div className="pt-1">
+                    <span className="font-bold text-neutral-400 uppercase text-[10px] block mb-1.5">Rider Proof of Delivery Photo:</span>
+                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-neutral-200">
+                      <img
+                        src={selectedOrder.deliveryProof || selectedOrder.delivery_proof}
+                        alt="Rider Proof of Delivery Photo"
+                        onClick={() => setPreviewImage(selectedOrder.deliveryProof || selectedOrder.delivery_proof || null)}
+                        className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                      />
+                      <div>
+                        <p className="text-xs font-bold text-neutral-800">Delivered & Verified</p>
+                        <p className="text-[11px] text-emerald-600 font-semibold">Handover confirmed with photo</p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

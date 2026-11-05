@@ -247,6 +247,8 @@ export function formatOrderResponse(row) {
       return phone;
     })(),
     paymentReceipt: row.payment_receipt || row.paymentReceipt || paymentReceiptFromPayments || undefined,
+    deliveryProof: row.delivery_proof || row.deliveryProof || undefined,
+    delivery_proof: row.delivery_proof || row.deliveryProof || undefined,
     refundReceipt: row.refund_receipt || row.refundReceipt || refundReceiptFromRefunds || undefined,
     refundReference: row.refund_reference || row.refundReference || refundReferenceFromRefunds || undefined,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),

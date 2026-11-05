@@ -29,6 +29,7 @@ async function runTests() {
     inMemoryOrders.clear();
     try {
       await query(`DELETE FROM orders WHERE id IN ('SFB-LOW-01', 'SFB-HIGH-01', 'SFB-COD-01', 'SFB-EST-01')`);
+      await query(`UPDATE products SET is_available = true WHERE name ILIKE '%Chicken Pastil%' OR name ILIKE '%Mixed Seafoods%'`);
     } catch {}
 
     // ==========================================

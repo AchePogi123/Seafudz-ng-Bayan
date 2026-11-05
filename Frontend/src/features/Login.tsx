@@ -132,8 +132,25 @@ return () => {
   const [addressLookupMessage, setAddressLookupMessage] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const validatePassword = (pwd: string) => {
+    if (!pwd) return 'Password is required.';
+    if (pwd.length < 8) return 'Password must be at least 8 characters long.';
+    if (!/\d/.test(pwd)) return 'Password must contain at least one number.';
+    return '';
+  };
+
+  const handlePasswordChange = (val: string) => {
+    setPassword(val);
+    if (val) {
+      setPasswordError(validatePassword(val));
+    } else {
+      setPasswordError('');
+    }
+  };
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'privacy'>('terms');
@@ -386,6 +403,14 @@ return () => {
       return;
     }
 
+    const passErr = validatePassword(password);
+    if (passErr) {
+      setPasswordError(passErr);
+      setErrorMessage(passErr);
+      alert(passErr);
+      return;
+    }
+
     const phoneCheck = validatePhilippinePhone(phone);
     if (!phoneCheck.isValid) {
       const msg = phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).';
@@ -571,6 +596,14 @@ return () => {
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password: password,
+          options: {
+            data: {
+              fullname: fullname.trim(),
+              username: username.trim(),
+              phone: phone.trim(),
+              delivery_address: address.trim(),
+            },
+          },
         });
 
         if (authError) {
@@ -601,6 +634,7 @@ return () => {
           fullname: fullname.trim(),
           username: username.trim(),
           email: email.trim(),
+          password: password,
           phone: phone.trim(),
           address: address.trim(),
           role,
@@ -613,6 +647,9 @@ return () => {
       if (!regRes.ok || !regJson.success) {
         if (regJson.code === 'EMAIL_ALREADY_EXISTS' || (regJson.message && regJson.message.toLowerCase().includes('already exist'))) {
           setEmailError(regJson.message || 'This email address is already registered. Please sign in or use a different email.');
+        }
+        if (regJson.code === 'INVALID_PASSWORD') {
+          setPasswordError(regJson.message || 'Password must be at least 8 characters long and include at least one number.');
         }
         throw new Error(regJson.message || 'Account registration failed. Please try again.');
       }
@@ -628,6 +665,7 @@ return () => {
       setEmailError('');
       setPhone('');
       setPhoneError('');
+      setPasswordError('');
       setAddress('');
       setAddressCoordinates(null);
       setAddressLookupMessage('');
@@ -948,7 +986,7 @@ return () => {
                   <input
                     type="text"
                     autoComplete="username"
-                    placeholder="you@example.com"
+                    placeholder="you@example.com or username"
                     required
                     className="w-full py-3.5 px-4 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
                     value={loginInput}
@@ -1247,11 +1285,11 @@ return () => {
                 <div className="mb-2.5 relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Password"
+                    placeholder="Password (min. 8 characters with numbers)"
                     required
-                    className="w-full py-3 pl-3.5 pr-10 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                    className={`w-full py-3 pl-3.5 pr-10 rounded-xl border ${passwordError ? 'border-red-500 focus:border-red-500' : 'border-[#eadfd7] focus:border-[#FF6900]'} font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border`}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => handlePasswordChange(e.target.value)}
                   />
                   <button
                     type="button"
@@ -1271,6 +1309,11 @@ return () => {
                     )}
                   </button>
                 </div>
+                {passwordError && (
+                  <p className="text-[11px] text-red-500 font-semibold -mt-1 mb-2 text-left">
+                    {passwordError}
+                  </p>
+                )}
 
                 {/* Confirm Password */}
                 <div className="mb-2.5 relative">
@@ -1754,11 +1797,11 @@ return () => {
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Password"
+                      placeholder="Password (8+ chars, 1+ num)"
                       required
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="w-full h-11 pl-3 pr-8 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                      onChange={(e) => handlePasswordChange(e.target.value)}
+                      className={`w-full h-11 pl-3 pr-8 rounded-xl border ${passwordError ? 'border-red-500 focus:border-red-500' : 'border-neutral-200 focus:border-[#FF6900]'} text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500/10 box-border`}
                     />
                     <button
                       type="button"
@@ -1796,6 +1839,11 @@ return () => {
                     </button>
                   </div>
                 </div>
+                {passwordError && (
+                  <p className="text-[11px] text-red-500 font-semibold mt-1 mb-1 text-left">
+                    {passwordError}
+                  </p>
+                )}
 
                 {/* Agreement checkbox */}
                 <div>

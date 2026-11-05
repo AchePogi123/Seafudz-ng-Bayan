@@ -963,14 +963,24 @@ router.post('/auth/login', async (req, res) => {
     if (!emp && !cust && searchValue) {
       try {
         const empRes = await query(
-          'SELECT * FROM employees WHERE LOWER(email) = LOWER($1) OR LOWER(username) = LOWER($1)',
+          `SELECT * FROM employees 
+           WHERE LOWER(email) = LOWER($1) 
+              OR (username IS NOT NULL AND LOWER(username) = LOWER($1))
+              OR LOWER(SPLIT_PART(email, '@', 1)) = LOWER($1)
+              OR LOWER(fullname) = LOWER($1)
+           LIMIT 1`,
           [searchValue]
         );
         if (empRes?.rows?.length > 0) emp = empRes.rows[0];
 
         if (!emp) {
           const custRes = await query(
-            'SELECT * FROM customers WHERE LOWER(email) = LOWER($1) OR LOWER(fullname) = LOWER($1)',
+            `SELECT * FROM customers 
+             WHERE LOWER(email) = LOWER($1) 
+                OR (username IS NOT NULL AND LOWER(username) = LOWER($1))
+                OR LOWER(SPLIT_PART(email, '@', 1)) = LOWER($1)
+                OR LOWER(fullname) = LOWER($1)
+             LIMIT 1`,
             [searchValue]
           );
           if (custRes?.rows?.length > 0) cust = custRes.rows[0];
@@ -1010,6 +1020,36 @@ router.post('/auth/login', async (req, res) => {
             role: 'customer',
           };
           verifiedSupabaseUserId = sbUser.id;
+        }
+      } catch { }
+    }
+
+    // Direct Supabase Auth Verification Fallback for username login
+    if (!emp && !cust && password && !searchValue.includes('@')) {
+      try {
+        const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+        const matched = usersData?.users?.find(
+          u => (u.user_metadata?.username || '').toLowerCase() === searchValue.toLowerCase()
+        );
+        if (matched?.email) {
+          const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({
+            email: matched.email,
+            password,
+          });
+          if (!loginError && loginData?.user) {
+            const sbUser = loginData.user;
+            cust = {
+              id: sbUser.id,
+              supabase_user_id: sbUser.id,
+              fullname: sbUser.user_metadata?.fullname || sbUser.user_metadata?.name || searchValue,
+              username: sbUser.user_metadata?.username || searchValue,
+              email: sbUser.email,
+              phone: sbUser.user_metadata?.phone || '0917-000-0000',
+              delivery_address: sbUser.user_metadata?.delivery_address || 'Metro Manila Address',
+              role: 'customer',
+            };
+            verifiedSupabaseUserId = sbUser.id;
+          }
         }
       } catch { }
     }
@@ -2101,7 +2141,7 @@ router.post('/auth/change-password', requireAuth, async (req, res) => {
  */
 router.post('/auth/register', async (req, res) => {
   try {
-    const { fullname, username, email, role, phone, address, supabaseUserId } = req.body;
+    const { fullname, username, email, role, phone, address, supabaseUserId, password } = req.body;
 
     if (!fullname || !email) {
       return res.status(400).json({
@@ -2110,8 +2150,19 @@ router.post('/auth/register', async (req, res) => {
       });
     }
 
+    if (password) {
+      if (typeof password !== 'string' || password.length < 8 || !/\d/.test(password)) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PASSWORD',
+          message: 'Password must be at least 8 characters long and include at least one number.',
+        });
+      }
+    }
+
     const cleanEmail = email.trim().toLowerCase();
     const cleanFullname = fullname.trim();
+    const cleanUsername = username ? username.trim() : null;
     const selectedRole = (role || 'customer').toLowerCase();
 
     if (selectedRole !== 'customer') {
@@ -2119,6 +2170,24 @@ router.post('/auth/register', async (req, res) => {
         success: false,
         message: 'Staff accounts must be created by an administrator.',
       });
+    }
+
+    // Check if username already exists in customers OR employees
+    if (cleanUsername) {
+      const existingUsername = await query(
+        `SELECT 'customer' AS source FROM customers WHERE LOWER(username) = LOWER($1)
+         UNION ALL
+         SELECT 'employee' AS source FROM employees WHERE LOWER(username) = LOWER($1)
+         LIMIT 1`,
+        [cleanUsername]
+      );
+      if (existingUsername.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          code: 'USERNAME_ALREADY_EXISTS',
+          message: 'This username is already taken. Please choose a different username.',
+        });
+      }
     }
 
     // STRICT UNIQUENESS CHECK: Check if email already exists in customers OR employees
@@ -2170,21 +2239,49 @@ router.post('/auth/register', async (req, res) => {
     }
     const cleanAddress = address ? address.trim() : null;
 
-    const sql = `
-      INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
-    `;
+    let passwordHash = null;
+    if (password) {
+      passwordHash = await hashPassword(password);
+    }
 
-    const { rows } = await query(sql, [
-      supabaseUserId || null,
-      cleanFullname,
-      cleanEmail,
-      cleanPhone,
-      cleanAddress,
-    ]);
+    let cust;
+    try {
+      const sql = `
+        INSERT INTO customers (supabase_user_id, fullname, username, email, phone, delivery_address, password_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id, supabase_user_id, fullname, username, email, phone, delivery_address, created_at
+      `;
 
-    const cust = rows[0];
+      const { rows } = await query(sql, [
+        supabaseUserId || null,
+        cleanFullname,
+        cleanUsername,
+        cleanEmail,
+        cleanPhone,
+        cleanAddress,
+        passwordHash,
+      ]);
+      cust = rows[0];
+    } catch (insertErr) {
+      if (insertErr.code === '42703') {
+        const fallbackSql = `
+          INSERT INTO customers (supabase_user_id, fullname, email, phone, delivery_address)
+          VALUES ($1, $2, $3, $4, $5)
+          RETURNING id, supabase_user_id, fullname, email, phone, delivery_address, created_at
+        `;
+        const { rows } = await query(fallbackSql, [
+          supabaseUserId || null,
+          cleanFullname,
+          cleanEmail,
+          cleanPhone,
+          cleanAddress,
+        ]);
+        cust = rows[0];
+      } else {
+        throw insertErr;
+      }
+    }
+
     const cryptoSession = generateSessionHashToken({ userId: cust.id, email: cust.email, role: 'customer' });
 
     return res.status(201).json({

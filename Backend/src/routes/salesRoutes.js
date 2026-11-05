@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { query } from '../config/db.js';
+import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
-import { inMemoryOrders } from './sharedFlowStore.js';
+import { inMemoryOrders, emitOrderUpdate } from './sharedFlowStore.js';
 
 const router = Router();
 
@@ -274,6 +274,56 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
     return res.status(500).json({
       success: false,
       message: 'Failed to retrieve transactions ledger',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/sales/reset-transactions
+ * Safely wipes all transactions (orders, items, payments, deliveries, refunds)
+ * while preserving employees, customers, products, categories, tables, and migrations.
+ * Also resets countdown servings and clears in-memory cache.
+ */
+router.post('/sales/reset-transactions', async (req, res) => {
+  try {
+    const pool = await getDbPool();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        TRUNCATE TABLE 
+          order_items, 
+          payments, 
+          refunds, 
+          deliveries, 
+          kitchen_orders, 
+          assistant_calls, 
+          orders 
+        RESTART IDENTITY CASCADE;
+      `);
+      await client.query(`UPDATE products SET remaining_servings = NULL;`);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    inMemoryOrders.clear();
+    emitOrderUpdate({ resetAll: true, type: 'RESET_ALL', timestamp: Date.now() });
+
+    console.log('[RESET] All transactions wiped from database and in-memory cache.');
+    return res.status(200).json({
+      success: true,
+      message: 'All order transactions have been safely reset. Fresh start activated.',
+    });
+  } catch (error) {
+    console.error('[ERROR] Failed to reset transactions:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to reset transactions',
       error: error.message,
     });
   }

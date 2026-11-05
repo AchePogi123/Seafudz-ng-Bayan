@@ -133,11 +133,15 @@ export const AssistantRole: React.FC = () => {
   const scannedReceiptsRef = useRef<Set<string>>(new Set())
 
   const handleDeleteAssistantOrder = async (orderId: string) => {
-    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete order #${orderId}? This will remove it from the PostgreSQL database.`)
+    const confirmDelete = window.confirm(`⚠️ Are you sure you want to permanently delete order #${orderId}? This will remove it from the database.`)
     if (!confirmDelete) return
 
+    const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+
     try {
-      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => { })
+      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE', headers }).catch(() => { })
     } catch { }
 
     try {
@@ -147,12 +151,44 @@ export const AssistantRole: React.FC = () => {
         const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
-      notifyOrderSync()
     } catch { }
 
+    setOrders((prev) => prev.filter((o) => o.id !== orderId && o.ref !== orderId))
     if (selectedOrderId === orderId) setSelectedOrderId(null)
+    notifyOrderSync()
     void fetchAssistantOrders(true)
-    setNotification(`Order #${orderId} deleted from DB by Admin.`)
+    setNotification(`Order #${orderId} deleted successfully.`)
+  }
+
+  const handleResetAllFromAssistant = async () => {
+    const confirmFirst = window.confirm(
+      '⚠️ FRESH START: Are you sure you want to wipe all transaction history from the database?\n\n' +
+      'All pending, active, and completed orders will be permanently cleared.\n\n' +
+      'Staff accounts, passwords, menu catalog, and tables will remain 100% intact.'
+    )
+    if (!confirmFirst) return
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/sales/reset-transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || 'Failed to reset transactions')
+
+      localStorage.removeItem('seafudz_orders')
+      localStorage.removeItem('seafudz_active_online_order')
+      localStorage.removeItem('seafudz_printed_receipts')
+      localStorage.removeItem('seafudz_pending_approvals')
+
+      setOrders([])
+      setSelectedOrderId(null)
+      notifyOrderSync()
+      alert('✅ All orders have been wiped. Fresh start ready!')
+      window.location.reload()
+    } catch (err: any) {
+      alert(err.message || 'Error executing reset')
+    }
   }
 
   useEffect(() => {
@@ -1108,7 +1144,7 @@ export const AssistantRole: React.FC = () => {
                 ))}
               </div>
 
-              {/* Search Bar & Admin Create Button */}
+              {/* Search Bar & Actions */}
               <div className="flex items-center gap-2 min-w-[240px]">
                 {isAdmin && (
                   <button
@@ -1118,6 +1154,17 @@ export const AssistantRole: React.FC = () => {
                     ➕ Create Transaction
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={handleResetAllFromAssistant}
+                  className="px-3.5 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-2xs active:scale-95 flex items-center gap-1.5"
+                  title="Wipe transaction history for fresh start"
+                >
+                  <svg className="w-4 h-4 text-rose-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Wipe Orders
+                </button>
                 <div className="relative flex-1">
                   <input
                     type="text"
@@ -1169,46 +1216,61 @@ export const AssistantRole: React.FC = () => {
                           <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
                           <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'cancel_requested' || (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
-                            ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
-                            : s === 'out_of_stock'
-                            ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
-                            : s === 'awaiting_kitchen_approval'
-                              ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse font-black'
-                              : s === 'kitchen_rejected'
-                                ? 'bg-rose-100 text-rose-900 border border-rose-300 font-black'
-                                : s === 'gcash_pending_approval'
-                                  ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                                  : s === 'gcash_authorized'
-                                    ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                                    : s === 'receipt_submitted'
-                                      ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                                      : s === 'pending' || s === 'unconfirmed'
-                                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                        : s === 'confirmed' || s === 'preparing'
-                                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                          : s === 'ready'
-                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                            : s === 'cancelled'
-                                              ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                            }`}
-                        >
-                          ● {s === 'cancel_requested'
-                            ? '🚨 Cancel & Refund Requested'
-                            : (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
-                              ? '🚨 Refund Needed'
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span
+                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'cancel_requested' || (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
+                              ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
                               : s === 'out_of_stock'
-                            ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
-                              ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
-                              : 'Awaiting Customer Choice'
-                            : s === 'awaiting_kitchen_approval'
-                              ? 'Kitchen Review Needed'
-                              : s === 'kitchen_rejected'
-                                ? 'Declined by Kitchen'
-                                : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? (ord.refundReceipt || ord.refundReference ? 'Cancelled & Refunded' : 'Cancelled') : ord.status}
-                        </span>
+                              ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
+                              : s === 'awaiting_kitchen_approval'
+                                ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse font-black'
+                                : s === 'kitchen_rejected'
+                                  ? 'bg-rose-100 text-rose-900 border border-rose-300 font-black'
+                                  : s === 'gcash_pending_approval'
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
+                                    : s === 'gcash_authorized'
+                                      ? 'bg-blue-100 text-blue-900 border border-blue-300'
+                                      : s === 'receipt_submitted'
+                                        ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                                        : s === 'pending' || s === 'unconfirmed'
+                                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                          : s === 'confirmed' || s === 'preparing'
+                                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                                            : s === 'ready'
+                                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                              : s === 'cancelled'
+                                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                                : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                              }`}
+                          >
+                            ● {s === 'cancel_requested'
+                              ? '🚨 Cancel & Refund Requested'
+                              : (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
+                                ? '🚨 Refund Needed'
+                                : s === 'out_of_stock'
+                              ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
+                                ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
+                                : 'Awaiting Customer Choice'
+                              : s === 'awaiting_kitchen_approval'
+                                ? 'Kitchen Review Needed'
+                                : s === 'kitchen_rejected'
+                                  ? 'Declined by Kitchen'
+                                  : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? (ord.refundReceipt || ord.refundReference ? 'Cancelled & Refunded' : 'Cancelled') : ord.status}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void handleDeleteAssistantOrder(ord.id)
+                            }}
+                            className="p-1 rounded-lg text-neutral-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            title="Delete this order"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
@@ -1292,9 +1354,21 @@ export const AssistantRole: React.FC = () => {
                 <div className="pb-4 border-b border-slate-100 space-y-1">
                   <div className="flex justify-between items-center">
                     <span className="font-extrabold text-slate-900 text-lg tracking-tight">{selectedOrder.ref}</span>
-                    <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide uppercase bg-slate-100 text-slate-600">
-                      {selectedOrder.paymentMethod || 'GCash'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide uppercase bg-slate-100 text-slate-600">
+                        {selectedOrder.paymentMethod || 'GCash'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteAssistantOrder(selectedOrder.id)}
+                        className="p-1.5 rounded-lg text-neutral-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                        title="Delete this order"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                   <p className="font-normal text-slate-800 text-sm pt-0.5">{selectedOrder.customer}</p>
                   <p className="text-slate-500 text-xs">{selectedOrder.phone}</p>

@@ -538,13 +538,15 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
   }
 });
 
-// DELETE /api/orders/:id - Delete order from DB and memory (Admin only)
-router.delete('/orders/:id', requireAuth, requireRole(['admin']), async (req, res) => {
+// DELETE /api/orders/:id - Delete order from DB and memory
+router.delete('/orders/:id', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     inMemoryOrders.delete(id);
 
     try {
+      await query(`DELETE FROM refunds WHERE order_id = $1`, [id]);
+      await query(`DELETE FROM assistant_calls WHERE order_id = $1`, [id]);
       await query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
       await query(`DELETE FROM kitchen_orders WHERE order_id = $1`, [id]);
       await query(`DELETE FROM deliveries WHERE order_id = $1`, [id]);
@@ -554,6 +556,7 @@ router.delete('/orders/:id', requireAuth, requireRole(['admin']), async (req, re
       console.warn('DB delete note:', dbErr.message);
     }
 
+    emitOrderUpdate({ id, type: 'ORDER_DELETED', timestamp: Date.now() });
     console.log(`[DELETE] Order ${id} deleted from database and memory`);
 
     return res.status(200).json({

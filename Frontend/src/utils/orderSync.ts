@@ -99,6 +99,16 @@ const initSseConnection = () => {
           notifyProductCatalogSync(data)
           return
         }
+        if (data && (data.type === 'RESET_ALL' || data.resetAll)) {
+          try {
+            localStorage.removeItem('seafudz_orders')
+            localStorage.removeItem('seafudz_active_online_order')
+            localStorage.removeItem('seafudz_printed_receipts')
+            localStorage.removeItem('seafudz_pending_approvals')
+          } catch {}
+          notifyOrderSync()
+          return
+        }
         if (data && (data.type === 'ORDER_UPDATE' || data.id || data.status)) {
           notifyOrderSync()
         }

@@ -2749,7 +2749,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         const standard = getProductQuantityStandard(ci.item.id || ci.item.name)
                                         const isStandardMet = ci.quantity >= standard
                                         return (
-                                            <div key={ci.item.id} className={`py-3 first:pt-0 ${!isAvailable(ci.item.id) ? 'rounded-lg bg-rose-50 px-2' : isStandardMet ? 'rounded-lg bg-amber-50/60 px-2' : ''}`}>
+                                            <div key={ci.item.id} className={`py-3 first:pt-0 ${!isAvailable(ci.item.id) ? 'rounded-lg bg-rose-50 px-2' : ''}`}>
                                                 <div className="flex justify-between items-start text-sm">
                                                     <div className="min-w-0 pr-2">
                                                         <span className="font-medium text-neutral-700">
@@ -4134,9 +4134,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     className={`pt-3.5 first:pt-0 ${
                                                         !isAvailable(ci.item.id)
                                                             ? 'rounded-2xl border border-rose-300 bg-rose-50 p-3'
-                                                            : isStandardMet
-                                                                ? 'rounded-2xl border border-amber-300/80 bg-amber-50/40 p-3'
-                                                                : ''
+                                                            : ''
                                                     }`}
                                                 >
                                                     <div className="flex items-center gap-3.5">

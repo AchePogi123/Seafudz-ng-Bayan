@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
-import { inMemoryOrders, emitOrderUpdate } from './sharedFlowStore.js';
+import { inMemoryOrders } from './sharedFlowStore.js';
+import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
 

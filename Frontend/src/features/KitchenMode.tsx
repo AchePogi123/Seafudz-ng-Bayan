@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser, getStoredSessionToken } from '../cryptography/cryptoSession'
@@ -17,6 +17,8 @@ interface OrderItem {
   quantity: number
   price?: number
   itemStatus?: string
+  remainingServings?: number | null
+  remaining_servings?: number | null
 }
 
 export interface KitchenOrder {
@@ -184,6 +186,8 @@ export const KitchenMode: React.FC = () => {
                 quantity: Number(ci.quantity || 1),
                 price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
                 itemStatus: ci.item_status || ci.itemStatus || 'ACTIVE',
+                remainingServings: ci.remaining_servings ?? ci.remainingServings ?? ci.item?.remaining_servings ?? null,
+                remaining_servings: ci.remaining_servings ?? ci.remainingServings ?? ci.item?.remaining_servings ?? null,
               }))
           } else if (Array.isArray(o.items) && o.items.length > 0) {
             parsedItems = o.items
@@ -203,6 +207,8 @@ export const KitchenMode: React.FC = () => {
                 quantity: Number(i.quantity || 1),
                 price: parseFloat(i.unit_price || i.price || 0),
                 itemStatus: i.item_status || i.itemStatus || 'ACTIVE',
+                remainingServings: i.remaining_servings ?? i.remainingServings ?? null,
+                remaining_servings: i.remaining_servings ?? i.remainingServings ?? null,
               }))
           } else if (typeof o.items === 'string' && o.items.trim()) {
             parsedItems = o.items.split(',').map((part: string, idx: number) => {
@@ -323,6 +329,8 @@ export const KitchenMode: React.FC = () => {
                       quantity: item.quantity || 1,
                       price: parseFloat(item.unit_price || item.price || 0),
                       itemStatus: item.item_status || item.itemStatus || 'ACTIVE',
+                      remainingServings: item.remaining_servings ?? item.remainingServings ?? null,
+                      remaining_servings: item.remaining_servings ?? item.remainingServings ?? null,
                     })),
                   notes: o.notes || '',
                   createdAt: o.created_at || new Date().toISOString(),
@@ -482,6 +490,9 @@ export const KitchenMode: React.FC = () => {
             const strVal = item.remaining_servings != null ? String(item.remaining_servings) : ''
             map[item.id] = servings
             inputs[item.id] = strVal
+            if (item.name) {
+              map[item.name.toLowerCase().trim()] = servings
+            }
             const aliasId = PRODUCT_ALIASES[item.id]
             if (aliasId) {
               map[aliasId] = servings
@@ -1010,9 +1021,59 @@ export const KitchenMode: React.FC = () => {
 
   const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
 
+  const isEstimatedServingItem = useCallback((item: OrderItem): boolean => {
+    // 1. Check if the order item captured remaining_servings at order time
+    const capturedServings = item.remainingServings ?? item.remaining_servings ?? (item as any).remaining_servings ?? (item as any).remainingServings
+    if (capturedServings !== undefined && capturedServings !== null) {
+      return true
+    }
+    // 2. Check if product currently has remaining_servings in servingsMap
+    if (item.productId && servingsMap[item.productId] !== undefined && servingsMap[item.productId] !== null) {
+      return true
+    }
+    // 3. Fallback: match by name directly in servingsMap
+    const nameKey = (item.name || '').toLowerCase().trim()
+    if (nameKey && servingsMap[nameKey] !== undefined && servingsMap[nameKey] !== null) {
+      return true
+    }
+    // 4. Fallback: match by product name in menuItems and check servingsMap or menu item
+    const matchedMenu = menuItems.find(
+      (m) => (item.productId && m.id === item.productId) || m.name.toLowerCase().trim() === nameKey
+    )
+    if (matchedMenu) {
+      if (servingsMap[matchedMenu.id] !== undefined && servingsMap[matchedMenu.id] !== null) {
+        return true
+      }
+      if ((matchedMenu as any).remaining_servings !== undefined && (matchedMenu as any).remaining_servings !== null) {
+        return true
+      }
+    }
+    return false
+  }, [servingsMap, menuItems])
+
+  const canOrderBeFlaggedOos = useCallback((order: KitchenOrder): boolean => {
+    const activeItems = (order.items || []).filter(
+      (item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase())
+    )
+    if (activeItems.length === 0) return false
+    // If all active items in the order have estimated servings set, the order cannot be flagged OOS
+    return activeItems.some((item) => !isEstimatedServingItem(item))
+  }, [isEstimatedServingItem])
+
   // Out-of-stock flagging handler
   const handleFlagOutOfStock = async () => {
     if (!outOfStockModalOrderId || selectedOosItemIds.length === 0) return
+
+    // Prevent flagging any items with kitchen estimated servings
+    const disallowedItems = selectedOosItemIds.filter((id) => {
+      const item = outOfStockOrder?.items.find((it, idx) => (it.id || idx + 1) === id)
+      return item ? isEstimatedServingItem(item) : false
+    })
+    if (disallowedItems.length > 0) {
+      alert('Items with kitchen estimated servings cannot be flagged as out of stock.')
+      return
+    }
+
     setIsSubmittingOos(true)
 
     try {
@@ -1431,8 +1492,15 @@ export const KitchenMode: React.FC = () => {
                           .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
                           .map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
-                            <span>{item.name}</span>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">{item.name}</span>
+                              {isEstimatedServingItem(item) && (
+                                <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                                  Est. Serving
+                                </span>
+                              )}
+                            </div>
+                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
                               x{item.quantity}
                             </span>
                           </div>
@@ -1455,13 +1523,15 @@ export const KitchenMode: React.FC = () => {
                       >
                         Start Cooking
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
-                        className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
-                        title="Flag items as out of stock"
-                      >
-                        ⚠️ OOS
-                      </button>
+                      {canOrderBeFlaggedOos(order) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
+                          className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
+                          title="Flag items as out of stock"
+                        >
+                          ⚠️ OOS
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1510,8 +1580,15 @@ export const KitchenMode: React.FC = () => {
                           .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
                           .map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
-                            <span>{item.name}</span>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">{item.name}</span>
+                              {isEstimatedServingItem(item) && (
+                                <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                                  Est. Serving
+                                </span>
+                              )}
+                            </div>
+                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
                               x{item.quantity}
                             </span>
                           </div>
@@ -1537,13 +1614,15 @@ export const KitchenMode: React.FC = () => {
                       >
                         Mark as Done
                       </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
-                        className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
-                        title="Flag items as out of stock"
-                      >
-                        ⚠️ OOS
-                      </button>
+                      {canOrderBeFlaggedOos(order) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
+                          className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
+                          title="Flag items as out of stock"
+                        >
+                          ⚠️ OOS
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))
@@ -1638,8 +1717,15 @@ export const KitchenMode: React.FC = () => {
                     .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
                     .map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center py-1.5 text-xs font-semibold">
-                      <span>{item.name}</span>
-                      <span className="bg-neutral-200 px-2 py-0.5 rounded font-bold">x{item.quantity}</span>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="truncate">{item.name}</span>
+                        {isEstimatedServingItem(item) && (
+                          <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
+                            Est. Serving
+                          </span>
+                        )}
+                      </div>
+                      <span className="bg-neutral-200 px-2 py-0.5 rounded font-bold shrink-0">x{item.quantity}</span>
                     </div>
                   ))}
                 </div>
@@ -1926,29 +2012,41 @@ export const KitchenMode: React.FC = () => {
                   .map((item, idx) => {
                   const itemId = item.id || idx + 1
                   const isSelected = selectedOosItemIds.includes(itemId)
+                  const isEst = isEstimatedServingItem(item)
                   return (
                     <label
                       key={idx}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'bg-red-50 border-red-300 ring-1 ring-red-200'
-                          : 'bg-[#faf9f6] border-neutral-200 hover:border-neutral-300'
+                      className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                        isEst
+                          ? 'bg-neutral-100/70 border-neutral-200 opacity-60 cursor-not-allowed'
+                          : isSelected
+                          ? 'bg-red-50 border-red-300 ring-1 ring-red-200 cursor-pointer'
+                          : 'bg-[#faf9f6] border-neutral-200 hover:border-neutral-300 cursor-pointer'
                       }`}
                     >
                       <input
                         type="checkbox"
                         checked={isSelected}
+                        disabled={isEst}
                         onChange={() => {
+                          if (isEst) return
                           setSelectedOosItemIds((prev) =>
                             isSelected
                               ? prev.filter((id) => id !== itemId)
                               : [...prev, itemId]
                           )
                         }}
-                        className="w-4 h-4 rounded accent-red-600"
+                        className="w-4 h-4 rounded accent-red-600 disabled:opacity-40 disabled:cursor-not-allowed"
                       />
                       <div className="flex-1">
-                        <div className="text-xs font-bold text-neutral-900">{item.name}</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-neutral-900">{item.name}</span>
+                          {isEst && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200">
+                              Estimated serving active
+                            </span>
+                          )}
+                        </div>
                         {item.price ? (
                           <div className="text-[11px] text-neutral-500">₱{item.price?.toFixed(2)} × {item.quantity}</div>
                         ) : null}

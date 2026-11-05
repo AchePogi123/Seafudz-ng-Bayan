@@ -29,7 +29,9 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
                    'subtotal', oi.subtotal,
                    'notes', oi.notes,
                    'name', COALESCE(oi.product_name_snapshot, p.name),
-                   'item_status', oi.item_status
+                   'item_status', oi.item_status,
+                   'remaining_servings', p.remaining_servings,
+                   'remainingServings', p.remaining_servings
                  )
                ) FILTER (WHERE oi.id IS NOT NULL AND oi.item_status NOT IN ('REPLACED', 'REFUNDED', 'CANCELLED')), '[]'
              ) AS "items"
@@ -322,6 +324,30 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
     try {
       await client.query('BEGIN');
       const itemIdsAsText = itemIds.map(String);
+
+      // Check if any of the items being flagged have kitchen estimated servings set
+      const estCheck = await client.query(
+        `SELECT oi.id, oi.product_id, COALESCE(oi.product_name_snapshot, p.name) AS product_name, p.remaining_servings
+         FROM order_items oi
+         LEFT JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = $1 AND (
+           oi.id::text = ANY($2::text[])
+           OR oi.product_id = ANY($2::text[])
+           OR LOWER(oi.product_name_snapshot) = ANY(SELECT LOWER(x) FROM unnest($2::text[]) AS x)
+         ) AND p.remaining_servings IS NOT NULL`,
+        [id, itemIdsAsText]
+      );
+
+      if (estCheck.rows && estCheck.rows.length > 0) {
+        await client.query('ROLLBACK');
+        const dishNames = estCheck.rows.map(r => r.product_name).join(', ');
+        return res.status(400).json({
+          success: false,
+          code: 'ESTIMATED_SERVING_CANNOT_BE_OOS',
+          message: `Cannot flag '${dishNames}' as out of stock because the kitchen already set an estimated serving for this dish.`,
+        });
+      }
+
       const flagResult = await client.query(
         `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
          WHERE order_id = $1 AND (
@@ -380,6 +406,22 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
 
   // 2. Always update inMemoryOrders
   let order = inMemoryOrders.get(id) || { id, items: [] };
+
+  if (Array.isArray(order.items)) {
+    const hasEst = order.items.some((item, idx) => {
+      const match = itemIds.includes(item.id) || itemIds.includes(String(item.id)) || itemIds.includes(idx) || itemIds.includes(String(idx));
+      const serv = item.remaining_servings ?? item.remainingServings;
+      return match && serv !== null && serv !== undefined;
+    });
+    if (hasEst) {
+      return res.status(400).json({
+        success: false,
+        code: 'ESTIMATED_SERVING_CANNOT_BE_OOS',
+        message: 'Cannot flag this item as out of stock because the kitchen already set an estimated serving for this dish.',
+      });
+    }
+  }
+
   order.status = 'OUT_OF_STOCK';
   order.customerResolution = null;
   order.customer_resolution = null;

@@ -240,6 +240,15 @@ export const KitchenMode: React.FC = () => {
   }
 
   const isFetchingRef = useRef(false)
+  const inFlightStatusUpdatesRef = useRef<Map<string, { status: string; timestamp: number }>>(new Map())
+
+  const KITCHEN_STATUS_ORDER: Record<string, number> = {
+    'CONFIRMED': 1,
+    'PREPARING': 2,
+    'READY': 3,
+    'COMPLETED': 4,
+    'OUT OF STOCK': 5,
+  }
   const lastFetchRef = useRef(0)
 
   // Fetch live tickets from backend API & merge with LocalStorage
@@ -347,6 +356,19 @@ export const KitchenMode: React.FC = () => {
 
       // 1. Load server tickets
       fetchedApiOrders.forEach((apiItem) => {
+        const inFlight = inFlightStatusUpdatesRef.current.get(apiItem.id) || inFlightStatusUpdatesRef.current.get(apiItem.queue)
+        if (inFlight) {
+          if (Date.now() - inFlight.timestamp < 15000) {
+            const apiRank = KITCHEN_STATUS_ORDER[apiItem.status.toUpperCase()] || 0
+            const inFlightRank = KITCHEN_STATUS_ORDER[inFlight.status.toUpperCase()] || 0
+            if (inFlightRank >= apiRank) {
+              apiItem.status = inFlight.status
+            }
+          } else {
+            inFlightStatusUpdatesRef.current.delete(apiItem.id)
+            inFlightStatusUpdatesRef.current.delete(apiItem.queue)
+          }
+        }
         mergedMap.set(apiItem.id, apiItem)
       })
 
@@ -362,6 +384,19 @@ export const KitchenMode: React.FC = () => {
         if (!existingApi) {
           mergedMap.set(localItem.id, localItem)
         } else {
+          // Monotonic progress check: preserve more advanced workflow state from local storage
+          const localRank = KITCHEN_STATUS_ORDER[localItem.status.toUpperCase()] || 0
+          const apiRank = KITCHEN_STATUS_ORDER[existingApi.status.toUpperCase()] || 0
+          if (localRank > apiRank) {
+            existingApi.status = localItem.status
+          }
+          if (localItem.startTime && !existingApi.startTime) {
+            existingApi.startTime = localItem.startTime
+          }
+          if (localItem.completedTimeElapsed && !existingApi.completedTimeElapsed) {
+            existingApi.completedTimeElapsed = localItem.completedTimeElapsed
+          }
+
           // If local order has modified dishes or notes, only set items from local if API had no items
           if ((!existingApi.items || existingApi.items.length === 0) && Array.isArray(localItem.items) && localItem.items.length > 0) {
             existingApi.items = localItem.items
@@ -385,7 +420,24 @@ export const KitchenMode: React.FC = () => {
         ...ord,
         items: (ord.items || []).filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase())),
       }))
-      setOrders(sanitizedOrders)
+
+      setOrders((prevOrders) => {
+        const prevMap = new Map(prevOrders.map((o) => [o.id, o]))
+        return sanitizedOrders.map((ord) => {
+          const prev = prevMap.get(ord.id) || prevMap.get(ord.queue)
+          if (prev) {
+            const prevRank = KITCHEN_STATUS_ORDER[prev.status.toUpperCase()] || 0
+            const ordRank = KITCHEN_STATUS_ORDER[ord.status.toUpperCase()] || 0
+            return {
+              ...ord,
+              status: prevRank > ordRank ? prev.status : ord.status,
+              startTime: ord.startTime || prev.startTime,
+              completedTimeElapsed: ord.completedTimeElapsed || prev.completedTimeElapsed,
+            }
+          }
+          return ord
+        })
+      })
     } finally {
       isFetchingRef.current = false
     }
@@ -933,10 +985,17 @@ export const KitchenMode: React.FC = () => {
       normalizedTarget = 'COMPLETED'
     }
 
+    // Record in-flight optimistic update to prevent stale backend polls from resetting status
+    inFlightStatusUpdatesRef.current.set(id, { status: newStatus, timestamp: Date.now() })
+    const targetOrder = orders.find((o) => o.id === id || o.queue === id)
+    if (targetOrder?.queue) {
+      inFlightStatusUpdatesRef.current.set(targetOrder.queue, { status: newStatus, timestamp: Date.now() })
+    }
+
     // 1. Update React UI state immediately
     setOrders((prevOrders) =>
       prevOrders.map((order) => {
-        if (order.id !== id) return order
+        if (order.id !== id && order.queue !== id) return order
         if (newStatus === 'Preparing') return { ...order, status: 'Preparing', startTime: Date.now() }
         if (newStatus === 'Ready') return { ...order, status: 'Ready', completedTimeElapsed: '4:30sec' }
         if (newStatus === 'Completed') return { ...order, status: 'Completed' }
@@ -947,7 +1006,6 @@ export const KitchenMode: React.FC = () => {
     // 2. Persist update in LocalStorage so polling doesn't reset it
     try {
       const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const targetOrder = orders.find((o) => o.id === id || o.queue === id)
       let found = false
 
       const updated = existing.map((o: any) => {
@@ -981,32 +1039,28 @@ export const KitchenMode: React.FC = () => {
           localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: normalizedTarget }))
         }
       }
-
-      notifyOrderSync()
     } catch {
       /* fallback silent */
     }
 
-    // 3. Persist update in Express Backend API
+    // 3. Persist update in Express Backend API and notify sync only once completed
     try {
-      const res1 = await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: normalizedTarget }),
-      })
-      if (!res1.ok) {
-        console.warn(`[KITCHEN] /kitchen/orders/${id}/status returned ${res1.status}`)
-      }
-      const res2 = await fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: normalizedTarget }),
-      })
-      if (!res2.ok) {
-        console.warn(`[KITCHEN] /user-flow/orders/${id}/status returned ${res2.status}`)
-      }
+      await Promise.allSettled([
+        fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: normalizedTarget }),
+        }),
+        fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: normalizedTarget }),
+        }),
+      ])
     } catch (err) {
       console.warn('[KITCHEN] Note on updating status with backend:', err)
+    } finally {
+      notifyOrderSync()
     }
   }
 

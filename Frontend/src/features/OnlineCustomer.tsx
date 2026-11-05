@@ -721,6 +721,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             ...order,
                             id: order.id || existing.id,
                             status: order.status || existing.status || 'PENDING',
+                            deliveryProof: order.deliveryProof || order.delivery_proof || existing.deliveryProof || existing.delivery_proof,
+                            delivery_proof: order.deliveryProof || order.delivery_proof || existing.deliveryProof || existing.delivery_proof,
                         })
                     })
                 }
@@ -1443,11 +1445,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const latestOutOfStockItems = Array.isArray(orderData.outOfStockItems)
                                 ? orderData.outOfStockItems
                                 : previousOrder?.outOfStockItems || []
+                            const apiProof = orderData.deliveryProof || orderData.delivery_proof
+                            const prevProof = previousOrder?.deliveryProof || (previousOrder as any)?.delivery_proof
                             const orderChanged = rawStatus !== String(previousOrder?.status || '').toUpperCase()
                                 || gcashAuthorized !== Boolean(previousOrder?.gcashAuthorized || previousOrder?.gcash_authorized)
                                 || customerResolution !== (previousOrder?.customerResolution || null)
                                 || customerResolutionStatus !== (previousOrder?.customerResolutionStatus || 'NONE')
                                 || Boolean(orderData.refundReceipt && orderData.refundReceipt !== previousOrder?.refundReceipt)
+                                || Boolean(apiProof && apiProof !== prevProof)
                                 || JSON.stringify(customerReplacements) !== JSON.stringify(previousOrder?.customerReplacements || [])
                                 || JSON.stringify(latestOutOfStockItems) !== JSON.stringify(previousOrder?.outOfStockItems || [])
                                 || Number(orderData.total ?? previousOrder?.total) !== Number(previousOrder?.total)
@@ -1474,6 +1479,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     customerResolution,
                                     customerResolutionStatus,
                                     customerReplacements,
+                                    deliveryProof: apiProof || prevProof,
+                                    delivery_proof: apiProof || prevProof,
+                                    riderName: orderData.riderName || orderData.rider_name || previousOrder?.riderName,
+                                    riderPhone: orderData.riderPhone || orderData.rider_phone || previousOrder?.riderPhone,
                                     ...(orderData.refundReceipt ? { refundReceipt: orderData.refundReceipt } : {}),
                                     ...(orderData.refundReference ? { refundReference: orderData.refundReference } : {}),
                                     subtotal: Number(orderData.subtotal ?? previousOrder?.subtotal ?? 0),
@@ -1554,7 +1563,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const normStatus = normalizeStatus(rawStatus)
                             const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
 
-                            const shouldAdvance = localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank)
+                            const localProof = current.deliveryProof || current.delivery_proof
+                            const prevProof = activeOrderRef.current?.deliveryProof || (activeOrderRef.current as any)?.delivery_proof
+                            const proofChanged = Boolean(localProof && localProof !== prevProof)
+                            const shouldAdvance = localRank > currentRank || (rawStatus !== currentRawStatus && localRank >= currentRank) || proofChanged
 
                             if (shouldAdvance) {
                                 if (rawStatus === 'GCASH_AUTHORIZED' && !isConfirmedOrLater) {
@@ -1571,6 +1583,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     ...activeOrderRef.current,
                                     status: rawStatus,
                                     gcashAuthorized: Boolean(current.gcashAuthorized || rawStatus === 'GCASH_AUTHORIZED'),
+                                    deliveryProof: localProof || prevProof,
+                                    delivery_proof: localProof || prevProof,
+                                    riderName: current.riderName || current.rider_name || activeOrderRef.current?.riderName,
+                                    riderPhone: current.riderPhone || current.rider_phone || activeOrderRef.current?.riderPhone,
                                     ...(current.paymentReceipt ? { paymentReceipt: current.paymentReceipt } : {}),
                                     ...(current.refundReceipt ? { refundReceipt: current.refundReceipt } : {}),
                                     ...(current.refundReference ? { refundReference: current.refundReference } : {}),
@@ -4123,6 +4139,52 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                 ? 'Your rider has dispatched from the store. Please ensure your contact number is reachable for a smooth handover.'
                                                                 : 'This delivery has been successfully received. Thank you for dining with Seafudz ng Bayan!'}
                                                         </p>
+
+                                                        {/* Rider Handover Proof Photo with Data Privacy Note */}
+                                                        {Boolean(activeOrder.deliveryProof || (activeOrder as any).delivery_proof) && (
+                                                            <div className="pt-3 border-t border-neutral-100 space-y-2.5">
+                                                                <div className="flex items-center justify-between">
+                                                                    <span className="text-[11px] font-bold text-neutral-700 uppercase tracking-wider flex items-center gap-1.5">
+                                                                        <span>📸</span> Proof of Delivery (Handover Photo)
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || (activeOrder as any).delivery_proof || null)}
+                                                                        className="text-xs font-bold text-emerald-600 hover:text-emerald-700 hover:underline cursor-pointer"
+                                                                    >
+                                                                        View Photo
+                                                                    </button>
+                                                                </div>
+
+                                                                <div className="relative rounded-xl overflow-hidden border border-neutral-200 bg-neutral-900 aspect-video flex items-center justify-center group shadow-2xs">
+                                                                    <img
+                                                                        src={activeOrder.deliveryProof || (activeOrder as any).delivery_proof}
+                                                                        alt="Proof of Delivery"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || (activeOrder as any).delivery_proof || null)}
+                                                                        className="w-full h-full object-cover cursor-pointer group-hover:scale-102 transition-transform duration-200"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || (activeOrder as any).delivery_proof || null)}
+                                                                        className="absolute bottom-2.5 right-2.5 px-3 py-1 bg-black/75 hover:bg-black/90 text-white text-[11px] font-bold rounded-lg backdrop-blur-xs flex items-center gap-1 shadow-md transition-all cursor-pointer"
+                                                                    >
+                                                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
+                                                                        </svg>
+                                                                        Click to Enlarge
+                                                                    </button>
+                                                                </div>
+
+                                                                {/* Data Privacy Note */}
+                                                                <div className="bg-emerald-50/90 border border-emerald-200/80 rounded-xl p-3 flex items-start gap-2.5 text-left">
+                                                                    <span className="text-emerald-700 text-sm mt-0.5 shrink-0">🔒</span>
+                                                                    <div className="text-[11px] leading-relaxed text-emerald-900">
+                                                                        <span className="font-bold block text-emerald-950 mb-0.5">Data Privacy Notice</span>
+                                                                        In compliance with the Data Privacy Act of 2012 (RA 10173), this handover photo was captured by your rider strictly for delivery verification and dispute resolution. It is securely stored and accessible solely to you and authorized restaurant staff.
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
                                             )}
@@ -4160,7 +4222,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     )}
 
                                                     {/* Proof of Delivery Photo */}
-                                                    {activeOrder.deliveryProof && (
+                                                    {Boolean(activeOrder.deliveryProof || (activeOrder as any).delivery_proof) && (
                                                         <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-200">
                                                             <span className="font-black text-emerald-800 uppercase text-[10px] block mb-1.5 tracking-wider">
                                                                 Proof of Delivery Photo
@@ -4168,9 +4230,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                             <div className="bg-white p-2.5 rounded-lg border border-emerald-200 flex items-center justify-between gap-3">
                                                                 <div className="flex items-center gap-2.5 min-w-0">
                                                                     <img
-                                                                        src={activeOrder.deliveryProof}
+                                                                        src={activeOrder.deliveryProof || (activeOrder as any).delivery_proof}
                                                                         alt="Proof of Delivery"
-                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || null)}
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || (activeOrder as any).delivery_proof || null)}
                                                                         className="w-12 h-12 object-cover rounded-lg border border-emerald-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
                                                                     />
                                                                     <div className="min-w-0">
@@ -4180,7 +4242,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                 </div>
                                                                 <button
                                                                     type="button"
-                                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || null)}
+                                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.deliveryProof || (activeOrder as any).delivery_proof || null)}
                                                                     className="px-2.5 py-1 text-[11px] font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg cursor-pointer transition-colors shrink-0"
                                                                 >
                                                                     View

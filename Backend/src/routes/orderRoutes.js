@@ -1417,6 +1417,8 @@ export async function handleGetCustomerFlowOrder(req, res) {
                COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer_name, c.phone AS customer_phone, c.delivery_address,
                COALESCE(r_emp.fullname, NULL) AS rider_name,
                COALESCE(r_emp.phone, NULL) AS rider_phone,
+               COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, ''), '') AS delivery_proof,
+               COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, ''), '') AS "deliveryProof",
                COALESCE(
                  json_agg(
                    DISTINCT jsonb_build_object(
@@ -1440,13 +1442,13 @@ export async function handleGetCustomerFlowOrder(req, res) {
         LEFT JOIN customers c ON o.customer_id = c.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
         LEFT JOIN (
-          SELECT DISTINCT ON (order_id) order_id, rider_id
+          SELECT DISTINCT ON (order_id) order_id, rider_id, delivery_proof
           FROM deliveries
           ORDER BY order_id, created_at DESC
         ) d ON o.id = d.order_id
         LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         WHERE o.id = $1
-        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, r_emp.fullname, r_emp.phone
+        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, r_emp.fullname, r_emp.phone, o.delivery_proof, d.delivery_proof
       `, [id]);
 
       if (rows.length > 0) {

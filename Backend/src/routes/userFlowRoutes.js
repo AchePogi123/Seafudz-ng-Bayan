@@ -89,13 +89,13 @@ router.get('/user-flow/orders', async (req, res) => {
         FROM orders o
         LEFT JOIN customers c ON o.customer_id = c.id
         LEFT JOIN (
-          SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
+          SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received, delivery_proof
           FROM deliveries
           ORDER BY order_id, created_at DESC
         ) d ON o.id = d.order_id
         LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         LEFT JOIN order_items oi ON o.id = oi.order_id
-        GROUP BY o.id, o.customer_id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, r_emp.fullname, r_emp.phone
+        GROUP BY o.id, o.customer_id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, d.rider_id, d.delivery_proof, r_emp.fullname, r_emp.phone
         ORDER BY o.created_at DESC
       `);
       dbOrders = rows;

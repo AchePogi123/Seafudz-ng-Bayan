@@ -2244,13 +2244,13 @@ export const RideRoleDemo: React.FC = () => {
                         ? 'bg-neutral-300 cursor-not-allowed text-neutral-500 shadow-none'
                         : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-md'
                     }`}
-                    title={!deliveryProofImage ? 'Proof of delivery photo is required before marking delivered' : ''}
+                    title={!deliveryProofImage ? 'Proof of delivery photo is required before marking as received' : ''}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                     </svg>
                     <span>
-                      Mark {activeBundle.isBundle ? (activeBundle.hasCod ? `Both Delivered & Paid` : `Both Delivered`) : (activeBundle.hasCod ? `Delivered & Paid` : `Delivered`)}
+                      Mark {activeBundle.isBundle ? (activeBundle.hasCod ? `Both as Received & Paid` : `Both as Received`) : (activeBundle.hasCod ? `as Received & Paid` : `as Received`)}
                     </span>
                   </button>
                   {!deliveryProofImage && (

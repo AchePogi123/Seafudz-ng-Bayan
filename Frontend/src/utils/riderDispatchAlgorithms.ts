@@ -83,18 +83,33 @@ export const METRO_MANILA_LOCATIONS: Record<string, GeoCoordinate> = {
   'bgc': { lat: 14.5490, lng: 121.0500, label: 'Bonifacio Global City, Taguig' },
   'taguig': { lat: 14.5200, lng: 121.0550, label: 'Taguig City' },
   'pasay': { lat: 14.5378, lng: 120.9990, label: 'Pasay City' },
+
+  // Adjacent provinces & cities (Beyond 8 km road limit)
+  'bulacan': { lat: 14.8527, lng: 120.8160, label: 'Bulacan Province' },
+  'malolos': { lat: 14.8527, lng: 120.8160, label: 'Malolos, Bulacan' },
+  'marilao': { lat: 14.7570, lng: 120.9480, label: 'Marilao, Bulacan' },
+  'meycauayan': { lat: 14.7350, lng: 120.9600, label: 'Meycauayan, Bulacan' },
+  'san jose del monte': { lat: 14.8130, lng: 121.0450, label: 'San Jose del Monte, Bulacan' },
+  'sjdm': { lat: 14.8130, lng: 121.0450, label: 'San Jose del Monte, Bulacan' },
+  'bocaue': { lat: 14.8000, lng: 120.9300, label: 'Bocaue, Bulacan' },
+  'santa maria': { lat: 14.8200, lng: 120.9600, label: 'Santa Maria, Bulacan' },
+  'norzagaray': { lat: 14.9100, lng: 121.0500, label: 'Norzagaray, Bulacan' },
+  'cavite': { lat: 14.4791, lng: 120.8969, label: 'Cavite' },
+  'laguna': { lat: 14.2800, lng: 121.4200, label: 'Laguna' },
+  'rizal': { lat: 14.6000, lng: 121.3000, label: 'Rizal' },
+  'antipolo': { lat: 14.5842, lng: 121.1763, label: 'Antipolo, Rizal' },
+  'pampanga': { lat: 15.0333, lng: 120.6833, label: 'Pampanga' },
 }
 
 /**
- * Resolves any customer text address to approximate coordinates.
- * Falls back to an offset from Caloocan store if not specifically matched.
+ * Searches the calibrated Metro Manila & surrounding area dictionary for a match.
+ * Returns null if not in the known dictionary.
  */
-export function geocodeAddress(addressText: string): GeoCoordinate {
+export function matchKnownLocation(addressText: string): GeoCoordinate | null {
   const normalized = (addressText || '').toLowerCase()
 
   for (const [key, coord] of Object.entries(METRO_MANILA_LOCATIONS)) {
     if (normalized.includes(key)) {
-      // Add slight deterministic pseudo-offset so multiple orders in same district dont sit on exact same pixel
       const hash = addressText.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
       const latOffset = ((hash % 100) - 50) * 0.00008
       const lngOffset = (((hash >> 2) % 100) - 50) * 0.00008
@@ -106,7 +121,18 @@ export function geocodeAddress(addressText: string): GeoCoordinate {
     }
   }
 
-  // Fallback: Generate reasonable Metro Manila coordinate nearby
+  return null
+}
+
+/**
+ * Resolves any customer text address to approximate coordinates.
+ * Falls back to an offset from Caloocan store if not specifically matched.
+ */
+export function geocodeAddress(addressText: string): GeoCoordinate {
+  const match = matchKnownLocation(addressText)
+  if (match) return match
+
+  // Fallback: Generate reasonable Metro Manila coordinate nearby (for simulations)
   const hash = addressText.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
   const latOffset = (((hash % 200) - 100) / 100) * 0.03
   const lngOffset = ((((hash * 3) % 200) - 100) / 100) * 0.03

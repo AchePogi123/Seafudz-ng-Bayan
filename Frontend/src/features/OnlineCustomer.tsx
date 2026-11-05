@@ -12,10 +12,10 @@ import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
-import { reverseGeocodeCoordinates, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
+import { reverseGeocodeCoordinates, forwardGeocodeAddress, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
 import {
     calculateDeliveryFee,
-    geocodeAddress,
+    matchKnownLocation,
     SEAFUDZ_FLAGSHIP_STORE,
 } from '../utils/riderDispatchAlgorithms'
 import { getProductQuantityStandard, checkProductQuantityStandards } from '../utils/bulkOrder'
@@ -1626,17 +1626,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             return acc + displayPrice * ci.quantity
         }, 0)
     }, [cartItems, getEffectivePrice])
-    const deliveryDestination = useMemo(
-        () => address.trim() ? addressCoordinates || geocodeAddress(address) : null,
-        [address, addressCoordinates]
-    )
-    const deliveryLatitude = deliveryDestination?.lat
-    const deliveryLongitude = deliveryDestination?.lng
+    const [typedCoordinates, setTypedCoordinates] = useState<Coordinates | null>(null)
+    const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
 
     useEffect(() => {
         const controller = new AbortController()
-        const timer = window.setTimeout(() => {
-            if (deliveryLatitude === undefined || deliveryLongitude === undefined) {
+        const timer = window.setTimeout(async () => {
+            const cleanAddress = address.trim()
+            if (!cleanAddress) {
+                setTypedCoordinates(null)
                 setDeliveryDistanceKm(null)
                 setIsCalculatingDeliveryFee(false)
                 setDeliveryDistanceMessage('')
@@ -1644,35 +1642,76 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             }
 
             setIsCalculatingDeliveryFee(true)
-            const destination = { lat: deliveryLatitude, lng: deliveryLongitude }
-            const origin = SEAFUDZ_FLAGSHIP_STORE
-            void fetchRoadDistances(origin, [{ id: 'checkout', coord: destination }], controller.signal)
-                .then((distances) => {
-                    if (controller.signal.aborted) return
-                    const routeDistance = distances.get('checkout')
-                    setDeliveryDistanceKm(routeDistance ?? null)
-                    setDeliveryDistanceMessage(
-                        routeDistance === undefined
-                            ? 'Road distance unavailable. Please retry before placing the order.'
-                            : routeDistance > 8
-                                ? 'Delivery is available only within 8 km of the store.'
-                                : ''
-                    )
+            setDeliveryDistanceMessage('Verifying address location…')
+
+            // 1. Resolve destination coordinates: GPS first, then calibrated local dictionary, then OpenStreetMap Nominatim
+            let targetCoords: Coordinates | null = addressCoordinates
+
+            if (!targetCoords) {
+                const localMatch = matchKnownLocation(cleanAddress)
+                if (localMatch) {
+                    targetCoords = { lat: localMatch.lat, lng: localMatch.lng }
+                } else {
+                    try {
+                        setIsGeocodingAddress(true)
+                        const osmCoord = await forwardGeocodeAddress(cleanAddress, controller.signal)
+                        if (controller.signal.aborted) return
+                        targetCoords = osmCoord
+                    } catch {
+                        // ignore network error
+                    } finally {
+                        if (!controller.signal.aborted) {
+                            setIsGeocodingAddress(false)
+                        }
+                    }
+                }
+            }
+
+            if (controller.signal.aborted) return
+
+            if (!targetCoords) {
+                setTypedCoordinates(null)
+                setDeliveryDistanceKm(null)
+                setDeliveryDistanceMessage('Could not locate this address. Please include your city or barangay, or tap Relocate.')
+                setIsCalculatingDeliveryFee(false)
+                return
+            }
+
+            setTypedCoordinates(targetCoords)
+
+            // 2. Query real driving road distance via OSRM
+            try {
+                const origin = SEAFUDZ_FLAGSHIP_STORE
+                const distances = await fetchRoadDistances(origin, [{ id: 'checkout', coord: targetCoords }], controller.signal)
+                if (controller.signal.aborted) return
+
+                const routeDistance = distances.get('checkout')
+                setDeliveryDistanceKm(routeDistance ?? null)
+                setDeliveryDistanceMessage(
+                    routeDistance === undefined
+                        ? 'Road distance calculation unavailable. Please verify your address.'
+                        : routeDistance > 8
+                            ? `This address is approximately ${routeDistance.toFixed(1)} km away. Delivery is available only within our 8 km road limit.`
+                            : ''
+                )
+            } catch {
+                if (controller.signal.aborted) return
+                setDeliveryDistanceKm(null)
+                setDeliveryDistanceMessage('Road distance unavailable. Please retry before placing the order.')
+            } finally {
+                if (!controller.signal.aborted) {
                     setIsCalculatingDeliveryFee(false)
-                })
-                .catch(() => {
-                    if (controller.signal.aborted) return
-                    setDeliveryDistanceKm(null)
-                    setDeliveryDistanceMessage('Road distance unavailable. Please retry before placing the order.')
-                    setIsCalculatingDeliveryFee(false)
-                })
-        }, 300)
+                }
+            }
+        }, 500)
 
         return () => {
             window.clearTimeout(timer)
             controller.abort()
         }
-    }, [deliveryLatitude, deliveryLongitude])
+    }, [address, addressCoordinates])
+
+    const deliveryDestination = addressCoordinates || typedCoordinates
 
     const deliveryFee = useMemo(
         () => {
@@ -1682,7 +1721,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         },
         [subtotal, deliveryDistanceKm, address]
     )
-    const deliveryDistanceLabel = isCalculatingDeliveryFee
+    const deliveryDistanceLabel = (isCalculatingDeliveryFee || isGeocodingAddress)
         ? 'Calculating distance…'
         : deliveryDistanceKm === null
             ? ''
@@ -2715,7 +2754,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
 
                                     {/* Real-time distance status feedback */}
-                                    {deliveryDistanceKm !== null && (
+                                    {deliveryDistanceKm !== null ? (
                                         <div className="mt-1">
                                             {deliveryDistanceKm <= 8 ? (
                                                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
@@ -2729,7 +2768,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 </div>
                                             )}
                                         </div>
-                                    )}
+                                    ) : (deliveryDistanceMessage || isCalculatingDeliveryFee) ? (
+                                        <div className="mt-1">
+                                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 text-[11px] font-medium">
+                                                <span>{isCalculatingDeliveryFee ? '⏳' : 'ℹ️'}</span>
+                                                <span>{deliveryDistanceMessage || 'Calculating road route…'}</span>
+                                            </div>
+                                        </div>
+                                    ) : null}
                                 </div>
 
                                 <div className="flex flex-col gap-1.5">
@@ -2811,14 +2857,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || hasUnavailableCartItems || hasDeletedCartItems || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null}
+                                        disabled={isSubmittingOrder || isCalculatingDeliveryFee || isGeocodingAddress || hasUnavailableCartItems || hasDeletedCartItems || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder
                                             ? 'Submitting Order...'
-                                            : (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null
-                                                ? 'Outside 8 km Delivery Zone'
-                                                : 'Confirm & Submit Order'}
+                                            : (isCalculatingDeliveryFee || isGeocodingAddress)
+                                                ? 'Calculating Route…'
+                                                : (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null
+                                                    ? 'Outside 8 km Delivery Zone'
+                                                    : 'Confirm & Submit Order'}
                                     </button>
                                     <button
                                         type="button"

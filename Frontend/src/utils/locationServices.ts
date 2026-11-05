@@ -31,6 +31,51 @@ export async function reverseGeocodeCoordinates({ lat, lng }: Coordinates): Prom
   return data.display_name
 }
 
+export async function forwardGeocodeAddress(
+  addressText: string,
+  signal?: AbortSignal
+): Promise<Coordinates | null> {
+  const cleanAddress = addressText.trim()
+  if (!cleanAddress || cleanAddress.length < 3) return null
+
+  const query = cleanAddress.toLowerCase().includes('philippines')
+    ? cleanAddress
+    : `${cleanAddress}, Philippines`
+
+  const params = new URLSearchParams({
+    format: 'jsonv2',
+    q: query,
+    limit: '1',
+    countrycodes: 'ph',
+    addressdetails: '1',
+  })
+
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Seafudz-ng-Bayan/1.0',
+      },
+      signal,
+    })
+    if (!response.ok) return null
+
+    const data = await response.json()
+    if (!Array.isArray(data) || data.length === 0) {
+      return null
+    }
+
+    const first = data[0]
+    const lat = parseFloat(first.lat)
+    const lng = parseFloat(first.lon)
+    if (isNaN(lat) || isNaN(lng)) return null
+
+    return { lat, lng }
+  } catch {
+    return null
+  }
+}
+
 export async function fetchRoadDistances(
   origin: Coordinates,
   destinations: RoadDestination[],

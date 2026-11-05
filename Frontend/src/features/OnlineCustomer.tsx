@@ -2127,11 +2127,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         }`}
                     />
                     <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5">
-                        {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
-                            <span className="bg-amber-500 text-white text-[10px] sm:text-xs font-black px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full shadow-xs flex items-center gap-1 animate-pulse">
-                                🔥 {servingsLeft} left
-                            </span>
-                        )}
                         <span className="bg-white/95 text-neutral-600 text-[10px] sm:text-xs font-bold px-2.5 py-1 sm:px-3 sm:py-1 rounded-full border border-neutral-200/60 shadow-xs" title={`Quantity standard: ${getProductQuantityStandard(item.id || item.name)}`}>
                             Std: {getProductQuantityStandard(item.id || item.name)}
                         </span>
@@ -2139,6 +2134,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {item.category}
                         </span>
                     </div>
+
+                    {/* Lower-Right Remaining Servings Badge */}
+                    {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
+                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-amber-500 text-white text-xs sm:text-sm font-extrabold uppercase tracking-wider px-2.5 py-1 sm:px-3 sm:py-1 rounded-lg shadow-md flex items-center gap-1.5 animate-pulse">
+                            🔥 {servingsLeft} left
+                        </span>
+                    )}
 
                     {!available && (
                         <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">

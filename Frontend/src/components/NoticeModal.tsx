@@ -72,3 +72,4 @@ export const NoticeModal: React.FC<NoticeModalProps> = ({
 }
 
 export default NoticeModal
+

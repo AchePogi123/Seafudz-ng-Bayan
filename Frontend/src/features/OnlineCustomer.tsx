@@ -2168,7 +2168,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                     {/* Lower-Right Remaining Servings Badge */}
                     {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
-                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-amber-500 text-white text-sm sm:text-base font-extrabold uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-md flex items-center justify-center animate-pulse">
+                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-neutral-900 text-white text-sm sm:text-base font-extrabold uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-md flex items-center justify-center animate-pulse">
                             {servingsLeft} left
                         </span>
                     )}

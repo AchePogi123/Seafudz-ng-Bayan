@@ -11,6 +11,7 @@
     "start:frontend": "cd Frontend && npm run dev",
     "start": "concurrently -n \"BACKEND,FRONTEND\" -c \"cyan,magenta\" \"npm run start:backend\" \"npm run start:frontend\"",
     "migrate": "cd Backend && npm run migrate",
+    "reset:transactions": "cd Backend && npm run reset:transactions",
     "clean-data": "python3 scripts/clear_generated_data.py"
   },
   "devDependencies": {

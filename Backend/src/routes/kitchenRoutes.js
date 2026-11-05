@@ -16,6 +16,8 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
              COALESCE(ko.status, o.status) AS status,
              o.notes, o.created_at, o.updated_at,
              t.name AS table_name,
+             COALESCE(NULLIF(c.fullname, ''), 'Customer') AS customer_name,
+             c.phone AS customer_phone,
              COALESCE(
                json_agg(
                  json_build_object(
@@ -34,6 +36,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
       FROM orders o
       LEFT JOIN kitchen_orders ko ON o.id = ko.order_id
       LEFT JOIN tables t ON o.table_id = t.id
+      LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
       WHERE (
@@ -51,7 +54,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
       AND UPPER(COALESCE(ko.status, o.status)) NOT IN ('AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED', 'APPROVED_BY_KITCHEN')
       AND UPPER(o.status) NOT IN ('AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED', 'APPROVED_BY_KITCHEN')
       AND COALESCE(o.kitchen_approval_status, 'APPROVED') != 'PENDING'
-      GROUP BY o.id, ko.status, t.name
+      GROUP BY o.id, ko.status, t.name, c.fullname, c.phone
       ORDER BY o.created_at ASC
     `;
     let dbOrders = [];
@@ -96,6 +99,9 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
           status: normStatus,
           order_status: normStatus,
           notes: order.notes || existing.notes || '',
+          customer_name: order.customer_name || order.customer || order.customerName || existing.customer_name || 'Customer',
+          customer_phone: order.customer_phone || order.phone || existing.customer_phone || '',
+          customer: order.customer || order.customer_name || order.customerName || existing.customer_name || 'Customer',
           created_at: order.created_at || existing.created_at || new Date().toISOString(),
           updated_at: order.updated_at || existing.updated_at || new Date().toISOString(),
           table_name: existing.table_name || null,
@@ -104,7 +110,11 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
       }
     });
 
-    const finalOrders = Array.from(mergedMap.values());
+    const finalOrders = Array.from(mergedMap.values()).map((ord) => ({
+      ...ord,
+      customer: ord.customer_name || ord.customer || 'Customer',
+      customer_name: ord.customer_name || ord.customer || 'Customer',
+    }));
 
     return res.status(200).json({
       success: true,

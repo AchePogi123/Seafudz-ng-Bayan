@@ -135,13 +135,15 @@ export const KitchenMode: React.FC = () => {
           else if (['CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN'].includes(rawStatus)) mappedStatus = 'Confirmed'
           else mappedStatus = rawStatus
 
+          const rawType = (o.type || o.order_type || 'Take Out').trim()
+          const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
           const customerName = typeof o.customer === 'string' && o.customer.trim()
             ? o.customer.trim()
             : typeof o.customerName === 'string' && o.customerName.trim()
             ? o.customerName.trim()
-            : undefined
-
-          const rawType = (o.type || o.order_type || 'Take Out').trim()
+            : typeof o.customer_name === 'string' && o.customer_name.trim()
+            ? o.customer_name.trim()
+            : (isDeliveryOrder ? 'Online Customer' : 'Walk-In Customer')
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
           const calcTotal = parseFloat(o.total || 0)
@@ -282,15 +284,15 @@ export const KitchenMode: React.FC = () => {
                 else if (['CONFIRMED', 'PENDING_PREPARATION', 'IN_KITCHEN'].includes(raw)) norm = 'Confirmed'
                 else norm = raw
 
+                const rawType = (o.order_type || o.type || 'Take Out').trim()
+                const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
                 const customerName = typeof o.customer === 'string' && o.customer.trim()
                   ? o.customer.trim()
                   : typeof o.customerName === 'string' && o.customerName.trim()
                   ? o.customerName.trim()
                   : typeof o.customer_name === 'string' && o.customer_name.trim()
                   ? o.customer_name.trim()
-                  : undefined
-
-                const rawType = (o.order_type || o.type || 'Take Out').trim()
+                  : (isDeliveryOrder ? 'Online Customer' : 'Walk-In Customer')
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
                 const calcTotal = parseFloat(o.total || 0)
@@ -355,6 +357,9 @@ export const KitchenMode: React.FC = () => {
           }
           if (localItem.category && !existingApi.category) {
             existingApi.category = localItem.category
+          }
+          if (localItem.customer && !existingApi.customer) {
+            existingApi.customer = localItem.customer
           }
         }
       })
@@ -838,25 +843,7 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  const deleteOrder = async (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation()
-    setOrders((prev) => prev.filter((o) => o.id !== id))
-    if (selectedOrderId === id) setSelectedOrderId(null)
 
-    try {
-      const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updated = existing.filter((o: any) => o.id !== id && o.ref !== id)
-      localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-    } catch {
-      /* ignore */
-    }
-
-    try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${id}`, { method: 'DELETE' })
-    } catch {
-      /* fallback silent */
-    }
-  }
 
   const handleStatusFromModal = (newStatus: string) => {
     if (selectedOrderId) {
@@ -1221,18 +1208,11 @@ export const KitchenMode: React.FC = () => {
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
                           </div>
-                          {order.customer && (
-                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
-                          )}
+                          <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
+                            {order.customer || 'Customer'}
+                          </div>
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => deleteOrder(order.id, e)}
-                          className="text-neutral-400 hover:text-red-600 p-1 rounded-md"
-                        >
-                          ✕
-                        </button>
                       </div>
 
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
@@ -1307,18 +1287,11 @@ export const KitchenMode: React.FC = () => {
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
                           </div>
-                          {order.customer && (
-                            <div className="text-xs font-bold text-neutral-800 mt-0.5">{order.customer}</div>
-                          )}
+                          <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
+                            {order.customer || 'Customer'}
+                          </div>
                           <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => deleteOrder(order.id, e)}
-                          className="text-neutral-400 hover:text-red-600 p-1 rounded-md"
-                        >
-                          ✕
-                        </button>
                       </div>
 
                       <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">

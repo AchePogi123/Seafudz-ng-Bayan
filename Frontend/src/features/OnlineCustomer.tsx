@@ -9,7 +9,7 @@ import { ProductImage } from '../components/ProductImage'
 import { API_BASE_URL } from '../utils/api'
 import { useMenuAvailability } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
-import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
+import { getActiveUser, saveActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import { reverseGeocodeCoordinates, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
@@ -432,6 +432,26 @@ export const OnlineCustomer: React.FC = () => {
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
     const currentUser = getActiveUser()
     const userProfileName = currentUser?.fullname || currentUser?.username || 'Guest'
+
+    // Restrict employee accounts from customer online ordering
+    useEffect(() => {
+        if (currentUser && isEmployeeRole(currentUser.role)) {
+            const work = getEmployeeWorkModule(currentUser.role);
+            const target = work?.route || '/pos';
+            navigate(target, { replace: true });
+        }
+    }, [currentUser, navigate]);
+
+    if (currentUser && isEmployeeRole(currentUser.role)) {
+        const work = getEmployeeWorkModule(currentUser.role);
+        return (
+            <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center p-6 text-center">
+                <div className="w-10 h-10 border-3 border-orange-500 border-t-transparent rounded-full animate-spin mb-4" />
+                <h2 className="text-base font-bold text-neutral-800">Redirecting to {work?.label || 'Staff Workspace'}…</h2>
+                <p className="text-xs text-neutral-500 mt-1">Staff accounts cannot place customer online orders.</p>
+            </div>
+        );
+    }
 
     // Availability & Price sync
     const { isAvailable, getRemainingServings } = useMenuAvailability()

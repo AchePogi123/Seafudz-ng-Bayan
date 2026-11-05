@@ -59,7 +59,7 @@ export function validatePhilippinePhone(input: string): PhoneValidationResult {
   if (subscriberDigits.length < 9) {
     return {
       isValid: false,
-      message: `Phone number is too short. It must have exactly 9 digits (excluding 09). You entered ${subscriberDigits.length} digit${subscriberDigits.length === 1 ? '' : 's'}.`,
+      message: 'Phone number is too short.',
       subscriberDigits,
     };
   }
@@ -67,7 +67,7 @@ export function validatePhilippinePhone(input: string): PhoneValidationResult {
   if (subscriberDigits.length > 9) {
     return {
       isValid: false,
-      message: `Phone number is too long. It must have exactly 9 digits (excluding 09). You entered ${subscriberDigits.length} digits.`,
+      message: 'Phone number is too long.',
       subscriberDigits,
     };
   }
@@ -79,3 +79,4 @@ export function validatePhilippinePhone(input: string): PhoneValidationResult {
     subscriberDigits,
   };
 }
+

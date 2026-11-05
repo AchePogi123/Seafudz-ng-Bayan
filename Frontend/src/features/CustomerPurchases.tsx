@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { API_BASE_URL } from '../utils/api'
-import { getActiveUser, isUuidString } from '../cryptography/cryptoSession'
+import { getActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { normalizeStatus } from './OnlineCustomer'
 import { subscribeOrderSync } from '../utils/orderSync'
 
@@ -65,6 +65,25 @@ interface CustomerOrder {
 export const CustomerPurchases: React.FC = () => {
   const navigate = useNavigate()
   const currentUser = getActiveUser()
+
+  useEffect(() => {
+    if (currentUser && isEmployeeRole(currentUser.role)) {
+      const work = getEmployeeWorkModule(currentUser.role);
+      navigate(work?.route || '/pos', { replace: true });
+    }
+  }, [currentUser, navigate]);
+
+  if (currentUser && isEmployeeRole(currentUser.role)) {
+    const work = getEmployeeWorkModule(currentUser.role);
+    return (
+      <div className="min-h-screen bg-neutral-50 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-9 h-9 border-3 border-orange-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <h2 className="text-base font-bold text-neutral-800">Redirecting to {work?.label || 'Staff Workspace'}…</h2>
+        <p className="text-xs text-neutral-500 mt-1">Staff accounts cannot view customer purchases.</p>
+      </div>
+    );
+  }
+
   const [orders, setOrders] = useState<CustomerOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')

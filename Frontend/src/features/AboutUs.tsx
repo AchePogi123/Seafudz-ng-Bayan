@@ -1,5 +1,6 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
+import { getActiveUser, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 
 // Import assets
 import seafoodBilaoImg from '../assets/seafood_bilao.png'
@@ -10,16 +11,25 @@ import garlicButterShrimpImg from '../assets/garlic_butter_shrimp.png'
 import freshJuiceImg from '../assets/fresh_juice.png'
 
 const AboutUs: React.FC = () => {
+  const activeUser = getActiveUser()
+  const employeeModule = activeUser ? getEmployeeWorkModule(activeUser.role) : null
+  const isEmployee = Boolean(employeeModule)
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-800">
       <nav className="bg-white py-[15px] px-[24px] shadow-[0_2px_8px_rgba(0,0,0,0.1)] flex justify-between items-center">
         <div className="text-[22px] font-bold text-[#ff7b00]">Seafood ng Bayan</div>
         <div className="flex gap-[25px]">
-          <Link to="/pos" className="no-underline text-[#333] font-semibold hover:text-[#ff7b00]">POS</Link>
-          <Link to="/customer" className="no-underline text-[#333] font-semibold hover:text-[#ff7b00]">Order Online</Link>
+          {isEmployee && employeeModule ? (
+            <Link to={employeeModule.route} className="no-underline text-[#333] font-semibold hover:text-[#ff7b00]">{employeeModule.shortLabel}</Link>
+          ) : (
+            <Link to="/customer" className="no-underline text-[#333] font-semibold hover:text-[#ff7b00]">Order Online</Link>
+          )}
           <Link to="/about" className="no-underline font-semibold text-[#ff7b00]">About Us</Link>
         </div>
-        <Link to="/customer" className="bg-[#ff7b00] text-white py-[8px] px-[20px] rounded-[30px] no-underline font-bold transition-all hover:bg-[#e06c00]">Order Now</Link>
+        <Link to={isEmployee && employeeModule ? employeeModule.route : "/customer"} className="bg-[#ff7b00] text-white py-[8px] px-[20px] rounded-[30px] no-underline font-bold transition-all hover:bg-[#e06c00] uppercase tracking-wider">
+          {isEmployee && employeeModule ? employeeModule.shortLabel : "Order Now"}
+        </Link>
       </nav>
 
       <div className="py-[40px] px-[24px] max-w-[1200px] mx-auto">

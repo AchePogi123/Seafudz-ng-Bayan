@@ -1152,12 +1152,9 @@ return () => {
 
                 {/* Phone */}
                 <div className="mb-2.5">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label htmlFor="register-phone" className="block text-xs font-semibold text-neutral-700">
-                      Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
-                    <span className="text-[11px] text-neutral-400">9 digits after 09</span>
-                  </div>
+                  <label htmlFor="register-phone" className="block mb-1.5 text-xs font-semibold text-neutral-700">
+                    Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  </label>
                   <input
                     id="register-phone"
                     type="tel"

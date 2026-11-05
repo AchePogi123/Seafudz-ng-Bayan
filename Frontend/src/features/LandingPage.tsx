@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import Footer from '../components/Footer';
 import Platter3DCard from '../components/Platter3DCard';
 import BrandLogo from '../components/BrandLogo';
-import { getActiveUser } from '../cryptography/cryptoSession';
+import { getActiveUser, getEmployeeWorkModule } from '../cryptography/cryptoSession';
 
 // Assets
 import seafoodBilaoImg from '../assets/seafood_bilao.png';
@@ -90,6 +90,9 @@ export const LandingPage: React.FC = () => {
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
   const [activeUser, setActiveUser] = useState<ReturnType<typeof getActiveUser>>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+
+  const employeeModule = activeUser ? getEmployeeWorkModule(activeUser.role) : null;
+  const isEmployee = Boolean(employeeModule);
 
   // Typewriter and bottom highlight line animation for "Bayan."
   const [typedWord, setTypedWord] = useState('');
@@ -195,6 +198,10 @@ export const LandingPage: React.FC = () => {
 
   const handleOrderOnline = (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
+    if (isEmployee && employeeModule) {
+      navigate(employeeModule.route);
+      return;
+    }
     navigate('/customer');
   };
 
@@ -248,15 +255,14 @@ export const LandingPage: React.FC = () => {
             {activeUser ? (
               <Link
                 to={
-                  activeUser.role === 'admin'
-                    ? '/admin-dashboard'
-                    : activeUser.role === 'cashier'
-                      ? '/pos'
-                      : '/account'
+                  employeeModule
+                    ? employeeModule.route
+                    : '/account'
                 }
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-colors truncate max-w-[140px]"
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3.5 py-2.5 rounded-xl transition-colors truncate max-w-[160px]"
+                title={employeeModule ? `Go to ${employeeModule.label}` : 'Account'}
               >
-                {activeUser.fullname || 'Account'}
+                {activeUser.fullname || (employeeModule ? employeeModule.shortLabel : 'Account')}
               </Link>
             ) : (
               <Link
@@ -303,9 +309,9 @@ export const LandingPage: React.FC = () => {
                   setIsMobileMenuOpen(false);
                   handleOrderOnline(e);
                 }}
-                className="block w-full text-center bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-xl text-sm cursor-pointer"
+                className="block w-full text-center bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-xl text-sm cursor-pointer uppercase tracking-wider"
               >
-                Order Now
+                {isEmployee && employeeModule ? employeeModule.shortLabel : 'Order Now'}
               </button>
               {!activeUser && (
                 <Link
@@ -383,25 +389,23 @@ export const LandingPage: React.FC = () => {
               <div className="flex flex-wrap items-center gap-3.5 pt-1">
                 <button
                   onClick={handleOrderOnline}
-                  className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer"
+                  className="bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl shadow-sm hover:shadow-md transition-all active:scale-95 cursor-pointer uppercase tracking-wider"
                 >
-                  Order Now
+                  {isEmployee && employeeModule ? employeeModule.shortLabel : 'Order Now'}
                 </button>
 
                 {/* Mobile View: Login Button */}
                 <Link
                   to={
                     activeUser
-                      ? activeUser.role === 'admin'
-                        ? '/admin-dashboard'
-                        : activeUser.role === 'cashier'
-                          ? '/pos'
-                          : '/account'
+                      ? employeeModule
+                        ? employeeModule.route
+                        : '/account'
                       : '/login'
                   }
                   className="lg:hidden bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer inline-flex items-center justify-center shadow-xs"
                 >
-                  {activeUser ? (activeUser.role === 'customer' ? 'My Account' : 'Dashboard') : 'Login'}
+                  {activeUser ? (activeUser.role === 'customer' ? 'My Account' : (employeeModule?.shortLabel || 'Dashboard')) : 'Login'}
                 </Link>
 
                 {/* Windows / Desktop View: View Specialties (Unchanged) */}
@@ -877,9 +881,9 @@ export const LandingPage: React.FC = () => {
               <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
                 <button
                   onClick={handleOrderOnline}
-                  className="bg-white hover:bg-orange-50 text-orange-600 font-bold text-sm sm:text-base px-8 py-4 rounded-xl shadow-xs transition-colors cursor-pointer"
+                  className="bg-white hover:bg-orange-50 text-orange-600 font-bold text-sm sm:text-base px-8 py-4 rounded-xl shadow-xs transition-colors cursor-pointer uppercase tracking-wider"
                 >
-                  Order Now
+                  {isEmployee && employeeModule ? `Go to ${employeeModule.shortLabel}` : 'Order Now'}
                 </button>
                 <a
                   href="tel:0288887323"

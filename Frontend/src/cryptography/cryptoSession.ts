@@ -35,14 +35,10 @@ export const ROLE_ROUTE_PERMISSIONS: Record<string, string[]> = {
     '/kitchen',
     '/assistant',
     '/rider',
-    '/customer',
-    '/customer-dashboard',
-    '/customer/purchases',
-    '/purchases',
     '/account',
     '/about',
   ],
-  cashier: ['/pos', '/sales-report', '/customer', '/customer-dashboard', '/customer/purchases', '/purchases', '/account', '/about'],
+  cashier: ['/pos', '/sales-report', '/account', '/about'],
   kitchen: ['/kitchen', '/account', '/about'],
   rider: ['/rider', '/account', '/about'],
   assistant: ['/assistant', '/account', '/about'],
@@ -60,6 +56,46 @@ export const ROLE_DEFAULT_ROUTES: Record<string, string> = {
   assistant: '/assistant',
   customer: '/customer',
 };
+
+/**
+ * Checks if a given role string is an employee / staff role
+ */
+export function isEmployeeRole(role?: string): boolean {
+  if (!role) return false;
+  const norm = role.toLowerCase().trim();
+  return ['admin', 'cashier', 'kitchen', 'rider', 'assistant'].includes(norm);
+}
+
+export interface EmployeeWorkModule {
+  route: string;
+  label: string;
+  shortLabel: string;
+}
+
+/**
+ * Returns the primary workspace route and button labels for an employee role
+ */
+export function getEmployeeWorkModule(role?: string): EmployeeWorkModule | null {
+  if (!role) return null;
+  const norm = role.toLowerCase().trim();
+  switch (norm) {
+    case 'cashier':
+      return { route: '/pos', label: 'POS Terminal', shortLabel: 'POS' };
+    case 'kitchen':
+      return { route: '/kitchen', label: 'Kitchen KDS', shortLabel: 'Kitchen' };
+    case 'rider':
+      return { route: '/rider', label: 'Rider Portal', shortLabel: 'Rider' };
+    case 'assistant':
+      return { route: '/assistant', label: 'Assistant Portal', shortLabel: 'Assistant' };
+    case 'admin':
+      return { route: '/admin-dashboard', label: 'Admin Dashboard', shortLabel: 'Admin Dashboard' };
+    default:
+      if (isEmployeeRole(norm)) {
+        return { route: ROLE_DEFAULT_ROUTES[norm] || '/dashboard', label: 'Staff Portal', shortLabel: 'Staff' };
+      }
+      return null;
+  }
+}
 
 /**
  * Extracts session_token or token query parameter from current URL window location

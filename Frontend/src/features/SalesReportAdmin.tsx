@@ -294,9 +294,11 @@ const SalesReportAdmin: React.FC = () => {
             created_at: dbO.created_at,
             items: itemsSummary,
             itemsList,
-            customer:
-                dbO.customer_name ||
-                (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In Customer'),
+            customer: (() => {
+                const c = String(dbO.customer_name || '').trim();
+                if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
+                return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+            })(),
             customerPhone: dbO.customer_phone || dbO.phone || undefined,
             customerAddress: dbO.delivery_address || dbO.address || undefined,
             total: Number(dbO.total || 0),
@@ -557,7 +559,11 @@ const SalesReportAdmin: React.FC = () => {
                                     dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
                                     type: o.type || 'POS Order',
                                     status: o.status || 'Completed',
-                                    customer: o.customerName || o.customer || 'Walk-In',
+                                    customer: (() => {
+                                        const c = String(o.customerName || o.customer || o.customer_name || '').trim();
+                                        if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
+                                        return '';
+                                    })(),
                                     customerPhone: o.phone || o.customerPhone || undefined,
                                     customerAddress: o.deliveryAddress || o.address || o.customerAddress || undefined,
                                     items: itemsStr,
@@ -1075,7 +1081,7 @@ const SalesReportAdmin: React.FC = () => {
                                                     {tx.ref || tx.id}
                                                 </td>
                                                 <td className="py-3 px-4">
-                                                    <div className="font-semibold text-slate-800">{tx.customer || 'Walk-In'}</div>
+                                                    <div className="font-semibold text-slate-800">{tx.customer || '—'}</div>
                                                     <div className="text-[11px] text-slate-400">{tx.type}</div>
                                                 </td>
                                                 <td className="py-3 px-4 max-w-sm">
@@ -1326,7 +1332,7 @@ const SalesReportAdmin: React.FC = () => {
                                     <div>
                                         <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Customer Name</span>
                                         <span className="font-bold text-slate-900 mt-0.5 block text-sm">
-                                            {selectedTransaction.customer || 'Walk-In Customer'}
+                                            {selectedTransaction.customer || 'None recorded'}
                                         </span>
                                     </div>
 

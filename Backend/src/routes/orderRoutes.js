@@ -75,7 +75,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
              o.order_type AS type, o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
-             COALESCE(c.fullname, 'Walk-In Customer') AS customer_name,
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer_name,
              c.phone AS customer_phone,
              COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
              d.status AS delivery_status,
@@ -166,7 +166,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
     }
 
     if (search && search.trim()) {
-      sql += ` AND (LOWER(o.id) LIKE LOWER($${paramIndex}) OR LOWER(COALESCE(c.fullname, '')) LIKE LOWER($${paramIndex}))`;
+      sql += ` AND (LOWER(o.id) LIKE LOWER($${paramIndex}) OR LOWER(COALESCE(o.customer_name, c.fullname, '')) LIKE LOWER($${paramIndex}))`;
       params.push(`%${search.trim()}%`);
       paramIndex++;
     }
@@ -180,7 +180,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       }
     }
 
-    sql += ` GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
+    sql += ` GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
 
     const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;
@@ -344,7 +344,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         console.warn('Customer provision error in POST /orders:', custErr);
       }
     }
-    const finalCustomerName = candidateCustomer || (validCustomerId ? 'Customer' : 'Walk-In');
+    const finalCustomerName = candidateCustomer || (validCustomerId ? 'Customer' : null);
 
     const availableProducts = await assertItemsAvailable(client, cartItems);
 
@@ -395,9 +395,11 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       INSERT INTO orders (
         id, customer_id, cashier_id, assistant_id, table_id,
         order_type, status, subtotal, tax, delivery_fee, total, notes,
-        payment_reference, payment_method, requires_kitchen_approval, kitchen_approval_status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        payment_reference, payment_method, requires_kitchen_approval, kitchen_approval_status,
+        customer_name
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       ON CONFLICT (id) DO UPDATE SET
+        customer_name = COALESCE(EXCLUDED.customer_name, orders.customer_name),
         payment_reference = COALESCE(EXCLUDED.payment_reference, orders.payment_reference),
         payment_method = COALESCE(EXCLUDED.payment_method, orders.payment_method),
         status = EXCLUDED.status,
@@ -424,6 +426,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       paymentMethod || 'CASH',
       requiresKitchenApproval,
       kitchenApprovalStatus,
+      finalCustomerName || null,
     ]);
 
     const createdOrder = orderRes.rows[0];
@@ -494,9 +497,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     const inMemPayload = {
       id: createdOrder.id,
       ref: createdOrder.id,
-      customerName: finalCustomerName,
-      customer: finalCustomerName,
-      customer_name: finalCustomerName,
+      customerName: finalCustomerName || '',
+      customer: finalCustomerName || '',
+      customer_name: finalCustomerName || '',
       type: createdOrder.order_type === 'ONLINE' ? 'Delivery' : 'POS Order',
       orderType: createdOrder.order_type,
       status: createdOrder.status || posStatus,
@@ -726,10 +729,12 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       const reqKitchenApproval = req.body.requiresKitchenApproval ?? req.body.requires_kitchen_approval;
       const reqKitchenApprovalStatus = req.body.kitchenApprovalStatus || req.body.kitchen_approval_status;
 
+      const cleanCustName = customerName !== undefined ? (customerName.trim() === 'Walk-In' || customerName.trim() === 'Walk-In Customer' ? null : customerName.trim() || null) : undefined;
+
       if (checkExists.rows.length === 0) {
         await client.query(
-          `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, payment_reference, payment_method, payment_receipt, requires_kitchen_approval, kitchen_approval_status, updated_at)
-           VALUES ($1, COALESCE($2, 'ON_SITE'), COALESCE($3, 'CONFIRMED'), $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, FALSE), COALESCE($13, 'NONE'), NOW())`,
+          `INSERT INTO orders (id, order_type, status, subtotal, tax, delivery_fee, total, notes, payment_reference, payment_method, payment_receipt, requires_kitchen_approval, kitchen_approval_status, customer_name, updated_at)
+           VALUES ($1, COALESCE($2, 'ON_SITE'), COALESCE($3, 'CONFIRMED'), $4, $5, $6, $7, $8, $9, $10, $11, COALESCE($12, FALSE), COALESCE($13, 'NONE'), $14, NOW())`,
           [
             id,
             normalizedOrderType || 'ON_SITE',
@@ -744,6 +749,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
             finalReceipt || null,
             reqKitchenApproval !== undefined ? Boolean(reqKitchenApproval) : null,
             reqKitchenApprovalStatus || null,
+            cleanCustName !== undefined ? cleanCustName : null,
           ]
         );
         await client.query(
@@ -767,6 +773,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
                payment_receipt = COALESCE($11, payment_receipt),
                requires_kitchen_approval = COALESCE($12, requires_kitchen_approval),
                kitchen_approval_status = COALESCE($13, kitchen_approval_status),
+               customer_name = COALESCE($14, customer_name),
                updated_at = NOW()
            WHERE id = $8`,
           [
@@ -783,8 +790,21 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
             finalReceipt || null,
             reqKitchenApproval !== undefined ? Boolean(reqKitchenApproval) : null,
             reqKitchenApprovalStatus || null,
+            cleanCustName !== undefined ? cleanCustName : null,
           ]
         );
+      }
+
+      if (cleanCustName) {
+        try {
+          const checkCust = await client.query('SELECT customer_id FROM orders WHERE id = $1', [id]);
+          const existingCustId = checkCust.rows[0]?.customer_id;
+          if (existingCustId) {
+            await client.query('UPDATE customers SET fullname = $1, updated_at = NOW() WHERE id = $2', [cleanCustName, existingCustId]);
+          }
+        } catch (cErr) {
+          console.warn('Customer update note in PUT /orders/:id:', cErr.message);
+        }
       }
 
       // If items provided, recreate order_items in DB
@@ -1394,7 +1414,7 @@ export async function handleGetCustomerFlowOrder(req, res) {
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
                o.receipt_status, o.is_receipt_printed, o.receipt_printed_at,
                o.created_at, o.updated_at,
-               c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,
+               COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer_name, c.phone AS customer_phone, c.delivery_address,
                COALESCE(r_emp.fullname, NULL) AS rider_name,
                COALESCE(r_emp.phone, NULL) AS rider_phone,
                COALESCE(
@@ -1426,7 +1446,7 @@ export async function handleGetCustomerFlowOrder(req, res) {
         ) d ON o.id = d.order_id
         LEFT JOIN employees r_emp ON d.rider_id = r_emp.id
         WHERE o.id = $1
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, r_emp.fullname, r_emp.phone
+        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, r_emp.fullname, r_emp.phone
       `, [id]);
 
       if (rows.length > 0) {
@@ -1488,7 +1508,7 @@ router.get('/cashier/online-receipts', async (req, res) => {
                COALESCE(o.is_receipt_printed, FALSE) AS is_receipt_printed,
                o.receipt_printed_at,
                o.created_at, o.updated_at,
-               COALESCE(c.fullname, 'Online Customer') AS customer_name,
+               COALESCE(NULLIF(o.customer_name, ''), c.fullname, 'Online Customer') AS customer_name,
                c.phone AS customer_phone,
                COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
                COALESCE(o.payment_method, p_pay.payment_method, 'ONLINE') AS payment_method,
@@ -1520,7 +1540,7 @@ router.get('/cashier/online-receipts', async (req, res) => {
         ) p_pay ON o.id = p_pay.order_id
         WHERE UPPER(COALESCE(o.order_type, '')) = 'ONLINE'
           AND o.id NOT LIKE 'POS-%'
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, p_pay.payment_method, p_pay.reference_number
+        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, p_pay.payment_method, p_pay.reference_number
         ORDER BY o.created_at ASC
       `);
       dbOrders = rows;

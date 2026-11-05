@@ -52,7 +52,8 @@ export const AdminEditTransactionModal: React.FC<AdminEditTransactionModalProps>
 
   useEffect(() => {
     if (transaction) {
-      setCustomerName(transaction.customer || transaction.customerName || 'Walk-In Customer')
+      const c = transaction.customer || transaction.customerName || ''
+      setCustomerName(c === 'Walk-In' || c === 'Walk-In Customer' ? '' : c)
       setPhone(transaction.phone || '')
       setAddress(transaction.address || '')
       setStatus((transaction.status || 'PENDING').toUpperCase())

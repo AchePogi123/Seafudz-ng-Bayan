@@ -278,8 +278,11 @@ const SalesReportCashier: React.FC = () => {
       dateTime: createdAt ? new Date(String(createdAt)).toLocaleString() : new Date().toLocaleString(),
       items: summarizeItems(dbO.items, 'Seafood Dish'),
       itemsList,
-      customer: readString(dbO.customer_name) ||
-        (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In Customer'),
+      customer: (() => {
+        const c = readString(dbO.customer_name);
+        if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
+        return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+      })(),
       customerPhone: readString(dbO.customer_phone, dbO.phone) || undefined,
       customerAddress: readString(dbO.delivery_address, dbO.address) || undefined,
       type: normalizedType,
@@ -493,7 +496,11 @@ const SalesReportCashier: React.FC = () => {
               dateTime: readString(order.dateTime, order.createdAt) || new Date().toLocaleString(),
               type: readString(order.type, order.order_type) || 'POS Order',
               status: readString(order.status) || 'Completed',
-              customer: readString(order.customerName, order.customer, order.customer_name) || 'Walk-In',
+              customer: (() => {
+                const c = readString(order.customerName, order.customer, order.customer_name);
+                if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
+                return '';
+              })(),
               customerPhone: readString(order.phone, order.customerPhone) || undefined,
               customerAddress: readString(order.deliveryAddress, order.address, order.customerAddress) || undefined,
               items: summarizeItems(order.items, 'Seafood Dish'),
@@ -985,7 +992,7 @@ const SalesReportCashier: React.FC = () => {
                           {tx.ref || tx.id}
                         </td>
                         <td className="py-3 px-4">
-                          <div className="font-semibold text-slate-800">{tx.customer || 'Walk-In'}</div>
+                          <div className="font-semibold text-slate-800">{tx.customer || '—'}</div>
                           <div className="text-[11px] text-slate-400">{tx.type}</div>
                         </td>
                         <td className="py-3 px-4 max-w-sm">
@@ -1230,7 +1237,7 @@ const SalesReportCashier: React.FC = () => {
                   <div>
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Customer Name</span>
                     <span className="font-bold text-slate-900 mt-0.5 block text-sm">
-                      {selectedTransaction.customer || 'Walk-In Customer'}
+                      {selectedTransaction.customer || 'None recorded'}
                     </span>
                   </div>
 

@@ -55,7 +55,8 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
     address,
   } = orderDetails
 
-  const customerName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
+  const extractedName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
+  const customerName = (extractedName === 'Walk-In' || extractedName === 'Walk-In Customer') ? '' : extractedName
 
   const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 
@@ -285,7 +286,8 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
     address,
   } = orderDetails
 
-  const customerName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
+  const extractedName = rawCustomerName || (orderDetails as any).customer || (orderDetails as any).customer_name || (orderDetails as any).name || ''
+  const customerName = (extractedName === 'Walk-In' || extractedName === 'Walk-In Customer') ? '' : extractedName
 
   const paymentReference = rawPaymentRef || (orderDetails as any).payment_reference || (orderDetails as any).referenceNumber || (orderDetails as any).reference_number || ''
 

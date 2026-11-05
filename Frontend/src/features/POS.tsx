@@ -1007,7 +1007,7 @@ export const POS: React.FC = () => {
     setLastOrderDetails({
       table: 'N/A',
       type: orderType,
-      customerName: customerName.trim() || 'Walk-In',
+      customerName: customerName.trim(),
       subtotal: rawSubtotal,
       vat,
       total: totalWithVat,
@@ -1042,15 +1042,15 @@ export const POS: React.FC = () => {
     const vat = rawSubtotal * 0.12
     const total = Math.round(rawSubtotal + vat)
     const orderId = `POS-${Date.now().toString().slice(-4)}`
-    const finalCustomerName = customerName.trim() || 'Walk-In'
+    const finalCustomerName = customerName.trim()
 
     const posOrderPayload = {
       id: orderId,
       ref: orderId,
-      customerName: finalCustomerName,
-      customer_name: finalCustomerName,
-      customer: finalCustomerName,
-      name: finalCustomerName,
+      customerName: finalCustomerName || undefined,
+      customer_name: finalCustomerName || undefined,
+      customer: finalCustomerName || '',
+      name: finalCustomerName || '',
       isPosOrder: true,
       status: 'AWAITING_KITCHEN_APPROVAL',
       orderType: orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
@@ -1144,13 +1144,14 @@ export const POS: React.FC = () => {
     const rawSubtotal = ord.subtotal || Math.round((ord.total / 1.12) * 100) / 100
     const vat = ord.vat || Math.round((ord.total - rawSubtotal) * 100) / 100
     const ordCust = ord.customerName || ord.customer_name || ord.customer || ord.name || ''
-    setCustomerName(ordCust !== 'Walk-In' && ordCust !== 'Walk-In Customer' ? ordCust : '')
+    const cleanCust = (ordCust === 'Walk-In' || ordCust === 'Walk-In Customer') ? '' : ordCust
+    setCustomerName(cleanCust)
     setApprovedOrderForPayment(ord)
     setLastOrderDetails({
       orderId: ord.id || ord.ref,
       table: ord.table || 'N/A',
       type: ord.type || ord.orderType || 'Take Out',
-      customerName: ordCust || 'Walk-In',
+      customerName: cleanCust,
       subtotal: rawSubtotal,
       vat,
       total: ord.total,
@@ -1216,7 +1217,8 @@ export const POS: React.FC = () => {
         return
       }
 
-      const finalCustName = customerName.trim() || approvedOrderForPayment.customerName || approvedOrderForPayment.customer_name || approvedOrderForPayment.customer || lastOrderDetails?.customerName || 'Walk-In'
+      const rawName = customerName.trim() || approvedOrderForPayment.customerName || approvedOrderForPayment.customer_name || approvedOrderForPayment.customer || lastOrderDetails?.customerName || ''
+      const finalCustName = (rawName === 'Walk-In' || rawName === 'Walk-In Customer') ? '' : rawName
 
       try {
         const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
@@ -1304,7 +1306,8 @@ export const POS: React.FC = () => {
       return
     }
     const orderId = `POS-${Date.now().toString().slice(-4)}`
-    const finalCustName = customerName.trim() || lastOrderDetails?.customerName || 'Walk-In'
+    const rawName = customerName.trim() || (lastOrderDetails?.customerName !== 'Walk-In' && lastOrderDetails?.customerName !== 'Walk-In Customer' ? lastOrderDetails?.customerName : '') || ''
+    const finalCustName = (rawName === 'Walk-In' || rawName === 'Walk-In Customer') ? '' : rawName
 
     const posOrderPayload = {
       id: orderId,
@@ -1671,8 +1674,18 @@ export const POS: React.FC = () => {
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
                               <span className="font-extrabold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
-                              <span>•</span>
-                              <span className="font-bold text-neutral-700">{String(ord.customerName || ord.customer_name || ord.customer || ord.name || 'Walk-In')}</span>
+                              {(() => {
+                                const cName = String(ord.customerName || ord.customer_name || ord.customer || ord.name || '').trim();
+                                if (cName && cName !== 'Walk-In' && cName !== 'Walk-In Customer') {
+                                  return (
+                                    <>
+                                      <span>•</span>
+                                      <span className="font-bold text-neutral-700">{cName}</span>
+                                    </>
+                                  );
+                                }
+                                return null;
+                              })()}
                               <span>•</span>
                               <span>Placed {String(ord.dateTime || 'Just now')}</span>
                             </div>

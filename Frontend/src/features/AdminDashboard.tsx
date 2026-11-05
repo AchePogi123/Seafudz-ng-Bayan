@@ -384,9 +384,11 @@ const AdminDashboard: React.FC = () => {
                                 type: normalizedType,
                                 status: dbO.status || 'Completed',
                                 paymentStatus: dbO.payment_status || 'Paid',
-                                customer:
-                                    dbO.customer_name ||
-                                    (normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : 'Walk-In'),
+                                customer: (() => {
+                                    const c = String(dbO.customer_name || '').trim();
+                                    if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
+                                    return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+                                })(),
                                 items: Array.isArray(dbO.items)
                                     ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')
                                     : 'Assorted Seafoods',
@@ -1608,8 +1610,8 @@ const AdminDashboard: React.FC = () => {
                                                             </span>
                                                         </td>
                                                         <td className="px-4 py-3.5">
-                                                            <span className="block max-w-[150px] truncate font-bold text-slate-800" title={tx.customer || 'Walk-In Customer'}>
-                                                                {tx.customer || 'Walk-In Customer'}
+                                                            <span className="block max-w-[150px] truncate font-bold text-slate-800" title={tx.customer || '—'}>
+                                                                {tx.customer || '—'}
                                                             </span>
                                                             <span className="mt-1 inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-[9px] font-bold text-orange-700">
                                                                 {tx.type}

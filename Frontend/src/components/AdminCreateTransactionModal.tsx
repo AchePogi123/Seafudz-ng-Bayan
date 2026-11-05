@@ -14,7 +14,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
   onClose,
   onCreated,
 }) => {
-  const [customerName, setCustomerName] = useState('Walk-In Customer')
+  const [customerName, setCustomerName] = useState('')
   const [phone, setPhone] = useState('0917-000-0000')
   const [address, setAddress] = useState('Metro Manila')
   const [orderType, setOrderType] = useState<'Dine In' | 'Take Out' | 'Delivery'>('Take Out')

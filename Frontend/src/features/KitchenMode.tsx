@@ -138,13 +138,14 @@ export const KitchenMode: React.FC = () => {
 
           const rawType = (o.type || o.order_type || 'Take Out').trim()
           const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
-          const customerName = typeof o.customer === 'string' && o.customer.trim()
-            ? o.customer.trim()
-            : typeof o.customerName === 'string' && o.customerName.trim()
+          const rawCust = typeof o.customerName === 'string' && o.customerName.trim()
             ? o.customerName.trim()
             : typeof o.customer_name === 'string' && o.customer_name.trim()
             ? o.customer_name.trim()
-            : (isDeliveryOrder ? 'Online Customer' : 'Walk-In Customer')
+            : typeof o.customer === 'string' && o.customer.trim() && o.customer !== 'Walk-In' && o.customer !== 'Walk-In Customer'
+            ? o.customer.trim()
+            : ''
+          const customerName = rawCust || (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order'))
           const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
           const calcTotal = parseFloat(o.total || 0)
@@ -287,13 +288,14 @@ export const KitchenMode: React.FC = () => {
 
                 const rawType = (o.order_type || o.type || 'Take Out').trim()
                 const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
-                const customerName = typeof o.customer === 'string' && o.customer.trim()
-                  ? o.customer.trim()
-                  : typeof o.customerName === 'string' && o.customerName.trim()
+                const rawCust = typeof o.customerName === 'string' && o.customerName.trim()
                   ? o.customerName.trim()
                   : typeof o.customer_name === 'string' && o.customer_name.trim()
                   ? o.customer_name.trim()
-                  : (isDeliveryOrder ? 'Online Customer' : 'Walk-In Customer')
+                  : typeof o.customer === 'string' && o.customer.trim() && o.customer !== 'Walk-In' && o.customer !== 'Walk-In Customer'
+                  ? o.customer.trim()
+                  : ''
+                const customerName = rawCust || (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order'))
                 const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
 
                 const calcTotal = parseFloat(o.total || 0)

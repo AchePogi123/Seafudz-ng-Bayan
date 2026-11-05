@@ -375,7 +375,7 @@ export async function generateTransactionsExcel({
     const destination = ord.table_id ? `Table ${ord.table_id}` : ord.delivery_address || (channelLabel === 'Online Delivery' ? 'Online Customer' : 'Dine-In / Takeout');
 
     // Customer name protection
-    const customer = ord.customer_name || (channelLabel === 'Online Delivery' ? 'Online Customer' : 'Walk-In Customer');
+    const customer = ord.customer_name || (channelLabel === 'Online Delivery' ? 'Online Customer' : '—');
 
     // Staff
     const staff = ord.cashier_name || (channelLabel === 'Online Delivery' ? 'Online Direct' : 'Cashier');
@@ -845,7 +845,7 @@ export async function generateTransactionsPDF({
 
     const destination = ord.table_id
       ? `Table ${ord.table_id}`
-      : ord.delivery_address || ord.customer_name || (isOnline ? 'Online Delivery' : 'Counter Walk-In');
+      : ord.delivery_address || ord.customer_name || (isOnline ? 'Online Delivery' : 'In-Store');
 
     const isEven = idx % 2 === 0;
     if (isEven) {

@@ -132,6 +132,9 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
     }
   }
 
+  const effectiveName = (customerName || orderDetails?.customerName || '').trim()
+  const displayCustomerName = (effectiveName === 'Walk-In' || effectiveName === 'Walk-In Customer') ? '' : effectiveName
+
   return (
     <div
       onClick={onClose}
@@ -213,7 +216,7 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             <h2 className="text-2xl font-black text-neutral-900 text-center tracking-tight">Order Confirmed!</h2>
             <p className="text-xs text-neutral-400 font-semibold mt-1 text-center">
               Order #A123 • {orderDetails.type}
-              {(customerName || orderDetails.customerName) ? ` • ${customerName || orderDetails.customerName}` : ''}
+              {displayCustomerName ? ` • ${displayCustomerName}` : ''}
             </p>
           </>
         )}
@@ -442,13 +445,13 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
             {setCustomerName ? (
               <input
                 type="text"
-                placeholder="Walk-In Customer"
-                value={customerName || orderDetails.customerName || ''}
+                placeholder="Enter customer name"
+                value={customerName || (orderDetails.customerName && orderDetails.customerName !== 'Walk-In' && orderDetails.customerName !== 'Walk-In Customer' ? orderDetails.customerName : '')}
                 onChange={(e) => setCustomerName(e.target.value)}
-                className="text-right text-neutral-900 font-bold text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-orange-500 max-w-[170px]"
+                className="text-right text-neutral-900 font-bold text-xs bg-white border border-neutral-200 rounded-lg px-2.5 py-1 focus:outline-none focus:border-orange-500 max-w-[170px] placeholder:font-normal placeholder:text-neutral-400"
               />
             ) : (
-              <span className="text-neutral-900 font-bold">{customerName || orderDetails.customerName || 'Walk-In'}</span>
+              <span className="text-neutral-900 font-bold">{displayCustomerName || '—'}</span>
             )}
           </div>
           <div className="flex justify-between text-xs font-bold text-neutral-500">

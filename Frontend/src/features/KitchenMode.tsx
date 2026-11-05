@@ -1133,14 +1133,58 @@ export const KitchenMode: React.FC = () => {
     [orders]
   )
 
-  const historyOrders = useMemo(
-    () =>
-      orders.filter((o) => {
+  const formatRealWorldTime = (dateStr?: string) => {
+    if (!dateStr) return '—'
+    const d = new Date(dateStr)
+    if (isNaN(d.getTime())) return String(dateStr)
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  }
+
+  const processedOrders = useMemo(() => {
+    const today = new Date(now)
+    const currentYear = today.getFullYear()
+    const currentMonth = today.getMonth()
+    const currentDate = today.getDate()
+
+    return orders
+      .filter((o) => {
         const s = (o.status || '').toUpperCase()
-        return s === 'READY' || s === 'PREPARED' || s === 'READY_FOR_PICKUP' || s === 'COMPLETED' || s === 'SERVED' || s === 'DELIVERED' || s === 'OUT_FOR_DELIVERY'
-      }),
-    [orders]
-  )
+        const isProcessed =
+          s === 'READY' ||
+          s === 'PREPARED' ||
+          s === 'READY_FOR_PICKUP' ||
+          s === 'COMPLETED' ||
+          s === 'SERVED' ||
+          s === 'DELIVERED' ||
+          s === 'OUT_FOR_DELIVERY' ||
+          s === 'CUSTOMER RECEIVED'
+        if (!isProcessed) return false
+
+        // Resets when the day ends: only include orders from today in real-world time
+        const dateVal = o.createdAt
+        if (!dateVal) return false
+        const d = new Date(dateVal)
+        if (isNaN(d.getTime())) return false
+
+        return (
+          d.getFullYear() === currentYear &&
+          d.getMonth() === currentMonth &&
+          d.getDate() === currentDate
+        )
+      })
+      .sort((a, b) => {
+        const timeA = new Date(a.createdAt || 0).getTime()
+        const timeB = new Date(b.createdAt || 0).getTime()
+        return timeB - timeA
+      })
+  }, [orders, now])
 
   return (
     <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
@@ -1183,12 +1227,12 @@ export const KitchenMode: React.FC = () => {
             <button
               onClick={() => setIsHistoryModalOpen(true)}
               className="flex items-center gap-2 bg-neutral-900 hover:bg-black text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              title="View Order History"
+              title="View Processed Orders"
             >
-              <span>Order History</span>
-              {historyOrders.length > 0 && (
+              <span>Processed order</span>
+              {processedOrders.length > 0 && (
                 <span className="bg-orange-500 text-white font-black text-[10px] px-1.5 py-0.5 rounded-full">
-                  {historyOrders.length}
+                  {processedOrders.length}
                 </span>
               )}
             </button>
@@ -1509,12 +1553,17 @@ export const KitchenMode: React.FC = () => {
         </div>
       </div>
 
-      {/* History Modal */}
+      {/* Processed Orders Modal */}
       {isHistoryModalOpen && (
         <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-3 sm:p-6 z-50 animate-fadeIn">
           <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col max-h-[92vh]">
             <div className="px-6 py-4.5 bg-white border-b border-neutral-100 flex items-center justify-between flex-shrink-0">
-              <h2 className="text-lg font-black text-neutral-900">Order History</h2>
+              <div>
+                <h2 className="text-lg font-black text-neutral-900">Processed order</h2>
+                <p className="text-xs text-neutral-400 font-semibold mt-0.5">
+                  Orders completed today in real-world time • Resets automatically at the end of the day
+                </p>
+              </div>
               <button
                 onClick={() => setIsHistoryModalOpen(false)}
                 className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold transition-colors cursor-pointer"
@@ -1535,18 +1584,20 @@ export const KitchenMode: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100 text-xs font-medium">
-                  {historyOrders.length === 0 ? (
+                  {processedOrders.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="px-6 py-12 text-center text-neutral-400">
-                        No completed order history yet.
+                        No processed orders for today yet.
                       </td>
                     </tr>
                   ) : (
-                    historyOrders.map((tx) => (
+                    processedOrders.map((tx) => (
                       <tr key={tx.id} className="hover:bg-neutral-50/60">
                         <td className="px-6 py-3.5 font-bold text-orange-600">{tx.queue}</td>
                         <td className="px-6 py-3.5 font-semibold text-neutral-800">{tx.customer || '—'}</td>
-                        <td className="px-6 py-3.5 text-neutral-500">{tx.createdAt}</td>
+                        <td className="px-6 py-3.5 text-neutral-500 whitespace-nowrap font-medium">
+                          {formatRealWorldTime(tx.createdAt)}
+                        </td>
                         <td className="px-6 py-3.5 font-semibold text-neutral-800">
                           {tx.items.map((i) => `${i.name} x${i.quantity}`).join(', ')}
                         </td>

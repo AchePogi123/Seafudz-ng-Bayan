@@ -4307,49 +4307,68 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             </div>
 
             {/* 1. WAITING FOR ASSISTANT AUTHORIZATION POPUP MODAL */}
-            {isWaitingModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
-                <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
-                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
-                        <button
-                            onClick={() => setIsWaitingModalOpen(false)}
-                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
-                        >
-                            ✕
-                        </button>
+            {isWaitingModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (() => {
+                const isAwaitingKitchen = normalizeStatus(activeOrder.status) === 'AWAITING_KITCHEN_APPROVAL' ||
+                    Boolean((activeOrder as any).kitchenApprovalRequired) ||
+                    checkProductQuantityStandards(activeOrder.items).requiresApproval
+                const flaggedStandard = checkProductQuantityStandards(activeOrder.items).flaggedItems[0]?.standard || 5
 
-                        <div className="text-center space-y-1">
-                            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-amber-500/20 animate-pulse">
-                                
-                            </div>
-                            <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
-                                Order #{activeOrder.id} Submitted
-                            </h3>
-                            <p className="text-xs font-semibold text-neutral-500">
-                                Your order is currently waiting for staff verification.
-                            </p>
-                        </div>
-
-                        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 text-center space-y-3">
-                            <h4 className="font-extrabold text-amber-950 text-sm">Please Wait for Assistant Authorization</h4>
-                            <p className="text-xs text-amber-800 leading-relaxed">
-                                Your order has been sent to our Floor Assistant. Please wait while staff authorizes your payment request before transferring funds.
-                            </p>
-                            <div className="bg-white/90 rounded-xl p-3 border border-amber-200 text-[11px] text-amber-900 font-medium leading-relaxed">
-                                The GCash payment pop-up will automatically appear on your screen once an assistant approves your order.
-                            </div>
-                        </div>
-
-                        <div className="pt-2">
+                return (
+                    <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                        <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
                             <button
                                 onClick={() => setIsWaitingModalOpen(false)}
-                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
+                                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
                             >
-                                Keep Waiting in Billing
+                                ✕
                             </button>
+
+                            <div className="text-center space-y-1">
+                                <div className="w-14 h-14 bg-neutral-100 text-neutral-500 rounded-full flex items-center justify-center mx-auto shadow-xs">
+                                    <svg className="w-6 h-6 text-neutral-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                </div>
+                                <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
+                                    Order #{activeOrder.id} Submitted
+                                </h3>
+                                <p className="text-xs font-semibold text-neutral-500">
+                                    {isAwaitingKitchen
+                                        ? 'Your order is currently awaiting kitchen verification.'
+                                        : 'Your order is currently waiting for staff verification.'}
+                                </p>
+                            </div>
+
+                            <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 text-center space-y-3">
+                                <h4 className="font-bold text-neutral-900 text-base sm:text-lg">
+                                    {isAwaitingKitchen
+                                        ? 'Please Wait for Kitchen Verification'
+                                        : 'Please Wait for Assistant Authorization'}
+                                </h4>
+                                <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
+                                    {isAwaitingKitchen
+                                        ? `Your order requires verification by the kitchen before payment because the quantity meets or exceeds our product standard (${flaggedStandard}+ items).`
+                                        : 'Your order has been sent to our Floor Assistant. Please wait while staff authorizes your payment request before transferring funds.'}
+                                </p>
+                                <div className="bg-white rounded-xl p-3 border border-neutral-200 text-[11px] sm:text-xs text-neutral-600 font-medium leading-relaxed">
+                                    {isAwaitingKitchen
+                                        ? 'The GCash payment pop-up will automatically appear on your screen once the kitchen confirms your order.'
+                                        : 'The GCash payment pop-up will automatically appear on your screen once an assistant approves your order.'}
+                                </div>
+                            </div>
+
+                            <div className="pt-2">
+                                <button
+                                    onClick={() => setIsWaitingModalOpen(false)}
+                                    className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
+                                >
+                                    Keep Waiting in Billing
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            })()}
 
             {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (

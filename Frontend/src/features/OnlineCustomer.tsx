@@ -249,6 +249,79 @@ const CartQuantityControl: React.FC<CartQuantityControlProps> = ({
     )
 }
 
+const CardQuantityControl: React.FC<{
+    quantity: number
+    onIncrement: (e?: React.MouseEvent) => void
+    onDecrement: () => void
+    onSetQuantity: (quantity: number) => void
+}> = ({ quantity, onIncrement, onDecrement, onSetQuantity }) => {
+    const [inputValue, setInputValue] = useState(String(quantity))
+
+    useEffect(() => {
+        setInputValue(String(quantity))
+    }, [quantity])
+
+    const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value
+        if (val === '' || /^[0-9]+$/.test(val)) {
+            setInputValue(val)
+            const num = parseInt(val, 10)
+            if (!isNaN(num) && num > 0) {
+                onSetQuantity(num)
+            }
+        }
+    }
+
+    const handleInputBlur = () => {
+        const num = parseInt(inputValue, 10)
+        if (isNaN(num) || num <= 0) {
+            setInputValue('1')
+            onSetQuantity(1)
+        } else {
+            setInputValue(String(num))
+            onSetQuantity(num)
+        }
+    }
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            e.currentTarget.blur()
+        }
+    }
+
+    return (
+        <div className="flex items-center bg-neutral-100 rounded-xl p-1 border border-neutral-200/60 shrink-0">
+            <button
+                type="button"
+                onClick={onDecrement}
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
+                title="Decrease quantity"
+            >
+                -
+            </button>
+            <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={inputValue}
+                onChange={handleInputChange}
+                onBlur={handleInputBlur}
+                onKeyDown={handleKeyDown}
+                aria-label="Quantity"
+                className="w-8 sm:w-10 text-center text-xs sm:text-sm font-black text-neutral-900 bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500 rounded py-0.5 border-none select-all"
+            />
+            <button
+                type="button"
+                onClick={onIncrement}
+                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
+                title="Increase quantity"
+            >
+                +
+            </button>
+        </div>
+    )
+}
+
 
 
 interface CategorySwipeRowProps {
@@ -2242,27 +2315,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <span>✓</span> Select as Replacement
                                 </button>
                             ) : cartItem ? (
-                                <div className="flex items-center bg-neutral-100 rounded-xl p-1 border border-neutral-200/60 shrink-0">
-                                    <button
-                                        type="button"
-                                        onClick={() => handleDecrement(item.id)}
-                                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
-                                        title="Decrease quantity"
-                                    >
-                                        -
-                                    </button>
-                                    <span className="w-7 sm:w-9 text-center text-xs sm:text-sm font-black text-neutral-900 select-none">
-                                        {cartItem.quantity}
-                                    </span>
-                                    <button
-                                        type="button"
-                                        onClick={(e) => handleIncrement(item.id, e)}
-                                        className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
-                                        title="Increase quantity"
-                                    >
-                                        +
-                                    </button>
-                                </div>
+                                <CardQuantityControl
+                                    quantity={cartItem.quantity}
+                                    onIncrement={(e) => handleIncrement(item.id, e)}
+                                    onDecrement={() => handleDecrement(item.id)}
+                                    onSetQuantity={(q) => handleSetQuantity(item.id, q)}
+                                />
                             ) : (
                                 <button
                                     type="button"

@@ -1726,7 +1726,6 @@ export const KitchenMode: React.FC = () => {
                       <input
                         type="number"
                         min="0"
-                        placeholder="∞"
                         title="Bulk remaining servings (leave blank for unlimited)"
                         value={bulkServingsInput}
                         onChange={(e) => setBulkServingsInput(e.target.value)}
@@ -1802,7 +1801,6 @@ export const KitchenMode: React.FC = () => {
                           <input
                             type="number"
                             min="0"
-                            placeholder="∞"
                             title="Remaining servings before automatic 86"
                             value={servingsInputs[item.id] ?? ''}
                             onChange={(e) => setServingsInputs((prev) => ({ ...prev, [item.id]: e.target.value }))}

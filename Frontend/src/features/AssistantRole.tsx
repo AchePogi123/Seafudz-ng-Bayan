@@ -165,36 +165,7 @@ export const AssistantRole: React.FC = () => {
     setNotification(`Order #${orderId} deleted successfully.`)
   }
 
-  const handleResetAllFromAssistant = async () => {
-    const confirmFirst = window.confirm(
-      '⚠️ FRESH START: Are you sure you want to wipe all transaction history from the database?\n\n' +
-      'All pending, active, and completed orders will be permanently cleared.\n\n' +
-      'Staff accounts, passwords, menu catalog, and tables will remain 100% intact.'
-    )
-    if (!confirmFirst) return
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/sales/reset-transactions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.message || 'Failed to reset transactions')
-
-      localStorage.removeItem('seafudz_orders')
-      localStorage.removeItem('seafudz_active_online_order')
-      localStorage.removeItem('seafudz_printed_receipts')
-      localStorage.removeItem('seafudz_pending_approvals')
-
-      setOrders([])
-      setSelectedOrderId(null)
-      notifyOrderSync()
-      alert('✅ All orders have been wiped. Fresh start ready!')
-      window.location.reload()
-    } catch (err: any) {
-      alert(err.message || 'Error executing reset')
-    }
-  }
 
   useEffect(() => {
     if (notification) {
@@ -1248,17 +1219,7 @@ export const AssistantRole: React.FC = () => {
                     ➕ Create Transaction
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={handleResetAllFromAssistant}
-                  className="px-3.5 py-2.5 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-2xs active:scale-95 flex items-center gap-1.5"
-                  title="Wipe transaction history for fresh start"
-                >
-                  <svg className="w-4 h-4 text-rose-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                  Wipe Orders
-                </button>
+
                 <div className="relative flex-1">
                   <input
                     type="text"

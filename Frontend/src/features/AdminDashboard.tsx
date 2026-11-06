@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
 import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
-import { subscribeOrderSync, subscribeProductCatalogSync, notifyOrderSync } from '../utils/orderSync'
+import { subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 
 export interface LiveOrderRecord {
@@ -237,48 +237,7 @@ const AdminDashboard: React.FC = () => {
         }
     }, [timeRange, customStartDate, customEndDate])
 
-    const handleResetAllTransactions = async () => {
-        const confirmFirst = window.confirm(
-            '⚠️ RESET ALL TRANSACTIONS (FRESH START)\n\n' +
-            'This will permanently wipe all order history, payments, deliveries, and active queues from the database.\n\n' +
-            'Critical data (Staff Accounts, PINs, Menu Catalog, Categories, Tables) will NOT be affected.\n\n' +
-            'Do you want to proceed with a fresh start?'
-        )
-        if (!confirmFirst) return
 
-        const confirmSecond = window.prompt(
-            'Type "RESET" to confirm wiping all transaction history from the database:'
-        )
-        if (confirmSecond !== 'RESET') {
-            alert('Reset cancelled. You must type "RESET" to confirm.')
-            return
-        }
-
-        try {
-            setIsLoadingOrders(true)
-            const res = await fetch(`${API_BASE_URL}/sales/reset-transactions`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-            })
-            const data = await res.json().catch(() => ({}))
-            if (!res.ok) throw new Error(data.message || 'Failed to reset transactions')
-
-            // Clear browser local storage
-            localStorage.removeItem('seafudz_orders')
-            localStorage.removeItem('seafudz_active_online_order')
-            localStorage.removeItem('seafudz_printed_receipts')
-            localStorage.removeItem('seafudz_pending_approvals')
-
-            setOrders([])
-            notifyOrderSync()
-            alert('✅ All transaction history wiped successfully! Fresh start ready.')
-            window.location.reload()
-        } catch (err: any) {
-            alert(err.message || 'Error executing transaction reset')
-        } finally {
-            setIsLoadingOrders(false)
-        }
-    }
 
     useEffect(() => {
         void fetchSummary()
@@ -1031,17 +990,7 @@ const AdminDashboard: React.FC = () => {
                             Sync Orders
                         </button>
 
-                        <button
-                            onClick={handleResetAllTransactions}
-                            type="button"
-                            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95"
-                            title="Wipe transaction history for a fresh start"
-                        >
-                            <svg className="w-4 h-4 text-rose-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                            Wipe Orders (Fresh Start)
-                        </button>
+
 
 
                     </div>

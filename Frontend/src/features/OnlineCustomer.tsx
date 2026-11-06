@@ -1021,6 +1021,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [isCancelConfirmModalOpen, isCancellingOrder])
+
+    // Close verification/waiting modals on Escape key press
+    useEffect(() => {
+        if (!isVerificationModalOpen && !isWaitingModalOpen) return
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                if (isVerificationModalOpen) dismissVerificationModal()
+                if (isWaitingModalOpen) setIsWaitingModalOpen(false)
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [isVerificationModalOpen, isWaitingModalOpen])
     // oos replacement inline select removed
     const [replacementSelections, setReplacementSelections] = useState<Record<string, any>>({})
     const [replacementTargetItem, setReplacementTargetItem] = useState<any | null>(null)
@@ -2047,7 +2060,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
         try {
             const isPayLater = paymentMethod === 'COD' || paymentMethod === 'PAY_IN_STORE'
-            const initialStatus = isPayLater ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
+            const qtyCheck = checkProductQuantityStandards(cartItems)
+            const initialStatus = isPayLater
+                ? 'PENDING_COD'
+                : (qtyCheck.requiresApproval ? 'AWAITING_KITCHEN_APPROVAL' : 'GCASH_AUTHORIZED')
             const combinedAddress = fulfillmentType === 'PICKUP'
                 ? 'Store Pick-Up (Seafudz ng Bayan Store Counter, Caloocan)'
                 : (addressDetails.trim() ? `${address.trim()} (${addressDetails.trim()})` : address.trim())
@@ -2078,8 +2094,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: fulfillmentType === 'PICKUP' ? 0 : deliveryFee,
                 total,
                 status: initialStatus,
-                gcashAuthorized: false,
-                gcash_authorized: false,
+                gcashAuthorized: !isPayLater && !qtyCheck.requiresApproval,
+                gcash_authorized: !isPayLater && !qtyCheck.requiresApproval,
                 items: cartItems.map((ci) => ({
                     id: ci.item.id,
                     name: ci.item.name,
@@ -2146,7 +2162,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: serverOrder?.deliveryFee ?? (fulfillmentType === 'PICKUP' ? 0 : deliveryFee),
                 total: serverOrder?.total ?? total,
                 status: (serverOrder?.status || initialStatus).toUpperCase(),
-                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized),
+                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized || (!isPayLater && !qtyCheck.requiresApproval)),
                 createdAt: serverOrder?.created_at || serverOrder?.createdAt || new Date().toISOString(),
             }
 
@@ -2177,14 +2193,26 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             } catch { }
             setCartItems([])
             setOrderNotes('')
-            if (paymentMethod === 'COD') {
+
+            const isOrderAwaitingKitchen = (serverOrder?.status || newOrder.status || '').toUpperCase() === 'AWAITING_KITCHEN_APPROVAL' ||
+                Boolean(serverOrder?.requiresKitchenApproval) ||
+                Boolean(serverOrder?.requires_kitchen_approval) ||
+                qtyCheck.requiresApproval
+
+            if (isPayLater) {
                 setActiveTab('tracking')
                 setIsVerificationModalOpen(false)
                 setIsWaitingModalOpen(false)
-            } else {
+            } else if (isOrderAwaitingKitchen) {
+                // High quantity meeting standard: must wait for kitchen verification before payment
                 setActiveTab('billing')
                 setIsWaitingModalOpen(true)
                 setIsVerificationModalOpen(false)
+            } else {
+                // Below quantity standard: customer is directed immediately to GCash payment!
+                setActiveTab('billing')
+                setIsWaitingModalOpen(false)
+                setIsVerificationModalOpen(true)
             }
             setIsCartDrawerOpen(false)
             notifyOrderSync()
@@ -2697,6 +2725,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
                                     >
                                         <span>View Kitchen Tracking</span>
+                                    </button>
+                                ) : ((activeOrder.paymentMethod || '').toLowerCase().includes('cod') || (activeOrder.paymentMethod || '').toLowerCase().includes('store')) ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('tracking')}
+                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
+                                    >
+                                        <span>View Order Tracking</span>
                                     </button>
                                 ) : (
                                     <button
@@ -4806,15 +4842,36 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 )}
             </div>
 
-            {/* 1. WAITING FOR ASSISTANT AUTHORIZATION POPUP MODAL */}
-            {isWaitingModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (() => {
-                const isAwaitingKitchen = normalizeStatus(activeOrder.status) === 'AWAITING_KITCHEN_APPROVAL' ||
+            {/* 1. WAITING FOR KITCHEN AUTHORIZATION POPUP MODAL (Only when quantity meets or exceeds standard) */}
+            {isWaitingModalOpen && activeOrder && (() => {
+                const normStatus = normalizeStatus(activeOrder.status)
+                const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
+                if (isConfirmedOrLater) return null
+
+                const isPayLater = (activeOrder.paymentMethod || '').toLowerCase().includes('cod') ||
+                    (activeOrder.paymentMethod || '').toLowerCase().includes('store')
+                if (isPayLater) return null
+
+                if (normStatus === 'GCASH_AUTHORIZED' || Boolean(activeOrder.gcashAuthorized)) return null
+
+                const qtyCheck = checkProductQuantityStandards(activeOrder.items)
+                const isAwaitingKitchen = normStatus === 'AWAITING_KITCHEN_APPROVAL' ||
                     Boolean((activeOrder as any).kitchenApprovalRequired) ||
-                    checkProductQuantityStandards(activeOrder.items).requiresApproval
-                const flaggedStandard = checkProductQuantityStandards(activeOrder.items).flaggedItems[0]?.standard || 5
+                    qtyCheck.requiresApproval
+
+                if (!isAwaitingKitchen) return null
+
+                const flaggedStandard = qtyCheck.flaggedItems[0]?.standard || 5
 
                 return (
-                    <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                    <div
+                        className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
+                        onClick={(e) => {
+                            if (e.target === e.currentTarget) {
+                                setIsWaitingModalOpen(false)
+                            }
+                        }}
+                    >
                         <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
                             <button
                                 onClick={() => setIsWaitingModalOpen(false)}
@@ -4833,27 +4890,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     Order #{activeOrder.id} Submitted
                                 </h3>
                                 <p className="text-xs font-semibold text-neutral-500">
-                                    {isAwaitingKitchen
-                                        ? 'Your order is currently awaiting kitchen verification.'
-                                        : 'Your order is currently waiting for staff verification.'}
+                                    Your order is currently awaiting kitchen verification.
                                 </p>
                             </div>
 
                             <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 text-center space-y-3">
                                 <h4 className="font-bold text-neutral-900 text-base sm:text-lg">
-                                    {isAwaitingKitchen
-                                        ? 'Please Wait for Kitchen Verification'
-                                        : 'Please Wait for Assistant Authorization'}
+                                    Please Wait for Kitchen Verification
                                 </h4>
                                 <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
-                                    {isAwaitingKitchen
-                                        ? `Your order requires verification by the kitchen before payment because the quantity meets or exceeds our product standard (${flaggedStandard}+ items).`
-                                        : 'Your order has been sent to our Floor Assistant. Please wait while staff authorizes your payment request before transferring funds.'}
+                                    Your order requires verification by the kitchen before payment because the quantity meets or exceeds our product standard ({flaggedStandard}+ items).
                                 </p>
                                 <div className="bg-white rounded-xl p-3 border border-neutral-200 text-[11px] sm:text-xs text-neutral-600 font-medium leading-relaxed">
-                                    {isAwaitingKitchen
-                                        ? 'The GCash payment pop-up will automatically appear on your screen once the kitchen confirms your order.'
-                                        : 'The GCash payment pop-up will automatically appear on your screen once an assistant approves your order.'}
+                                    The GCash payment pop-up will automatically appear on your screen once the kitchen confirms your order.
                                 </div>
                             </div>
 
@@ -4872,7 +4921,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (
-                <div className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto">
+                <div
+                    className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
+                    onClick={(e) => {
+                        if (e.target === e.currentTarget) {
+                            dismissVerificationModal()
+                        }
+                    }}
+                >
                     <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
                         {/* Close button */}
                         <button

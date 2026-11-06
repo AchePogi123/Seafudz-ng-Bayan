@@ -656,7 +656,7 @@ export async function generateTransactionsPDF({
   const doc = new PDFDocument({
     size: 'A4',
     layout: 'landscape',
-    margin: 36,
+    margins: { top: 36, bottom: 20, left: 36, right: 36 },
     bufferPages: true,
   });
 
@@ -666,7 +666,7 @@ export async function generateTransactionsPDF({
 
   const margin = 36;
   const contentWidth = 770;
-  const maxY = 535;
+  const maxY = 525;
 
   const channelLabel =
     channel === 'pos'
@@ -846,9 +846,35 @@ export async function generateTransactionsPDF({
     const isOnline = rawType.includes('ONLINE') || rawType.includes('DELIVERY');
     const channelLabelStr = isOnline ? 'Online' : 'POS Walk-In';
 
-    const destination = ord.table_id
-      ? `Table ${ord.table_id}`
-      : ord.delivery_address || ord.customer_name || (isOnline ? 'Online Delivery' : 'In-Store');
+    // Clean & understandable Customer / Destination formatting
+    const custName = (ord.customer_name || ord.customer || '').trim();
+    const isPickup = (ord.fulfillment_type || ord.fulfillmentType || ord.type || '').toUpperCase().includes('PICKUP');
+    const isPos = !isOnline;
+
+    let destination = '';
+    if (ord.table_id) {
+      destination = custName ? `${custName} (Table ${ord.table_id})` : `Table ${ord.table_id}`;
+    } else if (isPickup) {
+      destination = custName && custName !== 'Online Customer' ? `${custName} (Pick-Up)` : 'Store Pick-Up';
+    } else if (isPos) {
+      destination = custName && custName !== 'Walk-In Customer' && custName !== 'Online Customer' ? custName : 'POS Counter';
+    } else {
+      // Online delivery
+      let addr = (ord.delivery_address || '').trim();
+      if (addr) {
+        addr = addr.replace(/,\s*\d{4}.*$/, '');
+        addr = addr.replace(/,\s*(?:Metro Manila|Philippines|Eastern Manila District).*$/i, '');
+        const parts = addr.split(',').map((p) => p.trim()).filter(Boolean);
+        if (parts.length > 2) {
+          addr = `${parts[0]}, ${parts[1]}`;
+        }
+      }
+      if (custName && custName !== 'Online Customer') {
+        destination = addr ? `${custName} (${addr})` : custName;
+      } else {
+        destination = addr || 'Online Delivery';
+      }
+    }
 
     const isEven = idx % 2 === 0;
     if (isEven) {
@@ -875,6 +901,7 @@ export async function generateTransactionsPDF({
     rowData.forEach((item) => {
       doc.fillColor(item.color || '#1E293B').font(item.font).fontSize(7.5).text(item.text, curX + 4, currentY + 5, {
         width: item.col.width - 8,
+        height: 10,
         align: item.col.align,
         lineBreak: false,
         ellipsis: true,
@@ -978,6 +1005,7 @@ export async function generateTransactionsPDF({
       cells.forEach((cell) => {
         doc.fillColor('#1E293B').font(cell.font).fontSize(7.5).text(cell.text, curX + 6, currentY + 5, {
           width: cell.width - 12,
+          height: 10,
           align: cell.align,
           lineBreak: false,
           ellipsis: true,
@@ -1000,24 +1028,80 @@ export async function generateTransactionsPDF({
       width: contentWidth - 408,
       align: 'right',
     });
+    currentY += 22;
   }
+
+  // --- Section 3: Official Signatures & Verification Block ---
+  const signBlockHeight = 65;
+  if (currentY + signBlockHeight + 14 > maxY) {
+    doc.addPage();
+    currentY = margin + 10;
+  } else {
+    currentY += 16;
+  }
+
+  doc.rect(margin, currentY, contentWidth, signBlockHeight).fillAndStroke('#F8FAFC', '#CBD5E1');
+
+  // Title of the signature section
+  doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(8).text(
+    'FINANCIAL AUDIT VERIFICATION & ACKNOWLEDGEMENT',
+    margin + 16,
+    currentY + 8,
+    { height: 10, lineBreak: false }
+  );
+
+  const colSignW = 260;
+  const leftSignX = margin + 50;
+  const rightSignX = margin + contentWidth - colSignW - 50;
+  const lineY = currentY + 42;
+
+  // Cashier Signature Column
+  doc.strokeColor('#64748B').lineWidth(0.8).moveTo(leftSignX, lineY).lineTo(leftSignX + colSignW, lineY).stroke();
+  doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7.5).text(
+    'CASHIER SIGNATURE',
+    leftSignX,
+    lineY + 4,
+    { width: colSignW, align: 'center', height: 10, lineBreak: false }
+  );
+  doc.fillColor('#64748B').font('Helvetica').fontSize(6.5).text(
+    'Prepared & reconciled with register shift ledger',
+    leftSignX,
+    lineY + 13,
+    { width: colSignW, align: 'center', height: 10, lineBreak: false }
+  );
+
+  // Owner Signature Column
+  doc.strokeColor('#64748B').lineWidth(0.8).moveTo(rightSignX, lineY).lineTo(rightSignX + colSignW, lineY).stroke();
+  doc.fillColor('#0F172A').font('Helvetica-Bold').fontSize(7.5).text(
+    'OWNER / STORE MANAGER SIGNATURE',
+    rightSignX,
+    lineY + 4,
+    { width: colSignW, align: 'center', height: 10, lineBreak: false }
+  );
+  doc.fillColor('#64748B').font('Helvetica').fontSize(6.5).text(
+    'Verified, audited & approved for official accounting records',
+    rightSignX,
+    lineY + 13,
+    { width: colSignW, align: 'center', height: 10, lineBreak: false }
+  );
 
   // --- Footers on all pages ---
   const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i++) {
+  const totalPages = range.count;
+  for (let i = range.start; i < range.start + totalPages; i++) {
     doc.switchToPage(i);
-    doc.strokeColor('#CBD5E1').lineWidth(0.5).moveTo(margin, 560).lineTo(margin + contentWidth, 560).stroke();
+    doc.strokeColor('#CBD5E1').lineWidth(0.5).moveTo(margin, 555).lineTo(margin + contentWidth, 555).stroke();
     doc.fillColor('#64748B').font('Helvetica').fontSize(7.5).text(
       'Seafudz ng Bayan POS System — Official Financial & Transaction Audit Document (Confidential)',
       margin,
-      566,
-      { width: 500 }
+      562,
+      { width: 500, height: 10, lineBreak: false }
     );
     doc.fillColor('#64748B').font('Helvetica-Bold').fontSize(7.5).text(
-      `Page ${i + 1} of ${range.count}`,
+      `Page ${i + 1} of ${totalPages}`,
       margin + contentWidth - 150,
-      566,
-      { align: 'right', width: 150 }
+      562,
+      { align: 'right', width: 150, height: 10, lineBreak: false }
     );
   }
 

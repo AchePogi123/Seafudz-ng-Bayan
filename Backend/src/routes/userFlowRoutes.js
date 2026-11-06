@@ -52,7 +52,7 @@ router.get('/user-flow/orders', async (req, res) => {
     let dbOrders = [];
     try {
       const { rows } = await query(`
-        SELECT o.id, COALESCE(o.order_type, 'ONLINE') AS order_type, o.customer_id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+        SELECT o.id, COALESCE(o.order_type, 'ONLINE') AS order_type, COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type, o.customer_id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
                o.delivery_latitude, o.delivery_longitude,
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
                o.requires_kitchen_approval, o.kitchen_approval_status, o.servings_deducted,

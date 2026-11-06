@@ -145,7 +145,8 @@ export const KitchenMode: React.FC = () => {
           else mappedStatus = rawStatus
 
           const rawType = (o.type || o.order_type || 'Take Out').trim()
-          const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
+          const isPickupOrder = String(o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP')
+          const isDeliveryOrder = !isPickupOrder && (rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-'))))
           const rawCust = typeof o.customerName === 'string' && o.customerName.trim()
             ? o.customerName.trim()
             : typeof o.customer_name === 'string' && o.customer_name.trim()
@@ -153,8 +154,8 @@ export const KitchenMode: React.FC = () => {
             : typeof o.customer === 'string' && o.customer.trim() && o.customer !== 'Walk-In' && o.customer !== 'Walk-In Customer'
             ? o.customer.trim()
             : ''
-          const customerName = rawCust || (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order'))
-          const formatCategory = o.table ? `Dine In - ${o.table}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+          const customerName = rawCust || (isPickupOrder ? 'Store Pick-Up Customer' : (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order')))
+          const formatCategory = o.table ? `Dine In - ${o.table}` : (isPickupOrder ? 'Store Pick-Up' : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType))
 
           const calcTotal = parseFloat(o.total || 0)
 
@@ -308,7 +309,8 @@ export const KitchenMode: React.FC = () => {
                 else norm = raw
 
                 const rawType = (o.order_type || o.type || 'Take Out').trim()
-                const isDeliveryOrder = rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-')))
+                const isPickupOrder = String(o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP')
+                const isDeliveryOrder = !isPickupOrder && (rawType.toLowerCase().includes('delivery') || Boolean(o.address || o.deliveryAddress || (o.id && String(o.id).startsWith('SFB-'))))
                 const rawCust = typeof o.customerName === 'string' && o.customerName.trim()
                   ? o.customerName.trim()
                   : typeof o.customer_name === 'string' && o.customer_name.trim()
@@ -316,8 +318,8 @@ export const KitchenMode: React.FC = () => {
                   : typeof o.customer === 'string' && o.customer.trim() && o.customer !== 'Walk-In' && o.customer !== 'Walk-In Customer'
                   ? o.customer.trim()
                   : ''
-                const customerName = rawCust || (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order'))
-                const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType)
+                const customerName = rawCust || (isPickupOrder ? 'Store Pick-Up Customer' : (isDeliveryOrder ? 'Online Customer' : (rawType || 'On-Site Order')))
+                const formatCategory = o.table_name ? `Dine In - ${o.table_name}` : (isPickupOrder ? 'Store Pick-Up' : (rawType.toLowerCase() === 'delivery' ? 'Online order' : rawType))
 
                 const calcTotal = parseFloat(o.total || 0)
 
@@ -1531,8 +1533,13 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {String(order.category || order.type || '').toUpperCase().includes('PICKUP') && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                🛍️ STORE PICK-UP
+                              </span>
+                            )}
                           </div>
                           <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
                             {order.customer || 'Customer'}
@@ -1619,8 +1626,13 @@ export const KitchenMode: React.FC = () => {
                     <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
                       <div className="flex justify-between items-start mb-2">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
+                            {String(order.category || order.type || '').toUpperCase().includes('PICKUP') && (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                🛍️ STORE PICK-UP
+                              </span>
+                            )}
                           </div>
                           <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
                             {order.customer || 'Customer'}

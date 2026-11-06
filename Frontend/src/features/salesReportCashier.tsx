@@ -251,13 +251,16 @@ const SalesReportCashier: React.FC = () => {
   }
 
   const formatOrderRow = useCallback((dbO: RawOrder): LiveTransaction => {
+    const rawFulfillment = (readString((dbO as any).fulfillment_type, (dbO as any).fulfillmentType) || '').toUpperCase()
     const rawType = readString(dbO.order_type, dbO.type) || ''
     const normalizedType =
-      rawType.toUpperCase() === 'ONLINE'
-        ? 'Delivery'
-        : rawType.toUpperCase() === 'ON_SITE'
-          ? 'POS Order'
-          : rawType || 'POS Order'
+      rawFulfillment === 'PICKUP' || rawType.toUpperCase().includes('PICKUP')
+        ? 'Store Pick-Up'
+        : rawType.toUpperCase() === 'ONLINE' || rawType.toUpperCase() === 'DELIVERY'
+          ? 'Delivery'
+          : rawType.toUpperCase() === 'ON_SITE'
+            ? 'POS Order'
+            : rawType || 'POS Order'
 
     const createdAt = dbO.created_at
 
@@ -279,9 +282,10 @@ const SalesReportCashier: React.FC = () => {
       items: summarizeItems(dbO.items, 'Seafood Dish'),
       itemsList,
       customer: (() => {
-        const c = readString(dbO.customer_name);
-        if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
-        return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+        const c = readString(dbO.customer_name, (dbO as any).customerName, (dbO as any).customer, (dbO as any).fullname);
+        if (c && c !== 'Walk-In' && c !== 'Walk-In Customer' && c !== 'Online Customer') return c;
+        if (c === 'Online Customer') return c;
+        return '';
       })(),
       customerPhone: readString(dbO.customer_phone, dbO.phone) || undefined,
       customerAddress: readString(dbO.delivery_address, dbO.address) || undefined,
@@ -293,7 +297,7 @@ const SalesReportCashier: React.FC = () => {
       riderCashReceived: dbO.rider_cash_received !== undefined && dbO.rider_cash_received !== null
         ? Number(dbO.rider_cash_received)
         : (dbO.riderCashReceived !== undefined && dbO.riderCashReceived !== null ? Number(dbO.riderCashReceived) : undefined),
-      riderName: readString(dbO.rider_name, dbO.riderName) || undefined,
+      riderName: (rawFulfillment === 'PICKUP' || rawType.toUpperCase().includes('PICKUP')) ? undefined : (readString(dbO.rider_name, dbO.riderName) || undefined),
       paymentMethod: readString(dbO.payment_method, dbO.paymentMethod) || 'Cash',
       paymentReference: readReferenceString(
         dbO.payment_reference,
@@ -1237,7 +1241,7 @@ const SalesReportCashier: React.FC = () => {
                   <div>
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Customer Name</span>
                     <span className="font-bold text-slate-900 mt-0.5 block text-sm">
-                      {selectedTransaction.customer || 'None recorded'}
+                      {selectedTransaction.customer || (selectedTransaction as any).customerName || 'None recorded'}
                     </span>
                   </div>
 
@@ -1251,11 +1255,11 @@ const SalesReportCashier: React.FC = () => {
                   <div className="sm:col-span-2">
                     <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Delivery / Customer Address</span>
                     <span className="font-medium text-slate-800 mt-0.5 block leading-relaxed">
-                      {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : 'In-Store / On-Site')}
+                      {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : (selectedTransaction.type?.toLowerCase().includes('pick') ? 'Store Pick-Up Counter' : 'In-Store / On-Site'))}
                     </span>
                   </div>
 
-                  {selectedTransaction.riderName && (
+                  {selectedTransaction.riderName && !selectedTransaction.type?.toLowerCase().includes('pick') && (
                     <div className="sm:col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
                       <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Assigned Delivery Rider</span>
                       <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200 text-xs">

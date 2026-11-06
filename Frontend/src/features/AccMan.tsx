@@ -376,20 +376,6 @@ export const AccMan: React.FC = () => {
         } catch { }
         return true
     })
-    const [smsAlerts, setSmsAlerts] = useState(() => {
-        try {
-            const raw = localStorage.getItem('sfb_user_notifications')
-            if (raw) return JSON.parse(raw).smsAlerts ?? true
-        } catch { }
-        return true
-    })
-    const [promoAlerts, setPromoAlerts] = useState(() => {
-        try {
-            const raw = localStorage.getItem('sfb_user_notifications')
-            if (raw) return JSON.parse(raw).promoAlerts ?? false
-        } catch { }
-        return false
-    })
 
     // Handlers
     const handleProfileChange = (field: keyof UserProfile, value: string) => {
@@ -566,7 +552,7 @@ export const AccMan: React.FC = () => {
         setMessage(null)
 
         try {
-            const prefs = { emailAlerts, smsAlerts, promoAlerts }
+            const prefs = { emailAlerts }
             localStorage.setItem('sfb_user_notifications', JSON.stringify(prefs))
             setIsSaving(false)
             setMessage({ type: 'success', text: 'Notification preferences saved successfully!' })
@@ -1411,7 +1397,7 @@ export const AccMan: React.FC = () => {
                             <form onSubmit={handleSaveNotifications} className="space-y-6">
                                 <div>
                                     <h3 className="font-extrabold text-neutral-800 text-xl">Notification Preferences</h3>
-                                    <p className="text-xs text-neutral-400 mt-1">Control how and when you receive order notifications and promotional alerts</p>
+                                    <p className="text-xs text-neutral-400 mt-1">Manage email notifications for account verification and password changes</p>
                                 </div>
                                 <hr className="border-neutral-100" />
 
@@ -1425,33 +1411,7 @@ export const AccMan: React.FC = () => {
                                         />
                                         <div>
                                             <p className="font-bold text-sm text-neutral-800">Email Notifications</p>
-                                            <p className="text-xs text-neutral-400">Receive order receipts, updates, and account activity confirmations.</p>
-                                        </div>
-                                    </label>
-
-                                    <label className="flex items-start gap-3 p-4 border border-neutral-100 rounded-2xl hover:bg-neutral-50/50 cursor-pointer transition-colors">
-                                        <input
-                                            type="checkbox"
-                                            checked={smsAlerts}
-                                            onChange={(e) => setSmsAlerts(e.target.checked)}
-                                            className="mt-1 text-orange-500 focus:ring-orange-500 w-4 h-4 rounded"
-                                        />
-                                        <div>
-                                            <p className="font-bold text-sm text-neutral-800">SMS / Mobile Updates</p>
-                                            <p className="text-xs text-neutral-400">Get real-time SMS tracking updates on delivery status.</p>
-                                        </div>
-                                    </label>
-
-                                    <label className="flex items-start gap-3 p-4 border border-neutral-100 rounded-2xl hover:bg-neutral-50/50 cursor-pointer transition-colors">
-                                        <input
-                                            type="checkbox"
-                                            checked={promoAlerts}
-                                            onChange={(e) => setPromoAlerts(e.target.checked)}
-                                            className="mt-1 text-orange-500 focus:ring-orange-500 w-4 h-4 rounded"
-                                        />
-                                        <div>
-                                            <p className="font-bold text-sm text-neutral-800">Promotions & Discounts</p>
-                                            <p className="text-xs text-neutral-400">Be first to know about weekend specials, free delivery vouchers, and birthday points multiplier events.</p>
+                                            <p className="text-xs text-neutral-400">Used for account verification or changing password only (order receipts are viewed directly in-app).</p>
                                         </div>
                                     </label>
                                 </div>

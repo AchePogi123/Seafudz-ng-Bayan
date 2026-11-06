@@ -72,12 +72,24 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
     const { status, type, limit, offset, page, search, payment, tab, period, startDate, endDate } = req.query;
     let sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
-             o.order_type AS type, o.order_type, o.status,
+             COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type,
+             COALESCE(o.fulfillment_type, 'DELIVERY') AS "fulfillmentType",
+             CASE
+               WHEN UPPER(COALESCE(o.fulfillment_type, '')) = 'PICKUP' THEN 'Store Pick-Up'
+               WHEN UPPER(o.order_type) = 'ONLINE' THEN 'Delivery'
+               WHEN UPPER(o.order_type) = 'ON_SITE' THEN 'POS Order'
+               ELSE COALESCE(o.order_type, 'POS Order')
+             END AS type,
+             o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
              COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer_name,
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS "customerName",
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer,
              c.phone AS customer_phone,
+             c.phone AS phone,
              COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+             COALESCE(d.delivery_address, c.delivery_address) AS address,
              d.status AS delivery_status,
              d.rider_id,
              r_emp.fullname AS rider_name,
@@ -112,7 +124,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received, delivery_proof
         FROM deliveries
         ORDER BY order_id, created_at DESC
       ) d ON o.id = d.order_id
@@ -180,7 +192,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       }
     }
 
-    sql += ` GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
+    sql += ` GROUP BY o.id, o.fulfillment_type, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
 
     const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;
@@ -225,9 +237,24 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
     const { id } = req.params;
     const sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
-             o.order_type AS type, o.order_type, o.status,
+             COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type,
+             COALESCE(o.fulfillment_type, 'DELIVERY') AS "fulfillmentType",
+             CASE
+               WHEN UPPER(COALESCE(o.fulfillment_type, '')) = 'PICKUP' THEN 'Store Pick-Up'
+               WHEN UPPER(o.order_type) = 'ONLINE' THEN 'Delivery'
+               WHEN UPPER(o.order_type) = 'ON_SITE' THEN 'POS Order'
+               ELSE COALESCE(o.order_type, 'POS Order')
+             END AS type,
+             o.order_type, o.status,
              o.subtotal, o.tax AS vat, o.tax, o.delivery_fee, o.total, o.notes,
              o.created_at, o.updated_at,
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer_name,
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS "customerName",
+             COALESCE(NULLIF(o.customer_name, ''), c.fullname, '') AS customer,
+             c.phone AS customer_phone,
+             c.phone AS phone,
+             COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
+             COALESCE(d.delivery_address, c.delivery_address) AS address,
              o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
              t.name AS table_name,
              COALESCE(o.payment_method, p_pay.payment_method, 'CASH') AS payment_method,
@@ -257,9 +284,10 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
                ) FILTER (WHERE oi.id IS NOT NULL), '[]'
              ) AS "items"
       FROM orders o
+      LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN tables t ON o.table_id = t.id
       LEFT JOIN (
-        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received
+        SELECT DISTINCT ON (order_id) order_id, delivery_address, status, rider_id, rider_cash_received, delivery_proof
         FROM deliveries
         ORDER BY order_id, created_at DESC
       ) d ON o.id = d.order_id
@@ -272,7 +300,7 @@ router.get('/orders/:id', requireAuth, async (req, res) => {
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
       WHERE o.id = $1
-      GROUP BY o.id, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, d.rider_cash_received, d.delivery_proof, r_emp.fullname
+      GROUP BY o.id, o.fulfillment_type, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, d.rider_cash_received, d.delivery_proof, r_emp.fullname
     `;
     const { rows } = await query(sql, [id]);
 
@@ -982,6 +1010,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
+    // Determine fulfillment type: DELIVERY vs PICKUP
+    const rawFulfillment = (req.body.fulfillmentType || req.body.fulfillment_type || req.body.fulfillment || (req.body.type === 'Store Pick-Up' ? 'PICKUP' : 'DELIVERY')).toString().trim().toUpperCase();
+    const isPickup = rawFulfillment.includes('PICKUP');
+    const fulfillmentType = isPickup ? 'PICKUP' : 'DELIVERY';
+
     // Authoritative Server-side Calculations with fallback to client totals
     const calcSubtotal = req.body.subtotal !== undefined && Number(req.body.subtotal) > 0
       ? Number(req.body.subtotal)
@@ -989,30 +1022,36 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     const calcVat = req.body.vat !== undefined && Number(req.body.vat) > 0
       ? Number(req.body.vat)
       : Math.round(calcSubtotal * 0.12 * 100) / 100;
-    const calcFee = req.body.deliveryFee !== undefined
-      ? Number(req.body.deliveryFee)
-      : ((req.body.orderType === 'ONLINE' || req.body.type === 'Delivery' || deliveryAddress || address) ? 50 : 0);
+    const calcFee = isPickup
+      ? 0
+      : (req.body.deliveryFee !== undefined
+          ? Number(req.body.deliveryFee)
+          : ((req.body.orderType === 'ONLINE' || req.body.type === 'Delivery' || deliveryAddress || address) ? 50 : 0));
     const calcTotal = req.body.total !== undefined && Number(req.body.total) > 0
       ? Number(req.body.total)
       : Math.round((calcSubtotal + calcVat + calcFee) * 100) / 100;
 
     const cleanCustomer = customerName || (req.user && req.user.fullname) || 'Online Customer';
     const cleanPhone = phone || (req.user && req.user.phone) || '0917-000-0000';
-    const cleanAddress = deliveryAddress || address || (req.user && req.user.delivery_address) || 'Metro Manila Address';
-    const hasLatitude = rawDeliveryLatitude !== undefined && rawDeliveryLatitude !== null
-    const hasLongitude = rawDeliveryLongitude !== undefined && rawDeliveryLongitude !== null
-    const deliveryLatitude = hasLatitude ? Number(rawDeliveryLatitude) : null
-    const deliveryLongitude = hasLongitude ? Number(rawDeliveryLongitude) : null
+    const cleanAddress = isPickup
+      ? (deliveryAddress || address || 'Store Pick-Up (Seafudz ng Bayan Store Counter, Caloocan)')
+      : (deliveryAddress || address || (req.user && req.user.delivery_address) || 'Metro Manila Address');
+    const hasLatitude = rawDeliveryLatitude !== undefined && rawDeliveryLatitude !== null;
+    const hasLongitude = rawDeliveryLongitude !== undefined && rawDeliveryLongitude !== null;
+    const deliveryLatitude = hasLatitude ? Number(rawDeliveryLatitude) : null;
+    const deliveryLongitude = hasLongitude ? Number(rawDeliveryLongitude) : null;
     if (
-      hasLatitude !== hasLongitude ||
-      (hasLatitude && (
-        !Number.isFinite(deliveryLatitude) ||
-        !Number.isFinite(deliveryLongitude) ||
-        deliveryLatitude < -90 ||
-        deliveryLatitude > 90 ||
-        deliveryLongitude < -180 ||
-        deliveryLongitude > 180
-      ))
+      !isPickup && (
+        hasLatitude !== hasLongitude ||
+        (hasLatitude && (
+          !Number.isFinite(deliveryLatitude) ||
+          !Number.isFinite(deliveryLongitude) ||
+          deliveryLatitude < -90 ||
+          deliveryLatitude > 90 ||
+          deliveryLongitude < -180 ||
+          deliveryLongitude > 180
+        ))
+      )
     ) {
       return res.status(400).json({
         success: false,
@@ -1032,7 +1071,12 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
-    const initialPaymentMethod = (paymentMethod || 'GCash').toUpperCase().includes('COD') ? 'COD' : 'GCash';
+    const isPayInStore = (paymentMethod || '').toUpperCase().includes('STORE') || (paymentMethod || '').toUpperCase().includes('COUNTER');
+    const isCod = (paymentMethod || 'GCash').toUpperCase().includes('COD');
+    const initialPaymentMethod = isPickup
+      ? (isPayInStore ? 'Pay in Store' : 'GCash')
+      : (isCod ? 'COD' : 'GCash');
+    const isPayLater = isCod || (isPickup && isPayInStore);
     const normalizedItems = rawItems.map(item => {
       const quantity = Number(item.quantity) || 1;
       const price = Number(item.price ?? item.unit_price ?? 0);
@@ -1063,13 +1107,12 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     // Check individual product quantities against standards
     let standardCheck = checkProductQuantityStandards(normalizedItems);
     let requiresKitchenApproval = standardCheck.requiresApproval;
-    const isCod = initialPaymentMethod === 'COD';
     // If order is below standards or covered by estimated servings, permit customer/cashier to pay immediately
     let initialStatus = requiresKitchenApproval
       ? 'AWAITING_KITCHEN_APPROVAL'
-      : (isPos ? (req.body.status || 'CONFIRMED') : (isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
+      : (isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
     let kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
-    let isGcashAuthorized = !requiresKitchenApproval && !isCod && !isPos;
+    let isGcashAuthorized = !requiresKitchenApproval && !isPayLater && !isPos;
 
     const orderRecord = {
       id: orderId,
@@ -1084,6 +1127,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       delivery_longitude: deliveryLongitude,
       payment_method: initialPaymentMethod,
       paymentMethod: initialPaymentMethod,
+      fulfillment_type: fulfillmentType,
+      fulfillmentType: fulfillmentType,
+      type: isPickup ? 'Store Pick-Up' : (isPos ? 'POS Order' : 'Delivery'),
       payment_reference: req.body.paymentReference || req.body.referenceNumber || undefined,
       paymentReference: req.body.paymentReference || req.body.referenceNumber || undefined,
       referenceNumber: req.body.referenceNumber || req.body.paymentReference || undefined,
@@ -1169,9 +1215,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           requiresKitchenApproval = standardCheck.requiresApproval;
           initialStatus = requiresKitchenApproval
             ? 'AWAITING_KITCHEN_APPROVAL'
-            : (isPos ? (req.body.status || 'CONFIRMED') : (isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
+            : (isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
           kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
-          isGcashAuthorized = !requiresKitchenApproval && !isCod && !isPos;
+          isGcashAuthorized = !requiresKitchenApproval && !isPayLater && !isPos;
 
           orderRecord.requires_kitchen_approval = requiresKitchenApproval;
           orderRecord.requiresKitchenApproval = requiresKitchenApproval;
@@ -1256,13 +1302,15 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
         await client.query(
           `INSERT INTO orders (
-             id, customer_id, order_type, status, subtotal, tax, delivery_fee, total, notes,
+             id, customer_id, customer_name, order_type, status, subtotal, tax, delivery_fee, total, notes,
              created_at, delivery_latitude, delivery_longitude, payment_method, payment_reference, payment_receipt,
-             requires_kitchen_approval, kitchen_approval_status, servings_deducted
+             requires_kitchen_approval, kitchen_approval_status, servings_deducted, fulfillment_type
            )
-           VALUES ($1, $2, $16, $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13, $14, $15, FALSE)
+           VALUES ($1, $2, $18, $16, $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13, $14, $15, FALSE, $17)
            ON CONFLICT (id) DO UPDATE SET
+             customer_name = COALESCE(EXCLUDED.customer_name, orders.customer_name),
              order_type = EXCLUDED.order_type,
+             fulfillment_type = EXCLUDED.fulfillment_type,
              status = EXCLUDED.status,
              delivery_latitude = COALESCE(EXCLUDED.delivery_latitude, orders.delivery_latitude),
              delivery_longitude = COALESCE(EXCLUDED.delivery_longitude, orders.delivery_longitude),
@@ -1288,9 +1336,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             requiresKitchenApproval,
             kitchenApprovalStatus,
             dbOrderType,
+            fulfillmentType,
+            cleanCustomer,
           ]
         );
-        if (!isPos) {
+        if (!isPos && !isPickup) {
           await client.query(
             `INSERT INTO deliveries (order_id, delivery_address, status)
              VALUES ($1, $2, 'PENDING')
@@ -1506,6 +1556,7 @@ router.get('/cashier/online-receipts', async (req, res) => {
     try {
       const { rows } = await query(`
         SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
+               COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type,
                COALESCE(o.receipt_status, 'UNPRINTED') AS receipt_status,
                COALESCE(o.is_receipt_printed, FALSE) AS is_receipt_printed,
                o.receipt_printed_at,
@@ -1542,7 +1593,7 @@ router.get('/cashier/online-receipts', async (req, res) => {
         ) p_pay ON o.id = p_pay.order_id
         WHERE UPPER(COALESCE(o.order_type, '')) = 'ONLINE'
           AND o.id NOT LIKE 'POS-%'
-        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, p_pay.payment_method, p_pay.reference_number
+        GROUP BY o.id, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.rider_cash_received, p_pay.payment_method, p_pay.reference_number, o.fulfillment_type
         ORDER BY o.created_at ASC
       `);
       dbOrders = rows;
@@ -1719,6 +1770,95 @@ router.patch('/cashier/online-receipts/:id/print', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to record receipt print action',
+      error: error.message,
+    });
+  }
+});
+
+/**
+ * POST /api/orders/:id/pickup-handover
+ * Cashier marks a store pickup order as completed / handed over, collecting payment if unpaid.
+ */
+router.post('/orders/:id/pickup-handover', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { paymentMethod, cashReceived, change } = req.body;
+    let order = inMemoryOrders.get(id);
+    let dbOrder = null;
+
+    try {
+      const pool = await getDbPool();
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const { rows } = await client.query(`SELECT * FROM orders WHERE id = $1 FOR UPDATE`, [id]);
+        if (rows.length > 0) {
+          dbOrder = rows[0];
+        }
+
+        // Update orders table status to COMPLETED
+        await client.query(
+          `UPDATE orders 
+           SET status = 'COMPLETED',
+               updated_at = NOW()
+           WHERE id = $1`,
+          [id]
+        );
+
+        // Reconcile payment status to PAID
+        const payMethod = paymentMethod || dbOrder?.payment_method || order?.paymentMethod || 'Cash';
+        const existingPay = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [id]);
+        const finalAmt = Number(dbOrder?.total || order?.total || 0);
+        if (existingPay.rows.length === 0) {
+          await client.query(
+            `INSERT INTO payments (order_id, payment_method, amount, status, paid_at, updated_at)
+             VALUES ($1, $2, $3, 'PAID', NOW(), NOW())`,
+            [id, payMethod, finalAmt]
+          );
+        } else {
+          await client.query(
+            `UPDATE payments 
+             SET status = 'PAID',
+                 payment_method = COALESCE($2, payment_method),
+                 paid_at = NOW(),
+                 updated_at = NOW()
+             WHERE order_id = $1`,
+            [id, payMethod]
+          );
+        }
+
+        await client.query('COMMIT');
+      } catch (dbErr) {
+        await client.query('ROLLBACK');
+        console.warn('[PICKUP HANDOVER] Database update warning:', dbErr.message);
+      } finally {
+        client.release();
+      }
+    } catch (poolErr) {
+      console.warn('[PICKUP HANDOVER] DB connection warning:', poolErr.message);
+    }
+
+    if (!order) {
+      order = { ...(dbOrder || {}), id };
+    }
+    order.status = 'COMPLETED';
+    order.paymentStatus = 'Paid';
+    order.updated_at = new Date().toISOString();
+    inMemoryOrders.set(id, order);
+
+    const formatted = formatOrderResponse(order);
+    emitOrderUpdate(formatted);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Order successfully marked as picked up!',
+      data: formatted,
+    });
+  } catch (error) {
+    console.error('Error handling pickup handover:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to complete pickup handover',
       error: error.message,
     });
   }

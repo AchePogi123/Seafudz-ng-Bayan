@@ -35,6 +35,7 @@ router.get('/rider/deliveries', optionalAuth, async (req, res) => {
       LEFT JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN products p ON oi.product_id = p.id
       WHERE (UPPER(o.order_type) = 'ONLINE' OR d.id IS NOT NULL)
+        AND UPPER(COALESCE(o.fulfillment_type, 'DELIVERY')) != 'PICKUP'
         AND (o.is_receipt_printed = TRUE OR o.receipt_status = 'PRINTED')
         AND (UPPER(o.status) IN ('READY', 'OUT_FOR_DELIVERY'))
       GROUP BY o.id, o.status, d.id, d.delivery_address, d.status, d.rider_id, c.fullname, c.phone, e.fullname
@@ -53,7 +54,8 @@ router.get('/rider/deliveries', optionalAuth, async (req, res) => {
 
     inMemoryOrders.forEach((order, id) => {
       const isOnline = (order.order_type || 'ONLINE').toUpperCase() === 'ONLINE' || Boolean(order.delivery_address || order.customer_name || order.customer);
-      if (isOnline) {
+      const isPickup = String(order.fulfillment_type || order.fulfillmentType || order.type || '').toUpperCase().includes('PICKUP');
+      if (isOnline && !isPickup) {
         const isPrinted = Boolean(order.is_receipt_printed || order.isReceiptPrinted || order.receipt_status === 'PRINTED' || order.receiptStatus === 'PRINTED');
         if (!isPrinted) return;
 

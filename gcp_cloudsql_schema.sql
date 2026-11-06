@@ -156,6 +156,7 @@ CREATE TABLE orders (
     customer_replacements JSONB NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(customer_replacements) = 'array'),
     delivery_proof TEXT,
+    fulfillment_type VARCHAR(20) DEFAULT 'DELIVERY',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

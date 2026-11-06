@@ -262,13 +262,16 @@ const SalesReportAdmin: React.FC = () => {
     }
 
     const formatOrderRow = useCallback((dbO: any): LiveTransaction => {
-        const rawType = dbO.order_type || dbO.type || ''
+        const rawFulfillment = String(dbO.fulfillment_type || dbO.fulfillmentType || '').toUpperCase()
+        const rawType = String(dbO.order_type || dbO.type || '')
         const normalizedType =
-            rawType.toUpperCase() === 'ONLINE'
-                ? 'Delivery'
-                : rawType.toUpperCase() === 'ON_SITE'
-                    ? 'POS Order'
-                    : rawType || 'POS Order'
+            rawFulfillment === 'PICKUP' || rawType.toUpperCase().includes('PICKUP')
+                ? 'Store Pick-Up'
+                : rawType.toUpperCase() === 'ONLINE' || rawType.toUpperCase() === 'DELIVERY'
+                    ? 'Delivery'
+                    : rawType.toUpperCase() === 'ON_SITE'
+                        ? 'POS Order'
+                        : rawType || 'POS Order'
 
         let itemsSummary = 'Seafood Dish'
         let itemsList: OrderItemDetail[] = []
@@ -295,9 +298,10 @@ const SalesReportAdmin: React.FC = () => {
             items: itemsSummary,
             itemsList,
             customer: (() => {
-                const c = String(dbO.customer_name || '').trim();
-                if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
-                return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+                const c = String(dbO.customer_name || dbO.customerName || dbO.customer || dbO.fullname || '').trim();
+                if (c && c !== 'Walk-In' && c !== 'Walk-In Customer' && c !== 'Online Customer') return c;
+                if (c === 'Online Customer') return c;
+                return '';
             })(),
             customerPhone: dbO.customer_phone || dbO.phone || undefined,
             customerAddress: dbO.delivery_address || dbO.address || undefined,
@@ -308,7 +312,7 @@ const SalesReportAdmin: React.FC = () => {
             riderCashReceived: dbO.rider_cash_received !== undefined && dbO.rider_cash_received !== null
                 ? Number(dbO.rider_cash_received)
                 : (dbO.riderCashReceived !== undefined && dbO.riderCashReceived !== null ? Number(dbO.riderCashReceived) : undefined),
-            riderName: dbO.rider_name || dbO.riderName || undefined,
+            riderName: (rawFulfillment === 'PICKUP' || rawType.toUpperCase().includes('PICKUP')) ? undefined : (dbO.rider_name || dbO.riderName || undefined),
             type: normalizedType,
             paymentMethod: dbO.payment_method || 'Cash',
             paymentReference: readReferenceString(
@@ -553,14 +557,22 @@ const SalesReportAdmin: React.FC = () => {
                                         .map((i: any) => `${i.name || i.item?.name || 'Seafood'} x${i.quantity || 1}`)
                                         .join(', ')
                                 }
+                                const localFulfillment = String(o.fulfillmentType || o.fulfillment_type || '').toUpperCase()
+                                const localTypeStr = String(o.type || o.order_type || '')
+                                const txType = localFulfillment === 'PICKUP' || localTypeStr.toUpperCase().includes('PICKUP')
+                                    ? 'Store Pick-Up'
+                                    : (localTypeStr.toUpperCase() === 'ONLINE' || localTypeStr.toUpperCase() === 'DELIVERY')
+                                        ? 'Delivery'
+                                        : o.type || 'POS Order'
+
                                 const tx: LiveTransaction = {
                                     id: String(o.id || o.ref || `local-${idx}`),
                                     ref: String(o.ref || o.id || `local-${idx}`),
                                     dateTime: o.dateTime || o.createdAt || new Date().toLocaleString(),
-                                    type: o.type || 'POS Order',
+                                    type: txType,
                                     status: o.status || 'Completed',
                                     customer: (() => {
-                                        const c = String(o.customerName || o.customer || o.customer_name || '').trim();
+                                        const c = String(o.customerName || o.customer || o.customer_name || o.fullname || '').trim();
                                         if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
                                         return '';
                                     })(),
@@ -1332,7 +1344,7 @@ const SalesReportAdmin: React.FC = () => {
                                     <div>
                                         <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Customer Name</span>
                                         <span className="font-bold text-slate-900 mt-0.5 block text-sm">
-                                            {selectedTransaction.customer || 'None recorded'}
+                                            {selectedTransaction.customer || (selectedTransaction as any).customerName || 'None recorded'}
                                         </span>
                                     </div>
 
@@ -1346,11 +1358,11 @@ const SalesReportAdmin: React.FC = () => {
                                     <div className="sm:col-span-2">
                                         <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Delivery / Customer Address</span>
                                         <span className="font-medium text-slate-800 mt-0.5 block leading-relaxed">
-                                            {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : 'In-Store / On-Site')}
+                                            {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : (selectedTransaction.type?.toLowerCase().includes('pick') ? 'Store Pick-Up Counter' : 'In-Store / On-Site'))}
                                         </span>
                                     </div>
 
-                                    {selectedTransaction.riderName && (
+                                    {selectedTransaction.riderName && !selectedTransaction.type?.toLowerCase().includes('pick') && (
                                         <div className="sm:col-span-2">
                                             <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Assigned Delivery Rider</span>
                                             <span className="font-semibold text-slate-800 mt-0.5 block">

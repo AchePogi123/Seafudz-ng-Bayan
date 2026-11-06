@@ -161,8 +161,8 @@ export const POS: React.FC = () => {
   // Approved bulk order awaiting cashier payment collection
   const [approvedOrderForPayment, setApprovedOrderForPayment] = useState<any | null>(null)
 
-  // Sub-module navigation state: 'new_order' | 'processing_orders' | 'online_receipts'
-  const [activeSubModule, setActiveSubModule] = useState<'new_order' | 'processing_orders' | 'online_receipts'>('new_order')
+  // Sub-module navigation state: 'new_order' | 'processing_orders' | 'online_receipts' | 'store_pickups'
+  const [activeSubModule, setActiveSubModule] = useState<'new_order' | 'processing_orders' | 'online_receipts' | 'store_pickups'>('new_order')
   const [posOrders, setPosOrders] = useState<any[]>([])
   const [posSearchQuery, setPosSearchQuery] = useState('')
   const [posStatusFilter, setPosStatusFilter] = useState<'all' | 'kitchen' | 'ready' | 'completed' | 'cancelled'>('all')
@@ -172,6 +172,15 @@ export const POS: React.FC = () => {
   const [onlineReceipts, setOnlineReceipts] = useState<any[]>([])
   const [onlineSearchQuery, setOnlineSearchQuery] = useState('')
   const [onlineFilter, setOnlineFilter] = useState<'all' | 'unprinted' | 'printed'>('unprinted')
+
+  // Store Pickups State for Cashier
+  const [pickupSearchQuery, setPickupSearchQuery] = useState('')
+  const [pickupFilter, setPickupFilter] = useState<'all' | 'ready' | 'pending' | 'completed'>('all')
+  const [pickupPage, setPickupPage] = useState<number>(1)
+  const PICKUP_PAGE_SIZE = 10
+  const [handoverModalOrder, setHandoverModalOrder] = useState<any | null>(null)
+  const [cashTendered, setCashTendered] = useState<string>('')
+  const [isSubmittingHandover, setIsSubmittingHandover] = useState(false)
 
   // Pagination states (10 transactions per page)
   const [onlinePage, setOnlinePage] = useState<number>(1)
@@ -373,6 +382,8 @@ export const POS: React.FC = () => {
           )
           mergedMap.set(String(o.id), {
             ...o,
+            fulfillmentType: o.fulfillmentType || o.fulfillment_type || (typeStr.includes('pickup') ? 'PICKUP' : 'DELIVERY'),
+            fulfillment_type: o.fulfillmentType || o.fulfillment_type || (typeStr.includes('pickup') ? 'PICKUP' : 'DELIVERY'),
             isReceiptPrinted: isPrinted,
             receiptStatus: isPrinted ? 'PRINTED' : 'UNPRINTED',
           })
@@ -387,13 +398,16 @@ export const POS: React.FC = () => {
           (o.receiptStatus || '').toUpperCase() === 'PRINTED' ||
           (o.receipt_status || '').toUpperCase() === 'PRINTED'
         )
+        const fType = o.fulfillmentType || o.fulfillment_type || ((o.type || '').toUpperCase().includes('PICKUP') ? 'PICKUP' : 'DELIVERY')
         if (!mergedMap.has(idStr)) {
           mergedMap.set(idStr, {
             id: idStr,
             ref: idStr,
+            fulfillmentType: fType,
+            fulfillment_type: fType,
             customerName: o.customer || o.customerName || 'Online Customer',
             phone: o.phone || '0917-000-0000',
-            deliveryAddress: o.address || o.deliveryAddress || 'Delivery Address',
+            deliveryAddress: o.address || o.deliveryAddress || (fType === 'PICKUP' ? 'Store Counter (Pick-Up)' : 'Delivery Address'),
             paymentMethod: o.paymentMethod || 'GCash',
             receiptStatus: isPrinted ? 'PRINTED' : 'UNPRINTED',
             isReceiptPrinted: isPrinted,
@@ -401,7 +415,7 @@ export const POS: React.FC = () => {
             status: (o.status || 'CONFIRMED').toUpperCase(),
             subtotal: o.subtotal || o.total || 0,
             vat: o.vat || 0,
-            deliveryFee: o.deliveryFee ?? 50,
+            deliveryFee: fType === 'PICKUP' ? 0 : (o.deliveryFee ?? 50),
             total: o.total || 0,
             items: Array.isArray(o.cartItems)
               ? o.cartItems.map((ci: any) => ({
@@ -419,6 +433,10 @@ export const POS: React.FC = () => {
           const existing = mergedMap.get(idStr)
           if (o.deliveryProof || o.delivery_proof) {
             existing.deliveryProof = o.deliveryProof || o.delivery_proof
+          }
+          if (o.fulfillmentType || o.fulfillment_type) {
+            existing.fulfillmentType = o.fulfillmentType || o.fulfillment_type
+            existing.fulfillment_type = o.fulfillmentType || o.fulfillment_type
           }
           if (isPrinted) {
             existing.isReceiptPrinted = true
@@ -549,9 +567,26 @@ export const POS: React.FC = () => {
     }).length
   }, [posOrders])
 
+  const isPickupOrder = (o: any) => {
+    const fType = String(o?.fulfillmentType || o?.fulfillment_type || o?.type || '').toUpperCase()
+    return fType.includes('PICKUP')
+  }
+
   const unprintedOnlineCount = useMemo(() => {
     return onlineReceipts.filter(
-      (o) => !o.isReceiptPrinted && (o.receiptStatus || '').toUpperCase() !== 'PRINTED'
+      (o) => !isPickupOrder(o) && !o.isReceiptPrinted && (o.receiptStatus || '').toUpperCase() !== 'PRINTED'
+    ).length
+  }, [onlineReceipts])
+
+  const pendingPickupCount = useMemo(() => {
+    return onlineReceipts.filter(
+      (o) => isPickupOrder(o) && !['COMPLETED', 'CANCELLED'].includes((o.status || '').toUpperCase())
+    ).length
+  }, [onlineReceipts])
+
+  const readyPickupCount = useMemo(() => {
+    return onlineReceipts.filter(
+      (o) => isPickupOrder(o) && (o.status || '').toUpperCase() === 'READY'
     ).length
   }, [onlineReceipts])
 
@@ -585,7 +620,9 @@ export const POS: React.FC = () => {
   }
 
   const filteredOnlineReceipts = useMemo(() => {
-    const filtered = onlineReceipts.filter((o) => {
+    // Exclude Pickup orders so this tab is exclusive to Delivery
+    const deliveryOnly = onlineReceipts.filter((o) => !isPickupOrder(o))
+    const filtered = deliveryOnly.filter((o) => {
       const isPrinted = Boolean(o.isReceiptPrinted || (o.receiptStatus || '').toUpperCase() === 'PRINTED')
       const matchesFilter =
         onlineFilter === 'all'
@@ -615,7 +652,43 @@ export const POS: React.FC = () => {
     })
   }, [onlineReceipts, onlineFilter, onlineSearchQuery])
 
+  const filteredStorePickups = useMemo(() => {
+    // Exclusive to Pickup orders
+    const pickupOnly = onlineReceipts.filter((o) => isPickupOrder(o))
+    const filtered = pickupOnly.filter((o) => {
+      const s = (o.status || '').toUpperCase()
+      const matchesFilter =
+        pickupFilter === 'all'
+          ? true
+          : pickupFilter === 'ready'
+          ? s === 'READY'
+          : pickupFilter === 'pending'
+          ? ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING'].includes(s)
+          : pickupFilter === 'completed'
+          ? ['COMPLETED', 'DELIVERED', 'SERVED'].includes(s)
+          : true
+
+      if (!matchesFilter) return false
+
+      if (!pickupSearchQuery.trim()) return true
+      const q = pickupSearchQuery.toLowerCase()
+      const ref = (o.id || o.ref || '').toLowerCase()
+      const cust = (o.customerName || o.customer || '').toLowerCase()
+      const phone = (o.phone || '').toLowerCase()
+      return ref.includes(q) || cust.includes(q) || phone.includes(q)
+    })
+
+    // FIFO sorting: oldest creation timestamp first
+    return filtered.sort((a, b) => {
+      const timeA = parseOrderTimestamp(a)
+      const timeB = parseOrderTimestamp(b)
+      if (timeA !== timeB) return timeA - timeB
+      return String(a.id || a.ref || '').localeCompare(String(b.id || b.ref || ''))
+    })
+  }, [onlineReceipts, pickupFilter, pickupSearchQuery])
+
   const handlePrepareReceiptDetails = (order: any) => {
+    const isPickup = isPickupOrder(order)
     const itemsList: CartItem[] = Array.isArray(order.items)
       ? order.items.map((i: any) => ({
           item: {
@@ -632,24 +705,73 @@ export const POS: React.FC = () => {
       : itemsList.reduce((acc, ci) => acc + ci.item.price * ci.quantity, 0)
 
     const calcVat = typeof order.vat === 'number' ? order.vat : Math.round(calcSubtotal * 0.12)
-    const calcDeliveryFee = typeof order.deliveryFee === 'number' ? order.deliveryFee : 50
+    const calcDeliveryFee = isPickup ? 0 : (typeof order.deliveryFee === 'number' ? order.deliveryFee : 50)
     const calcTotal = typeof order.total === 'number' ? order.total : Math.round(calcSubtotal + calcVat + calcDeliveryFee)
     const paymentRef = order.paymentReference || order.payment_reference || order.referenceNumber || order.reference_number || undefined
 
     return {
       orderId: order.id || order.ref,
       table: 'N/A',
-      type: 'ONLINE / Delivery',
+      type: isPickup ? 'ONLINE / Store Pick-Up' : 'ONLINE / Delivery',
       total: calcTotal,
       subtotal: calcSubtotal,
       vat: calcVat,
       deliveryFee: calcDeliveryFee,
       cartItems: itemsList,
-      paymentMethod: order.paymentMethod || 'GCash',
+      paymentMethod: order.paymentMethod || (isPickup ? 'Pay in Store' : 'GCash'),
       paymentReference: paymentRef,
       customerName: order.customerName || order.customer || 'Online Customer',
       phone: order.phone || '0917-000-0000',
-      address: order.deliveryAddress || order.address || 'Delivery Address',
+      address: isPickup ? 'Store Counter (Pick-Up)' : (order.deliveryAddress || order.address || 'Delivery Address'),
+    }
+  }
+
+  const handlePickupHandover = async (order: any, cashTenderedVal?: number) => {
+    const orderId = order.id || order.ref
+    const isPayInStore = String(order.paymentMethod || '').toUpperCase().includes('STORE') || order.paymentMethod === 'PAY_IN_STORE' || order.paymentMethod === 'COD'
+
+    try {
+      setIsSubmittingHandover(true)
+      await fetch(`${API_BASE_URL}/orders/${encodeURIComponent(orderId)}/pickup-handover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cashierId: currentUser?.id,
+          paymentMethod: isPayInStore ? 'CASH' : 'GCASH',
+          cashReceived: cashTenderedVal !== undefined ? cashTenderedVal : (order.total || 0),
+        }),
+      }).catch(() => null)
+
+      // Update in LocalStorage
+      try {
+        const stored = localStorage.getItem('seafudz_orders')
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          const updated = parsed.map((o: any) =>
+            o.id === orderId || o.ref === orderId
+              ? { ...o, status: 'COMPLETED', paymentStatus: 'PAID', updatedAt: new Date().toISOString() }
+              : o
+          )
+          localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+        }
+      } catch {}
+
+      setOnlineReceipts((prev) =>
+        prev.map((o) =>
+          o.id === orderId || o.ref === orderId
+            ? { ...o, status: 'COMPLETED', paymentStatus: 'PAID' }
+            : o
+        )
+      )
+
+      notifyOrderSync()
+      setHandoverModalOrder(null)
+      setCashTendered('')
+      setPosNotification(`Order #${orderId} marked as Picked Up & successfully handed over!`)
+    } catch (err: any) {
+      alert(`Failed to complete handover: ${err?.message || 'Network error'}`)
+    } finally {
+      setIsSubmittingHandover(false)
     }
   }
 
@@ -755,6 +877,10 @@ export const POS: React.FC = () => {
     setPosPage(1)
   }, [posStatusFilter, posSearchQuery])
 
+  useEffect(() => {
+    setPickupPage(1)
+  }, [pickupFilter, pickupSearchQuery])
+
   // Paginated Slices (10 transactions per page)
   const totalOnlinePages = Math.max(1, Math.ceil(filteredOnlineReceipts.length / ONLINE_PAGE_SIZE))
   const paginatedOnlineReceipts = useMemo(() => {
@@ -768,6 +894,12 @@ export const POS: React.FC = () => {
     return filteredPosOrders.slice(start, start + POS_PAGE_SIZE)
   }, [filteredPosOrders, posPage])
 
+  const totalPickupPages = Math.max(1, Math.ceil(filteredStorePickups.length / PICKUP_PAGE_SIZE))
+  const paginatedStorePickups = useMemo(() => {
+    const start = (pickupPage - 1) * PICKUP_PAGE_SIZE
+    return filteredStorePickups.slice(start, start + PICKUP_PAGE_SIZE)
+  }, [filteredStorePickups, pickupPage])
+
   useEffect(() => {
     if (onlinePage > totalOnlinePages) setOnlinePage(1)
   }, [onlinePage, totalOnlinePages])
@@ -775,6 +907,10 @@ export const POS: React.FC = () => {
   useEffect(() => {
     if (posPage > totalPosPages) setPosPage(1)
   }, [posPage, totalPosPages])
+
+  useEffect(() => {
+    if (pickupPage > totalPickupPages) setPickupPage(1)
+  }, [pickupPage, totalPickupPages])
 
   const renderPagination = (
     currentPage: number,
@@ -1474,6 +1610,24 @@ export const POS: React.FC = () => {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setActiveSubModule('store_pickups')}
+              className={`px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer relative ${
+                activeSubModule === 'store_pickups'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
+              }`}
+            >
+              <span>🛍️</span>
+              <span>Store Pickups</span>
+              {pendingPickupCount > 0 && (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  activeSubModule === 'store_pickups' ? 'bg-white text-emerald-700' : 'bg-emerald-600 text-white'
+                }`}>
+                  {pendingPickupCount}
+                </span>
+              )}
+            </button>
             {isAdmin && (
               <button
                 onClick={() => setIsAdminCreateOpen(true)}
@@ -2122,6 +2276,310 @@ export const POS: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* SUB-MODULE 4: STORE PICKUPS */}
+        {activeSubModule === 'store_pickups' && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header & Filter Controls */}
+            <div className="bg-white p-4 sm:p-5 rounded-2xl border border-neutral-200/80 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-neutral-900 flex items-center gap-2">
+                  <span>🛍️</span> Online Store Pick-Up Orders
+                </h2>
+                <p className="text-xs text-neutral-500 font-medium">
+                  Manage store pick-ups, collect counter cash payments, print receipts, and hand over completed orders
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Search */}
+                <div className="relative flex-1 sm:w-64">
+                  <input
+                    type="text"
+                    value={pickupSearchQuery}
+                    onChange={(e) => setPickupSearchQuery(e.target.value)}
+                    placeholder="Search Ref / Customer / Phone..."
+                    className="w-full bg-neutral-100 text-neutral-900 border border-neutral-300/80 rounded-xl px-3 py-2 text-xs font-bold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                  {pickupSearchQuery && (
+                    <button
+                      onClick={() => setPickupSearchQuery('')}
+                      className="absolute right-2.5 top-2.5 text-neutral-400 hover:text-neutral-700 text-xs font-black cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Filter Switcher */}
+                <div className="flex items-center bg-neutral-100 p-1 rounded-xl border border-neutral-300/60">
+                  <button
+                    type="button"
+                    onClick={() => setPickupFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                      pickupFilter === 'all'
+                        ? 'bg-white text-emerald-700 shadow-2xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    All ({onlineReceipts.filter(isPickupOrder).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPickupFilter('ready')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                      pickupFilter === 'ready'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>🛍️</span> Ready ({readyPickupCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPickupFilter('pending')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                      pickupFilter === 'pending'
+                        ? 'bg-amber-500 text-white shadow-2xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>🍳</span> Cooking ({onlineReceipts.filter((o) => isPickupOrder(o) && ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING'].includes((o.status || '').toUpperCase())).length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPickupFilter('completed')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                      pickupFilter === 'completed'
+                        ? 'bg-neutral-800 text-white shadow-2xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>✓</span> Picked Up ({onlineReceipts.filter((o) => isPickupOrder(o) && ['COMPLETED', 'DELIVERED', 'SERVED'].includes((o.status || '').toUpperCase())).length})
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Pickups Table / Cards */}
+            {filteredStorePickups.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-neutral-200/80 p-12 text-center shadow-2xs">
+                <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-3xl mx-auto mb-4 border border-emerald-100">
+                  🛍️
+                </div>
+                <h3 className="text-base font-extrabold text-neutral-800">No Store Pick-Up Orders Found</h3>
+                <p className="text-xs text-neutral-500 max-w-md mx-auto mt-1 leading-relaxed">
+                  When customers select "Store Pick-Up" during checkout, their orders will appear here for preparation tracking and handover.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                  <div className="xl:col-span-3">Queue & Order Ref</div>
+                  <div className="xl:col-span-3">Customer & Pick-Up Info</div>
+                  <div className="xl:col-span-3">Ordered Dishes</div>
+                  <div className="xl:col-span-1 text-right">Total Due</div>
+                  <div className="xl:col-span-2 text-right">Actions</div>
+                </div>
+
+                {paginatedStorePickups.map((ord, idx) => {
+                  const globalIdx = (pickupPage - 1) * PICKUP_PAGE_SIZE + idx + 1
+                  const orderId = ord.id || ord.ref
+                  const isPrinted = Boolean(ord.isReceiptPrinted || (ord.receiptStatus || '').toUpperCase() === 'PRINTED')
+                  const items = Array.isArray(ord.items) ? ord.items : []
+                  const statusNorm = (ord.status || 'CONFIRMED').toUpperCase()
+                  const isCompleted = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(statusNorm)
+                  const isReady = statusNorm === 'READY'
+                  const isPayInStore = String(ord.paymentMethod || '').toUpperCase().includes('STORE') || ord.paymentMethod === 'PAY_IN_STORE' || ord.paymentMethod === 'COD'
+
+                  return (
+                    <div
+                      key={orderId}
+                      className={`bg-white rounded-2xl border transition-all p-4 sm:p-5 shadow-2xs hover:shadow-xs ${
+                        isReady ? 'border-emerald-400 ring-2 ring-emerald-500/10' : 'border-neutral-200 hover:border-neutral-300'
+                      }`}
+                    >
+                      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
+                        {/* Col 1: Queue Rank, ID, Time, Print Badge (col-span-3) */}
+                        <div className="xl:col-span-3 flex items-center gap-3">
+                          <div className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs ${
+                            isReady
+                              ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
+                              : 'bg-neutral-100 text-neutral-700 border border-neutral-200'
+                          }`}>
+                            <span className="text-[8px] uppercase tracking-wider font-extrabold opacity-85">PICKUP</span>
+                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
+                          </div>
+
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
+                                #{orderId}
+                              </span>
+                              {isPrinted ? (
+                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
+                                  <span>✅</span> Printed
+                                </span>
+                              ) : (
+                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
+                                  <span>🖨️</span> Unprinted
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-neutral-400 font-semibold flex items-center gap-2">
+                              <span>🕒 {formatOrderTime(ord.createdAt || ord.dateTime)}</span>
+                              <span className="text-neutral-300">•</span>
+                              <span className="text-emerald-700 font-bold">Pick-Up Fee: ₱0.00</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Col 2: Customer, Contact, Pick-Up Details & Status (col-span-3) */}
+                        <div className="xl:col-span-3 space-y-1.5 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-black text-xs sm:text-sm text-neutral-900 truncate">
+                              {ord.customerName || ord.customer || 'Online Customer'}
+                            </span>
+                            <span className="text-[11px] font-mono text-neutral-500 font-bold">
+                              📞 {ord.phone || '0917-000-0000'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {/* Status Badge */}
+                            {isReady ? (
+                              <span className="bg-emerald-500 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1 shadow-xs animate-pulse">
+                                <span>🛍️</span> READY FOR PICK-UP
+                              </span>
+                            ) : isCompleted ? (
+                              <span className="bg-neutral-800 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
+                                <span>✓</span> PICKED UP
+                              </span>
+                            ) : statusNorm === 'PREPARING' ? (
+                              <span className="bg-amber-500 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
+                                <span>🍳</span> COOKING IN KITCHEN
+                              </span>
+                            ) : (
+                              <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
+                                <span>✓</span> CONFIRMED
+                              </span>
+                            )}
+
+                            {/* Payment Badge */}
+                            {isPayInStore ? (
+                              isCompleted ? (
+                                <span className="bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
+                                  💵 Paid in Store
+                                </span>
+                              ) : (
+                                <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black">
+                                  ⚠️ Collect ₱{Number(ord.total || 0).toFixed(2)} Cash
+                                </span>
+                              )
+                            ) : (
+                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
+                                ✅ Paid Online (GCash)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Col 3: Ordered Dishes (col-span-3) */}
+                        <div className="xl:col-span-3">
+                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden mb-1">
+                            Dishes Ordered:
+                          </span>
+                          <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                            {items.length === 0 ? (
+                              <span className="text-xs text-neutral-400 italic">No dishes itemized</span>
+                            ) : (
+                              items.map((it: any, i: number) => (
+                                <span
+                                  key={i}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-md text-[11px] font-bold text-neutral-800 transition-colors"
+                                >
+                                  <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
+                                  <span className="font-mono font-black text-emerald-700">x{it.quantity || 1}</span>
+                                </span>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Col 4: Total Amount (col-span-1) */}
+                        <div className="xl:col-span-1 text-left xl:text-right">
+                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
+                            Total Due:
+                          </span>
+                          <span className="text-base font-black font-mono text-neutral-900">
+                            ₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        {/* Col 5: Actions (col-span-2) */}
+                        <div className="xl:col-span-2 flex items-center justify-start xl:justify-end gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => handleViewOnlineReceipt(ord)}
+                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
+                          >
+                            <span>👁️</span> View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePrintOnlineReceipt(ord)}
+                            className={`font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
+                              isPrinted
+                                ? 'bg-neutral-700 hover:bg-neutral-800 shadow-neutral-500/20'
+                                : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
+                            }`}
+                          >
+                            <span>🖨️</span>
+                            <span>{isPrinted ? 'Re-print' : 'Print'}</span>
+                          </button>
+
+                          {/* Handover Action Button */}
+                          {!isCompleted ? (
+                            isPayInStore ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setHandoverModalOrder(ord)
+                                  setCashTendered(String(ord.total || ''))
+                                }}
+                                className="bg-amber-600 hover:bg-amber-700 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                title="Collect cash from customer and hand over order"
+                              >
+                                <span>💵</span>
+                                <span>Collect & Hand Over</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isSubmittingHandover}
+                                onClick={() => handlePickupHandover(ord)}
+                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                title="Mark as picked up by customer"
+                              >
+                                <span>🛍️</span>
+                                <span>Mark as Picked Up</span>
+                              </button>
+                            )
+                          ) : (
+                            <span className="text-xs font-bold text-neutral-400 bg-neutral-100 border border-neutral-200 px-3 py-1.5 rounded-xl">
+                              ✓ Claimed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+                {renderPagination(pickupPage, totalPickupPages, filteredStorePickups.length, PICKUP_PAGE_SIZE, setPickupPage)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {cartItems.length > 0 && activeSubModule === 'new_order' && (
@@ -2273,6 +2731,152 @@ export const POS: React.FC = () => {
                 className="px-4 py-2 text-xs font-bold text-neutral-700 bg-white border border-neutral-300 rounded-lg hover:bg-neutral-50 shadow-xs cursor-pointer"
               >
                 Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cash Collection & Handover Modal for Pay-in-Store Pickups */}
+      {handoverModalOrder && (
+        <div
+          className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setHandoverModalOrder(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-neutral-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="bg-amber-500 text-white p-4 sm:p-5 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl">
+                  💵
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base leading-tight">Collect Cash & Hand Over</h3>
+                  <p className="text-xs text-amber-100 font-medium mt-0.5">
+                    Store Pick-Up Order #{handoverModalOrder.id || handoverModalOrder.ref}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHandoverModalOrder(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white font-bold cursor-pointer transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 space-y-4">
+              <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-200/80 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Customer</span>
+                  <p className="text-sm font-black text-neutral-900">{handoverModalOrder.customerName || handoverModalOrder.customer || 'Online Customer'}</p>
+                  <p className="text-xs text-neutral-500 font-mono font-bold mt-0.5">📞 {handoverModalOrder.phone || 'N/A'}</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Total Due</span>
+                  <p className="text-xl font-black font-mono text-amber-600">
+                    ₱{Number(handoverModalOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Cash Input */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-neutral-700 block">
+                  Cash Tendered (₱) *
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-base font-bold text-neutral-400">₱</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    autoFocus
+                    value={cashTendered}
+                    onChange={(e) => setCashTendered(e.target.value)}
+                    placeholder="Enter cash amount received"
+                    className="w-full pl-8 pr-4 py-2.5 bg-neutral-50 text-neutral-900 border border-neutral-300 rounded-xl text-base font-black font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
+                  />
+                </div>
+              </div>
+
+              {/* Quick Cash Buttons */}
+              <div className="grid grid-cols-4 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCashTendered(String(handoverModalOrder.total || 0))}
+                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
+                >
+                  Exact
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCashTendered('500')}
+                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
+                >
+                  ₱500
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCashTendered('1000')}
+                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
+                >
+                  ₱1,000
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCashTendered('2000')}
+                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
+                >
+                  ₱2,000
+                </button>
+              </div>
+
+              {/* Change Calculation */}
+              {Number(cashTendered) > 0 && (
+                <div className={`rounded-xl p-3 border flex items-center justify-between ${
+                  Number(cashTendered) >= Number(handoverModalOrder.total || 0)
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                    : 'bg-rose-50 border-rose-200 text-rose-950'
+                }`}>
+                  <span className="text-xs font-bold">
+                    {Number(cashTendered) >= Number(handoverModalOrder.total || 0) ? 'Change to Return:' : 'Insufficient Amount:'}
+                  </span>
+                  <span className="text-base font-black font-mono">
+                    ₱{Math.abs(Number(cashTendered) - Number(handoverModalOrder.total || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-neutral-50 border-t border-neutral-200 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setHandoverModalOrder(null)}
+                className="px-4 py-2.5 text-xs font-extrabold text-neutral-600 hover:text-neutral-800 bg-white border border-neutral-300 rounded-xl cursor-pointer hover:bg-neutral-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isSubmittingHandover || !cashTendered || Number(cashTendered) < Number(handoverModalOrder.total || 0)}
+                onClick={() => handlePickupHandover(handoverModalOrder, Number(cashTendered))}
+                className="px-5 py-2.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl cursor-pointer shadow-md shadow-amber-600/20 transition-all flex items-center gap-1.5"
+              >
+                {isSubmittingHandover ? (
+                  <span>Processing...</span>
+                ) : (
+                  <>
+                    <span>✓</span>
+                    <span>Confirm Payment & Hand Over</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -20,6 +20,9 @@ export interface OrderItem {
 export interface OnlineOrder {
   id: string
   ref: string
+  fulfillmentType?: 'DELIVERY' | 'PICKUP' | string
+  fulfillment_type?: string
+  type?: string
   customer: string
   phone: string
   address: string
@@ -551,6 +554,9 @@ export const AssistantRole: React.FC = () => {
               combinedMap.set(id, {
                 id,
                 ref: id,
+                fulfillmentType: o.fulfillmentType || o.fulfillment_type || ((o.type || '').toUpperCase().includes('PICKUP') ? 'PICKUP' : 'DELIVERY'),
+                fulfillment_type: o.fulfillmentType || o.fulfillment_type || ((o.type || '').toUpperCase().includes('PICKUP') ? 'PICKUP' : 'DELIVERY'),
+                type: ((o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP')) ? 'Store Pick-Up' : 'Delivery',
                 customer: o.customer || o.customerName || 'Online Customer',
                 phone: o.phone || '0917-000-0000',
                 address: o.address || o.deliveryAddress || 'Metro Manila Address',
@@ -591,7 +597,7 @@ export const AssistantRole: React.FC = () => {
                 additionalPaymentReceipt: o.additionalPaymentReceipt,
                 subtotal: Number(o.subtotal || 0),
                 vat: Number(o.vat || 0),
-                deliveryFee: Number(o.deliveryFee || o.delivery_fee || 50),
+                deliveryFee: String(o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP') ? 0 : Number(o.deliveryFee ?? o.delivery_fee ?? 50),
                 total: o.total || 0,
                 createdAt: o.createdAt || 'Just now',
                 correctionNote: o.notes,
@@ -660,6 +666,9 @@ export const AssistantRole: React.FC = () => {
                 combinedMap.set(id, {
                   id,
                   ref: id,
+                  fulfillmentType: o.fulfillmentType || o.fulfillment_type || ((o.type || '').toUpperCase().includes('PICKUP') ? 'PICKUP' : 'DELIVERY'),
+                  fulfillment_type: o.fulfillmentType || o.fulfillment_type || ((o.type || '').toUpperCase().includes('PICKUP') ? 'PICKUP' : 'DELIVERY'),
+                  type: ((o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP')) ? 'Store Pick-Up' : 'Delivery',
                   customer: o.customer || 'Online Customer',
                   phone: o.phone || '0917-000-0000',
                   address: o.address || 'Delivery Address',
@@ -684,7 +693,7 @@ export const AssistantRole: React.FC = () => {
                 customerReplacements: o.customerReplacements || o.customer_replacements || [],
                   subtotal: Number(o.subtotal || 0),
                   vat: Number(o.vat || o.tax || 0),
-                  deliveryFee: Number(o.deliveryFee || o.delivery_fee || 50),
+                  deliveryFee: String(o.fulfillmentType || o.fulfillment_type || o.type || '').toUpperCase().includes('PICKUP') ? 0 : Number(o.deliveryFee ?? o.delivery_fee ?? 50),
                   total: Number(o.total || 0),
                   createdAt: o.dateTime || 'Just now',
                   correctionNote: o.notes,
@@ -1109,13 +1118,15 @@ export const AssistantRole: React.FC = () => {
         hasPrintedRef
       )
 
+      const isPickup = String(order.fulfillmentType || (order as any).fulfillment_type || order.type || '').toUpperCase().includes('PICKUP')
+
       const matchesTab =
         activeTab === 'pending'
           ? (!isConfirmedOrLater || isCancellationRefundNeeded)
           : activeTab === 'kitchen'
             ? (s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock' || (s === 'ready' && !isPrinted))
             : activeTab === 'dispatch'
-              ? ((s === 'ready' && isPrinted) || s === 'out_for_delivery' || s === 'assigned' || s === 'completed')
+              ? (!isPickup && ((s === 'ready' && isPrinted) || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'))
               : true
 
       if (!matchesTab) return false
@@ -1270,8 +1281,9 @@ export const AssistantRole: React.FC = () => {
                     (ord as any).is_receipt_printed === true ||
                     String(ord.receiptStatus || '').toUpperCase() === 'PRINTED'
                   )
-                  const deliveryFee = Number(ord.deliveryFee ?? 0)
-                  const priceBeforeDelivery = Math.max(0, Number(ord.total || 0) - deliveryFee)
+                  const isPickupOrder = String(ord.fulfillmentType || (ord as any).fulfillment_type || ord.type || '').toUpperCase().includes('PICKUP')
+                  const deliveryFee = isPickupOrder ? 0 : Number(ord.deliveryFee ?? 0)
+                  const priceBeforeDelivery = isPickupOrder ? Number(ord.total || 0) : Math.max(0, Number(ord.total || 0) - deliveryFee)
 
                   return (
                     <div
@@ -1284,7 +1296,18 @@ export const AssistantRole: React.FC = () => {
                     >
                       <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
                         <div>
-                          <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
+                            {String(ord.fulfillmentType || (ord as any).fulfillment_type || ord.type || '').toUpperCase().includes('PICKUP') ? (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                🛍️ PICK-UP
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-orange-50 text-orange-700 border border-orange-200">
+                                🛵 DELIVERY
+                              </span>
+                            )}
+                          </div>
                           <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
                           <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
                         </div>
@@ -1361,10 +1384,12 @@ export const AssistantRole: React.FC = () => {
                           <span>Food price + VAT</span>
                           <span>₱{priceBeforeDelivery.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Delivery fee</span>
-                          <span>₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
+                        {!isPickupOrder && (
+                          <div className="flex justify-between">
+                            <span>Delivery fee</span>
+                            <span>₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
@@ -1460,18 +1485,27 @@ export const AssistantRole: React.FC = () => {
                     <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
 
-                  <div className="space-y-1 text-[11px]">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-medium">Food price + VAT:</span>
-                      <span className="font-semibold text-slate-800">
-                        ₱{Math.max(0, selectedOrder.total - Number(selectedOrder.deliveryFee ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-medium">Delivery fee:</span>
-                      <span className="font-semibold text-slate-800">₱{Number(selectedOrder.deliveryFee ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const isSelectedPickup = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
+                    const selectedDeliveryFee = isSelectedPickup ? 0 : Number(selectedOrder.deliveryFee ?? 0)
+                    const foodPlusVat = isSelectedPickup ? selectedOrder.total : Math.max(0, selectedOrder.total - selectedDeliveryFee)
+                    return (
+                      <div className="space-y-1 text-[11px]">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500 font-medium">Food price + VAT:</span>
+                          <span className="font-semibold text-slate-800">
+                            ₱{foodPlusVat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        {!isSelectedPickup && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-500 font-medium">Delivery fee:</span>
+                            <span className="font-semibold text-slate-800">₱{selectedDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   <div className="space-y-2 text-[11px]">
                     <div className="flex justify-between items-center">
@@ -1917,6 +1951,22 @@ export const AssistantRole: React.FC = () => {
                         hasPrintedRef
                       )
 
+                      const isPickup = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
+
+                      if (isPickup) {
+                        return (
+                          <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-4 text-center space-y-2 shadow-xs">
+                            <div className="flex items-center justify-center gap-1.5 text-emerald-900 font-extrabold text-xs">
+                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                              🛍️ Ready for Customer Store Pick-Up!
+                            </div>
+                            <p className="text-xs text-emerald-800 leading-snug">
+                              Kitchen cooking is finished! Customer can now claim their order at the Cashier Store Counter. The POS Cashier will hand over the dishes.
+                            </p>
+                          </div>
+                        )
+                      }
+
                       if (!isSelectedPrinted) {
                         return (
                           <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center space-y-2 shadow-xs">
@@ -1986,18 +2036,20 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD'
+                    const isPickupOrder = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
+                    const isPayInStore = String(selectedOrder.paymentMethod || '').toUpperCase().includes('STORE') || selectedOrder.paymentMethod === 'PAY_IN_STORE'
+                    const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD' || isPayInStore
                     const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
                     const isAuthorizedToPay = Boolean(selectedOrder.gcashAuthorized || (selectedOrder as any).gcash_authorized || st === 'GCASH_AUTHORIZED')
 
-                    // 1. COD Orders Flow
+                    // 1. COD / Pay in Store Orders Flow
                     if (isCOD) {
                       return (
                         <button
                           onClick={() => handleConfirmCOD(selectedOrder.id)}
                           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
                         >
-                          <span>✅ Confirm COD Order & Send to Kitchen</span>
+                          <span>✅ {isPickupOrder ? 'Confirm Pick-Up Order & Send to Kitchen' : 'Confirm COD Order & Send to Kitchen'}</span>
                         </button>
                       )
                     }

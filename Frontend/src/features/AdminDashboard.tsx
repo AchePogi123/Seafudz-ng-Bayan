@@ -368,13 +368,16 @@ const AdminDashboard: React.FC = () => {
                     const dbOrders = json.data || json || []
                     if (Array.isArray(dbOrders)) {
                         const dbList: LiveOrderRecord[] = dbOrders.map((dbO: any) => {
+                            const rawFulfillment = String(dbO.fulfillment_type || dbO.fulfillmentType || '').toUpperCase()
                             const rawType = dbO.order_type || dbO.type || ''
                             const normalizedType =
-                                rawType.toUpperCase() === 'ONLINE'
-                                    ? 'Delivery'
-                                    : rawType.toUpperCase() === 'ON_SITE'
-                                        ? 'POS Order'
-                                        : rawType || 'POS Order'
+                                rawFulfillment === 'PICKUP' || rawType.toUpperCase().includes('PICKUP')
+                                    ? 'Store Pick-Up'
+                                    : rawType.toUpperCase() === 'ONLINE' || rawType.toUpperCase() === 'DELIVERY'
+                                        ? 'Delivery'
+                                        : rawType.toUpperCase() === 'ON_SITE'
+                                            ? 'POS Order'
+                                            : rawType || 'POS Order'
 
                             return {
                                 id: dbO.id,
@@ -385,9 +388,10 @@ const AdminDashboard: React.FC = () => {
                                 status: dbO.status || 'Completed',
                                 paymentStatus: dbO.payment_status || 'Paid',
                                 customer: (() => {
-                                    const c = String(dbO.customer_name || '').trim();
-                                    if (c && c !== 'Walk-In' && c !== 'Walk-In Customer') return c;
-                                    return normalizedType.toLowerCase().includes('delivery') ? 'Online Customer' : '';
+                                    const c = String(dbO.customer_name || dbO.customerName || dbO.customer || dbO.fullname || '').trim();
+                                    if (c && c !== 'Walk-In' && c !== 'Walk-In Customer' && c !== 'Online Customer') return c;
+                                    if (c === 'Online Customer') return c;
+                                    return '';
                                 })(),
                                 items: Array.isArray(dbO.items)
                                     ? dbO.items.map((i: any) => `${i.name || i.product_name_snapshot} x${i.quantity}`).join(', ')

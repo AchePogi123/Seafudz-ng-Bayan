@@ -147,6 +147,10 @@ export function formatOrderResponse(row) {
   if (!Array.isArray(customerReplacements)) customerReplacements = [];
   const payments = Array.isArray(row.payments) ? row.payments : [];
   const refunds = Array.isArray(row.refunds) ? row.refunds : [];
+  const rawFulfillment = row.fulfillment_type || row.fulfillmentType || row.fulfillment || (String(row.order_type || row.orderType || '').toUpperCase() === 'ON_SITE' ? 'ON_SITE' : 'DELIVERY');
+  const fulfillmentType = String(rawFulfillment).toUpperCase().includes('PICKUP') || String(row.type || '').toUpperCase().includes('PICKUP')
+    ? 'PICKUP'
+    : (String(rawFulfillment).toUpperCase().includes('ON_SITE') ? 'ON_SITE' : 'DELIVERY');
   const rawMethod = row.payment_method || row.paymentMethod
     || payments.find(p => p.payment_method)?.payment_method
     || (String(row.status || '').toUpperCase() === 'PENDING_COD' ? 'COD' : 'GCash');
@@ -219,7 +223,9 @@ export function formatOrderResponse(row) {
     customer_id: row.customer_id || row.customerId || undefined,
     orderType: row.order_type || row.orderType || 'ONLINE',
     order_type: row.order_type || row.orderType || 'ONLINE',
-    type: row.order_type || row.orderType || 'Delivery',
+    fulfillmentType,
+    fulfillment_type: fulfillmentType,
+    type: fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : (row.order_type === 'ON_SITE' || row.orderType === 'ON_SITE' ? 'POS Order' : 'Delivery'),
     customerName: row.customer_name || row.customerName || row.fullname || row.name || (row.order_type === 'ONLINE' || row.orderType === 'ONLINE' ? 'Online Customer' : ''),
     customer: row.customer_name || row.customerName || row.fullname || row.name || (row.order_type === 'ONLINE' || row.orderType === 'ONLINE' ? 'Online Customer' : ''),
     phone: row.customer_phone || row.phone || '0917-000-0000',
@@ -233,6 +239,7 @@ export function formatOrderResponse(row) {
     riderCashReceived: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
     rider_cash_received: row.rider_cash_received != null ? Number(row.rider_cash_received) : (row.riderCashReceived != null ? Number(row.riderCashReceived) : undefined),
     riderName: (() => {
+      if (fulfillmentType === 'PICKUP') return undefined;
       const name = row.rider_name || row.riderName;
       if (!name || name === 'Kuya Mark Reyes') {
         return (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED') ? 'Rider Alex Ramos' : undefined;
@@ -240,6 +247,7 @@ export function formatOrderResponse(row) {
       return name;
     })(),
     riderPhone: (() => {
+      if (fulfillmentType === 'PICKUP') return undefined;
       const phone = row.rider_phone || row.riderPhone;
       if (!phone || phone === '0917-888-9999') {
         return (normStatus === 'OUT_FOR_DELIVERY' || normStatus === 'COMPLETED') ? '0917-888-9999' : undefined;

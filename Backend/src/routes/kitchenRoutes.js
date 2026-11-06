@@ -12,7 +12,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
   try {
     const sql = `
       SELECT o.id, o.customer_id, o.cashier_id, o.assistant_id, o.table_id,
-             o.order_type, o.status AS order_status,
+             o.order_type, COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type, o.status AS order_status,
              COALESCE(ko.status, o.status) AS status,
              o.notes, o.created_at, o.updated_at,
              t.name AS table_name,

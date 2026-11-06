@@ -368,14 +368,17 @@ export async function generateTransactionsExcel({
     const refundReasons = refunds.map((r) => `${r.status}: ${r.reason || 'General Refund'}`).join('; ') || 'None';
 
     // Channel formatting
+    const fulfillment = (ord.fulfillment_type || ord.fulfillmentType || '').toUpperCase();
     const rawType = (ord.order_type || '').toUpperCase();
-    const channelLabel = rawType.includes('ONLINE') || rawType.includes('DELIVERY') ? 'Online Delivery' : 'POS Walk-In';
+    const channelLabel = fulfillment === 'PICKUP'
+      ? 'Store Pick-Up'
+      : (rawType.includes('ONLINE') || rawType.includes('DELIVERY') ? 'Online Delivery' : 'POS Walk-In');
 
     // Destination
-    const destination = ord.table_id ? `Table ${ord.table_id}` : ord.delivery_address || (channelLabel === 'Online Delivery' ? 'Online Customer' : 'Dine-In / Takeout');
+    const destination = ord.table_id ? `Table ${ord.table_id}` : ord.delivery_address || (fulfillment === 'PICKUP' ? 'Store Counter (Pick-Up)' : (channelLabel === 'Online Delivery' ? 'Online Customer' : 'Dine-In / Takeout'));
 
     // Customer name protection
-    const customer = ord.customer_name || (channelLabel === 'Online Delivery' ? 'Online Customer' : '—');
+    const customer = ord.customer_name || (channelLabel === 'Online Delivery' || channelLabel === 'Store Pick-Up' ? 'Online Customer' : '—');
 
     // Staff
     const staff = ord.cashier_name || (channelLabel === 'Online Delivery' ? 'Online Direct' : 'Cashier');

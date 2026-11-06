@@ -31,6 +31,9 @@ interface OnlineOrderState {
     id: string
     customerId?: string
     userId?: string
+    fulfillmentType?: 'DELIVERY' | 'PICKUP' | string
+    fulfillment_type?: string
+    type?: string
     customerName: string
     phone: string
     address: string
@@ -980,6 +983,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [tempNote, setTempNote] = useState('')
 
     // Checkout Form states
+    const [fulfillmentType, setFulfillmentType] = useState<'DELIVERY' | 'PICKUP'>('DELIVERY')
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
@@ -990,7 +994,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null)
     const [isCalculatingDeliveryFee, setIsCalculatingDeliveryFee] = useState(false)
     const [deliveryDistanceMessage, setDeliveryDistanceMessage] = useState('')
-    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD'>('GCash')
+    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD' | 'PAY_IN_STORE'>('GCash')
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [gcashRefNumber, setGcashRefNumber] = useState<string>('')
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
@@ -1004,6 +1008,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const isSubmittingOrderRef = useRef(false)
     const pendingOrderSubmissionRef = useRef<{ fingerprint: string; id: string } | null>(null)
     const [isCancellingOrder, setIsCancellingOrder] = useState(false)
+    const [isCancelConfirmModalOpen, setIsCancelConfirmModalOpen] = useState(false)
+
+    // Close cancel confirmation modal on Escape key press
+    useEffect(() => {
+        if (!isCancelConfirmModalOpen) return
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !isCancellingOrder) {
+                setIsCancelConfirmModalOpen(false)
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [isCancelConfirmModalOpen, isCancellingOrder])
     // oos replacement inline select removed
     const [replacementSelections, setReplacementSelections] = useState<Record<string, any>>({})
     const [replacementTargetItem, setReplacementTargetItem] = useState<any | null>(null)
@@ -1291,7 +1308,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }
 
-    const handleCancelOrder = async () => {
+    const executeCancelOrder = async () => {
         if (!activeOrder || normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' || outOfStockItems.length > 0) return
 
         const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
@@ -1302,13 +1319,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             || Boolean(activeOrder.gcashAuthorized)
             || Boolean(activeOrder.referenceNumber)
         )
-
-        const confirmMsg = hasGcashPayment
-            ? `You already paid ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} via GCash.\n\nCancelling this order will notify our restaurant assistant to send your full refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to ${activeOrder.phone}.\n\nDo you want to proceed with requesting cancellation and refund?`
-            : `Are you sure you want to cancel Order #${activeOrder.id}?`
-
-        const confirmCancel = window.confirm(confirmMsg)
-        if (!confirmCancel) return
 
         setIsCancellingOrder(true)
         try {
@@ -1361,9 +1371,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             } catch { }
 
             notifyOrderSync()
-            if (hasGcashPayment) {
-                alert(`Cancellation request submitted! Our restaurant assistant has been notified to send your refund of ₱${Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to ${activeOrder.phone}.`)
-            }
+            setIsCancelConfirmModalOpen(false)
         } catch (err: any) {
             console.error('Error sending cancel request:', err)
             alert(err?.message || 'Error sending cancel request')
@@ -1764,11 +1772,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const deliveryFee = useMemo(
         () => {
+            if (fulfillmentType === 'PICKUP') return 0
             if (subtotal <= 0) return 0
             if (deliveryDistanceKm === null) return address.trim() ? null : 50
             return calculateDeliveryFee(deliveryDistanceKm)
         },
-        [subtotal, deliveryDistanceKm, address]
+        [fulfillmentType, subtotal, deliveryDistanceKm, address]
     )
     const deliveryDistanceLabel = (isCalculatingDeliveryFee || isGeocodingAddress)
         ? 'Calculating distance…'
@@ -1947,27 +1956,36 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             setCartItems((prev) => prev.filter((ci) => activeIds.has(ci.item.id)))
             return
         }
-        if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
-            alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
-            return
+        if (fulfillmentType === 'DELIVERY') {
+            if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
+                alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
+                return
+            }
+        } else {
+            if (!customerName.trim() || !phone.trim() || cartItems.length === 0) {
+                alert('Please fill out your Full Name and Phone Number before submitting your store pickup order.')
+                return
+            }
         }
         const phoneCheck = validatePhilippinePhone(phone)
         if (!phoneCheck.isValid) {
             alert(phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).')
             return
         }
-        if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
-            alert(deliveryDistanceKm === null
-                ? 'The road distance could not be verified. Please try again before ordering.'
-                : 'Delivery is available only within 8 km of the store.')
-            return
+        if (fulfillmentType === 'DELIVERY') {
+            if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
+                alert(deliveryDistanceKm === null
+                    ? 'The road distance could not be verified. Please try again before ordering.'
+                    : 'Delivery is available only within 8 km of the store.')
+                return
+            }
         }
         setIsConfirmOrderModalOpen(true)
     }
 
     const handlePlaceOrder = async (e?: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
-        if (isFindingAddress || isCalculatingDeliveryFee) {
+        if (fulfillmentType === 'DELIVERY' && (isFindingAddress || isCalculatingDeliveryFee)) {
             alert('Please wait while your location and delivery fee are calculated.')
             return
         }
@@ -1996,7 +2014,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 username: (customerName.trim() || 'customer').replace(/\s+/g, '.').toLowerCase(),
                 email: `${(customerName.trim() || 'customer').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()}@seafudz.ph`,
                 phone: phone.trim() || '0917-000-0000',
-                address: address.trim() || 'Delivery Address',
+                address: fulfillmentType === 'PICKUP' ? 'Store Pick-Up (Caloocan Counter)' : (address.trim() || 'Delivery Address'),
                 role: 'customer',
                 sessionToken: `guest_${Date.now()}`
             }
@@ -2004,8 +2022,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             currentUser = guestUser
         }
 
-        if (!customerName.trim() || !phone.trim() || !address.trim() || cartItems.length === 0) {
-            alert('Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.')
+        if (!customerName.trim() || !phone.trim() || (fulfillmentType === 'DELIVERY' && !address.trim()) || cartItems.length === 0) {
+            alert(fulfillmentType === 'DELIVERY'
+                ? 'Please fill out your Full Name, Phone Number, and Delivery Address before submitting your order.'
+                : 'Please fill out your Full Name and Phone Number before submitting your store pickup order.')
             return
         }
         const phoneCheck = validatePhilippinePhone(phone)
@@ -2013,39 +2033,49 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             alert(phoneCheck.message || 'Phone number must have exactly 9 digits (excluding 09).')
             return
         }
-        if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
-            alert(deliveryDistanceKm === null
-                ? 'The road distance could not be verified. Please try again before ordering.'
-                : 'Delivery is available only within 8 km of the store.')
-            return
+        if (fulfillmentType === 'DELIVERY') {
+            if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
+                alert(deliveryDistanceKm === null
+                    ? 'The road distance could not be verified. Please try again before ordering.'
+                    : 'Delivery is available only within 8 km of the store.')
+                return
+            }
         }
 
         isSubmittingOrderRef.current = true
         setIsSubmittingOrder(true)
 
         try {
-            const initialStatus = paymentMethod === 'COD' ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
-            const combinedAddress = addressDetails.trim()
-                ? `${address.trim()} (${addressDetails.trim()})`
-                : address.trim()
+            const isPayLater = paymentMethod === 'COD' || paymentMethod === 'PAY_IN_STORE'
+            const initialStatus = isPayLater ? 'PENDING_COD' : 'GCASH_PENDING_APPROVAL'
+            const combinedAddress = fulfillmentType === 'PICKUP'
+                ? 'Store Pick-Up (Seafudz ng Bayan Store Counter, Caloocan)'
+                : (addressDetails.trim() ? `${address.trim()} (${addressDetails.trim()})` : address.trim())
+
+            const effectivePaymentMethod = fulfillmentType === 'PICKUP'
+                ? (paymentMethod === 'PAY_IN_STORE' ? 'Pay in Store' : 'GCash')
+                : paymentMethod
 
             const orderPayload = {
-                type: 'Delivery',
+                type: fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : 'Delivery',
+                orderType: 'ONLINE',
+                fulfillmentType,
+                fulfillment_type: fulfillmentType,
                 customerId: currentUser?.id || undefined,
                 userId: currentUser?.id || undefined,
                 customerName: customerName.trim(),
                 phone: phone.trim(),
                 deliveryAddress: combinedAddress,
-                deliveryLatitude: deliveryDestination?.lat ?? addressCoordinates?.lat,
-                deliveryLongitude: deliveryDestination?.lng ?? addressCoordinates?.lng,
-                paymentMethod,
+                deliveryLatitude: fulfillmentType === 'PICKUP' ? null : (deliveryDestination?.lat ?? addressCoordinates?.lat),
+                deliveryLongitude: fulfillmentType === 'PICKUP' ? null : (deliveryDestination?.lng ?? addressCoordinates?.lng),
+                paymentMethod: effectivePaymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 paymentReference: gcashRefNumber.trim() || undefined,
                 referenceNumber: gcashRefNumber.trim() || undefined,
                 notes: orderNotes,
                 subtotal,
                 vat,
-                deliveryFee,
+                deliveryFee: fulfillmentType === 'PICKUP' ? 0 : deliveryFee,
                 total,
                 status: initialStatus,
                 gcashAuthorized: false,
@@ -2095,7 +2125,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             const newOrderId = serverOrder.id
             const newOrder: OnlineOrderState & { type: string; customer: string; deliveryAddress: string } = {
                 id: newOrderId,
-                type: 'Delivery',
+                type: serverOrder?.type || (fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : 'Delivery'),
+                fulfillmentType: serverOrder?.fulfillmentType || serverOrder?.fulfillment_type || fulfillmentType,
+                fulfillment_type: serverOrder?.fulfillment_type || serverOrder?.fulfillmentType || fulfillmentType,
                 customerId: serverOrder?.customerId || serverOrder?.customer_id || currentUser?.id || undefined,
                 userId: serverOrder?.userId || serverOrder?.customerId || currentUser?.id || undefined,
                 customerName: serverOrder?.customerName || serverOrder?.customer_name || customerName,
@@ -2105,13 +2137,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
                 deliveryLatitude: serverOrder?.deliveryLatitude ?? (deliveryDestination?.lat ?? addressCoordinates?.lat),
                 deliveryLongitude: serverOrder?.deliveryLongitude ?? (deliveryDestination?.lng ?? addressCoordinates?.lng),
-                paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || paymentMethod,
+                paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || effectivePaymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
                 items: [...cartItems],
                 subtotal: serverOrder?.subtotal ?? subtotal,
                 vat: serverOrder?.vat ?? vat,
-                deliveryFee: serverOrder?.deliveryFee ?? deliveryFee,
+                deliveryFee: serverOrder?.deliveryFee ?? (fulfillmentType === 'PICKUP' ? 0 : deliveryFee),
                 total: serverOrder?.total ?? total,
                 status: (serverOrder?.status || initialStatus).toUpperCase(),
                 gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized),
@@ -2318,18 +2350,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
                         }`}
                     />
-                    <div className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5">
-                        <span className="bg-white/95 text-neutral-600 text-[10px] sm:text-xs font-bold px-2.5 py-1 sm:px-3 sm:py-1 rounded-full border border-neutral-200/60 shadow-xs" title={`Quantity standard: ${getProductQuantityStandard(item.id || item.name)}`}>
-                            Std: {getProductQuantityStandard(item.id || item.name)}
-                        </span>
-                        <span className="bg-white/95 text-neutral-800 text-xs sm:text-sm font-bold px-3 py-1 sm:px-3.5 sm:py-1.5 rounded-full border border-neutral-200/60 shadow-xs">
-                            {item.category}
-                        </span>
-                    </div>
-
                     {/* Lower-Right Remaining Servings Badge */}
                     {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
-                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-neutral-900 text-white text-sm sm:text-base font-extrabold uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-md flex items-center justify-center animate-pulse">
+                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-white/95 text-neutral-800 text-xs sm:text-sm font-extrabold uppercase tracking-wider px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border border-neutral-200/80 shadow-md flex items-center justify-center">
                             {servingsLeft} left
                         </span>
                     )}
@@ -2751,95 +2774,138 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </div>
                                 </div>
 
-                                <div className="flex flex-col gap-1.5">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                            Delivery Address *
-                                        </label>
+                                {/* Fulfillment Type Toggle */}
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                        Fulfillment Option *
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-2 p-1 bg-neutral-100 rounded-xl border border-neutral-200">
                                         <button
                                             type="button"
-                                            onClick={handleUseCurrentLocation}
-                                            disabled={isFindingAddress}
-                                            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
-                                            title="Refresh or change your delivery location"
+                                            onClick={() => {
+                                                setFulfillmentType("DELIVERY")
+                                                if (paymentMethod === "PAY_IN_STORE") setPaymentMethod("GCash")
+                                            }}
+                                            className={`py-2 px-3 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                                fulfillmentType === "DELIVERY"
+                                                    ? "bg-white text-orange-600 shadow-xs"
+                                                    : "text-neutral-600 hover:text-neutral-900"
+                                            }`}
                                         >
-                                            <svg className={`w-3.5 h-3.5 text-neutral-500 ${isFindingAddress ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                            </svg>
-                                            {isFindingAddress ? 'Relocating…' : 'Relocate'}
+                                            <span>🛵</span>
+                                            <span>Delivery</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setFulfillmentType("PICKUP")
+                                                if (paymentMethod === "COD") setPaymentMethod("PAY_IN_STORE")
+                                            }}
+                                            className={`py-2 px-3 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                                fulfillmentType === "PICKUP"
+                                                    ? "bg-white text-orange-600 shadow-xs"
+                                                    : "text-neutral-600 hover:text-neutral-900"
+                                            }`}
+                                        >
+                                            <span>🛍️</span>
+                                            <span>Store Pick-Up</span>
                                         </button>
                                     </div>
-                                    <textarea
-                                        required
-                                        rows={2}
-                                        disabled={isFindingAddress}
-                                        placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
-                                        value={address}
-                                        onChange={(e) => {
-                                            setAddress(e.target.value)
-                                            setAddressCoordinates(null)
-                                            setAddressLookupMessage('')
-                                        }}
-                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm transition-colors resize-none bg-white text-neutral-800 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 placeholder:text-neutral-400"
-                                    />
-                                    {addressLookupMessage && (
-                                        <p role="status" className="text-xs text-neutral-500">
-                                            {addressLookupMessage}
-                                        </p>
-                                    )}
+                                </div>
 
-                                    {/* Store Delivery Policy Notice (Max 8 km) */}
-                                    <div className="mt-1 flex items-start gap-2.5 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
-                                        <svg className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                                        </svg>
-                                        <div className="space-y-0.5">
-                                            <p className="font-bold text-orange-900 text-[11px] uppercase tracking-wide">Store Delivery Radius Policy (Max 8 km)</p>
-                                            <p className="text-[11px] text-orange-800 leading-snug">
-                                                Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our restaurant in Caloocan. Beyond 8 km, our riders cannot deliver.
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {/* Real-time distance status feedback */}
-                                    {deliveryDistanceKm !== null ? (
-                                        <div className="mt-1">
-                                            {deliveryDistanceKm <= 8 ? (
-                                                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
-                                                    <span>✓</span>
-                                                    <span>Address is within delivery range ({deliveryDistanceKm.toFixed(1)} km) • Delivery fee: ₱{deliveryFee?.toFixed(2) ?? '50.00'}</span>
-                                                </div>
-                                            ) : (
-                                                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold">
-                                                    <span>⚠️</span>
-                                                    <span>Outside 8 km delivery coverage ({deliveryDistanceKm.toFixed(1)} km). Store cannot deliver to this address.</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : (deliveryDistanceMessage || isCalculatingDeliveryFee) ? (
-                                        <div className="mt-1">
-                                            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 text-[11px] font-medium">
-                                                <span>{isCalculatingDeliveryFee ? '⏳' : 'ℹ️'}</span>
-                                                <span>{deliveryDistanceMessage || 'Calculating road route…'}</span>
+                                {fulfillmentType === "DELIVERY" && (
+                                    <>
+                                        <div className="flex flex-col gap-1.5">
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                                    Delivery Address *
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    onClick={handleUseCurrentLocation}
+                                                    disabled={isFindingAddress}
+                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
+                                                    title="Refresh or change your delivery location"
+                                                >
+                                                    <svg className={`w-3.5 h-3.5 text-neutral-500 ${isFindingAddress ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                    </svg>
+                                                    {isFindingAddress ? 'Relocating…' : 'Relocate'}
+                                                </button>
                                             </div>
-                                        </div>
-                                    ) : null}
-                                </div>
+                                            <textarea
+                                                required={fulfillmentType === 'DELIVERY'}
+                                                rows={2}
+                                                disabled={isFindingAddress}
+                                                placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
+                                                value={address}
+                                                onChange={(e) => {
+                                                    setAddress(e.target.value)
+                                                    setAddressCoordinates(null)
+                                                    setAddressLookupMessage('')
+                                                }}
+                                                className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm transition-colors resize-none bg-white text-neutral-800 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 placeholder:text-neutral-400"
+                                            />
+                                            {addressLookupMessage && (
+                                                <p role="status" className="text-xs text-neutral-500">
+                                                    {addressLookupMessage}
+                                                </p>
+                                            )}
 
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider flex items-center justify-between">
-                                        <span>Additional Details (Unit / Floor / Landmark)</span>
-                                        <span className="text-neutral-400 font-semibold text-[11px] normal-case tracking-normal">(Optional)</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Unit 4B, 3rd Floor, Blue Gate, near 7-Eleven"
-                                        value={addressDetails}
-                                        onChange={(e) => setAddressDetails(e.target.value)}
-                                        className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                    />
-                                </div>
+                                            {/* Store Delivery Policy Notice (Max 8 km) */}
+                                            <div className="mt-1 flex items-start gap-2.5 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
+                                                <svg className="w-4 h-4 text-orange-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                </svg>
+                                                <div className="space-y-0.5">
+                                                    <p className="font-bold text-orange-900 text-[11px] uppercase tracking-wide">Store Delivery Radius Policy (Max 8 km)</p>
+                                                    <p className="text-[11px] text-orange-800 leading-snug">
+                                                        Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our restaurant in Caloocan. Beyond 8 km, our riders cannot deliver.
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* Real-time distance status feedback */}
+                                            {deliveryDistanceKm !== null ? (
+                                                <div className="mt-1">
+                                                    {deliveryDistanceKm <= 8 ? (
+                                                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                                                            <span>✓</span>
+                                                            <span>Address is within delivery range ({deliveryDistanceKm.toFixed(1)} km) • Delivery fee: ₱{deliveryFee?.toFixed(2) ?? '50.00'}</span>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold">
+                                                            <span>⚠️</span>
+                                                            <span>Outside 8 km delivery coverage ({deliveryDistanceKm.toFixed(1)} km). Store cannot deliver to this address.</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (deliveryDistanceMessage || isCalculatingDeliveryFee) ? (
+                                                <div className="mt-1">
+                                                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 text-[11px] font-medium">
+                                                        <span>{isCalculatingDeliveryFee ? '⏳' : 'ℹ️'}</span>
+                                                        <span>{deliveryDistanceMessage || 'Calculating road route…'}</span>
+                                                    </div>
+                                                </div>
+                                            ) : null}
+                                        </div>
+
+                                        <div className="flex flex-col gap-1.5">
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider flex items-center justify-between">
+                                                <span>Additional Details (Unit / Floor / Landmark)</span>
+                                                <span className="text-neutral-400 font-semibold text-[11px] normal-case tracking-normal">(Optional)</span>
+                                            </label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. Unit 4B, 3rd Floor, Blue Gate, near 7-Eleven"
+                                                value={addressDetails}
+                                                onChange={(e) => setAddressDetails(e.target.value)}
+                                                className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
+                                            />
+                                        </div>
+                                    </>
+                                )}
 
                                 <div className="flex flex-col gap-1.5">
                                     <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
@@ -2870,7 +2936,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 }`}
                                         >
                                             <span className={`font-black text-sm ${paymentMethod === 'GCash' ? 'text-white' : 'text-neutral-900'}`}>
-                                                GCash
+                                                {fulfillmentType === 'PICKUP' ? 'Pay Now (GCash)' : 'GCash'}
                                             </span>
                                             <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'GCash'
                                                 ? 'bg-white text-blue-600 shadow-2xs'
@@ -2880,25 +2946,46 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </span>
                                         </button>
 
-                                        {/* COD Option */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setPaymentMethod('COD')}
-                                            className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'COD'
-                                                ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
-                                                }`}
-                                        >
-                                            <span className={`font-black text-sm ${paymentMethod === 'COD' ? 'text-white' : 'text-neutral-900'}`}>
-                                                Cash on Delivery
-                                            </span>
-                                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'COD'
-                                                ? 'bg-white text-emerald-700 shadow-2xs'
-                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                                }`}>
-                                                COD
-                                            </span>
-                                        </button>
+                                        {/* COD or Pay in Store Option */}
+                                        {fulfillmentType === 'DELIVERY' ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => setPaymentMethod('COD')}
+                                                className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'COD'
+                                                    ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
+                                                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
+                                                    }`}
+                                            >
+                                                <span className={`font-black text-sm ${paymentMethod === 'COD' ? 'text-white' : 'text-neutral-900'}`}>
+                                                    Cash on Delivery
+                                                </span>
+                                                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'COD'
+                                                    ? 'bg-white text-emerald-700 shadow-2xs'
+                                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                    }`}>
+                                                    COD
+                                                </span>
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => setPaymentMethod('PAY_IN_STORE')}
+                                                className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'PAY_IN_STORE'
+                                                    ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
+                                                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
+                                                    }`}
+                                            >
+                                                <span className={`font-black text-sm ${paymentMethod === 'PAY_IN_STORE' ? 'text-white' : 'text-neutral-900'}`}>
+                                                    Pay in Store
+                                                </span>
+                                                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'PAY_IN_STORE'
+                                                    ? 'bg-white text-emerald-700 shadow-2xs'
+                                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                                    }`}>
+                                                    Counter Cash
+                                                </span>
+                                            </button>
+                                        )}
                                     </div>
 
                                 </div>
@@ -2906,14 +2993,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || isCalculatingDeliveryFee || isGeocodingAddress || hasUnavailableCartItems || hasDeletedCartItems || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null}
+                                        disabled={isSubmittingOrder || (fulfillmentType === 'DELIVERY' && (isCalculatingDeliveryFee || isGeocodingAddress || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null)) || hasUnavailableCartItems || hasDeletedCartItems}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder
                                             ? 'Submitting Order...'
-                                            : (isCalculatingDeliveryFee || isGeocodingAddress)
+                                            : (fulfillmentType === 'DELIVERY' && (isCalculatingDeliveryFee || isGeocodingAddress))
                                                 ? 'Calculating Route…'
-                                                : (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null
+                                                : (fulfillmentType === 'DELIVERY' && ((deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null))
                                                     ? 'Outside 8 km Delivery Zone'
                                                     : 'Confirm & Submit Order'}
                                     </button>
@@ -2987,16 +3074,25 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         <span>VAT (12%)</span>
                                         <span>₱{vat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
-                                    <div className="flex justify-between text-xs text-neutral-500">
-                                        <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                        <span className={deliveryFee === null ? 'text-rose-600 font-bold' : ''}>
-                                            {deliveryFee === null ? 'Unavailable (Beyond 8 km)' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                        </span>
-                                    </div>
-                                    {deliveryDistanceMessage && (
-                                        <p role="status" className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1">
-                                            ⚠️ {deliveryDistanceMessage}
-                                        </p>
+                                    {fulfillmentType === 'DELIVERY' ? (
+                                        <>
+                                            <div className="flex justify-between text-xs text-neutral-500">
+                                                <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
+                                                <span className={deliveryFee === null ? 'text-rose-600 font-bold' : ''}>
+                                                    {deliveryFee === null ? 'Unavailable (Beyond 8 km)' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                                </span>
+                                            </div>
+                                            {deliveryDistanceMessage && (
+                                                <p role="status" className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1">
+                                                    ⚠️ {deliveryDistanceMessage}
+                                                </p>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <div className="flex justify-between text-xs text-neutral-600 font-medium">
+                                            <span>Delivery Fee</span>
+                                            <span className="text-emerald-700 font-bold">No delivery fee</span>
+                                        </div>
                                     )}
                                     <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-3 border-t border-dashed border-neutral-200">
                                         <span>Total Amount</span>
@@ -3118,7 +3214,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     return (
                                         <button
                                             type="button"
-                                            onClick={handleCancelOrder}
+                                            onClick={() => setIsCancelConfirmModalOpen(true)}
                                             disabled={isCancellingOrder}
                                             className="bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 hover:border-rose-300 font-extrabold text-xs px-4 py-2.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center gap-1.5"
                                         >
@@ -3872,7 +3968,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         {normalizeStatus(activeOrder.status) !== 'CANCELLED' && (
                             <div className="py-4">
                                 {(() => {
-                                    const steps = [
+                                    const isPickupOrder = String(activeOrder.fulfillmentType || (activeOrder as any).fulfillment_type || activeOrder.type || '').toUpperCase().includes('PICKUP')
+                                    const steps = isPickupOrder ? [
+                                        { key: 'PENDING', label: 'Order Placed', icon: '📋' },
+                                        { key: 'CONFIRMED', label: 'Confirmed', icon: '✓' },
+                                        { key: 'PREPARING', label: 'Preparing', icon: '🍳' },
+                                        { key: 'READY', label: 'Ready for Pick-Up', icon: '🛍️' },
+                                        { key: 'COMPLETED', label: 'Picked Up', icon: '✓' },
+                                    ] : [
                                         { key: 'PENDING', label: 'Order Placed', icon: '📋' },
                                         { key: 'CONFIRMED', label: 'Confirmed', icon: '✓' },
                                         { key: 'PREPARING', label: 'Preparing', icon: '🍳' },
@@ -3880,7 +3983,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         { key: 'OUT_FOR_DELIVERY', label: 'Out for Delivery', icon: '🛵' },
                                         { key: 'COMPLETED', label: 'Delivered', icon: '✓' },
                                     ]
-                                    const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
+                                    const statusOrder = isPickupOrder
+                                        ? ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'COMPLETED']
+                                        : ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
                                     const currUpper = normalizeStatus(activeOrder.status)
                                     const currentIdx = statusOrder.indexOf(currUpper)
 
@@ -3999,7 +4104,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         {(() => {
                             const rawStatus = (activeOrder.status || '').toUpperCase()
                             const norm = normalizeStatus(rawStatus)
-                            const isOutForDelivery = ['OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(norm)
+                            const isPickupOrder = String(activeOrder.fulfillmentType || (activeOrder as any).fulfillment_type || activeOrder.type || '').toUpperCase().includes('PICKUP')
+                            const isOutForDelivery = !isPickupOrder && ['OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED'].includes(norm)
                             const isEnRoute = norm === 'OUT_FOR_DELIVERY'
 
                             const rawRider = activeOrder.riderName || (activeOrder as any).rider_name || (activeOrder as any).assignedRiderName
@@ -4007,18 +4113,24 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const rawPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone
                             const riderPhone = (!rawPhone) ? '0917-888-9999' : rawPhone
 
+                            const isPayInStore = String(activeOrder.paymentMethod || '').toUpperCase().includes('STORE') || activeOrder.paymentMethod === 'PAY_IN_STORE' || activeOrder.paymentMethod === 'COD'
+
                             return (
                                 <div className="space-y-6 mt-2">
                                     {/* ── Top Row: 2-column layout ── */}
-                                    <div className={`grid grid-cols-1 ${isOutForDelivery ? 'lg:grid-cols-2' : 'md:grid-cols-2'} gap-5`}>
+                                    <div className={`grid grid-cols-1 ${isPickupOrder || isOutForDelivery ? 'lg:grid-cols-2' : 'md:grid-cols-2'} gap-5`}>
 
-                                        {/* LEFT: Delivery & Order Info Card */}
+                                        {/* LEFT: Delivery / Pick-Up & Order Info Card */}
                                         <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
                                             {/* Card Header */}
                                             <div className="bg-gradient-to-r from-neutral-800 to-neutral-900 px-5 py-3.5 flex items-center justify-between">
                                                 <div className="flex items-center gap-2.5">
-                                                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-base">📍</div>
-                                                    <h4 className="font-bold text-white text-sm tracking-wide">Delivery & Order Info</h4>
+                                                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-base">
+                                                        {isPickupOrder ? '🛍️' : '📍'}
+                                                    </div>
+                                                    <h4 className="font-bold text-white text-sm tracking-wide">
+                                                        {isPickupOrder ? 'Store Pick-Up & Order Info' : 'Delivery & Order Info'}
+                                                    </h4>
                                                 </div>
                                                 <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">
                                                     {(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items
@@ -4037,10 +4149,31 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         <p className="text-sm font-bold text-neutral-900 font-mono">{activeOrder.phone || (activeOrder as any).customer_phone || 'N/A'}</p>
                                                     </div>
                                                 </div>
-                                                <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
-                                                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Delivery Address</span>
-                                                    <p className="text-sm font-semibold text-neutral-800 leading-relaxed">{activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}</p>
-                                                </div>
+
+                                                {/* Address or Store Location */}
+                                                {isPickupOrder ? (
+                                                    <div className="bg-emerald-50/80 rounded-xl p-3.5 border border-emerald-200">
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block mb-1">
+                                                                Store Pick-Up Counter
+                                                            </span>
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200/80 text-emerald-900">
+                                                                Self Pick-Up
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm font-bold text-emerald-950">Seafudz ng Bayan Store Counter</p>
+                                                        <p className="text-xs text-emerald-800 mt-0.5">Caloocan City Counter Branch • 10:00 AM – 10:00 PM</p>
+                                                        <p className="text-[11px] text-emerald-700 mt-2 pt-2 border-t border-emerald-200/70">
+                                                            💡 Present your Order Reference <strong className="font-mono text-emerald-950 font-bold">#{activeOrder.id || (activeOrder as any).ref}</strong> to our cashier when claiming.
+                                                        </p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                        <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Delivery Address</span>
+                                                        <p className="text-sm font-semibold text-neutral-800 leading-relaxed">{activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery Address on file'}</p>
+                                                    </div>
+                                                )}
+
                                                 {activeOrder.notes && (
                                                     <div className="bg-orange-50 rounded-xl p-3 border border-orange-200/50">
                                                         <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider block mb-0.5">Special Notes</span>
@@ -4085,9 +4218,100 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </div>
                                         </div>
 
-                                        {/* RIGHT: Rider + Billing Stacked */}
+                                        {/* RIGHT: Pick-Up Details / Rider + Billing Stacked */}
                                         <div className="space-y-5">
-                                            {/* Rider Card (visible when out for delivery) */}
+                                            {/* Store Pick-Up Counter Card (visible for pickup orders) */}
+                                            {isPickupOrder && (
+                                                <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
+                                                    <div className={`px-5 py-3.5 flex items-center justify-between ${
+                                                        norm === 'READY'
+                                                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600'
+                                                            : norm === 'COMPLETED'
+                                                                ? 'bg-gradient-to-r from-neutral-800 to-neutral-900'
+                                                                : 'bg-gradient-to-r from-orange-500 to-amber-500'
+                                                    }`}>
+                                                        <div className="flex items-center gap-2.5">
+                                                            <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center text-base backdrop-blur-xs">🛍️</div>
+                                                            <h4 className="font-bold text-white text-sm tracking-wide">Store Pick-Up Counter</h4>
+                                                        </div>
+                                                        {norm === 'READY' ? (
+                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black bg-white/20 text-white backdrop-blur-xs">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                                                                Ready for Pick-Up!
+                                                            </span>
+                                                        ) : norm === 'COMPLETED' ? (
+                                                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-black bg-white/20 text-white backdrop-blur-xs">
+                                                                ✓ Picked Up
+                                                            </span>
+                                                        ) : (
+                                                            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-black bg-white/20 text-white backdrop-blur-xs">
+                                                                {norm === 'PREPARING' ? '🍳 Cooking' : '⏳ Confirmed'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="p-5 space-y-4">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="w-14 h-14 rounded-2xl bg-emerald-50 border-2 border-emerald-200 text-emerald-600 flex items-center justify-center text-3xl shrink-0">
+                                                                🛍️
+                                                            </div>
+                                                            <div className="min-w-0 flex-1">
+                                                                <h5 className="font-extrabold text-neutral-900 text-base">Seafudz Store Counter</h5>
+                                                                <p className="text-xs text-neutral-600 font-medium flex items-center gap-1.5 mt-0.5">
+                                                                    <span className="text-neutral-400">📍</span>
+                                                                    <span>Caloocan Branch • Store Pick-Up</span>
+                                                                </p>
+                                                                <p className="text-[11px] font-mono font-bold text-orange-600 mt-1">
+                                                                    Ref: #{activeOrder.id || (activeOrder as any).ref}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Counter Hours</span>
+                                                                <p className="text-xs font-bold text-neutral-800">10:00 AM – 10:00 PM</p>
+                                                            </div>
+                                                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
+                                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Claim Status</span>
+                                                                <p className={`text-xs font-bold ${
+                                                                    norm === 'READY' ? 'text-emerald-600 font-extrabold' : norm === 'COMPLETED' ? 'text-neutral-700' : 'text-orange-600'
+                                                                }`}>
+                                                                    {norm === 'READY' ? 'Ready at Counter ✓' : norm === 'COMPLETED' ? 'Order Claimed ✓' : norm === 'PREPARING' ? 'Cooking in Kitchen' : 'In Line'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className={`rounded-xl p-3 border text-xs leading-relaxed ${
+                                                            isPayInStore && norm !== 'COMPLETED'
+                                                                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                                                                : 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                                        }`}>
+                                                            {isPayInStore && norm !== 'COMPLETED' ? (
+                                                                <div className="space-y-1">
+                                                                    <span className="font-bold flex items-center gap-1.5 text-amber-950">
+                                                                        <span>💵</span> Pay at Counter upon Claiming
+                                                                    </span>
+                                                                    <p className="text-[11px]">
+                                                                        Please pay <strong className="text-amber-950 font-black">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> in cash directly to our cashier when claiming your order.
+                                                                    </p>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="space-y-1">
+                                                                    <span className="font-bold flex items-center gap-1.5 text-emerald-950">
+                                                                        <span>✅</span> Paid Online via GCash
+                                                                    </span>
+                                                                    <p className="text-[11px]">
+                                                                        Simply present this tracking screen or your Order Reference <strong className="font-mono font-bold">#{activeOrder.id || (activeOrder as any).ref}</strong> to the cashier counter to claim your hot dishes.
+                                                                    </p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Rider Card (visible when delivery order is out for delivery) */}
                                             {isOutForDelivery && (
                                                 <div className="bg-white rounded-2xl border border-neutral-200/60 shadow-xs overflow-hidden">
                                                     <div className={`px-5 py-3.5 flex items-center justify-between ${isEnRoute ? 'bg-gradient-to-r from-orange-500 to-amber-500' : 'bg-gradient-to-r from-emerald-500 to-teal-500'}`}>
@@ -4200,7 +4424,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                         <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
                                                             <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-0.5">Payment Method</span>
-                                                            <p className="text-sm font-bold text-neutral-900">{activeOrder.paymentMethod} Transfer</p>
+                                                            <p className="text-sm font-bold text-neutral-900">
+                                                                {isPayInStore ? 'Pay in Store (Counter Cash)' : `${activeOrder.paymentMethod || 'GCash'} Transfer`}
+                                                            </p>
                                                         </div>
                                                         {activeOrder.paymentReference && (
                                                             <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100">
@@ -4221,8 +4447,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </div>
                                                     )}
 
-                                                    {/* Proof of Delivery Photo */}
-                                                    {Boolean(activeOrder.deliveryProof || (activeOrder as any).delivery_proof) && (
+                                                    {/* Proof of Delivery Photo (For Delivery Orders) */}
+                                                    {!isPickupOrder && Boolean(activeOrder.deliveryProof || (activeOrder as any).delivery_proof) && (
                                                         <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-200">
                                                             <span className="font-black text-emerald-800 uppercase text-[10px] block mb-1.5 tracking-wider">
                                                                 Proof of Delivery Photo
@@ -4286,21 +4512,30 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         <div className="flex justify-between text-xs text-neutral-600">
                                                             <span>Subtotal</span>
                                                             <span className="font-semibold text-neutral-800">
-                                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (activeOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (isPickupOrder ? 0 : (activeOrder.deliveryFee || 50)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </span>
                                                         </div>
                                                         <div className="flex justify-between text-xs text-orange-600">
                                                             <span className="font-medium">VAT (12%)</span>
                                                             <span className="font-bold">
-                                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (Number(activeOrder.deliveryFee || 50))) / 1.12) * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (isPickupOrder ? 0 : (Number(activeOrder.deliveryFee || 50))))) / 1.12 * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                             </span>
                                                         </div>
-                                                        <div className="flex justify-between text-xs text-neutral-600">
-                                                            <span>Delivery Fee</span>
-                                                            <span className="font-semibold text-neutral-800">₱{(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                        </div>
+                                                        {isPickupOrder ? (
+                                                            <div className="flex justify-between text-xs text-neutral-600 font-medium">
+                                                                <span>Delivery Fee</span>
+                                                                <span className="text-emerald-700 font-bold">No delivery fee</span>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex justify-between text-xs text-neutral-600">
+                                                                <span>Delivery Fee</span>
+                                                                <span className="font-semibold text-neutral-800">₱{(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                                            </div>
+                                                        )}
                                                         <div className="border-t-2 border-dashed border-neutral-200 pt-2.5 mt-1 flex justify-between items-center">
-                                                            <span className="text-sm font-extrabold text-neutral-900">Paid Total</span>
+                                                            <span className="text-sm font-extrabold text-neutral-900">
+                                                                {isPayInStore && norm !== 'COMPLETED' ? 'Total to Pay at Counter' : 'Paid Total'}
+                                                            </span>
                                                             <span className="text-lg font-black text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                         </div>
                                                     </div>
@@ -4910,6 +5145,101 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     </div>
                 </div>
             )}
+
+            {/* Minimal & Modern Order Cancellation Confirmation Modal */}
+            {isCancelConfirmModalOpen && activeOrder && (() => {
+                const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
+                    || String(activeOrder.status || '').toUpperCase() === 'PENDING_COD'
+                const hasGcashPayment = !isCOD && (
+                    String(activeOrder.paymentMethod || '').toUpperCase().includes('GCASH')
+                    || Boolean(activeOrder.paymentReceipt)
+                    || Boolean(activeOrder.gcashAuthorized)
+                    || Boolean(activeOrder.referenceNumber)
+                )
+                const refundAmount = Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                const targetPhone = activeOrder.phone || phone || 'your contact number'
+
+                return (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200"
+                        onClick={() => !isCancellingOrder && setIsCancelConfirmModalOpen(false)}
+                    >
+                        <div
+                            className="bg-white rounded-2xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 space-y-4"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3">
+                                <div>
+                                    <h3 className="text-base sm:text-lg font-black text-neutral-900">
+                                        {hasGcashPayment ? 'Request Cancellation & Refund' : 'Cancel Order'}
+                                    </h3>
+                                    <p className="text-xs text-neutral-500 mt-0.5">
+                                        Order ID: <span className="font-mono font-bold text-neutral-700">{(activeOrder as any).ref || activeOrder.id}</span>
+                                    </p>
+                                </div>
+                                <button
+                                    type="button"
+                                    disabled={isCancellingOrder}
+                                    onClick={() => setIsCancelConfirmModalOpen(false)}
+                                    className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 transition-colors cursor-pointer disabled:opacity-50"
+                                    title="Close (Esc)"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+
+                            {hasGcashPayment ? (
+                                <div className="space-y-3">
+                                    <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl space-y-1.5 text-xs">
+                                        <div className="flex justify-between items-center text-neutral-700 font-semibold">
+                                            <span>Paid Amount (GCash)</span>
+                                            <span className="font-extrabold text-neutral-900">₱{refundAmount}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center text-neutral-700 font-semibold">
+                                            <span>Refund Recipient Phone</span>
+                                            <span className="font-extrabold text-neutral-900">{targetPhone}</span>
+                                        </div>
+                                    </div>
+
+                                    <p className="text-xs text-neutral-600 leading-relaxed">
+                                        Cancelling this order will notify our restaurant assistant to send your full refund of <strong className="text-neutral-900 font-bold">₱{refundAmount}</strong> to <strong className="text-neutral-900 font-bold">{targetPhone}</strong>.
+                                    </p>
+                                    <p className="text-xs text-neutral-500 font-medium">
+                                        Do you want to proceed with requesting cancellation and refund?
+                                    </p>
+                                </div>
+                            ) : (
+                                <p className="text-xs text-neutral-600 leading-relaxed">
+                                    Are you sure you want to cancel this order? This will remove your ticket from processing.
+                                </p>
+                            )}
+
+                            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-neutral-100">
+                                <button
+                                    type="button"
+                                    disabled={isCancellingOrder}
+                                    onClick={() => setIsCancelConfirmModalOpen(false)}
+                                    className="px-4 py-2.5 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 font-bold text-xs transition-all cursor-pointer disabled:opacity-50"
+                                >
+                                    Keep Order
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={isCancellingOrder}
+                                    onClick={executeCancelOrder}
+                                    className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition-all shadow-md shadow-rose-600/20 active:scale-98 cursor-pointer disabled:opacity-50"
+                                >
+                                    {isCancellingOrder
+                                        ? 'Processing...'
+                                        : (hasGcashPayment ? 'Request Refund' : 'Cancel Order')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })()}
 
             {/* Account Required for Checkout Modal */}
             {isAuthModalOpen && (

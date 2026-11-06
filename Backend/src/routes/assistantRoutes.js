@@ -113,7 +113,7 @@ router.patch('/assistant/calls/:id/resolve', requireAuth, requireRole(['admin', 
 router.get('/assistant/orders', optionalAuth, async (req, res) => {
   try {
     const sql = `
-      SELECT o.id, o.id AS ref, o.order_type, o.status, o.subtotal, o.tax AS vat,
+      SELECT o.id, o.id AS ref, o.order_type, COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type, o.status, o.subtotal, o.tax AS vat,
              o.delivery_fee, o.total, o.notes, o.created_at,
              o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
              c.fullname AS customer_name, c.phone AS customer_phone, c.delivery_address,

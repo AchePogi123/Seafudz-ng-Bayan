@@ -4861,7 +4861,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                 if (!isAwaitingKitchen) return null
 
-                const flaggedStandard = qtyCheck.flaggedItems[0]?.standard || 5
+                const firstFlag = qtyCheck.flaggedItems[0]
+                const flaggedStandard = firstFlag?.standard || 5
+                const standardDesc = firstFlag?.type === 'category'
+                    ? `${firstFlag.category || 'category'} standard (${flaggedStandard}+ items)`
+                    : `quantity standard (${flaggedStandard}+ items)`
 
                 return (
                     <div
@@ -4899,7 +4903,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     Please Wait for Kitchen Verification
                                 </h4>
                                 <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
-                                    Your order requires verification by the kitchen before payment because the quantity meets or exceeds our product standard ({flaggedStandard}+ items).
+                                    Your order requires verification by the kitchen before payment because the quantity meets or exceeds our {standardDesc}.
                                 </p>
                                 <div className="bg-white rounded-xl p-3 border border-neutral-200 text-[11px] sm:text-xs text-neutral-600 font-medium leading-relaxed">
                                     The GCash payment pop-up will automatically appear on your screen once the kitchen confirms your order.

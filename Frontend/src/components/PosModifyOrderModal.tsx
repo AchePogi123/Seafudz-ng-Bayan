@@ -68,6 +68,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
         id: it.productId,
         productId: it.productId,
         name: it.name,
+        category: (it as any).category || (it as any).item?.category,
         quantity: it.quantity,
         remaining_servings: getRemainingServings(it.productId),
         remainingServings: getRemainingServings(it.productId),

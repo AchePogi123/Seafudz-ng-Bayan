@@ -162,10 +162,13 @@ export function formatOrderResponse(row) {
     id: item.id || item.product_id || item.menu_item_id,
     productId: item.product_id || item.productId || item.menu_item_id,
     name: item.name || item.product_name_snapshot || 'Seafood Dish',
+    category: item.category || item.category_name || item.categoryName || item.item?.category,
     quantity: item.quantity || 1,
     price: item.price || item.unit_price || 0,
     item_status: item.item_status || item.itemStatus || 'ACTIVE',
     specialNote: item.specialNote || item.notes || '',
+    remaining_servings: item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings,
+    remainingServings: item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings,
     replacementForItemId: item.replacement_for_item_id || item.replacementForItemId || null,
   }));
   const outOfStockItems = (Array.isArray(row.outOfStockItems) && row.outOfStockItems.length > 0)

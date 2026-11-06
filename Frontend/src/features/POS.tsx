@@ -147,6 +147,7 @@ export const POS: React.FC = () => {
         id: ci.item.id,
         productId: ci.item.id,
         name: ci.item.name,
+        category: ci.item.category,
         quantity: ci.quantity,
         remaining_servings: servings,
         remainingServings: servings,

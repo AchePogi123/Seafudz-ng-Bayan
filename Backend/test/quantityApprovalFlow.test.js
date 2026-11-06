@@ -28,7 +28,7 @@ async function runTests() {
     // Clear in-memory orders and existing test DB records
     inMemoryOrders.clear();
     try {
-      await query(`DELETE FROM orders WHERE id IN ('SFB-LOW-01', 'SFB-HIGH-01', 'SFB-COD-01', 'SFB-EST-01')`);
+      await query(`DELETE FROM orders WHERE id IN ('SFB-LOW-01', 'SFB-HIGH-01', 'SFB-COD-01', 'SFB-EST-01', 'SFB-CAT-01')`);
       await query(`UPDATE products SET is_available = true WHERE name ILIKE '%Chicken Pastil%' OR name ILIKE '%Mixed Seafoods%'`);
     } catch {}
 
@@ -406,6 +406,64 @@ async function runTests() {
     console.log(`[PASS] Kitchen set new servings = 10: is_available = ${newServingsJson.data?.is_available}, remaining_servings = ${newServingsJson.data?.remaining_servings}`);
     if (newServingsJson.data?.is_available !== true) throw new Error('Expected is_available = true after setting 10 servings');
     if (newServingsJson.data?.remaining_servings !== 10) throw new Error('Expected remaining_servings = 10');
+
+    // ==========================================
+    // SCENARIO 6: CATEGORY QUANTITY STANDARD (Combined 3 + 2 = 5 Seafoods)
+    // Neither item meets individual product standard (5), but combined category quantity = 5
+    // ==========================================
+    console.log('\n--- TEST 6: Category Quantity Standard (Combined 3 + 2 = 5 Seafoods) ---');
+    await query(`UPDATE products SET remaining_servings = NULL WHERE id IN ('mixed-seafoods-alacarte-99', 'all-shrimp-bowl-699', 'item-001', 'item-006')`);
+    const catOrderRes = await fetch(`${baseUrl}/user-flow/orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: 'SFB-CAT-01',
+        customerName: 'Category Bulk Customer',
+        phone: '0917-555-6666',
+        deliveryAddress: '789 Harbor View, Caloocan',
+        paymentMethod: 'GCash',
+        items: [
+          { id: 'mixed-seafoods-alacarte-99', name: 'Mixed Seafoods Alacarte (Mini)', quantity: 3, price: 99 },
+          { id: 'all-shrimp-bowl-699', name: 'All Shrimp Bowl', quantity: 2, price: 699 }
+        ]
+      })
+    });
+
+    const catOrderJson = await catOrderRes.json();
+    if (!catOrderRes.ok) {
+      throw new Error(`Scenario 6: Order placement failed with status ${catOrderRes.status}: ${JSON.stringify(catOrderJson)}`);
+    }
+
+    const catOrder = catOrderJson.data;
+    console.log(`[PASS] Category order created with ID: ${catOrder.id}, status: ${catOrder.status}`);
+    // Combined seafood quantity (3 + 2 = 5) meets category limit (5) -> MUST require kitchen approval
+    if (catOrder.status !== 'AWAITING_KITCHEN_APPROVAL') {
+      throw new Error(`Scenario 6: Expected status AWAITING_KITCHEN_APPROVAL, got ${catOrder.status}`);
+    }
+    if (catOrder.requiresKitchenApproval !== true) {
+      throw new Error(`Scenario 6: Expected requiresKitchenApproval = true, got ${catOrder.requiresKitchenApproval}`);
+    }
+    if (catOrder.kitchenApprovalStatus !== 'PENDING') {
+      throw new Error(`Scenario 6: Expected kitchenApprovalStatus = PENDING, got ${catOrder.kitchenApprovalStatus}`);
+    }
+
+    // Must appear in Kitchen approvals
+    const catApprRes = await fetch(`${baseUrl}/kitchen/approvals`);
+    const catApprJson = await catApprRes.json();
+    const catInAppr = (catApprJson.data || []).some(o => o.id === 'SFB-CAT-01');
+    console.log(`[PASS] Category bulk order in kitchen approvals list? ${catInAppr} (expected true)`);
+    if (!catInAppr) throw new Error('Category bulk order MUST appear in kitchen approvals list');
+
+    // Kitchen approves category order -> Routes to GCASH_AUTHORIZED
+    const catApproveActionRes = await fetch(`${baseUrl}/kitchen/orders/SFB-CAT-01/approve-quantities`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const catApproveJson = await catApproveActionRes.json();
+    console.log(`[PASS] Kitchen approved category bulk order: status = ${catApproveJson.data.status}`);
+    if (catApproveJson.data.status !== 'GCASH_AUTHORIZED') {
+      throw new Error(`Expected GCASH_AUTHORIZED, got ${catApproveJson.data.status}`);
+    }
 
     console.log('\n>>> ALL INTEGRATION TESTS PASSED SUCCESSFULLY! <<<\n');
   } finally {

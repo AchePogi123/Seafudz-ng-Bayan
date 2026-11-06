@@ -1094,7 +1094,7 @@ export const AssistantRole: React.FC = () => {
       }
     } catch {}
 
-    return orders.filter((order) => {
+    const filtered = orders.filter((order) => {
       const s = normalizeStatusStr(order.status)
       const rawSt = (order.status || '').toUpperCase()
       const appSt = (order.kitchen_approval_status || order.kitchenApprovalStatus || '').toUpperCase()
@@ -1140,6 +1140,22 @@ export const AssistantRole: React.FC = () => {
         order.address.toLowerCase().includes(q) ||
         order.items.some((i) => i.name.toLowerCase().includes(q))
       )
+    })
+
+    // First In, First Out (FIFO): Earliest created orders appear first at the top
+    return [...filtered].sort((a, b) => {
+      const getTimestamp = (o: any) => {
+        const raw = o.createdAt || (o as any).created_at || (o as any).dateTime
+        if (!raw || raw === 'Just now') return 0
+        const t = new Date(raw).getTime()
+        return isNaN(t) ? 0 : t
+      }
+      const tA = getTimestamp(a)
+      const tB = getTimestamp(b)
+      if (tA && tB) return tA - tB // Earliest placed order first
+      if (tA && !tB) return -1
+      if (!tA && tB) return 1
+      return 0
     })
   }, [orders, activeTab, searchQuery])
 
@@ -1263,10 +1279,10 @@ export const AssistantRole: React.FC = () => {
               </div>
             </div>
 
-            {/* Orders Cards Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Orders Cards List (Row by Row) */}
+            <div className="flex flex-col gap-4">
               {paginatedOrders.length === 0 ? (
-                <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
+                <div className="w-full bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
                   <h3 className="font-bold text-neutral-700">No orders in this stage right now.</h3>
                   <p className="text-xs mt-1">
                     {searchQuery ? `No results matching "${searchQuery}"` : 'Online orders placed by customers will appear here immediately.'}
@@ -1376,7 +1392,7 @@ export const AssistantRole: React.FC = () => {
 
                       <div className="py-3 text-xs text-neutral-600 space-y-1">
                         <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
-                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
+                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i: any) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
                       </div>
 
                       <div className="space-y-1 border-t border-neutral-100 pt-2 text-[11px] text-neutral-500">

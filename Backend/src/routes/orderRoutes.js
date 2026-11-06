@@ -1796,6 +1796,16 @@ router.post('/orders/:id/pickup-handover', async (req, res) => {
           dbOrder = rows[0];
         }
 
+        // Prevent handover before the kitchen has marked the order as READY
+        const currentStatus = String(dbOrder?.status || order?.status || '').toUpperCase();
+        if (!['READY', 'PREPARED', 'READY_FOR_PICKUP'].includes(currentStatus)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            success: false,
+            message: `Cannot hand over pickup order while still ${currentStatus || 'in kitchen'}. The kitchen must mark it as Ready first.`,
+          });
+        }
+
         // Update orders table status to COMPLETED
         await client.query(
           `UPDATE orders 

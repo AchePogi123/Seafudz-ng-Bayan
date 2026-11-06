@@ -2136,7 +2136,7 @@ export const AssistantRole: React.FC = () => {
                               onClick={() => handleRejectReceipt(selectedOrder.id)}
                               className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
                             >
-                              Reject (Invalid Image)
+                              Reject
                             </button>
                           </div>
                         </div>

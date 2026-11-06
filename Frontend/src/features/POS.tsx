@@ -728,6 +728,11 @@ export const POS: React.FC = () => {
 
   const handlePickupHandover = async (order: any, cashTenderedVal?: number) => {
     const orderId = order.id || order.ref
+    const statusNorm = (order.status || '').toUpperCase()
+    if (statusNorm !== 'READY') {
+      alert(`Cannot hand over this order yet. The kitchen is still preparing it (current status: ${statusNorm}). Please wait until the kitchen marks it as Ready.`)
+      return
+    }
     const isPayInStore = String(order.paymentMethod || '').toUpperCase().includes('STORE') || order.paymentMethod === 'PAY_IN_STORE' || order.paymentMethod === 'COD'
 
     try {
@@ -2538,32 +2543,41 @@ export const POS: React.FC = () => {
                             <span>{isPrinted ? 'Re-print' : 'Print'}</span>
                           </button>
 
-                          {/* Handover Action Button */}
+                          {/* Handover Action Button: Only allowed once kitchen marks order as READY */}
                           {!isCompleted ? (
-                            isPayInStore ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setHandoverModalOrder(ord)
-                                  setCashTendered(String(ord.total || ''))
-                                }}
-                                className="bg-amber-600 hover:bg-amber-700 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
-                                title="Collect cash from customer and hand over order"
-                              >
-                                <span>💵</span>
-                                <span>Collect & Hand Over</span>
-                              </button>
+                            isReady ? (
+                              isPayInStore ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHandoverModalOrder(ord)
+                                    setCashTendered(String(ord.total || ''))
+                                  }}
+                                  className="bg-amber-600 hover:bg-amber-700 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                  title="Collect cash from customer and hand over order"
+                                >
+                                  <span>💵</span>
+                                  <span>Collect & Hand Over</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isSubmittingHandover}
+                                  onClick={() => handlePickupHandover(ord)}
+                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                  title="Mark as picked up by customer"
+                                >
+                                  <span>🛍️</span>
+                                  <span>Mark as Picked Up</span>
+                                </button>
+                              )
                             ) : (
-                              <button
-                                type="button"
-                                disabled={isSubmittingHandover}
-                                onClick={() => handlePickupHandover(ord)}
-                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
-                                title="Mark as picked up by customer"
+                              <span
+                                className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs whitespace-nowrap"
+                                title="Order is still being prepared in the kitchen. Handover and claiming are available once the kitchen marks it as Ready."
                               >
-                                <span>🛍️</span>
-                                <span>Mark as Picked Up</span>
-                              </button>
+                                <span>🍳</span> Cooking in Kitchen
+                              </span>
                             )
                           ) : (
                             <span className="text-xs font-bold text-neutral-400 bg-neutral-100 border border-neutral-200 px-3 py-1.5 rounded-xl">

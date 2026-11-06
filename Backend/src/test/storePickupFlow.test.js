@@ -166,6 +166,22 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
   });
 
   await t.test('5. Cashier hands over pickup order and collects cash: status COMPLETED and payment PAID', async () => {
+    // 5a. Handover attempt while still CONFIRMED/cooking must fail with 400
+    const prematureRes = await fetch(`${baseUrl}/orders/${testPickupOrderId}/pickup-handover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paymentMethod: 'CASH', cashReceived: 1000 }),
+    });
+    assert.equal(prematureRes.status, 400, 'Handover must be blocked before kitchen marks order as READY');
+
+    // 5b. Advance pickup order to READY (Kitchen completes cooking)
+    await query(`UPDATE orders SET status = 'READY' WHERE id = $1`, [testPickupOrderId]);
+    if (inMemoryOrders.has(testPickupOrderId)) {
+      const mem = inMemoryOrders.get(testPickupOrderId);
+      mem.status = 'READY';
+      inMemoryOrders.set(testPickupOrderId, mem);
+    }
+
     const res = await fetch(`${baseUrl}/orders/${testPickupOrderId}/pickup-handover`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -38,11 +38,7 @@ export const Footer: React.FC = () => {
                 Order Online
               </Link>
             </li>
-            <li>
-              <a href="#specialties" className="hover:text-cyan-300 transition-colors duration-200">
-                Signature Platters
-              </a>
-            </li>
+
             <li>
               <a href="#standards" className="hover:text-cyan-300 transition-colors duration-200">
                 Our Standard

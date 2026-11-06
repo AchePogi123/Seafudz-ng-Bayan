@@ -7,58 +7,6 @@ import { getActiveUser, getEmployeeWorkModule } from '../cryptography/cryptoSess
 
 // Assets
 import seafoodBilaoImg from '../assets/seafood_bilao.png';
-import crabBucketImg from '../assets/crab_bucket.png';
-import garlicButterShrimpImg from '../assets/garlic_butter_shrimp.png';
-import spicyShrimpImg from '../assets/spicy_shrimp.png';
-
-interface DishItem {
-  id: string;
-  name: string;
-  tag: string;
-  price: number;
-  serves: string;
-  description: string;
-  image: string;
-}
-
-const SIGNATURE_DISHES: DishItem[] = [
-  {
-    id: 'dish-1',
-    name: 'Seafood Bilao Supreme',
-    tag: 'Bestseller',
-    price: 1890,
-    serves: 'Serves 4 to 6 Persons',
-    description: 'Generous medley of crabs, tiger prawns, sweet mussels, corn coblets, and garlic annatto rice drenched in signature garlic butter sauce.',
-    image: seafoodBilaoImg
-  },
-  {
-    id: 'dish-2',
-    name: 'Imperial Cajun Crab Bucket',
-    tag: "Chef's Selection",
-    price: 2450,
-    serves: 'Serves 3 to 4 Persons',
-    description: 'Wild jumbo mud crabs tossed in our proprietary 12-spice Cajun butter blend, accompanied by warm toasted mantou buns.',
-    image: crabBucketImg
-  },
-  {
-    id: 'dish-3',
-    name: 'Garlic Butter Tiger Prawns',
-    tag: 'House Favorite',
-    price: 890,
-    serves: 'Serves 2 to 3 Persons',
-    description: 'Fresh plump tiger prawns sauteed with caramelized native garlic, rich dairy butter, and thinly sliced scallions.',
-    image: garlicButterShrimpImg
-  },
-  {
-    id: 'dish-4',
-    name: 'Fire-Roasted Chili Shrimp',
-    tag: 'Spicy Specialty',
-    price: 950,
-    serves: 'Serves 2 to 3 Persons',
-    description: 'Char-grilled succulent shrimps glazed with sweet bird’s eye chili marmalade and freshly squeezed calamansi.',
-    image: spicyShrimpImg
-  }
-];
 
 const FAQ_LIST = [
   {
@@ -228,10 +176,6 @@ export const LandingPage: React.FC = () => {
               Home
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
-            <a href="#specialties" onClick={(e) => handleNavClick(e, 'specialties')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
-              Specialties
-              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
-            </a>
             <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Standard
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
@@ -297,7 +241,6 @@ export const LandingPage: React.FC = () => {
           <div className="lg:hidden bg-white border-t border-slate-100 px-6 py-5 shadow-lg space-y-4 text-left">
             <nav className="flex flex-col gap-3 font-semibold text-slate-700 text-sm">
               <a href="#hero" onClick={(e) => handleNavClick(e, 'hero')} className="hover:text-orange-600 py-1">Home</a>
-              <a href="#specialties" onClick={(e) => handleNavClick(e, 'specialties')} className="hover:text-orange-600 py-1">Specialties</a>
               <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="hover:text-orange-600 py-1">Our Standard</a>
               <a href="#our-story" onClick={(e) => handleNavClick(e, 'our-story')} className="hover:text-orange-600 py-1">Our Story</a>
               <a href="#branches" onClick={(e) => handleNavClick(e, 'branches')} className="hover:text-orange-600 py-1">Branches</a>
@@ -408,13 +351,13 @@ export const LandingPage: React.FC = () => {
                   {activeUser ? (activeUser.role === 'customer' ? 'My Account' : (employeeModule?.shortLabel || 'Dashboard')) : 'Login'}
                 </Link>
 
-                {/* Windows / Desktop View: View Specialties (Unchanged) */}
+                {/* Windows / Desktop View: Our Standards */}
                 <a
-                  href="#specialties"
-                  onClick={(e) => handleNavClick(e, 'specialties')}
+                  href="#standards"
+                  onClick={(e) => handleNavClick(e, 'standards')}
                   className="hidden lg:inline-flex bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-bold text-xs sm:text-sm px-5 py-3.5 rounded-xl border border-slate-200 hover:border-orange-300 transition-all cursor-pointer items-center justify-center"
                 >
-                  View Specialties
+                  Our Standards
                 </a>
               </div>
 
@@ -517,55 +460,7 @@ export const LandingPage: React.FC = () => {
         </div>
       </section>
 
-      {/* 5. SIGNATURE SPECIALTIES */}
-      <section id="specialties" className="py-20 bg-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-2xl mx-auto mb-14">
-            <span className="text-xs font-bold uppercase tracking-widest text-orange-700 bg-orange-100 px-3.5 py-1.5 rounded-full inline-block mb-3">
-              Fresh From Our Kitchen
-            </span>
-            <h2 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
-              Our Signature Seafood Platters
-            </h2>
-            <p className="text-sm sm:text-base text-slate-600 mt-3 leading-relaxed">
-              Every dish is freshly prepared upon order using prime morning catches, natural dairy butter, and our proprietary Cajun rub.
-            </p>
-          </div>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
-            {SIGNATURE_DISHES.map((dish) => (
-              <div
-                key={dish.id}
-                onClick={handleOrderOnline}
-                className="relative h-48 sm:h-80 md:h-88 rounded-xl sm:rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 group cursor-pointer border border-slate-200/80 bg-orange-50"
-              >
-                <img
-                  src={dish.image}
-                  alt={dish.name}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
-                />
-                <div className="absolute top-2.5 left-2.5 sm:top-4 sm:left-4 bg-white/95 backdrop-blur-md px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[9px] sm:text-[11px] font-bold text-orange-700 shadow-sm border border-orange-100/80">
-                  {dish.tag}
-                </div>
-                <div className="absolute inset-0 bg-slate-950/45 flex flex-col justify-end p-3 sm:p-5 text-white transition-opacity duration-300">
-                  <h3 className="font-extrabold text-xs sm:text-xl leading-snug drop-shadow-sm line-clamp-2">
-                    {dish.name}
-                  </h3>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="text-center mt-12">
-            <button
-              onClick={handleOrderOnline}
-              className="inline-block bg-slate-900 hover:bg-orange-600 hover:text-[#2b180c] text-white font-bold text-sm px-8 py-3.5 rounded-xl transition-colors shadow-xs cursor-pointer"
-            >
-              Explore Full Online Menu
-            </button>
-          </div>
-        </div>
-      </section>
 
       {/* 6. OUR STANDARD (Numbered Pillar Cards) */}
       <section id="standards" className="py-20 bg-slate-50 border-t border-slate-200">

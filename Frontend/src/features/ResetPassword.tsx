@@ -34,8 +34,13 @@ export const ResetPassword = () => {
       return;
     }
 
-    if (newPassword.length < 6) {
-      setErrorMessage('Password must be at least 6 characters long.');
+    if (newPassword.length < 8) {
+      setErrorMessage('Password must be at least 8 characters long.');
+      return;
+    }
+
+    if (!/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      setErrorMessage('Password must contain both letters and numbers.');
       return;
     }
 
@@ -137,7 +142,7 @@ export const ResetPassword = () => {
             <div className="relative">
               <input
                 type={showNewPassword ? 'text' : 'password'}
-                placeholder="Minimum 6 characters"
+                placeholder="Minimum 8 characters with letters & numbers"
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}

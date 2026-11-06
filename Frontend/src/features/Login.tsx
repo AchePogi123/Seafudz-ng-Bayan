@@ -139,7 +139,11 @@ return () => {
   const validatePassword = (pwd: string) => {
     if (!pwd) return 'Password is required.';
     if (pwd.length < 8) return 'Password must be at least 8 characters long.';
-    if (!/\d/.test(pwd)) return 'Password must contain at least one number.';
+    const hasLetter = /[a-zA-Z]/.test(pwd);
+    const hasNumber = /\d/.test(pwd);
+    if (!hasLetter && !hasNumber) return 'Password must contain both letters and numbers.';
+    if (!hasLetter) return 'Password must contain at least one letter.';
+    if (!hasNumber) return 'Password must contain at least one number.';
     return '';
   };
 
@@ -1285,7 +1289,7 @@ return () => {
                 <div className="mb-2.5 relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
-                    placeholder="Password (min. 8 characters with numbers)"
+                    placeholder="Password (min. 8 characters with letters & numbers)"
                     required
                     className={`w-full py-3 pl-3.5 pr-10 rounded-xl border ${passwordError ? 'border-red-500 focus:border-red-500' : 'border-[#eadfd7] focus:border-[#FF6900]'} font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border`}
                     value={password}
@@ -1797,7 +1801,7 @@ return () => {
                   <div className="relative">
                     <input
                       type={showPassword ? 'text' : 'password'}
-                      placeholder="Password (8+ chars, 1+ num)"
+                      placeholder="Password (8+ chars, letters & nums)"
                       required
                       value={password}
                       onChange={(e) => handlePasswordChange(e.target.value)}

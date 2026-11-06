@@ -1967,6 +1967,14 @@ router.post('/auth/reset-password', async (req, res) => {
       });
     }
 
+    if (typeof newPassword !== 'string' || newPassword.length < 8 || !/[a-zA-Z]/.test(newPassword) || !/\d/.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_PASSWORD',
+        message: 'Password must be at least 8 characters long and include both letters and numbers.',
+      });
+    }
+
     const hashed = await hashPassword(newPassword);
 
     // 1. Ensure password_hash columns exist on PostgreSQL tables
@@ -2151,11 +2159,13 @@ router.post('/auth/register', async (req, res) => {
     }
 
     if (password) {
-      if (typeof password !== 'string' || password.length < 8 || !/\d/.test(password)) {
+      const hasLetter = /[a-zA-Z]/.test(password);
+      const hasNumber = /\d/.test(password);
+      if (typeof password !== 'string' || password.length < 8 || !hasLetter || !hasNumber) {
         return res.status(400).json({
           success: false,
           code: 'INVALID_PASSWORD',
-          message: 'Password must be at least 8 characters long and include at least one number.',
+          message: 'Password must be at least 8 characters long and include both letters and numbers.',
         });
       }
     }

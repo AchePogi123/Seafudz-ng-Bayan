@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import zlib from 'zlib';
 import pg from 'pg';
+import express from 'express';
+import exportRoutes from '../routes/exportRoutes.js';
 import { promisify } from 'util';
 import {
   ensureBackupBucket,
@@ -217,47 +219,61 @@ test('8. Historical transactions Excel (.xlsx) export and schema integrity', asy
 });
 
 test('9. Admin-only export authorization and RBAC verification', async () => {
-  const adminTokenObj = generateSessionHashToken({
-    userId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55',
-    email: 'admin@seafudz.ph',
-    role: 'admin',
-  });
+  const app = express();
+  app.use(express.json());
+  app.use('/api', exportRoutes);
 
-  const cashierTokenObj = generateSessionHashToken({
-    userId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
-    email: 'cashier@seafudz.ph',
-    role: 'cashier',
+  const server = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
+  const port = server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
 
-  // Test preview endpoint
-  const cashierPrev = await fetch('http://localhost:5000/api/admin/export/transactions/preview?period=all', {
-    headers: { Authorization: `Bearer ${cashierTokenObj.sessionToken}` },
-  });
-  assert.equal(cashierPrev.status, 403, 'Cashier must be blocked with 403 Forbidden from export preview');
+  try {
+    const adminTokenObj = generateSessionHashToken({
+      userId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55',
+      email: 'admin@seafudz.ph',
+      role: 'admin',
+    });
 
-  const adminPrev = await fetch('http://localhost:5000/api/admin/export/transactions/preview?period=all', {
-    headers: { Authorization: `Bearer ${adminTokenObj.sessionToken}` },
-  });
-  assert.equal(adminPrev.status, 200, 'Admin must receive 200 OK for export preview');
-  const prevJson = await adminPrev.json();
-  assert.ok(prevJson.data?.totalRecords >= 8, 'Preview must reflect historical records');
+    const cashierTokenObj = generateSessionHashToken({
+      userId: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      email: 'cashier@seafudz.ph',
+      role: 'cashier',
+    });
 
-  // Test excel download endpoint
-  const cashierDl = await fetch('http://localhost:5000/api/admin/export/transactions/excel?period=all', {
-    headers: { Authorization: `Bearer ${cashierTokenObj.sessionToken}` },
-  });
-  assert.equal(cashierDl.status, 403, 'Cashier must be blocked with 403 Forbidden from Excel download');
+    // Test preview endpoint
+    const cashierPrev = await fetch(`${baseUrl}/api/admin/export/transactions/preview?period=all`, {
+      headers: { Authorization: `Bearer ${cashierTokenObj.sessionToken}` },
+    });
+    assert.equal(cashierPrev.status, 403, 'Cashier must be blocked with 403 Forbidden from export preview');
 
-  const adminDl = await fetch('http://localhost:5000/api/admin/export/transactions/excel?period=all', {
-    headers: { Authorization: `Bearer ${adminTokenObj.sessionToken}` },
-  });
-  assert.equal(adminDl.status, 200, 'Admin must receive 200 OK for Excel download');
-  assert.ok(
-    adminDl.headers.get('content-type')?.includes('spreadsheetml'),
-    'Response must be Excel spreadsheetml content type'
-  );
+    const adminPrev = await fetch(`${baseUrl}/api/admin/export/transactions/preview?period=all`, {
+      headers: { Authorization: `Bearer ${adminTokenObj.sessionToken}` },
+    });
+    assert.equal(adminPrev.status, 200, 'Admin must receive 200 OK for export preview');
+    const prevJson = await adminPrev.json();
+    assert.ok(prevJson.data?.totalRecords >= 8, 'Preview must reflect historical records');
 
-  const p = await getDbPool();
-  await p.end();
+    // Test excel download endpoint
+    const cashierDl = await fetch(`${baseUrl}/api/admin/export/transactions/excel?period=all`, {
+      headers: { Authorization: `Bearer ${cashierTokenObj.sessionToken}` },
+    });
+    assert.equal(cashierDl.status, 403, 'Cashier must be blocked with 403 Forbidden from Excel download');
+
+    const adminDl = await fetch(`${baseUrl}/api/admin/export/transactions/excel?period=all`, {
+      headers: { Authorization: `Bearer ${adminTokenObj.sessionToken}` },
+    });
+    assert.equal(adminDl.status, 200, 'Admin must receive 200 OK for Excel download');
+    assert.ok(
+      adminDl.headers.get('content-type')?.includes('spreadsheetml'),
+      'Response must be Excel spreadsheetml content type'
+    );
+
+    const p = await getDbPool();
+    await p.end();
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 

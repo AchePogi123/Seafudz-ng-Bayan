@@ -305,7 +305,6 @@ router.post('/sales/reset-transactions', async (req, res) => {
           orders 
         RESTART IDENTITY CASCADE;
       `);
-      await client.query(`UPDATE products SET remaining_servings = NULL;`);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');

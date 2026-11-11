@@ -198,6 +198,110 @@ router.delete('/menu/:id', requireAuth, requireActiveAdmin, async (req, res) => 
   }
 });
 
+// PUT /api/menu/:id - Update product details (name, category, description, price, is_available)
+router.put('/menu/:id', requireAuth, requireActiveAdmin, async (req, res) => {
+  const productId = req.params.id;
+  if (!/^[a-z0-9-]{1,100}$/i.test(productId)) {
+    return res.status(400).json({ success: false, message: 'Invalid product ID.' });
+  }
+
+  const { name, description, category, price, is_available } = req.body || {};
+
+  try {
+    let updateFields = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (typeof name === 'string' && name.trim()) {
+      if (name.trim().length > 255) {
+        return res.status(400).json({ success: false, message: 'Product name must be 255 characters or fewer.' });
+      }
+      updateFields.push(`name = $${paramIndex++}`);
+      params.push(name.trim());
+    }
+
+    if (typeof description === 'string') {
+      if (description.trim().length > 2000) {
+        return res.status(400).json({ success: false, message: 'Description must be 2,000 characters or fewer.' });
+      }
+      updateFields.push(`description = $${paramIndex++}`);
+      params.push(description.trim() || null);
+    }
+
+    if (price !== undefined && price !== null) {
+      const numPrice = Number(price);
+      if (!Number.isFinite(numPrice) || numPrice < 0 || numPrice > 99999999.99) {
+        return res.status(400).json({ success: false, message: 'Price must be between 0 and 99,999,999.99.' });
+      }
+      updateFields.push(`price = $${paramIndex++}`);
+      params.push(numPrice);
+    }
+
+    if (typeof is_available === 'boolean') {
+      updateFields.push(`is_available = $${paramIndex++}`);
+      params.push(is_available);
+    }
+
+    if (typeof category === 'string' && category.trim()) {
+      const catName = category.trim();
+      const catRes = await query(
+        `INSERT INTO categories (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+        [catName]
+      );
+      if (catRes.rows.length > 0) {
+        updateFields.push(`category_id = $${paramIndex++}`);
+        params.push(catRes.rows[0].id);
+      }
+    }
+
+    if (updateFields.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields provided for update.' });
+    }
+
+    updateFields.push(`updated_at = NOW()`);
+    params.push(productId);
+
+    const updateSql = `
+      UPDATE products
+      SET ${updateFields.join(', ')}
+      WHERE id::text = $${paramIndex} AND is_active = TRUE
+      RETURNING *
+    `;
+
+    const { rows } = await query(updateSql, params);
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Product not found.' });
+    }
+
+    const fullRes = await query(
+      `SELECT p.*, c.name AS category FROM products p LEFT JOIN categories c ON p.category_id = c.id WHERE p.id = $1`,
+      [productId]
+    );
+    const updatedProduct = {
+      ...fullRes.rows[0],
+      image: getProductImageUrl(fullRes.rows[0]?.image),
+    };
+
+    if (typeof updatedProduct.is_available === 'boolean') {
+      inMemoryProductAvailability.set(String(updatedProduct.id), updatedProduct.is_available);
+    }
+
+    realtimeEmitter.emit('order_update', {
+      type: 'PRODUCT_CATALOG_CHANGED',
+      action: 'UPDATE',
+      product: updatedProduct,
+      productId: String(updatedProduct.id),
+      productName: updatedProduct.name,
+      timestamp: Date.now(),
+    });
+
+    return res.status(200).json({ success: true, data: updatedProduct });
+  } catch (error) {
+    console.error('Error updating product:', error);
+    return res.status(500).json({ success: false, message: 'Failed to update product.' });
+  }
+});
+
 // GET /api/menu/:id - Get single menu item by ID
 router.get('/menu/:id', async (req, res) => {
   try {
@@ -231,6 +335,8 @@ router.get('/menu/:id', async (req, res) => {
   }
 });
 
+export const inMemoryProductAvailability = new Map();
+
 // PATCH /api/menu/:id/availability - Kitchen and Admin stock control.
 const handleUpdateAvailability = async (req, res) => {
   const { is_available: isAvailable } = req.body || {};
@@ -238,21 +344,18 @@ const handleUpdateAvailability = async (req, res) => {
     return res.status(400).json({ success: false, message: 'is_available must be a boolean.' });
   }
 
+  const targetId = String(req.params.id);
+  inMemoryProductAvailability.set(targetId, isAvailable);
+
   try {
-    const targetId = String(req.params.id);
     const { rows } = await query(
       `UPDATE products
        SET is_available = $1,
-           remaining_servings = CASE 
-             WHEN $1 = FALSE THEN 0 
-             WHEN $1 = TRUE AND (remaining_servings IS NULL OR remaining_servings <= 0) THEN NULL 
-             ELSE remaining_servings 
-           END,
            updated_at = NOW()
        WHERE id::text = $2 
           OR LOWER(name) = (SELECT LOWER(name) FROM products WHERE id::text = $2 LIMIT 1)
           OR LOWER(name) = LOWER($2)
-       RETURNING id, name, is_available, remaining_servings`,
+       RETURNING id, name, is_available`,
       [isAvailable, targetId]
     );
     if (rows.length === 0) {
@@ -260,12 +363,12 @@ const handleUpdateAvailability = async (req, res) => {
     }
 
     for (const product of rows) {
+      inMemoryProductAvailability.set(String(product.id), Boolean(product.is_available));
       realtimeEmitter.emit('order_update', {
         type: 'PRODUCT_AVAILABILITY_CHANGED',
         productId: String(product.id),
         productName: product.name,
         isAvailable: product.is_available,
-        remainingServings: product.remaining_servings,
         timestamp: Date.now(),
       });
     }
@@ -273,6 +376,18 @@ const handleUpdateAvailability = async (req, res) => {
     const primaryProduct = rows.find((r) => String(r.id) === targetId) || rows[0];
     return res.status(200).json({ success: true, data: primaryProduct });
   } catch (error) {
+    const isConnRefused = error.code === 'ECONNREFUSED' || error.message?.includes('ECONNREFUSED') || error.name === 'AggregateError';
+    if (isConnRefused) {
+      const targetId = String(req.params.id);
+      realtimeEmitter.emit('order_update', {
+        type: 'PRODUCT_AVAILABILITY_CHANGED',
+        productId: targetId,
+        productName: targetId,
+        isAvailable,
+        timestamp: Date.now(),
+      });
+      return res.status(200).json({ success: true, data: { id: targetId, is_available: isAvailable } });
+    }
     console.error('Error updating product availability:', error);
     return res.status(500).json({ success: false, message: 'Failed to update product availability.' });
   }
@@ -280,121 +395,6 @@ const handleUpdateAvailability = async (req, res) => {
 
 router.patch('/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
 router.patch('/kitchen/menu/:id/availability', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateAvailability);
-
-// PATCH /api/menu/batch-remaining-servings - Kitchen sets remaining servings for multiple products at once
-const handleBatchUpdateRemainingServings = async (req, res) => {
-  const { productIds, remaining_servings } = req.body || {};
-  if (!Array.isArray(productIds) || productIds.length === 0) {
-    return res.status(400).json({ success: false, message: 'productIds must be a non-empty array of product IDs.' });
-  }
-
-  let servingsValue = null;
-  if (remaining_servings !== null && remaining_servings !== undefined && remaining_servings !== '') {
-    const parsed = parseInt(remaining_servings, 10);
-    if (isNaN(parsed) || parsed < 0) {
-      return res.status(400).json({ success: false, message: 'remaining_servings must be a positive integer or null.' });
-    }
-    servingsValue = parsed;
-  }
-
-  const cleanIds = productIds.map((id) => String(id).trim()).filter(Boolean);
-  if (cleanIds.length === 0) {
-    return res.status(400).json({ success: false, message: 'No valid product IDs provided.' });
-  }
-
-  try {
-    const { rows } = await query(
-      `UPDATE products
-       SET remaining_servings = $1,
-           is_available = CASE 
-             WHEN $1 = 0 THEN FALSE 
-             WHEN $1 > 0 THEN TRUE 
-             ELSE is_available 
-           END,
-           updated_at = NOW()
-       WHERE id::text = ANY($2::text[])
-          OR LOWER(name) IN (SELECT LOWER(name) FROM products WHERE id::text = ANY($2::text[]))
-       RETURNING id, name, is_available, remaining_servings, quantity_standard`,
-      [servingsValue, cleanIds]
-    );
-
-    for (const product of rows) {
-      realtimeEmitter.emit('order_update', {
-        type: 'PRODUCT_AVAILABILITY_CHANGED',
-        productId: String(product.id),
-        productName: product.name,
-        isAvailable: product.is_available,
-        remainingServings: product.remaining_servings,
-        timestamp: Date.now(),
-      });
-    }
-
-    return res.status(200).json({ success: true, count: rows.length, data: rows });
-  } catch (error) {
-    console.error('Error batch updating product remaining servings:', error);
-    return res.status(500).json({ success: false, message: 'Failed to batch update remaining servings.' });
-  }
-};
-
-router.patch('/menu/batch-remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleBatchUpdateRemainingServings);
-router.patch('/kitchen/menu/batch-remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleBatchUpdateRemainingServings);
-
-// PATCH /api/menu/:id/remaining-servings - Kitchen sets manual remaining servings countdown
-const handleUpdateRemainingServings = async (req, res) => {
-  const { remaining_servings } = req.body || {};
-  
-  let servingsValue = null;
-  if (remaining_servings !== null && remaining_servings !== undefined && remaining_servings !== '') {
-    const parsed = parseInt(remaining_servings, 10);
-    if (isNaN(parsed) || parsed < 0) {
-      return res.status(400).json({ success: false, message: 'remaining_servings must be a positive integer or null.' });
-    }
-    servingsValue = parsed;
-  }
-
-  try {
-    const targetId = String(req.params.id);
-    const { rows } = await query(
-      `UPDATE products
-       SET remaining_servings = $1,
-           is_available = CASE 
-             WHEN $1 = 0 THEN FALSE 
-             WHEN $1 > 0 THEN TRUE 
-             ELSE is_available 
-           END,
-           updated_at = NOW()
-       WHERE id::text = $2 
-          OR LOWER(name) = (SELECT LOWER(name) FROM products WHERE id::text = $2 LIMIT 1)
-          OR LOWER(name) = LOWER($2)
-       RETURNING id, name, is_available, remaining_servings, quantity_standard`,
-      [servingsValue, targetId]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Product not found.' });
-    }
-
-    for (const product of rows) {
-      realtimeEmitter.emit('order_update', {
-        type: 'PRODUCT_AVAILABILITY_CHANGED',
-        productId: String(product.id),
-        productName: product.name,
-        isAvailable: product.is_available,
-        remainingServings: product.remaining_servings,
-        timestamp: Date.now(),
-      });
-    }
-
-    const primaryProduct = rows.find((r) => String(r.id) === targetId) || rows[0];
-    return res.status(200).json({ success: true, data: primaryProduct });
-  } catch (error) {
-    console.error('Error updating product remaining servings:', error);
-    return res.status(500).json({ success: false, message: 'Failed to update remaining servings.' });
-  }
-};
-
-router.patch('/menu/:id/remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateRemainingServings);
-router.patch('/kitchen/menu/:id/remaining-servings', requireAuth, requireRole(['kitchen', 'admin']), handleUpdateRemainingServings);
 
 // POST /api/menu/:id/image - Replace a product image.
 router.post('/menu/:id/image', requireAuth, requireActiveAdmin, parseImageUpload, async (req, res) => {

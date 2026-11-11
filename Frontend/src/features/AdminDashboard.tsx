@@ -61,63 +61,6 @@ const parseOrderDate = (dateStr?: string, createdAtRaw?: string): Date => {
     return new Date(0)
 }
 
-const generateSmoothSparkline = (values: number[], width = 56, height = 28, padding = 3) => {
-    let ptsData = values && values.length > 0 ? [...values] : [10, 15, 12, 22, 18, 28, 25]
-
-    // If all values are 0 or all values are identical
-    const allZero = ptsData.every((v) => v === 0)
-    const minVal = Math.min(...ptsData)
-    const maxVal = Math.max(...ptsData)
-
-    if (allZero) {
-        ptsData = [6, 12, 9, 18, 14, 24, 20] // Default gentle upward trend when 0
-    } else if (minVal === maxVal) {
-        ptsData = ptsData.map((v, i) => Math.max(1, v + Math.sin(i * 1.2) * (v * 0.15 || 2)))
-    }
-
-    if (ptsData.length === 1) {
-        ptsData = [ptsData[0] * 0.8, ptsData[0], ptsData[0] * 1.1]
-    } else if (ptsData.length === 2) {
-        ptsData = [ptsData[0], (ptsData[0] + ptsData[1]) / 2, ptsData[1]]
-    }
-
-    const curMin = Math.min(...ptsData)
-    const curMax = Math.max(...ptsData)
-    const range = curMax - curMin || 1
-
-    const numPoints = ptsData.length
-    const dx = (width - padding * 2) / (numPoints - 1)
-
-    const points = ptsData.map((val, i) => {
-        const x = padding + i * dx
-        const normalized = (val - curMin) / range
-        const y = height - padding - normalized * (height - padding * 2)
-        return { x, y }
-    })
-
-    let lineD = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`
-
-    for (let i = 0; i < points.length - 1; i++) {
-        const p0 = points[i]
-        const p1 = points[i + 1]
-
-        const cp1x = (p0.x + (p1.x - p0.x) * 0.45).toFixed(1)
-        const cp1y = p0.y.toFixed(1)
-        const cp2x = (p0.x + (p1.x - p0.x) * 0.55).toFixed(1)
-        const cp2y = p1.y.toFixed(1)
-        const endX = p1.x.toFixed(1)
-        const endY = p1.y.toFixed(1)
-
-        lineD += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`
-    }
-
-    const firstX = points[0].x.toFixed(1)
-    const lastX = points[points.length - 1].x.toFixed(1)
-    const areaD = `${lineD} L ${lastX} ${height} L ${firstX} ${height} Z`
-
-    return { lineD, areaD }
-}
-
 const AdminDashboard: React.FC = () => {
     const navigate = useNavigate()
     const { menuItems, refresh: refreshProductImages } = useProductImages()
@@ -562,63 +505,6 @@ const AdminDashboard: React.FC = () => {
                         : 'All Time'
     }, [timeRange])
 
-    // Dynamic Time-Aware Smooth Curve SVG Paths for all 6 KPI Metric Cards
-    const dynamicMetricTrends = useMemo(() => {
-        const slotsCount = 7
-        const revenueSlots = new Array(slotsCount).fill(0)
-        const ordersSlots = new Array(slotsCount).fill(0)
-        const posSlots = new Array(slotsCount).fill(0)
-        const deliverySlots = new Array(slotsCount).fill(0)
-        const customerSets: Set<string>[] = Array.from({ length: slotsCount }, () => new Set())
-        const avgTicketSlots = new Array(slotsCount).fill(0)
-
-        if (dateFilteredOrders.length > 0) {
-            const sorted = [...dateFilteredOrders].sort(
-                (a, b) => parseOrderDate(a.dateTime, a.created_at).getTime() - parseOrderDate(b.dateTime, b.created_at).getTime()
-            )
-
-            const minTime = parseOrderDate(sorted[0].dateTime, sorted[0].created_at).getTime()
-            const maxTime = parseOrderDate(sorted[sorted.length - 1].dateTime, sorted[sorted.length - 1].created_at).getTime()
-            const timeSpan = maxTime - minTime || 1
-
-            sorted.forEach((ord) => {
-                const t = parseOrderDate(ord.dateTime, ord.created_at).getTime()
-                let idx = Math.floor(((t - minTime) / timeSpan) * slotsCount)
-                if (idx >= slotsCount) idx = slotsCount - 1
-                if (idx < 0) idx = 0
-
-                const total = Number(ord.total || 0)
-                const isDel = isOnlineOrder(ord.type)
-
-                revenueSlots[idx] += total
-                ordersSlots[idx] += 1
-                if (isDel) {
-                    deliverySlots[idx] += 1
-                    if (ord.customer && typeof ord.customer === 'string') {
-                        customerSets[idx].add(ord.customer.trim().toLowerCase())
-                    }
-                } else {
-                    posSlots[idx] += 1
-                }
-            })
-
-            for (let i = 0; i < slotsCount; i++) {
-                avgTicketSlots[i] = ordersSlots[i] > 0 ? Math.round(revenueSlots[i] / ordersSlots[i]) : 0
-            }
-        }
-
-        const customerCounts = customerSets.map((s) => s.size)
-
-        return {
-            revenue: generateSmoothSparkline(revenueSlots),
-            orders: generateSmoothSparkline(ordersSlots),
-            pos: generateSmoothSparkline(posSlots),
-            delivery: generateSmoothSparkline(deliverySlots),
-            customers: generateSmoothSparkline(customerCounts),
-            avgTicket: generateSmoothSparkline(avgTicketSlots),
-        }
-    }, [dateFilteredOrders])
-
     // Dynamic item sales breakdown
     const itemSalesStats = useMemo(() => {
         const counts: Record<string, number> = {}
@@ -741,7 +627,7 @@ const AdminDashboard: React.FC = () => {
                 }
             }
 
-            // Case B: Order has string description (e.g. "All Shrimp Bowl x6, Fresh Lemonade (Small) x2")
+            // Case B: Order has string description
             const itemsStr = (ord.items || '').trim()
             if (itemsStr) {
                 const parts = itemsStr.split(',')
@@ -773,7 +659,7 @@ const AdminDashboard: React.FC = () => {
                 }
             }
 
-            // Case C: Fallback to detecting from order notes or summary (default Seafoods)
+            // Case C: Fallback
             const fallbackCat = detectCategory(itemsStr || ord.type || '')
             catMap[fallbackCat] = (catMap[fallbackCat] || 0) + ordTotal
         })
@@ -890,7 +776,7 @@ const AdminDashboard: React.FC = () => {
         }))
     }, [dateFilteredOrders, trendViewMode, timeRange])
 
-    // Payment Methods Distribution (accurately distinguishes GCash, POS Cash, and Online COD)
+    // Payment Methods Distribution
     const paymentStats = useMemo(() => {
         let gcash = 0
         let posCash = 0
@@ -918,699 +804,510 @@ const AdminDashboard: React.FC = () => {
 
         if (posCash > 0 || (gcash === 0 && onlineCod === 0 && other === 0)) {
             list.push({
-                name: 'Cash (POS Store)',
+                name: 'Cash (POS)',
                 amount: posCash,
                 pct: Math.round((posCash / total) * 100),
-                color: 'bg-amber-500',
-                border: 'border-amber-500',
+                dotClass: 'bg-amber-400',
             })
         }
         if (onlineCod > 0) {
             list.push({
-                name: 'Cash on Delivery (COD)',
+                name: 'COD',
                 amount: onlineCod,
                 pct: Math.round((onlineCod / total) * 100),
-                color: 'bg-emerald-500',
-                border: 'border-emerald-500',
+                dotClass: 'bg-orange-500',
             })
         }
         list.push({
-            name: 'GCash Online',
+            name: 'GCash',
             amount: gcash,
             pct: Math.round((gcash / total) * 100),
-            color: 'bg-blue-500',
-            border: 'border-blue-500',
+            dotClass: 'bg-blue-500',
         })
         if (other > 0) {
             list.push({
                 name: 'Maya / Cards',
                 amount: other,
                 pct: Math.round((other / total) * 100),
-                color: 'bg-purple-500',
-                border: 'border-purple-500',
+                dotClass: 'bg-violet-500',
             })
         }
 
         return list
     }, [dateFilteredOrders])
 
+    const timeRangeOptions: { value: TimeRangeOption; label: string }[] = [
+        { value: 'ALL', label: 'All time' },
+        { value: '1D', label: 'Today' },
+        { value: '1W', label: '7 days' },
+        { value: '1M', label: '30 days' },
+        { value: '1Y', label: 'This year' },
+        { value: 'CUSTOM', label: 'Custom' },
+    ]
+
     return (
-        <div className="min-h-screen bg-[#f4f7f6] text-slate-800 font-sans pb-16 transition-all">
-            {/* Top Admin Navigation */}
-            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
+        <div className="min-h-screen bg-slate-50 text-slate-800 pb-16">
+            {/* Navbar */}
+            <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-5 print:hidden">
                 <NavbarAdmin />
             </div>
 
-            {/* Full Width Body Container */}
-            <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
-                {/* Header Greeting & Action Bar */}
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs print:hidden">
+            <div className="w-full px-4 sm:px-6 lg:px-10 pt-6 space-y-6">
+
+                {/* Header row: title + sync + time filter */}
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                     <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Live System Active</span>
-                        </div>
-                        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900">
-                            Executive Admin Dashboard
+                        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+                            Dashboard
                         </h1>
-                        <p className="text-xs sm:text-sm text-slate-500 font-medium mt-0.5">
-                            Seafudz ng Bayan • Store Operations, Revenue Trends & Product Price Control
+                        <p className="text-sm text-slate-500 mt-0.5">
+                            Store operations overview
                         </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2.5">
-                        <button
-                            onClick={fetchLiveOrders}
-                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all shadow-2xs cursor-pointer"
-                            title="Refresh orders"
-                        >
-                            <svg className={`w-4 h-4 text-slate-500 ${isLoadingOrders ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            Sync Orders
-                        </button>
-
-
-
-
-                    </div>
-                </div>
-
-                {/* GLOBAL TIME & DATE RANGE FILTER BAR (SEPARATED CONTROLS) */}
-                <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col xl:flex-row xl:items-center justify-between gap-5">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-600 shrink-0">
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <h3 className="text-sm font-black text-slate-900 leading-tight">Analytics Time & Date Filter</h3>
-                            <p className="text-[11px] text-slate-400 font-medium mt-0.5">Select a preset time horizon or specify a custom date window</p>
-                        </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-4">
-                        {/* CONTROL 1: Preset Period Dropdown */}
-                        <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-200/80">
-                            <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 pl-1">
-                                Preset Horizon:
-                            </label>
-                            <div className="relative">
-                                <select
-                                    value={timeRange}
-                                    onChange={(e) => {
-                                        const val = e.target.value as TimeRangeOption
-                                        setTimeRange(val)
-                                        if (val !== 'CUSTOM') {
+                    <div className="flex flex-wrap items-center gap-2">
+                        {/* Time range pills */}
+                        <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-lg">
+                            {timeRangeOptions.map((opt) => (
+                                <button
+                                    key={opt.value}
+                                    onClick={() => {
+                                        setTimeRange(opt.value)
+                                        if (opt.value !== 'CUSTOM') {
                                             setCustomStartDate('')
                                             setCustomEndDate('')
                                         }
                                     }}
-                                    className="bg-white border border-slate-200 text-slate-800 text-xs font-extrabold rounded-xl px-3.5 py-1.5 pr-8 focus:outline-none focus:border-orange-500 shadow-2xs transition-all cursor-pointer appearance-none"
+                                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                                        timeRange === opt.value
+                                            ? 'bg-white text-slate-900 shadow-sm'
+                                            : 'text-slate-500 hover:text-slate-700'
+                                    }`}
                                 >
-                                    <option value="ALL">All Time History</option>
-                                    <option value="1D">Today (1 Day)</option>
-                                    <option value="1W">1 Week (Last 7 Days)</option>
-                                    <option value="1M">1 Month (Last 30 Days)</option>
-                                    <option value="1Y">This Year (Last 365 Days)</option>
-                                    <option value="CUSTOM">Custom Date Range</option>
-                                </select>
-                                <svg className="w-4 h-4 text-slate-400 absolute right-2.5 top-2 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                </svg>
-                            </div>
+                                    {opt.label}
+                                </button>
+                            ))}
                         </div>
 
-                        {/* SEPARATOR */}
-                        <div className="hidden sm:block w-px h-8 bg-slate-200"></div>
-
-                        {/* CONTROL 2: Separate Dedicated Date Picker Inputs */}
-                        <div className="flex flex-wrap items-center gap-2.5 bg-slate-50 p-2 rounded-2xl border border-slate-200/80">
-                            <label className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 pl-1">
-                                Date Picker:
-                            </label>
-
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-slate-500">From</span>
+                        {/* Custom date inputs (visible when Custom selected) */}
+                        {timeRange === 'CUSTOM' && (
+                            <div className="flex items-center gap-1.5 text-xs">
                                 <input
                                     type="date"
                                     value={customStartDate}
-                                    onChange={(e) => {
-                                        setCustomStartDate(e.target.value)
-                                        setTimeRange('CUSTOM')
-                                    }}
-                                    className="bg-white border border-slate-200 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-orange-500 cursor-pointer shadow-2xs"
+                                    onChange={(e) => setCustomStartDate(e.target.value)}
+                                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-orange-500"
                                 />
-                            </div>
-
-                            <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-slate-500">To</span>
+                                <span className="text-slate-400">–</span>
                                 <input
                                     type="date"
                                     value={customEndDate}
-                                    onChange={(e) => {
-                                        setCustomEndDate(e.target.value)
-                                        setTimeRange('CUSTOM')
-                                    }}
-                                    className="bg-white border border-slate-200 rounded-xl px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-orange-500 cursor-pointer shadow-2xs"
+                                    onChange={(e) => setCustomEndDate(e.target.value)}
+                                    className="border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-orange-500"
                                 />
                             </div>
+                        )}
 
-                            {(customStartDate || customEndDate) && (
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setCustomStartDate('')
-                                        setCustomEndDate('')
-                                        setTimeRange('ALL')
-                                    }}
-                                    className="px-2.5 py-1 rounded-xl bg-orange-100 hover:bg-orange-200 text-orange-700 font-extrabold text-[10px] transition-colors cursor-pointer ml-1"
-                                >
-                                    Reset Dates
-                                </button>
-                            )}
-                        </div>
+                        <button
+                            onClick={fetchLiveOrders}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                            title="Refresh orders"
+                        >
+                            <svg className={`w-3.5 h-3.5 ${isLoadingOrders ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            Sync
+                        </button>
                     </div>
                 </div>
 
-                {/* 3 KPI Metric Cards Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    {/* Metric 1: Total Orders (Both Online & POS) */}
-                    <div
+                {/* KPI row: 4 metric cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Total Revenue */}
+                    <button
                         onClick={() => navigate('/admin-sales-report', { state: { tab: mappedActiveTab } })}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer group"
+                        className="text-left bg-white rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer border border-slate-100 group"
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-indigo-600 transition-colors">Total Orders</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-indigo-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.orders.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.orders.areaD} fill="url(#indigoSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="indigoSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#6366f1" />
-                                            <stop offset="100%" stopColor="#6366f1" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl sm:text-3xl font-black text-slate-900 mt-2">
+                        <p className="text-xs font-medium text-slate-400 mb-1">Revenue</p>
+                        <p className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight">
+                            ₱{totalLiveRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </p>
+                        <p className="text-[11px] text-slate-400 mt-1 tabular-nums">
+                            Avg ₱{totalOrdersCount > 0 ? Math.round(totalLiveRevenue / totalOrdersCount).toLocaleString() : '0'} / order
+                        </p>
+                    </button>
+
+                    {/* Total Orders */}
+                    <button
+                        onClick={() => navigate('/admin-sales-report', { state: { tab: mappedActiveTab } })}
+                        className="text-left bg-white rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer border border-slate-100 group"
+                    >
+                        <p className="text-xs font-medium text-slate-400 mb-1">Orders</p>
+                        <p className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight">
                             {totalOrdersCount.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-indigo-600 mt-1">
-                            Combined Online & On-Site
                         </p>
-                    </div>
+                        <p className="text-[11px] text-slate-400 mt-1">
+                            POS + online combined
+                        </p>
+                    </button>
 
-                    {/* Metric 2: Total Orders of On-Site POS */}
-                    <div
+                    {/* POS Orders */}
+                    <button
                         onClick={() => navigate('/admin-sales-report', { state: { channel: 'POS', tab: mappedActiveTab } })}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-amber-300 transition-all cursor-pointer group"
+                        className="text-left bg-white rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer border border-slate-100 group"
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-amber-600 transition-colors">Total POS Orders</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-amber-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.pos.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.pos.areaD} fill="url(#amberSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="amberSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#f59e0b" />
-                                            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl sm:text-3xl font-black text-amber-600 mt-2">
+                        <p className="text-xs font-medium text-slate-400 mb-1">POS store</p>
+                        <p className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight">
                             {posOrdersCount.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-amber-600 mt-1">
-                            On-Site Store Walk-Ins
                         </p>
-                    </div>
+                        <p className="text-[11px] text-orange-600 mt-1 tabular-nums font-medium">
+                            ₱{posRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </p>
+                    </button>
 
-                    {/* Metric 3: Total Orders Online */}
-                    <div
+                    {/* Online Orders */}
+                    <button
                         onClick={() => navigate('/admin-sales-report', { state: { channel: 'Online', tab: mappedActiveTab } })}
-                        className="bg-white p-4 sm:p-5 rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group"
+                        className="text-left bg-white rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer border border-slate-100 group"
                     >
-                        <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 group-hover:text-blue-600 transition-colors">Total Online Orders</span>
-                            <div className="w-14 h-8 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                                <svg className="w-full h-full text-blue-500 overflow-visible" viewBox="0 0 56 28" fill="none">
-                                    <path d={dynamicMetricTrends.delivery.lineD} stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d={dynamicMetricTrends.delivery.areaD} fill="url(#blueSpark)" opacity="0.25" />
-                                    <defs>
-                                        <linearGradient id="blueSpark" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#3b82f6" />
-                                            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-                                        </linearGradient>
-                                    </defs>
-                                </svg>
-                            </div>
-                        </div>
-                        <h3 className="text-2xl sm:text-3xl font-black text-blue-600 mt-2">
+                        <p className="text-xs font-medium text-slate-400 mb-1">Online</p>
+                        <p className="text-2xl font-bold text-slate-900 tabular-nums tracking-tight">
                             {deliveryOrdersCount.toLocaleString()}
-                        </h3>
-                        <p className="text-[10px] font-bold text-blue-600 mt-1">
-                            Online Delivery Orders
                         </p>
-                    </div>
+                        <p className="text-[11px] text-orange-600 mt-1 tabular-nums font-medium">
+                            ₱{deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        </p>
+                    </button>
                 </div>
 
-                {/* VISUAL CHARTS ROW 1: Sales Trend Timeline Chart + Sales Channel & Payment Distribution */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                    {/* CHART 1: Real-Time Revenue Timeline Bar Chart (8 Cols) */}
-                    <div className="lg:col-span-8 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                        <div>
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-4">
-                                <div>
-                                    <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                                        Sales Revenue Timeline Chart
-                                    </h2>
-                                    <p className="text-xs text-slate-400 font-medium mt-0.5">
-                                        Chronological revenue breakdown filtered by {timeRange === 'ALL' ? 'All Time' : timeRange}
-                                    </p>
-                                </div>
-
-                                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold">
-                                    {(['All', 'POS', 'Delivery'] as const).map((m) => (
-                                        <button
-                                            key={m}
-                                            onClick={() => setTrendViewMode(m)}
-                                            className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${trendViewMode === m
-                                                ? 'bg-orange-500 text-white shadow-2xs'
-                                                : 'text-slate-600 hover:bg-slate-200'
-                                                }`}
-                                        >
-                                            {m === 'All' ? 'All Sales' : m === 'POS' ? 'POS Store' : 'Delivery'}
-                                        </button>
-                                    ))}
-                                </div>
+                {/* Charts row 1: Revenue timeline + Channel split */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {/* Revenue timeline chart */}
+                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-100 p-5">
+                        <div className="flex items-center justify-between mb-6">
+                            <div>
+                                <h2 className="text-sm font-semibold text-slate-900">Revenue</h2>
+                                <p className="text-xs text-slate-400 mt-0.5 tabular-nums">
+                                    ₱{totalLiveRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total
+                                </p>
                             </div>
 
-                            {/* Native Interactive Bar Chart */}
-                            <div className="pt-8 pb-4">
-                                <div className="h-56 flex items-end justify-between gap-2 sm:gap-4 px-2 border-b border-slate-200 relative">
-                                    {/* Grid background lines */}
-                                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none text-[10px] text-slate-300">
-                                        <div className="border-b border-slate-100 w-full pb-1">High Peak</div>
-                                        <div className="border-b border-slate-100 w-full pb-1">Mid Volume</div>
-                                        <div className="border-b border-slate-100 w-full pb-1">Baseline</div>
-                                    </div>
-
-                                    {salesTrendBuckets.map((bucket, idx) => {
-                                        const isHovered = hoveredTrendIndex === idx
-                                        return (
-                                            <div
-                                                key={idx}
-                                                onMouseEnter={() => setHoveredTrendIndex(idx)}
-                                                onMouseLeave={() => setHoveredTrendIndex(null)}
-                                                className="flex-1 flex flex-col items-center group relative cursor-pointer z-10"
-                                            >
-                                                {/* Tooltip */}
-                                                {isHovered && (
-                                                    <div className="absolute -top-12 bg-slate-900 text-white text-[11px] font-extrabold px-3 py-1.5 rounded-xl shadow-lg z-20 whitespace-nowrap animate-in fade-in">
-                                                        ₱{bucket.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({bucket.ordersCount} {bucket.ordersCount === 1 ? 'order' : 'orders'})
-                                                    </div>
-                                                )}
-
-                                                <div className="w-full max-w-[48px] bg-slate-100 rounded-t-xl overflow-hidden h-44 flex items-end p-1">
-                                                    <div
-                                                        className={`w-full rounded-t-lg transition-all duration-500 ${isHovered ? 'bg-orange-600 shadow-md' : 'bg-gradient-to-t from-orange-500 to-amber-400'
-                                                            }`}
-                                                        style={{ height: `${bucket.heightPct}%` }}
-                                                    ></div>
-                                                </div>
-                                                <span className="text-[10px] font-bold text-slate-500 mt-2 truncate w-full text-center">
-                                                    {bucket.label}
-                                                </span>
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                            <span className="font-semibold text-slate-600">
-                                Period Total: <strong className="text-orange-600 font-extrabold">₱{totalLiveRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Revenue</strong>
-                            </span>
-                            <span className="text-[11px] text-slate-400">Interactive Hover Activated</span>
-                        </div>
-                    </div>
-
-                    {/* CHART 2: Sales Channel & Payment Method Distribution (4 Cols) */}
-                    <div className="lg:col-span-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                        <div className="space-y-4">
-                            <div className="border-b border-slate-100 pb-3">
-                                <h3 className="font-black text-base text-slate-900 tracking-tight">Channel & Payment Split</h3>
-                                <p className="text-[11px] text-slate-400 font-medium">Revenue ratio between store channels & digital wallets</p>
-                            </div>
-
-                            {/* Channel Split Progress Card */}
-                            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 space-y-3">
-                                <div className="flex justify-between items-center text-xs font-bold">
-                                    <span className="text-slate-700">Order Channel Ratio</span>
-                                    <span className="text-orange-600">{posRevenuePercent}% POS / {deliveryRevenuePercent}% Delivery</span>
-                                </div>
-                                <div className="w-full bg-slate-200 rounded-full h-3.5 flex overflow-hidden p-0.5">
-                                    <div
-                                        className="bg-amber-500 h-full rounded-l-full transition-all duration-500"
-                                        style={{ width: `${posRevenuePercent}%` }}
-                                        title={`POS Revenue: ₱${posRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                    ></div>
-                                    <div
-                                        className="bg-emerald-500 h-full rounded-r-full transition-all duration-500"
-                                        style={{ width: `${deliveryRevenuePercent}%` }}
-                                        title={`Delivery Revenue: ₱${deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                    ></div>
-                                </div>
-                                <div className="flex justify-between text-[11px] font-semibold text-slate-500">
-                                    <span className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                                        POS Store (₱{posRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                    </span>
-                                    <span className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                                        Delivery (₱{deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Payment Methods Breakdown List */}
-                            <div className="space-y-2.5">
-                                <p className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Payment Gateways</p>
-                                {paymentStats.map((pm) => (
-                                    <div key={pm.name} className="p-2.5 rounded-2xl bg-white border border-slate-100 flex items-center justify-between text-xs">
-                                        <div className="flex items-center gap-2.5">
-                                            <span className={`w-3 h-3 rounded-full ${pm.color}`}></span>
-                                            <span className="font-bold text-slate-700">{pm.name}</span>
-                                        </div>
-                                        <div className="text-right font-extrabold">
-                                            <span className="text-slate-900 block">₱{pm.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                            <span className="text-[10px] text-slate-400 font-semibold">{pm.pct}% share</span>
-                                        </div>
-                                    </div>
+                            <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-lg">
+                                {(['All', 'POS', 'Delivery'] as const).map((m) => (
+                                    <button
+                                        key={m}
+                                        onClick={() => setTrendViewMode(m)}
+                                        className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer ${
+                                            trendViewMode === m
+                                                ? 'bg-white text-slate-900 shadow-sm'
+                                                : 'text-slate-500 hover:text-slate-700'
+                                        }`}
+                                    >
+                                        {m === 'All' ? 'All' : m === 'POS' ? 'POS' : 'Online'}
+                                    </button>
                                 ))}
                             </div>
                         </div>
 
-                        <div className="pt-3 border-t border-slate-100 text-right text-xs">
-                            <Link to="/admin-sales-report" className="text-orange-600 hover:text-orange-700 font-bold text-[11px]">
-                                Full Sales Breakdown &rarr;
+                        {/* Bar chart */}
+                        <div className="h-48 flex items-end gap-1.5 sm:gap-3">
+                            {salesTrendBuckets.map((bucket, idx) => {
+                                const isHovered = hoveredTrendIndex === idx
+                                return (
+                                    <div
+                                        key={idx}
+                                        onMouseEnter={() => setHoveredTrendIndex(idx)}
+                                        onMouseLeave={() => setHoveredTrendIndex(null)}
+                                        className="flex-1 flex flex-col items-center relative cursor-pointer"
+                                    >
+                                        {isHovered && (
+                                             <div className="absolute -top-10 bg-slate-800 text-white text-[10px] font-medium px-2.5 py-1 rounded-md shadow-lg z-10 whitespace-nowrap">
+                                                ₱{bucket.revenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} · {bucket.ordersCount} orders
+                                            </div>
+                                        )}
+                                        <div className="w-full flex items-end h-40">
+                                            <div
+                                                className={`w-full rounded-t-md transition-all duration-300 ${
+                                                    isHovered
+                                                        ? 'bg-orange-600'
+                                                        : 'bg-orange-500'
+                                                }`}
+                                                style={{ height: `${bucket.heightPct}%` }}
+                                            />
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 mt-2 tabular-nums">
+                                            {bucket.label}
+                                        </span>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Channel & Payment split */}
+                    <div className="bg-white rounded-xl border border-slate-100 p-5 flex flex-col">
+                        <h2 className="text-sm font-semibold text-slate-900 mb-4">Channels</h2>
+
+                        {/* Channel ratio bar */}
+                        <div className="mb-5">
+                            <div className="flex justify-between text-[11px] text-slate-500 mb-1.5">
+                                <span>POS {posRevenuePercent}%</span>
+                                <span>Online {deliveryRevenuePercent}%</span>
+                            </div>
+                            <div className="w-full bg-slate-100 rounded-full h-2 flex overflow-hidden">
+                                <div
+                                    className="bg-amber-400 h-full transition-all duration-500"
+                                    style={{ width: `${posRevenuePercent}%` }}
+                                />
+                                <div
+                                    className="bg-orange-500 h-full transition-all duration-500"
+                                    style={{ width: `${deliveryRevenuePercent}%` }}
+                                />
+                            </div>
+                            <div className="flex justify-between text-[10px] text-slate-400 mt-1.5 tabular-nums">
+                                <span>₱{posRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                                <span>₱{deliveryRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                            </div>
+                        </div>
+
+                        {/* Payment methods */}
+                        <p className="text-[11px] font-medium text-slate-400 mb-2">Payment methods</p>
+                        <div className="space-y-2 flex-1">
+                            {paymentStats.map((pm) => (
+                                <div key={pm.name} className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <span className={`w-2 h-2 rounded-full ${pm.dotClass}`} />
+                                        <span className="text-slate-600">{pm.name}</span>
+                                    </div>
+                                    <div className="text-right tabular-nums">
+                                        <span className="font-semibold text-slate-800">₱{pm.amount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                                        <span className="text-slate-400 ml-1.5">{pm.pct}%</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="pt-3 mt-auto border-t border-slate-100">
+                            <Link to="/admin-sales-report" className="text-xs font-medium text-orange-600 hover:text-orange-700 transition-colors">
+                                View full report →
                             </Link>
                         </div>
                     </div>
                 </div>
 
-                {/* VISUAL CHARTS ROW 2: Seafood Category Revenue Breakdown + Seafood Item Sales Volume + Product Catalog */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                    {/* CHART 3: Category Revenue Distribution Horizontal Chart (6 Cols) */}
-                    <div className="lg:col-span-6 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                        <div>
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                                <div>
-                                    <h3 className="font-black text-base text-slate-900 tracking-tight">Category Revenue Breakdown</h3>
-                                    <p className="text-[11px] text-slate-400 font-medium">Revenue contribution per menu category</p>
-                                </div>
-                                <span className="text-xs bg-orange-50 text-orange-600 font-bold px-3 py-1 rounded-full border border-orange-200/60">
-                                    7 Categories
-                                </span>
-                            </div>
-
-                            <div className="space-y-3">
-                                {categoryRevenueData.map((cat) => (
-                                    <div key={cat.category} className="space-y-1">
-                                        <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                                            <span>{cat.category}</span>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-slate-400 text-[11px] font-normal">{cat.percentage}%</span>
-                                                <span className="text-orange-600 font-extrabold">₱{cat.revenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                            </div>
-                                        </div>
-                                        <div className="bg-slate-100 rounded-full h-2.5 overflow-hidden">
-                                            <div
-                                                className="bg-gradient-to-r from-orange-400 to-amber-500 h-full rounded-full transition-all duration-500"
-                                                style={{ width: `${cat.barRatio}%` }}
-                                            ></div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
+                {/* Charts row 2: Category breakdown + Top sellers */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {/* Category Revenue */}
+                    <div className="bg-white rounded-xl border border-slate-100 p-5">
+                        <div className="flex items-center justify-between mb-5">
+                            <h2 className="text-sm font-semibold text-slate-900">Category revenue</h2>
+                            <span className="text-[11px] text-slate-400 tabular-nums">{categoryRevenueData.filter(c => c.revenue > 0).length} active</span>
                         </div>
 
-                        <div className="pt-4 border-t border-slate-100 flex justify-between items-center text-xs text-slate-500">
-                            <span>Top Category: <strong className="text-orange-600 font-bold">{categoryRevenueData[0]?.category || 'Seafoods'}</strong></span>
-                            <span className="text-[11px] text-slate-400">Synced Real-Time</span>
+                        <div className="space-y-3">
+                            {categoryRevenueData.map((cat) => (
+                                <div key={cat.category}>
+                                    <div className="flex items-center justify-between text-xs mb-1">
+                                        <span className="text-slate-600">{cat.category}</span>
+                                        <span className="font-semibold text-slate-800 tabular-nums">
+                                            ₱{cat.revenue.toLocaleString()}
+                                            <span className="text-slate-400 font-normal ml-1">{cat.percentage}%</span>
+                                        </span>
+                                    </div>
+                                    <div className="bg-slate-100 rounded-full h-1.5">
+                                        <div
+                                            className="bg-orange-500 h-full rounded-full transition-all duration-500"
+                                            style={{ width: `${cat.barRatio}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
-                    {/* Dynamic Real Sales Product Chart (6 Cols) */}
-                    <div className="lg:col-span-6 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
-                        <div>
-                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-4">
-                                <div>
-                                    <h2 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
-                                        Seafood Menu Sales Volume
-                                    </h2>
-                                    <p className="text-xs text-slate-400 font-medium mt-0.5">
-                                        Quantity sold calculated from actual placed orders
-                                    </p>
-                                </div>
-
-                                <div className="flex items-center gap-2 text-xs font-bold text-slate-500 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100">
-                                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
-                                    <span>
-                                        Total Units:{' '}
-                                        {summaryData.topDishes && summaryData.topDishes.length > 0
-                                            ? summaryData.topDishes.reduce((sum, d) => sum + (Number(d.quantitySold) || 0), 0)
-                                            : Object.values(itemSalesStats).reduce((a, b) => a + b, 0)}
-                                    </span>
-                                </div>
-                            </div>
-
-                            {/* Chart Display based on Real Order Items */}
-                            <div className="space-y-4 pt-4">
-                                {topItemPerformers.map((prod) => {
-                                    const pct = maxSoldVolume > 0 && prod.count > 0 ? Math.round((prod.count / maxSoldVolume) * 100) : 0
-
-                                    return (
-                                        <div key={prod.code} className="space-y-1.5">
-                                            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="w-5 h-5 rounded-md bg-slate-100 text-slate-800 flex items-center justify-center text-[10px] font-black">
-                                                        {prod.code}
-                                                    </span>
-                                                    <span>{prod.name}</span>
-                                                </div>
-                                                <span className="text-[11px] text-orange-600 font-extrabold">
-                                                    {prod.count} {prod.count === 1 ? 'unit sold' : 'units sold'}
-                                                </span>
-                                            </div>
-
-                                            <div className="bg-slate-50/80 p-2 rounded-2xl border border-slate-100">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="flex-1 bg-slate-200/60 rounded-full h-3 overflow-hidden">
-                                                        <div
-                                                            className="bg-gradient-to-r from-orange-400 to-amber-500 h-full rounded-full transition-all duration-700"
-                                                            style={{ width: `${Math.max(pct, prod.count > 0 ? 8 : 0)}%` }}
-                                                        ></div>
-                                                    </div>
-                                                    <span className="w-10 text-right text-[11px] font-bold text-slate-600">
-                                                        {prod.count} qty
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
+                    {/* Top sellers */}
+                    <div className="bg-white rounded-xl border border-slate-100 p-5">
+                        <div className="flex items-center justify-between mb-5">
+                            <h2 className="text-sm font-semibold text-slate-900">Top sellers</h2>
+                            <span className="text-[11px] text-slate-400 tabular-nums">
+                                {summaryData.topDishes && summaryData.topDishes.length > 0
+                                    ? summaryData.topDishes.reduce((sum, d) => sum + (Number(d.quantitySold) || 0), 0)
+                                    : Object.values(itemSalesStats).reduce((a, b) => a + b, 0)} units
+                            </span>
                         </div>
 
-                        <div className="pt-4 mt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
-                            <span>
-                                Top Seller:{' '}
-                                <strong className="text-orange-600 font-bold">
-                                    {topItemPerformers[0]?.name || 'Waiting for orders'} ({topItemPerformers[0]?.count || 0} sold)
-                                </strong>
-                            </span>
-                            <span className="text-[11px] text-slate-400">Auto-synced</span>
+                        <div className="space-y-3">
+                            {topItemPerformers.map((prod, i) => {
+                                const pct = maxSoldVolume > 0 && prod.count > 0 ? Math.round((prod.count / maxSoldVolume) * 100) : 0
+                                return (
+                                    <div key={prod.code}>
+                                        <div className="flex items-center justify-between text-xs mb-1">
+                                            <div className="flex items-center gap-2">
+                                                <span className="w-5 h-5 rounded-md bg-slate-100 flex items-center justify-center text-[10px] font-semibold text-slate-500 tabular-nums">
+                                                    {i + 1}
+                                                </span>
+                                                <span className="text-slate-700">{prod.name}</span>
+                                            </div>
+                                            <span className="font-semibold text-slate-800 tabular-nums">{prod.count}</span>
+                                        </div>
+                                        <div className="bg-slate-100 rounded-full h-1.5">
+                                            <div
+                                                className="bg-amber-400 h-full rounded-full transition-all duration-500"
+                                                style={{ width: `${Math.max(pct, prod.count > 0 ? 8 : 0)}%` }}
+                                            />
+                                        </div>
+                                    </div>
+                                )
+                            })}
                         </div>
                     </div>
                 </div>
 
-                {/* Bottom Section: Real Live Transactions Table (Full Width) */}
-                <div className="w-full flex flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-md shadow-slate-900/5">
-                        <div className="border-b border-orange-100 bg-gradient-to-r from-orange-50/80 via-white to-white p-5 sm:p-6">
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex items-start gap-3">
-                                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-500 text-white shadow-sm shadow-orange-500/20">
-                                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8m-8 4h8m-8 4h5m-8 6h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                        </svg>
-                                    </div>
-                                    <div>
-                                        <div className="flex flex-wrap items-center gap-2">
-                                            <h2 className="text-lg font-black tracking-tight text-slate-900">Order history</h2>
-                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-1 text-[9px] font-extrabold uppercase tracking-wider text-emerald-700">
-                                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                                                Live
-                                            </span>
-                                        </div>
-                                        <p className="mt-1 text-xs font-medium text-slate-500">
-                                            Recent orders from Cashier POS and Online Menu
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex shrink-0 items-center gap-2">
+                {/* Order history table */}
+                <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
+                    {/* Table header */}
+                    <div className="px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100">
+                        <div className="flex items-center gap-3">
+                            <h2 className="text-sm font-semibold text-slate-900">Recent orders</h2>
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-[10px] font-medium text-emerald-700">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                Live
+                            </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            {/* Search */}
+                            <div className="relative">
+                                <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                                <input
+                                    type="search"
+                                    value={orderSearchQuery}
+                                    onChange={(e) => setOrderSearchQuery(e.target.value)}
+                                    placeholder="Search orders…"
+                                    aria-label="Search order history"
+                                    className="w-48 pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-orange-500 placeholder:text-slate-400"
+                                />
+                            </div>
+
+                            {/* Channel filter */}
+                            <div className="flex items-center gap-0.5 bg-slate-100 p-0.5 rounded-lg">
+                                {(['All', 'POS', 'Delivery'] as const).map((tab) => (
                                     <button
-                                        type="button"
-                                        onClick={() => navigate('/admin-menu')}
-                                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-orange-50 px-3.5 py-2.5 text-[11px] font-extrabold text-orange-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-100 cursor-pointer"
+                                        key={tab}
+                                        onClick={() => setOrderTableFilter(tab)}
+                                        aria-pressed={orderTableFilter === tab}
+                                        className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors cursor-pointer ${
+                                            orderTableFilter === tab
+                                                ? 'bg-white text-slate-900 shadow-sm'
+                                                : 'text-slate-500 hover:text-slate-700'
+                                        }`}
                                     >
-                                        <svg className="h-3.5 w-3.5 text-orange-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7.5h18M5.25 4.5h13.5A2.25 2.25 0 0121 6.75v10.5a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 17.25V6.75A2.25 2.25 0 015.25 4.5zM8 12h3m-3 3h8" />
-                                        </svg>
-                                        Menu Management
-                                        <span className="rounded-full bg-orange-200/70 px-1.5 py-0.2 text-[10px] font-extrabold text-orange-800">
-                                            {menuItems.length}
-                                        </span>
+                                        {tab === 'All' ? 'All' : tab}
                                     </button>
-                                    <Link
-                                        to="/admin-sales-report"
-                                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-orange-200 bg-white px-3.5 py-2.5 text-[11px] font-extrabold text-orange-700 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-orange-300 hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 motion-reduce:transition-none"
-                                    >
-                                        All invoices
-                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M7 17 17 7M7 7h10v10" />
-                                        </svg>
-                                    </Link>
-                                </div>
+                                ))}
                             </div>
 
-                            <div className="mt-5 flex flex-col gap-3 xl:flex-row xl:items-center">
-                                <div className="relative min-w-0 flex-1">
-                                    <svg className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                    <input
-                                        type="search"
-                                        value={orderSearchQuery}
-                                        onChange={(e) => setOrderSearchQuery(e.target.value)}
-                                        placeholder="Search reference, customer, or item"
-                                        aria-label="Search order history"
-                                        className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-xs font-medium text-slate-700 shadow-sm shadow-slate-900/[0.02] outline-none transition-all duration-200 placeholder:text-slate-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10 motion-reduce:transition-none"
-                                    />
-                                </div>
-
-                                <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm shadow-slate-900/[0.02]">
-                                    {(['All', 'POS', 'Delivery'] as const).map((tab) => (
-                                        <button
-                                            key={tab}
-                                            type="button"
-                                            onClick={() => setOrderTableFilter(tab)}
-                                            aria-pressed={orderTableFilter === tab}
-                                            className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-extrabold transition-all duration-200 motion-reduce:transition-none ${orderTableFilter === tab
-                                                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/20'
-                                                : 'text-slate-500 hover:bg-orange-50 hover:text-orange-700'
-                                                }`}
-                                        >
-                                            {tab === 'All' ? 'All channels' : tab === 'POS' ? 'POS store' : 'Delivery'}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex-1 px-4 pb-3 pt-4 sm:px-5">
-                            <div className="overflow-hidden rounded-2xl border border-slate-200">
-                                <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[860px] border-collapse text-left">
-                                        <thead>
-                                            <tr className="border-b border-orange-100 bg-orange-50/70 text-[10px] font-extrabold uppercase tracking-wider text-orange-800">
-                                                <th className="px-4 py-3.5">Reference</th>
-                                                <th className="px-4 py-3.5">Customer / channel</th>
-                                                <th className="px-4 py-3.5">Items</th>
-                                                <th className="px-4 py-3.5">Date & time</th>
-                                                <th className="px-4 py-3.5">Payment</th>
-                                                <th className="px-4 py-3.5 text-right">Total</th>
-                                                <th className="px-4 py-3.5 text-center">Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100 text-xs font-medium text-slate-700">
-                                            {filteredOrders.length === 0 ? (
-                                                <tr>
-                                                    <td colSpan={7} className="px-5 py-14 text-center">
-                                                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-orange-50 text-orange-400 ring-1 ring-orange-100">
-                                                            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24" aria-hidden="true">
-                                                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h8m-8 4h8m-8 4h5m-8 6h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                                            </svg>
-                                                        </div>
-                                                        <p className="mt-3 font-extrabold text-slate-800">No matching orders</p>
-                                                        <p className="mt-1 text-[11px] text-slate-400">Try changing the search or selecting another channel.</p>
-                                                    </td>
-                                                </tr>
-                                            ) : (
-                                                filteredOrders.slice(0, 10).map((tx) => (
-                                                    <tr key={tx.id || tx.ref} className="transition-colors duration-150 hover:bg-orange-50/50">
-                                                        <td className="px-4 py-3.5">
-                                                            <span className="inline-flex rounded-lg bg-slate-100 px-2.5 py-1.5 font-mono text-[10px] font-bold text-slate-700">
-                                                                {tx.ref || tx.id}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-4 py-3.5">
-                                                            <span className="block max-w-[150px] truncate font-bold text-slate-800" title={tx.customer || '—'}>
-                                                                {tx.customer || '—'}
-                                                            </span>
-                                                            <span className="mt-1 inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-[9px] font-bold text-orange-700">
-                                                                {tx.type}
-                                                            </span>
-                                                        </td>
-                                                        <td className="max-w-[190px] truncate px-4 py-3.5 text-slate-600" title={tx.items}>
-                                                            {tx.items || 'Seafood Dish'}
-                                                        </td>
-                                                        <td className="whitespace-nowrap px-4 py-3.5 text-[10px] text-slate-500">{tx.dateTime}</td>
-                                                        <td className="px-4 py-3.5">
-                                                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[9px] font-extrabold ${(tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                ? 'border-blue-200 bg-blue-50 text-blue-700'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                                                    : 'border-amber-200 bg-amber-50 text-amber-800'
-                                                                }`}>
-                                                                {tx.paymentMethod || 'Cash'}
-                                                            </span>
-                                                        </td>
-                                                        <td className="whitespace-nowrap px-4 py-3.5 text-right font-extrabold tabular-nums text-orange-700">
-                                                            ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                        </td>
-                                                        <td className="px-4 py-3.5 text-center">
-                                                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[9px] font-extrabold text-emerald-700">
-                                                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                                                {tx.status || 'Completed'}
-                                                            </span>
-                                                        </td>
-                                                    </tr>
-                                                ))
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/70 px-5 py-3.5 text-[10px]">
-                            <span className="font-medium text-slate-500">
-                                Showing <strong className="font-extrabold text-slate-700">{Math.min(filteredOrders.length, 10)}</strong> of {filteredOrders.length} orders
-                            </span>
-                            <span className="rounded-full border border-orange-100 bg-white px-3 py-1.5 font-extrabold text-orange-700">
-                                Orders in period: {filteredOrders.length}
-                            </span>
+                            {/* Quick links */}
+                            <button
+                                onClick={() => navigate('/admin-menu')}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                            >
+                                Menu
+                                <span className="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded-md tabular-nums">{menuItems.length}</span>
+                            </button>
+                            <button
+                                onClick={() => navigate('/admin-inventory')}
+                                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
+                            >
+                                Inventory
+                            </button>
                         </div>
                     </div>
+
+                    {/* Table */}
+                    <div className="overflow-x-auto">
+                        <table className="w-full min-w-[720px] text-left">
+                            <thead>
+                                <tr className="border-b border-slate-100 text-[11px] font-medium text-slate-400">
+                                    <th className="px-5 py-3 font-medium">Reference</th>
+                                    <th className="px-5 py-3 font-medium">Customer</th>
+                                    <th className="px-5 py-3 font-medium">Items</th>
+                                    <th className="px-5 py-3 font-medium">Date</th>
+                                    <th className="px-5 py-3 font-medium">Payment</th>
+                                    <th className="px-5 py-3 font-medium text-right">Total</th>
+                                    <th className="px-5 py-3 font-medium text-center">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="text-xs text-slate-700">
+                                {filteredOrders.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={7} className="px-5 py-16 text-center">
+                                            <p className="font-medium text-slate-500">No matching orders</p>
+                                            <p className="text-slate-400 text-[11px] mt-1">Try a different search or filter.</p>
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    filteredOrders.slice(0, 10).map((tx) => (
+                                        <tr key={tx.id || tx.ref} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                            <td className="px-5 py-3">
+                                                <span className="font-mono text-[11px] text-slate-500">
+                                                    {tx.ref || tx.id}
+                                                </span>
+                                            </td>
+                                            <td className="px-5 py-3">
+                                                <span className="block max-w-[140px] truncate font-medium text-slate-800" title={tx.customer || '—'}>
+                                                    {tx.customer || '—'}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400">{tx.type}</span>
+                                            </td>
+                                            <td className="px-5 py-3 max-w-[180px] truncate text-slate-500" title={tx.items}>
+                                                {tx.items || 'Seafood Dish'}
+                                            </td>
+                                            <td className="px-5 py-3 whitespace-nowrap text-[11px] text-slate-400 tabular-nums">
+                                                {tx.dateTime}
+                                            </td>
+                                            <td className="px-5 py-3">
+                                                <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-medium ${
+                                                    (tx.paymentMethod || '').toLowerCase().includes('gcash')
+                                                        ? 'bg-blue-50 text-blue-700'
+                                                        : (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                                            ? 'bg-violet-50 text-violet-700'
+                                                            : 'bg-amber-50 text-amber-700'
+                                                }`}>
+                                                    {tx.paymentMethod || 'Cash'}
+                                                </span>
+                                            </td>
+                                            <td className="px-5 py-3 text-right font-semibold tabular-nums text-slate-900">
+                                                ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </td>
+                                            <td className="px-5 py-3 text-center">
+                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-emerald-50 text-[10px] font-medium text-emerald-700">
+                                                    <span className="w-1 h-1 rounded-full bg-emerald-500" />
+                                                    {tx.status || 'Completed'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Table footer */}
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 text-[11px] text-slate-400">
+                        <span>
+                            Showing <span className="font-medium text-slate-600">{Math.min(filteredOrders.length, 10)}</span> of {filteredOrders.length}
+                        </span>
+                        <Link
+                            to="/admin-sales-report"
+                            className="font-medium text-orange-600 hover:text-orange-700 transition-colors"
+                        >
+                            All invoices →
+                        </Link>
+                    </div>
+                </div>
             </div>
         </div>
     )

@@ -27,9 +27,6 @@ async function resetTransactions() {
       RESTART IDENTITY CASCADE;
     `);
 
-    console.log('[*] Resetting product remaining_servings countdown to NULL (standard availability)...');
-    await client.query(`UPDATE products SET remaining_servings = NULL;`);
-
     await client.query('COMMIT');
     console.log('[SUCCESS] All transactional tables have been cleanly wiped and reset!');
 

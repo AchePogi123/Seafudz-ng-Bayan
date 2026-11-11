@@ -187,13 +187,6 @@ export const AssistantRole: React.FC = () => {
       return found
     }
     if (lastSelectedOrderRef.current && (lastSelectedOrderRef.current.id === selectedOrderId || lastSelectedOrderRef.current.ref === selectedOrderId)) {
-      const rawSt = (lastSelectedOrderRef.current.status || '').toUpperCase()
-      const appSt = (lastSelectedOrderRef.current.kitchenApprovalStatus || lastSelectedOrderRef.current.kitchen_approval_status || '').toUpperCase()
-      const reqApp = lastSelectedOrderRef.current.requiresKitchenApproval === true || lastSelectedOrderRef.current.requires_kitchen_approval === true
-      if (rawSt === 'AWAITING_KITCHEN_APPROVAL' || rawSt === 'KITCHEN_REJECTED' || appSt === 'PENDING' || (reqApp && appSt !== 'APPROVED')) {
-        lastSelectedOrderRef.current = null
-        return null
-      }
       return lastSelectedOrderRef.current
     }
     return null
@@ -496,20 +489,6 @@ export const AssistantRole: React.FC = () => {
               const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
 
-              // Critical: Orders meeting quantity standards awaiting kitchen approval (or declined by kitchen) must NOT reflect on Assistant
-              const rawStatusUpper = (o.status || '').toUpperCase()
-              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
-              const reqApp = o.requires_kitchen_approval === true || o.requiresKitchenApproval === true
-
-              const isAwaitingOrRejectedByKitchen = rawStatusUpper === 'AWAITING_KITCHEN_APPROVAL'
-                || rawStatusUpper === 'KITCHEN_REJECTED'
-                || appSt === 'PENDING'
-                || (reqApp && appSt !== 'APPROVED')
-
-              if (isAwaitingOrRejectedByKitchen) {
-                return // Only reflect on Assistant AFTER Kitchen approves
-              }
-
               const id = o.id
               const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
               const hasPrintedRef = Boolean(o.ref && String(o.ref).trim() && printedReceiptsSet.has(String(o.ref).trim()))
@@ -590,20 +569,6 @@ export const AssistantRole: React.FC = () => {
               const orderType = (o.type || o.order_type || '').toLowerCase()
               const isDelivery = orderType.includes('delivery') || orderType.includes('online') || Boolean(o.deliveryAddress || o.address || o.customer || o.customerName)
               if (!isDelivery) return // Ignore POS walk-in orders
-
-              // Critical: Orders meeting quantity standards awaiting kitchen approval (or declined by kitchen) must NOT reflect on Assistant
-              const rawStatusUpper = (o.status || '').toUpperCase()
-              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
-              const reqApp = o.requires_kitchen_approval === true || o.requiresKitchenApproval === true
-
-              const isAwaitingOrRejectedByKitchen = rawStatusUpper === 'AWAITING_KITCHEN_APPROVAL'
-                || rawStatusUpper === 'KITCHEN_REJECTED'
-                || appSt === 'PENDING'
-                || (reqApp && appSt !== 'APPROVED')
-
-              if (isAwaitingOrRejectedByKitchen) {
-                return // Only reflect on Assistant AFTER Kitchen approves
-              }
 
               const id = o.id || o.ref
               const hasPrintedId = Boolean(id && String(id).trim() && printedReceiptsSet.has(String(id).trim()))
@@ -854,11 +819,12 @@ export const AssistantRole: React.FC = () => {
     setNotification(`Receipt rejected for order #${orderId}. Customer notified to re-upload.`)
   }
 
-  const handleConfirmCOD = async (orderId: string) => {
+  const handleConfirmPickUp = async (orderId: string) => {
     try {
-      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/confirm-cod`, {
+      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CONFIRMED' }),
       })
     } catch { }
 
@@ -880,7 +846,7 @@ export const AssistantRole: React.FC = () => {
     } catch { }
 
     fetchAssistantOrders(true)
-    setNotification(`COD product availability confirmed for order #${orderId}! Sent to Kitchen!`)
+    setNotification(`Pick-up order #${orderId} confirmed! Sent to Kitchen!`)
   }
 
   const [isVerifyingAdditionalPayment, setIsVerifyingAdditionalPayment] = useState(false)
@@ -1067,13 +1033,6 @@ export const AssistantRole: React.FC = () => {
 
     const filtered = orders.filter((order) => {
       const s = normalizeStatusStr(order.status)
-      const rawSt = (order.status || '').toUpperCase()
-      const appSt = (order.kitchen_approval_status || order.kitchenApprovalStatus || '').toUpperCase()
-      const reqApp = order.requires_kitchen_approval === true || order.requiresKitchenApproval === true
-
-      if (rawSt === 'AWAITING_KITCHEN_APPROVAL' || rawSt === 'KITCHEN_REJECTED' || appSt === 'PENDING' || (reqApp && appSt !== 'APPROVED')) {
-        return false
-      }
 
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
       const isCancellationRefundNeeded = s === 'cancel_requested' || (s === 'cancelled' && (order.paymentMethod || '').toLowerCase().includes('gcash') && !order.refundReceipt && !order.refundReference)
@@ -1359,9 +1318,9 @@ export const AssistantRole: React.FC = () => {
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('cod')
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            : 'bg-blue-100 text-blue-800 border border-blue-200'
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('gcash')
+                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
                             }`}>
                             {ord.paymentMethod || 'GCash'}
                           </span>
@@ -1638,12 +1597,10 @@ export const AssistantRole: React.FC = () => {
                         <span>{addressValidation.isComplete ? '✓' : '!'}</span>
                         <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
                       </p>
-                      {(!selectedOrder.paymentMethod?.toLowerCase().includes('cod') && selectedOrder.status?.toUpperCase() !== 'PENDING_COD') && (
-                        <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                          <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
-                          <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
-                        </p>
-                      )}
+                      <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
+                        <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
+                        <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
+                      </p>
                     </div>
                   </div>
                 )}
@@ -1960,50 +1917,19 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    if (st === 'AWAITING_KITCHEN_APPROVAL') {
-                      return (
-                        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-center space-y-2">
-                          <div className="flex items-center justify-center gap-1.5 text-amber-900 font-extrabold text-xs">
-                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-                            Kitchen Review Required
-                          </div>
-                          <p className="text-xs text-amber-800 leading-snug">
-                            This order contains high-quantity items exceeding kitchen standards. The Kitchen team must review and approve quantities before payment authorization.
-                          </p>
-                          <div className="text-[11px] font-bold text-amber-800 bg-amber-100 py-1.5 px-3 rounded-lg inline-block">
-                            Awaiting Kitchen Action
-                          </div>
-                        </div>
-                      )
-                    }
-
-                    if (st === 'KITCHEN_REJECTED') {
-                      return (
-                        <div className="bg-rose-50 border-2 border-rose-300 rounded-2xl p-4 text-center space-y-2">
-                          <div className="flex items-center justify-center gap-1.5 text-rose-900 font-extrabold text-xs">
-                            <span>❌</span> Declined by Kitchen
-                          </div>
-                          <p className="text-xs text-rose-800 leading-snug">
-                            Kitchen staff declined this high-quantity order due to ingredient or batch capacity limitations.
-                          </p>
-                        </div>
-                      )
-                    }
-
                     const isPickupOrder = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
                     const isPayInStore = String(selectedOrder.paymentMethod || '').toUpperCase().includes('STORE') || selectedOrder.paymentMethod === 'PAY_IN_STORE'
-                    const isCOD = selectedOrder.paymentMethod?.toLowerCase().includes('cod') || st === 'PENDING_COD' || isPayInStore
                     const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
                     const isAuthorizedToPay = Boolean(selectedOrder.gcashAuthorized || (selectedOrder as any).gcash_authorized || st === 'GCASH_AUTHORIZED')
 
-                    // 1. COD / Pay in Store Orders Flow
-                    if (isCOD) {
+                    // 1. Pay in Store (Pick-Up) Flow
+                    if (isPickupOrder && isPayInStore) {
                       return (
                         <button
-                          onClick={() => handleConfirmCOD(selectedOrder.id)}
+                          onClick={() => handleConfirmPickUp(selectedOrder.id)}
                           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
                         >
-                          <span>✅ {isPickupOrder ? 'Confirm Pick-Up Order & Send to Kitchen' : 'Confirm COD Order & Send to Kitchen'}</span>
+                          <span>✅ Confirm Pick-Up Order & Send to Kitchen</span>
                         </button>
                       )
                     }
@@ -2544,13 +2470,6 @@ export const AssistantRole: React.FC = () => {
                             Awaiting customer upload of additional ₱{Number(selectedOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} payment screenshot.
                           </p>
                         )}
-                      </div>
-                    )}
-
-                    {/* COD Order Note */}
-                    {String(selectedOrder.paymentMethod || '').toUpperCase().includes('COD') && (
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-[11px] text-slate-800">
-                        <span className="font-black">💵 Cash on Delivery:</span> Rider will collect updated total of ₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} upon delivery.
                       </div>
                     )}
                   </div>

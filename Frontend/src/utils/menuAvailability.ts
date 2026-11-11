@@ -86,8 +86,8 @@ export const PRODUCT_ALIASES: Record<string, string> = {
   'item-028': 'cucumber-lemonade-big-50',
 }
 
-let availabilityById: Record<string, boolean> = {}
-let servingsById: Record<string, number | null> = {}
+const availabilityById: Record<string, boolean> = {}
+const servingsById: Record<string, number | null> = {}
 let availabilityRequest: Promise<void> | null = null
 let availabilityRevision = 0
 
@@ -168,21 +168,11 @@ export function getUnavailableItemIds(): string[] {
 export function isItemAvailable(itemId: string): boolean {
   const id = String(itemId)
   const aliasId = PRODUCT_ALIASES[id]
-
-  const servings = servingsById[id] !== undefined ? servingsById[id] : (aliasId ? servingsById[aliasId] : undefined)
-  if (servings !== undefined && servings !== null && servings <= 0) {
-    return false
-  }
-
   const avail = availabilityById[id] !== undefined ? availabilityById[id] : (aliasId ? availabilityById[aliasId] : undefined)
   return avail !== false
 }
 
-export function getItemRemainingServings(itemId: string): number | null {
-  const id = String(itemId)
-  const aliasId = PRODUCT_ALIASES[id]
-  if (servingsById[id] !== undefined) return servingsById[id]
-  if (aliasId && servingsById[aliasId] !== undefined) return servingsById[aliasId]
+export function getItemRemainingServings(_itemId: string): number | null {
   return null
 }
 
@@ -195,34 +185,22 @@ async function fetchAvailability() {
       if (!response.ok) return
       const payload = await response.json()
       const next: Record<string, boolean> = {}
-      const nextServings: Record<string, number | null> = {}
       if (Array.isArray(payload?.data)) {
         for (const product of payload.data) {
           if (product?.id != null) {
             const pid = String(product.id)
-            const remaining = product.remaining_servings != null ? Number(product.remaining_servings) : null
-            nextServings[pid] = remaining
-
-            if (remaining !== null && remaining <= 0) {
-              next[pid] = false
-            } else if (typeof product.is_available === "boolean") {
+            if (typeof product.is_available === "boolean") {
               next[pid] = product.is_available
             }
 
             const aliasId = PRODUCT_ALIASES[pid]
-            if (aliasId) {
-              nextServings[aliasId] = remaining
-              if (remaining !== null && remaining <= 0) {
-                next[aliasId] = false
-              } else if (typeof product.is_available === "boolean") {
-                next[aliasId] = product.is_available
-              }
+            if (aliasId && typeof product.is_available === "boolean") {
+              next[aliasId] = product.is_available
             }
           }
         }
       }
       publishAvailability(next)
-      publishServings(nextServings)
     } catch (error) {
       console.warn("Could not load product availability:", error)
     }
@@ -238,18 +216,12 @@ async function fetchAvailability() {
 export async function setItemAvailability(itemId: string, available: boolean): Promise<boolean> {
   const id = String(itemId)
   const previous = isItemAvailable(id)
-  if (previous === available && (!available || (servingsById[id] !== null && servingsById[id] !== undefined && servingsById[id] > 0))) {
+  if (previous === available) {
     return true
   }
 
   // 1. Instant optimistic update (0ms local lag)
   applyProductAvailabilityChange(id, available)
-  if (!available) {
-    applyProductServingsChange(id, 0)
-  } else {
-    // When turning ON from an out-of-stock state, reset servings to null (unlimited in-stock)
-    applyProductServingsChange(id, null)
-  }
 
   try {
     const rawUser = typeof window !== 'undefined' ? (sessionStorage.getItem('sfb_active_user_profile') || localStorage.getItem('sfb_active_user_profile')) : null
@@ -315,25 +287,17 @@ export function useMenuAvailability() {
     (itemId: string) => {
       const id = String(itemId)
       const aliasId = PRODUCT_ALIASES[id]
-      const s = servings[id] !== undefined ? servings[id] : (aliasId ? servings[aliasId] : undefined)
-      if (s !== undefined && s !== null && s <= 0) {
-        return false
-      }
       const a = availability[id] !== undefined ? availability[id] : (aliasId ? availability[aliasId] : undefined)
       return a !== false
     },
-    [availability, servings]
+    [availability]
   )
 
   const checkRemainingServings = useCallback(
-    (itemId: string) => {
-      const id = String(itemId)
-      const aliasId = PRODUCT_ALIASES[id]
-      if (servings[id] !== undefined) return servings[id]
-      if (aliasId && servings[aliasId] !== undefined) return servings[aliasId]
+    (_itemId: string) => {
       return null
     },
-    [servings]
+    []
   )
 
   return {

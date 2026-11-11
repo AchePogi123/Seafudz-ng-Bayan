@@ -3,8 +3,7 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
-import { checkProductQuantityStandards } from '../utils/bulkOrder.js';
-import { deductOrderRemainingServings, restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
+import { inMemoryProductAvailability } from './menuRoutes.js';
 
 const router = Router();
 
@@ -32,7 +31,7 @@ export async function assertItemsAvailable(client, items) {
     .filter(Boolean)
     .map((name) => String(name).toLowerCase());
   const { rows } = await client.query(
-    `SELECT id::text AS id, name, is_available, is_active, remaining_servings
+    `SELECT id::text AS id, name, is_available, is_active
      FROM products
      WHERE id::text = ANY($1::text[]) OR LOWER(name) = ANY($2::text[])
      FOR SHARE`,
@@ -47,20 +46,6 @@ export async function assertItemsAvailable(client, items) {
     if (!product) throw outOfStockError(name);
     if (product.is_active === false) throw itemDeletedError(name);
     if (!product.is_available) throw outOfStockError(name);
-
-    if (product.remaining_servings !== null && product.remaining_servings !== undefined) {
-      const remaining = Number(product.remaining_servings);
-      if (remaining <= 0) {
-        throw outOfStockError(name);
-      }
-      const requestedQty = Number(item.quantity) || 1;
-      if (requestedQty > remaining) {
-        const err = new Error(`Only ${remaining} serving${remaining === 1 ? '' : 's'} remaining for ${name}. Please reduce quantity.`);
-        err.statusCode = 409;
-        err.code = 'INSUFFICIENT_SERVINGS';
-        throw err;
-      }
-    }
   }
 
   return rows;
@@ -382,9 +367,6 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       const prod = availableProducts.find(
         (r) => r.id === pId || r.name.toLowerCase() === pName.toLowerCase()
       );
-      const rawServ = prod && prod.remaining_servings !== null && prod.remaining_servings !== undefined
-        ? Number(prod.remaining_servings)
-        : (ci.remaining_servings !== undefined ? ci.remaining_servings : ci.item?.remaining_servings);
       return {
         ...ci,
         id: pId,
@@ -392,22 +374,12 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         name: pName,
         category: ci.category || ci.item?.category || prod?.category || prod?.category_name,
         quantity: Number(ci.quantity) || 1,
-        remaining_servings: rawServ !== undefined ? rawServ : null,
-        remainingServings: rawServ !== undefined ? rawServ : null,
       };
     });
 
-    const standardCheck = checkProductQuantityStandards(normalizedCartItems);
-    const requiresKitchenApproval = req.body.requires_kitchen_approval === true ||
-      req.body.requiresKitchenApproval === true ||
-      String(req.body.status || '').toUpperCase() === 'AWAITING_KITCHEN_APPROVAL' ||
-      standardCheck.requiresApproval;
-
-    const posStatus = requiresKitchenApproval
-      ? 'AWAITING_KITCHEN_APPROVAL'
-      : (req.body.status ? req.body.status.toUpperCase() : 'CONFIRMED');
-
-    const kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
+    const requiresKitchenApproval = false;
+    const posStatus = req.body.status ? req.body.status.toUpperCase() : 'CONFIRMED';
+    const kitchenApprovalStatus = 'NONE';
 
     const orderNumber = req.body.id || req.body.ref || `ORD-${Date.now().toString().slice(-6)}`;
     const subtotal = cartItems.reduce((acc, ci) => {
@@ -538,8 +510,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       kitchenApprovalStatus,
       is_bulk: requiresKitchenApproval,
       isBulk: requiresKitchenApproval,
-      flagged_quantity_items: standardCheck.flaggedItems,
-      flaggedQuantityItems: standardCheck.flaggedItems,
+      flagged_quantity_items: [],
+      flaggedQuantityItems: [],
       items: cartItems.map((ci) => ({
         id: ci.item ? ci.item.id : (ci.id || ci.productId),
         product_id: ci.item ? ci.item.id : (ci.id || ci.productId),
@@ -559,15 +531,6 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       updated_at: createdOrder.updated_at || new Date().toISOString(),
     };
     inMemoryOrders.set(createdOrder.id, inMemPayload);
-
-    // Atomically deduct remaining servings for on-site POS orders (status is CONFIRMED)
-    if (createdOrder.status === 'CONFIRMED') {
-      try {
-        await deductOrderRemainingServings(client, createdOrder.id);
-      } catch (servErr) {
-        console.warn('[SERVINGS] POS deduction note:', servErr.message);
-      }
-    }
 
     await client.query('COMMIT');
     client.release();
@@ -589,8 +552,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         kitchenApprovalStatus,
         is_bulk: requiresKitchenApproval,
         isBulk: requiresKitchenApproval,
-        flagged_quantity_items: standardCheck.flaggedItems,
-        flaggedQuantityItems: standardCheck.flaggedItems,
+        flagged_quantity_items: [],
+        flaggedQuantityItems: [],
       },
     });
   } catch (error) {
@@ -728,7 +691,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
     };
     inMemoryOrders.set(id, updatedInMemory);
 
-    // 2. Persist in PostgreSQL DB with transactional servings reconciliation
+    // 2. Persist in PostgreSQL DB
     let updatedProducts = [];
     let pool;
     let client;
@@ -739,21 +702,8 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
 
       const calcTotal = total !== undefined ? total : (subtotal || 0) + (vat || 0) + (deliveryFee || 0);
 
-      const checkExists = await client.query('SELECT id, status, servings_deducted FROM orders WHERE id = $1 FOR UPDATE', [id]);
+      const checkExists = await client.query('SELECT id, status FROM orders WHERE id = $1 FOR UPDATE', [id]);
       console.log(`[PUT /orders/${id}] checkExists:`, checkExists.rows, 'items count:', items?.length);
-      
-      // If order already exists and items are being modified, restore previous deducted servings first
-      if (checkExists.rows.length > 0 && Array.isArray(items) && items.length > 0) {
-        try {
-          const restRes = await restoreOrderRemainingServings(client, id);
-          console.log(`[PUT /orders/${id}] restRes:`, restRes);
-          if (restRes?.updatedProducts?.length) {
-            updatedProducts.push(...restRes.updatedProducts);
-          }
-        } catch (restErr) {
-          console.warn('[SERVINGS] Order modification restore servings note:', restErr.message);
-        }
-      }
 
       const reqKitchenApproval = req.body.requiresKitchenApproval ?? req.body.requires_kitchen_approval;
       const reqKitchenApprovalStatus = req.body.kitchenApprovalStatus || req.body.kitchen_approval_status;
@@ -850,32 +800,9 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
             [id, prodId, itemName, qty, price, qty * price]
           );
         }
-
-        // Atomically deduct servings for the new items of the modified order (if active / confirmed)
-        const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
-        if (effectiveStatus !== 'CANCELLED' && effectiveStatus !== 'AWAITING_KITCHEN_APPROVAL') {
-          try {
-            const deductRes = await deductOrderRemainingServings(client, id);
-            console.log(`[PUT /orders/${id}] deductRes:`, deductRes);
-            if (deductRes?.updatedProducts?.length) {
-              updatedProducts.push(...deductRes.updatedProducts);
-            }
-          } catch (deductErr) {
-            console.warn('[SERVINGS] Order modification deduction note:', deductErr.message);
-          }
-        }
       } else {
-        // If items not re-sent but order status transitioned to CONFIRMED, ensure servings are deducted
         const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
         if (effectiveStatus === 'CONFIRMED') {
-          try {
-            const deductRes = await deductOrderRemainingServings(client, id);
-            if (deductRes?.updatedProducts?.length) {
-              updatedProducts.push(...deductRes.updatedProducts);
-            }
-          } catch (deductErr) {
-            console.warn('[SERVINGS] Order confirmation deduction note:', deductErr.message);
-          }
           try {
             await client.query(`
               INSERT INTO kitchen_orders (order_id, status, updated_at)
@@ -1072,16 +999,21 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
+    if ((paymentMethod || '').toUpperCase().includes('COD')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cash on Delivery (COD) is no longer supported. Please pay via GCash.',
+      });
+    }
+
     const isPayInStore = (paymentMethod || '').toUpperCase().includes('STORE') || (paymentMethod || '').toUpperCase().includes('COUNTER');
-    const isCod = (paymentMethod || 'GCash').toUpperCase().includes('COD');
     const initialPaymentMethod = isPickup
       ? (isPayInStore ? 'Pay in Store' : 'GCash')
-      : (isCod ? 'COD' : 'GCash');
-    const isPayLater = isCod || (isPickup && isPayInStore);
+      : 'GCash';
+    const isPayLater = isPickup && isPayInStore;
     const normalizedItems = rawItems.map(item => {
       const quantity = Number(item.quantity) || 1;
       const price = Number(item.price ?? item.unit_price ?? 0);
-      const rawServings = item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings;
       return {
         id: item.id || item.product_id || item.productId || 'item-1',
         product_id: item.product_id || item.productId || item.id || null,
@@ -1091,8 +1023,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         price,
         subtotal: Math.round(price * quantity * 100) / 100,
         specialNote: item.specialNote || item.notes || '',
-        remaining_servings: rawServings !== undefined ? rawServings : undefined,
-        remainingServings: rawServings !== undefined ? rawServings : undefined,
       };
     });
 
@@ -1106,15 +1036,21 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       rawOrderType.includes('ON_SITE')
     );
 
-    // Check individual product quantities against standards
-    let standardCheck = checkProductQuantityStandards(normalizedItems);
-    let requiresKitchenApproval = standardCheck.requiresApproval;
-    // If order is below standards or covered by estimated servings, permit customer/cashier to pay immediately
-    let initialStatus = requiresKitchenApproval
-      ? 'AWAITING_KITCHEN_APPROVAL'
-      : (isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
-    let kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
-    let isGcashAuthorized = !requiresKitchenApproval && !isPayLater && !isPos;
+    let requiresKitchenApproval = false;
+    let initialStatus = isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PAY_IN_STORE' : 'GCASH_AUTHORIZED');
+    let kitchenApprovalStatus = 'NONE';
+    let isGcashAuthorized = !isPayLater && !isPos;
+
+    for (const item of normalizedItems) {
+      const pId = String(item.product_id || item.productId || item.item?.id || item.id || '');
+      if (inMemoryProductAvailability.get(pId) === false) {
+        return res.status(400).json({
+          success: false,
+          error: 'ITEM_OUT_OF_STOCK',
+          message: `Item "${item.name}" is currently out of stock.`,
+        });
+      }
+    }
 
     const orderRecord = {
       id: orderId,
@@ -1146,10 +1082,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       requiresKitchenApproval,
       kitchen_approval_status: kitchenApprovalStatus,
       kitchenApprovalStatus,
-      flagged_quantity_items: standardCheck.flaggedItems,
-      flaggedQuantityItems: standardCheck.flaggedItems,
-      servings_deducted: false,
-      servingsDeducted: false,
+      flagged_quantity_items: [],
+      flaggedQuantityItems: [],
       is_bulk: requiresKitchenApproval,
       isBulk: requiresKitchenApproval,
       isPosOrder: isPos,
@@ -1167,7 +1101,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       vat: calcVat,
       delivery_fee: calcFee,
       total: calcTotal,
-      status: initialStatus,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       items: normalizedItems,
@@ -1182,12 +1115,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         await client.query('BEGIN');
 
         // 1. Verify availability of order items inside transaction
-        let productRows = [];
         try {
-          productRows = await assertItemsAvailable(client, normalizedItems);
+          await assertItemsAvailable(client, normalizedItems);
         } catch (itemErr) {
           await client.query('ROLLBACK');
-          if (itemErr.code === 'ITEM_OUT_OF_STOCK' || itemErr.code === 'ITEM_DELETED' || itemErr.code === 'INSUFFICIENT_SERVINGS') {
+          if (itemErr.code === 'ITEM_OUT_OF_STOCK' || itemErr.code === 'ITEM_DELETED') {
             return res.status(409).json({ success: false, error: itemErr.code, message: itemErr.message });
           }
           console.error('Could not validate item availability:', itemErr.message);
@@ -1196,42 +1128,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             error: 'INVENTORY_VALIDATION_UNAVAILABLE',
             message: 'Could not verify item availability. Please try again.',
           });
-        }
-
-        // 1b. Authoritatively link remaining_servings from database products
-        // When kitchen has set estimated servings, portion capacity is already verified and approved.
-        if (Array.isArray(productRows) && productRows.length > 0) {
-          for (const item of normalizedItems) {
-            const prod = productRows.find(
-              (r) => r.id === String(item.product_id) || r.name.toLowerCase() === String(item.name).toLowerCase()
-            );
-            if (prod) {
-              item.remaining_servings = prod.remaining_servings !== null && prod.remaining_servings !== undefined
-                ? Number(prod.remaining_servings)
-                : null;
-              item.remainingServings = item.remaining_servings;
-            }
-          }
-
-          standardCheck = checkProductQuantityStandards(normalizedItems);
-          requiresKitchenApproval = standardCheck.requiresApproval;
-          initialStatus = requiresKitchenApproval
-            ? 'AWAITING_KITCHEN_APPROVAL'
-            : (isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PENDING_COD' : 'GCASH_AUTHORIZED'));
-          kitchenApprovalStatus = requiresKitchenApproval ? 'PENDING' : 'NONE';
-          isGcashAuthorized = !requiresKitchenApproval && !isPayLater && !isPos;
-
-          orderRecord.requires_kitchen_approval = requiresKitchenApproval;
-          orderRecord.requiresKitchenApproval = requiresKitchenApproval;
-          orderRecord.kitchen_approval_status = kitchenApprovalStatus;
-          orderRecord.kitchenApprovalStatus = kitchenApprovalStatus;
-          orderRecord.gcash_authorized = isGcashAuthorized;
-          orderRecord.gcashAuthorized = isGcashAuthorized;
-          orderRecord.status = initialStatus;
-          orderRecord.is_bulk = requiresKitchenApproval;
-          orderRecord.isBulk = requiresKitchenApproval;
-          orderRecord.flagged_quantity_items = standardCheck.flaggedItems;
-          orderRecord.flaggedQuantityItems = standardCheck.flaggedItems;
         }
 
         // 2. Resolve customer_id safely
@@ -1306,9 +1202,9 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           `INSERT INTO orders (
              id, customer_id, customer_name, order_type, status, subtotal, tax, delivery_fee, total, notes,
              created_at, delivery_latitude, delivery_longitude, payment_method, payment_reference, payment_receipt,
-             requires_kitchen_approval, kitchen_approval_status, servings_deducted, fulfillment_type
+             requires_kitchen_approval, kitchen_approval_status, fulfillment_type
            )
-           VALUES ($1, $2, $18, $16, $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13, $14, $15, FALSE, $17)
+           VALUES ($1, $2, $18, $16, $8, $3, $4, $5, $6, $7, NOW(), $9, $10, $11, $12, $13, $14, $15, $17)
            ON CONFLICT (id) DO UPDATE SET
              customer_name = COALESCE(EXCLUDED.customer_name, orders.customer_name),
              order_type = EXCLUDED.order_type,
@@ -1373,13 +1269,13 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         }
 
         const posPaymentStatus = (requiresKitchenApproval || initialStatus === 'AWAITING_KITCHEN_APPROVAL') ? 'PENDING' : 'PAID';
-        const finalPaymentMethod = req.body.paymentMethod || (initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH');
+        const finalPaymentMethod = req.body.paymentMethod || (isPayLater ? 'PAY_IN_STORE' : 'GCASH');
         const existingPayments = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [orderId]);
         if (existingPayments.rows.length === 0) {
           await client.query(
             `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [orderId, isPos ? finalPaymentMethod : (initialPaymentMethod === 'COD' ? 'CASH' : 'GCASH'), calcTotal, isPos ? posPaymentStatus : 'PENDING', orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
+            [orderId, isPos ? finalPaymentMethod : (isPayLater ? 'PAY_IN_STORE' : 'GCASH'), calcTotal, isPos ? posPaymentStatus : 'PENDING', orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
           );
         } else {
           await client.query(
@@ -1391,15 +1287,6 @@ export async function handleCreateCustomerFlowOrder(req, res) {
              WHERE order_id = $1`,
             [orderId, orderRecord.paymentReference || null, orderRecord.paymentReceipt || null, isPos ? posPaymentStatus : 'PENDING']
           );
-        }
-
-        // Deduct servings atomically for items configured with remaining servings countdown
-        if (initialStatus === 'CONFIRMED') {
-          try {
-            await deductOrderRemainingServings(client, orderId);
-          } catch (servErr) {
-            console.warn('[SERVINGS] Note during order creation deduction:', servErr.message);
-          }
         }
 
         await client.query('COMMIT');

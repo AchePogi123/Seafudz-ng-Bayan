@@ -1,12 +1,82 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Footer from '../components/Footer';
 import Platter3DCard from '../components/Platter3DCard';
 import BrandLogo from '../components/BrandLogo';
+import { ProductImage } from '../components/ProductImage';
+import { useProductImages } from '../utils/useProductImages';
+import { useMenuPrices } from '../utils/menuPriceManager';
 import { getActiveUser, getEmployeeWorkModule } from '../cryptography/cryptoSession';
 
 // Assets
 import seafoodBilaoImg from '../assets/seafood_bilao.png';
+
+interface MagazinePromoConfig {
+  id: string;
+  badge: string;
+  subheading: string;
+  tastingNotes: string;
+  serves: string;
+  flavorProfile: string;
+  highlights: string[];
+}
+
+const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
+  {
+    id: 'mixed-seafoods-bowl-699',
+    badge: '🔥 #1 BESTSELLER',
+    subheading: 'The Iconic Coastal Cajun Boil',
+    tastingNotes: 'An abundance of wild mud crabs, plump tiger prawns, and sea mussels drenched in our signature garlic-cajun reduction. Cooked fresh upon order with sweet Batangas corn.',
+    serves: '2 to 3 Persons',
+    flavorProfile: 'Aromatic Roasted Garlic & Mild Cajun Spice',
+    highlights: ['Wild Mud Crabs', 'Plump Tiger Prawns', 'Sweet Batangas Corn', 'Signature Cajun Sauce'],
+  },
+  {
+    id: 'all-shrimp-tray-1099',
+    badge: '⭐ CHEF’S SIGNATURE',
+    subheading: 'Pure Tiger Prawn Indulgence',
+    tastingNotes: 'Over a kilogram of succulent tiger prawns bathed in golden clarified butter and minced native garlic. Designed specifically for gatherings and shrimp lovers.',
+    serves: '4 to 6 Persons',
+    flavorProfile: 'Rich Golden Garlic Butter Glaze',
+    highlights: ['100% Tiger Prawns', 'Clarified Butter Reduction', 'Party Celebration Tray', 'Peeled-to-Dip Ease'],
+  },
+  {
+    id: 'mixed-seafoods-tray-1199',
+    badge: '👑 THE GRAND FIESTA BILAO',
+    subheading: 'The Ultimate Filipino Celebration Platter',
+    tastingNotes: 'Our grandest presentation on an authentic woven bamboo bilao. Loaded to the brim with giant crabs, jumbo prawns, clams, and sweet corn. The undisputed centerpiece for any feast.',
+    serves: '6 to 8 Persons',
+    flavorProfile: 'Special House Bilao Seasoning',
+    highlights: ['Giant Coastal Crabs', 'Whole Bamboo Bilao Platter', 'Thermal Heat Packaging', 'Complimentary Garlic Dip'],
+  },
+  {
+    id: 'all-shrimp-alacarte-199',
+    badge: '🦐 SOLO DELICACY',
+    subheading: 'Gourmet Sautéed Prawns for One',
+    tastingNotes: 'A satisfying solo portion of succulent prawns tossed vigorously in our savory garlic butter glaze. Perfect for lunch pairings or quick late-night seafood cravings.',
+    serves: 'Solo Delight (1 Person)',
+    flavorProfile: 'Garlic Butter Glazed Prawns',
+    highlights: ['Solo Friendly', 'Rapid Wok Sautéed', 'Pairs with Garlic Rice', 'Crispy Golden Tail'],
+  },
+  {
+    id: 'cucumber-lemonade-big-50',
+    badge: '🍋 ARTISAN REFRESHER',
+    subheading: 'Cold-Pressed Citrus Palate Cleanser',
+    tastingNotes: 'Crisp, garden-fresh cucumber slices blended with freshly squeezed lemons and cane nectar. Crafted intentionally to balance out the rich, savory garlic sauces of our seafood.',
+    serves: '22oz Jumbo Cup',
+    flavorProfile: 'Crisp Cucumber & Zesty Calamansi Lemonade',
+    highlights: ['Cold-Pressed Cucumber', 'Freshly Squeezed Citrus', 'Zero Artificial Flavors', 'Ice Cold Refreshment'],
+  },
+  {
+    id: 'chicken-pastil-35',
+    badge: '⚡ SOUTHERN HERITAGE',
+    subheading: 'Authentic Mindanao-Style Kagikit',
+    tastingNotes: 'Tender shredded chicken slow-simmered for four hours in native ginger, garlic, and annatto aromatics. A hearty, flavorful staple wrapped hot and ready to savor.',
+    serves: 'Hearty Solo Meal',
+    flavorProfile: 'Savory Slow-Simmered Native Spices',
+    highlights: ['4-Hour Slow Simmer', 'Mindanao Kagikit Recipe', 'Steamed Rice Pairing', 'Budget-Friendly Value'],
+  },
+];
 
 const FAQ_LIST = [
   {
@@ -41,6 +111,91 @@ export const LandingPage: React.FC = () => {
 
   const employeeModule = activeUser ? getEmployeeWorkModule(activeUser.role) : null;
   const isEmployee = Boolean(employeeModule);
+
+  // Dynamic Product Catalog & Real-Time Images
+  const { menuItems } = useProductImages();
+  const { getEffectivePrice } = useMenuPrices();
+
+  // Slideable Magazine State
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [isSlidePaused, setIsSlidePaused] = useState(false);
+  const touchStartXRef = useRef<number | null>(null);
+
+  const magazineItems = useMemo(() => {
+    return MAGAZINE_PROMOS.map((promo) => {
+      const product = menuItems.find((m) => m.id === promo.id);
+      if (!product) return null;
+      const effectivePrice = getEffectivePrice(product.id, product.price);
+      return {
+        ...product,
+        effectivePrice,
+        badge: promo.badge,
+        subheading: promo.subheading,
+        tastingNotes: promo.tastingNotes,
+        serves: promo.serves,
+        flavorProfile: promo.flavorProfile,
+        highlights: promo.highlights,
+      };
+    }).filter(Boolean) as (typeof menuItems[0] & {
+      effectivePrice: number;
+      badge: string;
+      subheading: string;
+      tastingNotes: string;
+      serves: string;
+      flavorProfile: string;
+      highlights: string[];
+    })[];
+  }, [menuItems, getEffectivePrice]);
+
+  const totalSlides = magazineItems.length;
+
+  const nextSlide = useCallback(() => {
+    if (totalSlides === 0) return;
+    setActiveSlide((prev) => (prev + 1) % totalSlides);
+  }, [totalSlides]);
+
+  const prevSlide = useCallback(() => {
+    if (totalSlides === 0) return;
+    setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
+  }, [totalSlides]);
+
+  const goToSlide = (idx: number) => {
+    if (idx >= 0 && idx < totalSlides) {
+      setActiveSlide(idx);
+    }
+  };
+
+  // Auto-play slide advance with hover pause
+  useEffect(() => {
+    if (isSlidePaused || totalSlides <= 1) return;
+    const timer = setInterval(() => {
+      setActiveSlide((prev) => (prev + 1) % totalSlides);
+    }, 6000);
+    return () => clearInterval(timer);
+  }, [isSlidePaused, totalSlides]);
+
+  // Touch swipe support for mobile/tablet brochure flipping
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null) return;
+    const diff = touchStartXRef.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 45) {
+      if (diff > 0) nextSlide();
+      else prevSlide();
+    }
+    touchStartXRef.current = null;
+  };
+
+  const handleFeaturedOrder = (item: { name: string }) => {
+    if (isEmployee && employeeModule) {
+      navigate(employeeModule.route);
+      return;
+    }
+    navigate(`/customer?search=${encodeURIComponent(item.name)}`);
+  };
 
   // Typewriter and bottom highlight line animation for "Bayan."
   const [typedWord, setTypedWord] = useState('');
@@ -176,6 +331,10 @@ export const LandingPage: React.FC = () => {
               Home
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
             </a>
+            <a href="#featured" onClick={(e) => handleNavClick(e, 'featured')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
+              Bestsellers
+              <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
+            </a>
             <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="relative py-1 text-slate-600 hover:text-orange-600 transition-colors duration-200 group">
               Our Standard
               <span className="absolute bottom-0 left-0 w-0 h-[2px] bg-[#FF6900] transition-all duration-300 ease-out group-hover:w-full rounded-full" />
@@ -241,6 +400,7 @@ export const LandingPage: React.FC = () => {
           <div className="lg:hidden bg-white border-t border-slate-100 px-6 py-5 shadow-lg space-y-4 text-left">
             <nav className="flex flex-col gap-3 font-semibold text-slate-700 text-sm">
               <a href="#hero" onClick={(e) => handleNavClick(e, 'hero')} className="hover:text-orange-600 py-1">Home</a>
+              <a href="#featured" onClick={(e) => handleNavClick(e, 'featured')} className="hover:text-orange-600 py-1">Bestsellers</a>
               <a href="#standards" onClick={(e) => handleNavClick(e, 'standards')} className="hover:text-orange-600 py-1">Our Standard</a>
               <a href="#our-story" onClick={(e) => handleNavClick(e, 'our-story')} className="hover:text-orange-600 py-1">Our Story</a>
               <a href="#branches" onClick={(e) => handleNavClick(e, 'branches')} className="hover:text-orange-600 py-1">Branches</a>
@@ -460,7 +620,276 @@ export const LandingPage: React.FC = () => {
         </div>
       </section>
 
+      {/* 5. SLIDEABLE MAGAZINE & BROCHURE SHOWCASE */}
+      <section
+        id="featured"
+        className="py-20 bg-slate-50 border-t border-slate-200"
+        onMouseEnter={() => setIsSlidePaused(true)}
+        onMouseLeave={() => setIsSlidePaused(false)}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* Magazine Editorial Header */}
+          <div className="text-center max-w-3xl mx-auto mb-10">
+            <span className="text-xs font-bold uppercase tracking-widest text-orange-700 bg-orange-100 px-3.5 py-1.5 rounded-full inline-block mb-3">
+              Culinary Magazine &amp; Brochure Showcase
+            </span>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+              The Seafood Chronicle
+            </h2>
+            <p className="text-sm sm:text-base text-slate-600 mt-3 leading-relaxed">
+              Flip through our chef-curated seafood platters, giant cajun boils, and refreshing accompaniments. Prepared fresh daily with dawn-sourced coastal catches.
+            </p>
+          </div>
 
+          {/* Main Magazine Slide Spread */}
+          {magazineItems.length > 0 && (() => {
+            const current = magazineItems[activeSlide] || magazineItems[0];
+            return (
+              <div
+                onTouchStart={handleTouchStart}
+                onTouchEnd={handleTouchEnd}
+                className="relative bg-white rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden transition-all duration-300"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
+                  {/* Left Column: Big Picture Magazine Stage (Col 7) */}
+                  <div className="lg:col-span-7 relative min-h-[360px] sm:min-h-[460px] lg:min-h-[540px] bg-gradient-to-br from-amber-50/70 via-orange-50/40 to-slate-100 flex items-center justify-center p-6 sm:p-12 overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-100">
+                    {/* Subtle warm magazine radial ambient background */}
+                    <div className="absolute inset-0 bg-[radial-gradient(#ea580c_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none" />
+
+                    {/* Giant Product Photo */}
+                    <div className="relative z-10 w-full h-full max-h-[460px] flex items-center justify-center">
+                      <ProductImage
+                        src={current.image}
+                        fallbackSrc={current.bundledImage}
+                        alt={current.name}
+                        className="w-full h-full max-h-[440px] object-contain drop-shadow-2xl transition-all duration-700 transform hover:scale-105 select-none"
+                      />
+                    </div>
+
+                    {/* Floating Magazine Badges */}
+                    <div className="absolute top-4 left-4 z-20">
+                      <span className="bg-white/95 backdrop-blur-md text-orange-700 border border-orange-200/90 text-xs font-black uppercase tracking-wider px-3.5 py-1.5 rounded-full shadow-md">
+                        {current.badge}
+                      </span>
+                    </div>
+
+                    <div className="absolute top-4 right-4 z-20">
+                      <span className="bg-gradient-to-r from-orange-600 to-amber-600 text-white font-black text-sm sm:text-base px-4 py-1.5 rounded-full shadow-lg">
+                        ₱{current.effectivePrice.toLocaleString()}
+                      </span>
+                    </div>
+
+                    <div className="absolute bottom-4 left-4 z-20 hidden sm:inline-flex items-center gap-2 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-md">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>100% DAWN CATCH • STEAMED PIPING HOT</span>
+                    </div>
+
+                    {/* Left & Right Slide Navigation Arrows */}
+                    <button
+                      onClick={prevSlide}
+                      aria-label="Previous Magazine Page"
+                      className="absolute left-3 sm:left-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-orange-600 text-slate-800 hover:text-white shadow-xl flex items-center justify-center transition-all cursor-pointer z-30 active:scale-90 border border-slate-200/80"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+
+                    <button
+                      onClick={nextSlide}
+                      aria-label="Next Magazine Page"
+                      className="absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-orange-600 text-slate-800 hover:text-white shadow-xl flex items-center justify-center transition-all cursor-pointer z-30 active:scale-90 border border-slate-200/80"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Right Column: Editorial Article & Specifications (Col 5) */}
+                  <div className="lg:col-span-5 p-6 sm:p-9 lg:p-10 flex flex-col justify-between text-left bg-white">
+                    <div>
+                      {/* Top Editorial Ticker */}
+                      <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-600">
+                          BROCHURE SPREAD 0{activeSlide + 1} / 0{totalSlides}
+                        </span>
+                        <span className="text-[11px] font-extrabold uppercase tracking-wider text-orange-600 bg-orange-50 px-2.5 py-0.5 rounded-md">
+                          {current.category}
+                        </span>
+                      </div>
+
+                      {/* Main Title & Subtitle */}
+                      <h3 className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-900 tracking-tight leading-tight">
+                        {current.name}
+                      </h3>
+                      <p className="text-xs sm:text-sm font-extrabold uppercase tracking-widest text-orange-600 mt-1">
+                        {current.subheading}
+                      </p>
+
+                      {/* Tasting Notes / Magazine Narrative */}
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 block mb-1">
+                          Chef's Tasting Notes &amp; Preparation
+                        </span>
+                        <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-normal">
+                          {current.tastingNotes}
+                        </p>
+                      </div>
+
+                      {/* Spec Sheet Grid */}
+                      <div className="grid grid-cols-2 gap-3 mt-5 pt-4 border-t border-slate-100">
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
+                            Portion Serving
+                          </span>
+                          <span className="text-xs font-black text-slate-800 mt-0.5 block">
+                            {current.serves}
+                          </span>
+                        </div>
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
+                            Signature Glaze
+                          </span>
+                          <span className="text-xs font-black text-slate-800 mt-0.5 block">
+                            {current.flavorProfile}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Ingredient Highlights Tags */}
+                      <div className="mt-4 flex flex-wrap gap-1.5">
+                        {current.highlights.map((tag) => (
+                          <span
+                            key={tag}
+                            className="bg-orange-50 text-orange-800 border border-orange-100 text-[11px] font-bold px-2.5 py-1 rounded-lg"
+                          >
+                            ✓ {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Bottom CTA & Price Section */}
+                    <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between gap-4">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
+                          Menu Price
+                        </span>
+                        <span className="text-2xl sm:text-3xl font-black text-orange-600">
+                          ₱{current.effectivePrice.toLocaleString()}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={() => handleFeaturedOrder(current)}
+                        className="inline-flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer uppercase tracking-wider"
+                      >
+                        <span>Order This Dish</span>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Slide Pagination Bar */}
+                <div className="bg-slate-50 border-t border-slate-100 px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+                  <div className="flex items-center gap-2">
+                    {magazineItems.map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => goToSlide(idx)}
+                        aria-label={`Go to slide ${idx + 1}`}
+                        className={`h-2.5 rounded-full transition-all cursor-pointer ${
+                          activeSlide === idx
+                            ? 'w-8 bg-orange-600'
+                            : 'w-2.5 bg-slate-300 hover:bg-slate-400'
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  <span className="text-xs text-slate-600 font-semibold">
+                    Swipe or use arrows to flip • Pauses on hover
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Slideable Thumbnail Selector Strip (Brochure Deck) */}
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <span className="text-xs font-black uppercase tracking-widest text-slate-600">
+                Flip to Any Signature Item
+              </span>
+              <span className="text-xs text-orange-600 font-bold">
+                {magazineItems.length} Featured Items
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+              {magazineItems.map((item, idx) => {
+                const isActive = activeSlide === idx;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => goToSlide(idx)}
+                    className={`p-3 rounded-2xl text-left transition-all duration-300 cursor-pointer flex flex-col justify-between ${
+                      isActive
+                        ? 'bg-white border-2 border-orange-500 shadow-lg scale-102 ring-2 ring-orange-200'
+                        : 'bg-white/80 hover:bg-white border border-slate-200/90 hover:border-orange-300 shadow-xs'
+                    }`}
+                  >
+                    <div className="w-full aspect-square rounded-xl bg-slate-50 flex items-center justify-center p-2 mb-2 overflow-hidden">
+                      <ProductImage
+                        src={item.image}
+                        fallbackSrc={item.bundledImage}
+                        alt={item.name}
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-orange-600 block truncate">
+                        {item.badge}
+                      </span>
+                      <h4 className="text-xs font-bold text-slate-800 truncate mt-0.5">
+                        {item.name}
+                      </h4>
+                      <span className="text-xs font-black text-slate-700 block mt-1">
+                        ₱{item.effectivePrice.toLocaleString()}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Promotional Advertisement Callout Banner */}
+          <div className="mt-14 bg-gradient-to-r from-orange-600 via-orange-500 to-amber-600 rounded-3xl p-6 sm:p-9 text-white shadow-md relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
+            <div className="space-y-2 text-center md:text-left z-10">
+              <span className="inline-block bg-white/20 backdrop-blur-xs text-white text-[11px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full">
+                🔥 Hot Feasting Promotion
+              </span>
+              <h3 className="text-xl sm:text-2xl font-black tracking-tight">
+                Complimentary Metro Manila Delivery on Orders Above ₱3,000
+              </h3>
+              <p className="text-orange-100 text-xs sm:text-sm max-w-xl leading-relaxed">
+                Enjoy free delivery in temperature-sealed thermal packaging. Keep your mud crabs and butter garlic prawns piping hot until your feast begins.
+              </p>
+            </div>
+            <button
+              onClick={handleOrderOnline}
+              className="z-10 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs sm:text-sm px-7 py-3.5 rounded-xl shadow-xs hover:shadow-md transition-all active:scale-95 cursor-pointer uppercase tracking-wider shrink-0"
+            >
+              Order Online Storefront
+            </button>
+          </div>
+        </div>
+      </section>
 
       {/* 6. OUR STANDARD (Numbered Pillar Cards) */}
       <section id="standards" className="py-20 bg-slate-50 border-t border-slate-200">

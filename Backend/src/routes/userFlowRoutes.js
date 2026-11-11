@@ -6,7 +6,6 @@ import { handleAssistantStatusUpdate } from './assistantRoutes.js';
 import { handleKitchenStatusUpdate } from './kitchenRoutes.js';
 import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
 import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
-import { restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 import { realtimeEmitter, emitOrderUpdate } from '../utils/realtimeEvents.js';
 
@@ -55,7 +54,7 @@ router.get('/user-flow/orders', async (req, res) => {
         SELECT o.id, COALESCE(o.order_type, 'ONLINE') AS order_type, COALESCE(o.fulfillment_type, 'DELIVERY') AS fulfillment_type, o.customer_id, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
                o.delivery_latitude, o.delivery_longitude,
                o.customer_resolution, o.customer_resolution_status, o.customer_replacements,
-               o.requires_kitchen_approval, o.kitchen_approval_status, o.servings_deducted,
+               o.requires_kitchen_approval, o.kitchen_approval_status,
                o.receipt_status, o.is_receipt_printed, o.receipt_printed_at,
                o.created_at, o.updated_at,
                c.fullname AS customer_name, c.phone AS customer_phone,
@@ -337,7 +336,7 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
     let deliveryFee = Number(dbOrder?.delivery_fee || order?.deliveryFee || 0);
     let projectedTotal = 0;
     let calculatedLedger = null;
-    let payMethod = order?.payment_method || order?.paymentMethod || (order?.status === 'PENDING_COD' ? 'COD' : 'GCash');
+    let payMethod = order?.payment_method || order?.paymentMethod || 'GCash';
 
     if (resolution === 'REPLACE') {
       const submittedReplacements = req.body.replacements;
@@ -472,9 +471,9 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
         dbPayments = payRes.rows;
         dbRefunds = refRes.rows;
 
-        const isCod = String(dbOrder.status).toUpperCase() === 'PENDING_COD'
-          || dbPayments.some(p => ['COD', 'CASH'].includes(String(p.payment_method).toUpperCase()));
-        payMethod = isCod ? 'COD' : (dbPayments[0]?.payment_method || 'GCash');
+        const isCod = dbPayments.some(p => ['COD', 'CASH'].includes(String(p.payment_method).toUpperCase()))
+          || String(dbOrder.payment_method || '').toUpperCase().includes('COD');
+        payMethod = isCod ? 'COD' : (dbPayments[0]?.payment_method || dbOrder.payment_method || 'GCash');
 
         const targetTotal = resolution === 'REPLACE' ? projectedTotal : Number(dbOrder.total || 0);
         calculatedLedger = calculateFinancialLedger(dbPayments, dbRefunds, targetTotal, payMethod);
@@ -654,7 +653,7 @@ router.post('/user-flow/orders/:id/additional-payment-receipt', optionalAuth, as
     }
 
     const currentTotal = Number(dbOrder?.total || order?.total || 0);
-    const payMethod = dbOrder?.status === 'PENDING_COD' ? 'COD' : 'GCash';
+    const payMethod = dbOrder?.payment_method || order?.paymentMethod || 'GCash';
     const ledger = calculateFinancialLedger(payRows, refRows, currentTotal, payMethod);
     const additionalAmount = ledger.additionalRequired > 0 ? ledger.additionalRequired : 0;
 
@@ -756,8 +755,7 @@ async function executeOrderCancellation(id, options = {}) {
   const currentStatus = orderInMemory?.status || dbOrder?.status || null;
   const normCurrent = normalizeFlowStatus(currentStatus);
 
-  const isCOD = String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('COD')
-    || String(orderInMemory?.status || dbOrder?.status || '').toUpperCase() === 'PENDING_COD';
+  const isCOD = String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('COD');
 
   const hasGcashPayment = !isCOD && !options.forceImmediateCancel && (
     String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('GCASH')
@@ -833,19 +831,6 @@ async function executeOrderCancellation(id, options = {}) {
         [id]
       );
     } catch (e) {}
-
-    // Restore any deducted remaining servings if cancelled before prep
-    try {
-      const pool = await getDbPool();
-      const client = await pool.connect();
-      try {
-        await restoreOrderRemainingServings(client, id);
-      } finally {
-        client.release();
-      }
-    } catch (restErr) {
-      console.warn('[SERVINGS] Cancellation servings restoration note:', restErr.message);
-    }
 
     if (orderInMemory) {
       orderInMemory.status = 'CANCEL_REQUESTED';
@@ -934,19 +919,6 @@ async function executeOrderCancellation(id, options = {}) {
       [id]
     );
   } catch (e) {}
-
-  // Restore any deducted remaining servings if cancelled before prep
-  try {
-    const pool = await getDbPool();
-    const client = await pool.connect();
-    try {
-      await restoreOrderRemainingServings(client, id);
-    } finally {
-      client.release();
-    }
-  } catch (restErr) {
-    console.warn('[SERVINGS] Order cancellation servings restoration note:', restErr.message);
-  }
 
   const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCELLED' } : { id, status: 'CANCELLED' });
   const formattedResponse = formatOrderResponse(activeOrderObj);

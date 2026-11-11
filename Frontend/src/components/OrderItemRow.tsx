@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import type { MenuItem } from './MenuCard'
 import { ProductImage } from './ProductImage'
-import { getProductQuantityStandard } from '../utils/bulkOrder'
 
 export interface CartItem {
   item: MenuItem
@@ -27,15 +26,6 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
 }) => {
   const { item, quantity } = cartItem
   const [inputValue, setInputValue] = useState(String(quantity))
-
-  const standard = getProductQuantityStandard(item.id || item.name)
-  const rawServings = (cartItem as any).remaining_servings !== undefined
-    ? (cartItem as any).remaining_servings
-    : (cartItem as any).remainingServings !== undefined
-      ? (cartItem as any).remainingServings
-      : (item as any).remaining_servings
-  const hasEstimatedServings = rawServings !== null && rawServings !== undefined
-  const isExceedingStandard = quantity >= standard && !hasEstimatedServings
 
   useEffect(() => {
     setInputValue(String(quantity))
@@ -74,9 +64,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
     <div className={`flex items-center justify-between gap-2 py-2.5 border-b group transition-all ${
       !isAvailable
         ? 'border-rose-200 bg-rose-50/70 px-2 rounded-lg'
-        : isExceedingStandard
-          ? 'border-amber-200 bg-amber-50/40 px-2 rounded-lg'
-          : 'border-neutral-100'
+        : 'border-neutral-100'
     }`}>
       {/* Item info (Image + Name + Unit Price) */}
       <div className="flex items-center gap-2.5 flex-1 min-w-0">
@@ -95,14 +83,6 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
           {!isAvailable && (
             <span className="inline-flex mt-1 rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-white">
               ⚠️ Out of Stock
-            </span>
-          )}
-          {isExceedingStandard && (
-            <span
-              className="inline-flex mt-1 rounded bg-amber-100 border border-amber-300 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-900"
-              title={`Exceeds standard of ${standard}. Requires kitchen approval.`}
-            >
-              ⚠️ STD: {standard} (Review Req.)
             </span>
           )}
           <p className="text-[11px] text-neutral-400 font-medium mt-0.5">

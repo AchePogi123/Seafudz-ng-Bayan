@@ -388,13 +388,13 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   item,
   onAddToCart,
   isAvailable = true,
-  remainingServings,
+  remainingServings: _remainingServings,
   onToggleAvailability,
   showAvailabilityToggle = false,
   allowPriceEdit = false,
   onUpdatePrice,
 }) => {
-  const effectiveAvailable = isAvailable && (remainingServings === null || remainingServings === undefined || remainingServings > 0)
+  const effectiveAvailable = isAvailable
   const currentRole = getActiveUser()?.role?.toLowerCase()
   const canManageAvailability = currentRole === 'kitchen' || currentRole === 'admin'
   const canEditPrice = currentRole === 'admin'
@@ -442,13 +442,6 @@ export const MenuCard: React.FC<MenuCardProps> = ({
         <span className="absolute top-2.5 left-2.5 bg-white/95 backdrop-blur-xs text-neutral-800 font-bold text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-md border border-neutral-200/60 shadow-2xs">
           {item.category}
         </span>
-
-        {/* Remaining Servings Badge (when limited) - Lower Right of picture */}
-        {effectiveAvailable && remainingServings !== null && remainingServings !== undefined && remainingServings > 0 && (
-          <span className="absolute bottom-2.5 right-2.5 z-10 bg-white/95 text-neutral-800 font-extrabold text-xs sm:text-sm uppercase tracking-wider px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border border-neutral-200/80 shadow-md flex items-center justify-center">
-            {remainingServings} left
-          </span>
-        )}
 
         {/* Unavailable Banner if item is out of stock */}
         {!effectiveAvailable && (

@@ -1,0 +1,92 @@
+/* Admin Inventory Styles - Harmonized with Executive Dashboard */
+
+/* Clean custom scrollbar for overflow panels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Subtle scrollbars for data tables and panels */
+.admin-inventory-workspace :is(*, *::before, *::after) {
+  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-width: thin;
+}
+
+/* Stock comparison indicator for tables and lists */
+.stock-comparison {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  min-width: 110px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-quantity {
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.stock-level-mark {
+  position: relative;
+  width: 100%;
+  height: 5px;
+  overflow: visible;
+  border-radius: 9999px;
+  background-color: #f1f5f9;
+}
+
+.stock-level-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: #f97316;
+  transition: width 0.3s ease;
+}
+
+.stock-level-mark.is-empty .stock-level-fill {
+  background-color: #ef4444;
+}
+
+.stock-level-mark.is-low .stock-level-fill {
+  background-color: #f59e0b;
+}
+
+.stock-minimum-tick {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 9px;
+  background-color: #94a3b8;
+  border-radius: 1px;
+}
+
+.stock-status {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.stock-status.is-low {
+  color: #d97706;
+}
+
+.stock-status.is-depleted {
+  color: #dc2626;
+}
+
+/* Reduced motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .admin-inventory-workspace *,
+  .admin-inventory-workspace *::before,
+  .admin-inventory-workspace *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

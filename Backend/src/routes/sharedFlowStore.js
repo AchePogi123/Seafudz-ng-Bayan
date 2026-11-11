@@ -1,5 +1,4 @@
 // Central In-Memory Store Fallback for backend order flow
-import { checkProductQuantityStandards } from '../utils/bulkOrder.js';
 
 export const inMemoryOrders = new Map();
 
@@ -14,7 +13,7 @@ export function normalizeFlowStatus(rawStatus) {
   if (['APPROVED_BY_KITCHEN', 'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_APPROVAL', 'PENDING_KITCHEN_APPROVAL'].includes(upper)) return upper === 'APPROVED_BY_KITCHEN' ? 'APPROVED_BY_KITCHEN' : 'AWAITING_KITCHEN_APPROVAL';
   if (['KITCHEN_REJECTED', 'DECLINED_BY_KITCHEN'].includes(upper)) return 'KITCHEN_REJECTED';
   if (['CANCEL_REQUESTED', 'CANCELLATION_REQUESTED', 'PENDING_CANCELLATION'].includes(upper)) return 'CANCEL_REQUESTED';
-  if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD'].includes(upper)) return upper;
+  if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PAY_IN_STORE', 'PENDING_STORE_PICKUP'].includes(upper)) return upper;
   if (['PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING';
   if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED';
   if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING';
@@ -153,10 +152,8 @@ export function formatOrderResponse(row) {
     : (String(rawFulfillment).toUpperCase().includes('ON_SITE') ? 'ON_SITE' : 'DELIVERY');
   const rawMethod = row.payment_method || row.paymentMethod
     || payments.find(p => p.payment_method)?.payment_method
-    || (String(row.status || '').toUpperCase() === 'PENDING_COD' ? 'COD' : 'GCash');
-  const paymentMethod = String(rawMethod || 'GCash').toUpperCase().includes('COD') || String(rawMethod || '').toUpperCase() === 'CASH'
-    ? 'COD'
-    : (rawMethod || 'GCash');
+    || 'GCash';
+  const paymentMethod = rawMethod;
 
   const formattedItems = items.map(item => ({
     id: item.id || item.product_id || item.menu_item_id,
@@ -167,8 +164,6 @@ export function formatOrderResponse(row) {
     price: item.price || item.unit_price || 0,
     item_status: item.item_status || item.itemStatus || 'ACTIVE',
     specialNote: item.specialNote || item.notes || '',
-    remaining_servings: item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings,
-    remainingServings: item.remaining_servings !== undefined ? item.remaining_servings : item.remainingServings,
     replacementForItemId: item.replacement_for_item_id || item.replacementForItemId || null,
   }));
   const outOfStockItems = (Array.isArray(row.outOfStockItems) && row.outOfStockItems.length > 0)
@@ -206,17 +201,8 @@ export function formatOrderResponse(row) {
   const paymentReceiptFromPayments = payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.payment_receipt
     || payments.slice().reverse().find(p => p.payment_receipt || p.paymentReceipt)?.paymentReceipt;
 
-  const standardCheck = checkProductQuantityStandards(formattedItems);
-  const requiresKitchenApproval = row.requires_kitchen_approval !== null && row.requires_kitchen_approval !== undefined
-    ? Boolean(row.requires_kitchen_approval)
-    : (row.requiresKitchenApproval !== undefined
-        ? Boolean(row.requiresKitchenApproval)
-        : Boolean(normStatus === 'AWAITING_KITCHEN_APPROVAL' || (standardCheck.requiresApproval && !['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED', 'GCASH_AUTHORIZED', 'PENDING_COD'].includes(normStatus))));
-  const kitchenApprovalStatus = row.kitchen_approval_status || row.kitchenApprovalStatus || (
-    normStatus === 'AWAITING_KITCHEN_APPROVAL' ? 'PENDING' : 
-    (normStatus === 'KITCHEN_REJECTED' ? 'REJECTED' : 
-    (requiresKitchenApproval && ['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normStatus) ? 'APPROVED' : 'NONE'))
-  );
+  const requiresKitchenApproval = false;
+  const kitchenApprovalStatus = 'NONE';
 
   return {
     id: row.id,
@@ -272,11 +258,9 @@ export function formatOrderResponse(row) {
     requires_kitchen_approval: requiresKitchenApproval,
     kitchenApprovalStatus,
     kitchen_approval_status: kitchenApprovalStatus,
-    flaggedQuantityItems: standardCheck.flaggedItems,
-    servingsDeducted: Boolean(row.servings_deducted || row.servingsDeducted),
-    servings_deducted: Boolean(row.servings_deducted || row.servingsDeducted),
-    isBulk: Boolean(row.is_bulk || row.isBulk || standardCheck.requiresApproval || requiresKitchenApproval),
-    is_bulk: Boolean(row.is_bulk || row.isBulk || standardCheck.requiresApproval || requiresKitchenApproval),
+    flaggedQuantityItems: [],
+    isBulk: false,
+    is_bulk: false,
     notes: row.notes || '',
     items: formattedItems,
     subtotal: parseFloat(row.subtotal || 0),

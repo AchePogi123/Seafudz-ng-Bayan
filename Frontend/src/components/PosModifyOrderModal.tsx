@@ -1,9 +1,8 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
-import { useMenuAvailability, applyProductServingsChange } from '../utils/menuAvailability'
+import { useMenuAvailability } from '../utils/menuAvailability'
 import { CLIENT_CATEGORIES, CLIENT_MENU_ITEMS, type MenuItem } from './MenuCard'
-import { checkProductQuantityStandards } from '../utils/bulkOrder'
 import { NoticeModal } from './NoticeModal'
 
 export interface PosModifyOrderModalProps {
@@ -46,7 +45,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
   menuItems = CLIENT_MENU_ITEMS,
   isItemAvailable = () => true,
 }) => {
-  const { isAvailable: liveIsAvailable, getRemainingServings } = useMenuAvailability()
+  const { isAvailable: liveIsAvailable } = useMenuAvailability()
   const effectiveIsAvailable = useCallback(
     (id: string) => isItemAvailable(id) && liveIsAvailable(id),
     [isItemAvailable, liveIsAvailable]
@@ -61,20 +60,6 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
   const showNotice = useCallback((message: string, title?: string) => {
     setNoticeModal({ message, title: title || 'Notice' })
   }, [])
-
-  const bulkCheck = useMemo(() => {
-    return checkProductQuantityStandards(
-      items.map((it) => ({
-        id: it.productId,
-        productId: it.productId,
-        name: it.name,
-        category: (it as any).category || (it as any).item?.category,
-        quantity: it.quantity,
-        remaining_servings: getRemainingServings(it.productId),
-        remainingServings: getRemainingServings(it.productId),
-      }))
-    )
-  }, [items, getRemainingServings])
   const [liveStatus, setLiveStatus] = useState('CONFIRMED')
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -341,14 +326,6 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
   // Quantity Steppers
   const handleQuantityIncrement = (index: number) => {
     if (isCookingOrLater) return
-    const it = items[index]
-    if (it) {
-      const servingsLeft = getRemainingServings(it.productId)
-      if (servingsLeft !== null && servingsLeft !== undefined && it.quantity >= servingsLeft) {
-        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${it.name}.`, 'Portion Limit Reached')
-        return
-      }
-    }
     setItems((prev) =>
       prev.map((item, idx) =>
         idx === index ? { ...item, quantity: item.quantity + 1 } : item
@@ -383,17 +360,9 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
   const handleAddDishFromMenu = (menuItem: MenuItem) => {
     if (isCookingOrLater) return
 
-    const servingsLeft = getRemainingServings(menuItem.id)
-    if (servingsLeft !== null && servingsLeft !== undefined) {
-      if (servingsLeft <= 0) {
-        showNotice(`Sorry, "${menuItem.name}" is currently out of stock.`, 'Out of Stock')
-        return
-      }
-      const existing = items.find((it) => it.productId === menuItem.id)
-      if (existing && existing.quantity >= servingsLeft) {
-        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${menuItem.name}.`, 'Portion Limit Reached')
-        return
-      }
+    if (!effectiveIsAvailable(menuItem.id)) {
+      showNotice(`Sorry, "${menuItem.name}" is currently out of stock.`, 'Out of Stock')
+      return
     }
 
     setItems((prev) => {
@@ -433,21 +402,12 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
     const replacement = menuItems.find((m) => m.id === selectedReplacementId)
     if (!replacement) return
 
-    const servingsLeft = getRemainingServings(replacement.id)
-    const currentQty = items[index]?.quantity || 1
-    if (servingsLeft !== null && servingsLeft !== undefined) {
-      if (servingsLeft <= 0) {
-        showNotice(`Sorry, "${replacement.name}" is currently out of stock.`, 'Out of Stock')
-        return
-      }
-      if (currentQty > servingsLeft) {
-        showNotice(`Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${replacement.name}. Quantity adjusted to ${servingsLeft}.`, 'Portion Limit Reached')
-      }
+    if (!effectiveIsAvailable(replacement.id)) {
+      showNotice(`Sorry, "${replacement.name}" is currently out of stock.`, 'Out of Stock')
+      return
     }
 
-    const finalQty = servingsLeft !== null && servingsLeft !== undefined && currentQty > servingsLeft
-      ? servingsLeft
-      : currentQty
+    const currentQty = items[index]?.quantity || 1
 
     setItems((prev) =>
       prev.map((it, idx) => {
@@ -457,7 +417,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
           productId: replacement.id,
           name: replacement.name,
           price: replacement.price,
-          quantity: finalQty,
+          quantity: currentQty,
           item: replacement,
         }
       })
@@ -594,14 +554,14 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
       adjustmentDetails,
       excessRefunded: isRefundDue ? excessToReturn : (order.excessRefunded || 0),
       additionalPaid: isAdditionalDue ? additionalDue : (order.additionalPaid || 0),
-      status: bulkCheck.requiresApproval ? 'AWAITING_KITCHEN_APPROVAL' : (order.status || 'CONFIRMED'),
-      requiresKitchenApproval: bulkCheck.requiresApproval,
-      requires_kitchen_approval: bulkCheck.requiresApproval,
-      kitchenApprovalStatus: bulkCheck.requiresApproval ? 'PENDING' : (order.kitchenApprovalStatus || 'NONE'),
-      kitchen_approval_status: bulkCheck.requiresApproval ? 'PENDING' : (order.kitchen_approval_status || 'NONE'),
-      is_bulk: bulkCheck.requiresApproval,
-      isBulk: bulkCheck.requiresApproval,
-      flaggedQuantityItems: bulkCheck.flaggedItems,
+      status: order.status || 'CONFIRMED',
+      requiresKitchenApproval: false,
+      requires_kitchen_approval: false,
+      kitchenApprovalStatus: 'NONE',
+      kitchen_approval_status: 'NONE',
+      is_bulk: false,
+      isBulk: false,
+      flaggedQuantityItems: [],
       updated_at: new Date().toISOString(),
     }
 
@@ -639,18 +599,6 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
           return
         }
         console.warn('Backend update order response note:', data)
-      } else {
-        // Instantly sync updated product servings into frontend cache
-        if (data && Array.isArray(data.updatedProducts)) {
-          data.updatedProducts.forEach((p: any) => {
-            applyProductServingsChange(
-              String(p.id),
-              p.remaining_servings !== null && p.remaining_servings !== undefined
-                ? Number(p.remaining_servings)
-                : null
-            )
-          })
-        }
       }
     } catch (err) {
       console.warn('Network note during order update:', err)
@@ -754,25 +702,6 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
             <div className="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-xs font-semibold flex items-center gap-2">
               <span>⚠️</span>
               <span>{errorMessage}</span>
-            </div>
-          )}
-
-          {bulkCheck.requiresApproval && !isCookingOrLater && (
-            <div className="bg-amber-50 border-2 border-amber-300 text-amber-900 p-3.5 rounded-2xl text-xs space-y-1.5 animate-fade-in text-center">
-              <div className="flex items-center justify-center gap-1.5 font-extrabold text-amber-900">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                Kitchen Review Required
-              </div>
-              <p className="text-[11px] text-amber-800 leading-snug">
-                This modified order contains items exceeding kitchen quantity standards. The Kitchen team must review and approve quantities before preparation can resume.
-              </p>
-              <div className="flex flex-wrap gap-1 justify-center pt-0.5">
-                {bulkCheck.flaggedItems.map((fi, idx) => (
-                  <span key={idx} className="bg-amber-100 border border-amber-300 text-amber-900 text-[10px] font-bold px-1.5 py-0.5 rounded">
-                    {fi.name}: x{fi.quantity} (STD: {fi.standard})
-                  </span>
-                ))}
-              </div>
             </div>
           )}
 
@@ -932,11 +861,10 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
                             className="flex-1 bg-white px-2.5 py-1.5 rounded-lg border border-orange-200 text-xs font-semibold text-neutral-800 focus:outline-none"
                           >
                             {menuItems.map((m) => {
-                              const sLeft = getRemainingServings(m.id)
-                              const isAvail = effectiveIsAvailable(m.id) && (sLeft === null || sLeft === undefined || sLeft > 0)
+                              const isAvail = effectiveIsAvailable(m.id)
                               return (
                                 <option key={m.id} value={m.id} disabled={!isAvail}>
-                                  {m.name} (₱{m.price}){sLeft !== null && sLeft !== undefined ? ` [${sLeft} left]` : ''}{!isAvail ? ' [Out of Stock]' : ''}
+                                  {m.name} (₱{m.price}){!isAvail ? ' [Out of Stock]' : ''}
                                 </option>
                               )
                             })}
@@ -1018,10 +946,7 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
               {/* Available Menu Dishes List */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
                 {filteredMenuItems.map((menuItem) => {
-                  const available = effectiveIsAvailable(menuItem.id)
-                  const servingsLeft = getRemainingServings(menuItem.id)
-                  const isOutOfServings = servingsLeft !== null && servingsLeft !== undefined && servingsLeft <= 0
-                  const isDishAvailable = available && !isOutOfServings
+                  const isDishAvailable = effectiveIsAvailable(menuItem.id)
                   const alreadyInOrder = items.find((it) => it.productId === menuItem.id)
 
                   return (
@@ -1043,16 +968,10 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
                           <span className="font-black text-orange-600 text-xs">
                             ₱{menuItem.price}
                           </span>
-                          {!isDishAvailable ? (
+                          {!isDishAvailable && (
                             <span className="text-[9px] font-bold text-rose-600">
                               [Out of Stock]
                             </span>
-                          ) : (
-                            servingsLeft !== null && servingsLeft !== undefined && (
-                              <span className="text-[9px] font-black text-amber-700 bg-amber-100 px-1 py-0.5 rounded">
-                                {servingsLeft} left
-                              </span>
-                            )
                           )}
                           {alreadyInOrder && (
                             <span className="text-[9px] font-bold text-amber-800 bg-amber-100 px-1 rounded">

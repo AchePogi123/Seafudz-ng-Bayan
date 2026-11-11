@@ -3,7 +3,6 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
-import { restoreOrderRemainingServings } from '../utils/servingsDeduction.js';
 
 const router = Router();
 
@@ -29,9 +28,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
                    'subtotal', oi.subtotal,
                    'notes', oi.notes,
                    'name', COALESCE(oi.product_name_snapshot, p.name),
-                   'item_status', oi.item_status,
-                   'remaining_servings', p.remaining_servings,
-                   'remainingServings', p.remaining_servings
+                   'item_status', oi.item_status
                  )
                ) FILTER (WHERE oi.id IS NOT NULL AND oi.item_status NOT IN ('REPLACED', 'REFUNDED', 'CANCELLED')), '[]'
              ) AS "items"
@@ -79,16 +76,6 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
 
     inMemoryOrders.forEach((order, id) => {
       const normStatus = normalizeFlowStatus(order.status);
-      const isPendingApproval = normStatus === 'AWAITING_KITCHEN_APPROVAL'
-        || normStatus === 'KITCHEN_REJECTED'
-        || order.kitchen_approval_status === 'PENDING'
-        || order.kitchenApprovalStatus === 'PENDING'
-        || (order.requires_kitchen_approval === true && order.kitchen_approval_status !== 'APPROVED')
-        || (order.requiresKitchenApproval === true && order.kitchenApprovalStatus !== 'APPROVED');
-
-      if (isPendingApproval || normStatus === 'APPROVED_BY_KITCHEN') {
-        return;
-      }
 
       if (
         validKitchenStatuses.includes(normStatus) || 
@@ -167,13 +154,6 @@ router.patch('/kitchen/orders/:id/status', optionalAuth, async (req, res) => {
         approvalStatus = rows[0].kitchen_approval_status || approvalStatus;
       }
     } catch {}
-
-    if (currentStatus === 'AWAITING_KITCHEN_APPROVAL' || approvalStatus === 'PENDING') {
-      return res.status(400).json({
-        success: false,
-        message: 'Order requires Kitchen quantity approval before it can enter the kitchen preparation queue.',
-      });
-    }
 
     // Update in-memory store if present
     let memoryUpdated = false;
@@ -325,29 +305,6 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
       await client.query('BEGIN');
       const itemIdsAsText = itemIds.map(String);
 
-      // Check if any of the items being flagged have kitchen estimated servings set
-      const estCheck = await client.query(
-        `SELECT oi.id, oi.product_id, COALESCE(oi.product_name_snapshot, p.name) AS product_name, p.remaining_servings
-         FROM order_items oi
-         LEFT JOIN products p ON p.id = oi.product_id
-         WHERE oi.order_id = $1 AND (
-           oi.id::text = ANY($2::text[])
-           OR oi.product_id = ANY($2::text[])
-           OR LOWER(oi.product_name_snapshot) = ANY(SELECT LOWER(x) FROM unnest($2::text[]) AS x)
-         ) AND p.remaining_servings IS NOT NULL`,
-        [id, itemIdsAsText]
-      );
-
-      if (estCheck.rows && estCheck.rows.length > 0) {
-        await client.query('ROLLBACK');
-        const dishNames = estCheck.rows.map(r => r.product_name).join(', ');
-        return res.status(400).json({
-          success: false,
-          code: 'ESTIMATED_SERVING_CANNOT_BE_OOS',
-          message: `Cannot flag '${dishNames}' as out of stock because the kitchen already set an estimated serving for this dish.`,
-        });
-      }
-
       const flagResult = await client.query(
         `UPDATE order_items SET item_status = 'OUT_OF_STOCK'
          WHERE order_id = $1 AND (
@@ -406,21 +363,6 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
 
   // 2. Always update inMemoryOrders
   let order = inMemoryOrders.get(id) || { id, items: [] };
-
-  if (Array.isArray(order.items)) {
-    const hasEst = order.items.some((item, idx) => {
-      const match = itemIds.includes(item.id) || itemIds.includes(String(item.id)) || itemIds.includes(idx) || itemIds.includes(String(idx));
-      const serv = item.remaining_servings ?? item.remainingServings;
-      return match && serv !== null && serv !== undefined;
-    });
-    if (hasEst) {
-      return res.status(400).json({
-        success: false,
-        code: 'ESTIMATED_SERVING_CANNOT_BE_OOS',
-        message: 'Cannot flag this item as out of stock because the kitchen already set an estimated serving for this dish.',
-      });
-    }
-  }
 
   order.status = 'OUT_OF_STOCK';
   order.customerResolution = null;
@@ -617,88 +559,13 @@ export async function handleKitchenStatusUpdate(req, res) {
   }
 }
 
-// GET /api/kitchen/approvals - Get orders requiring quantity approval
-router.get('/kitchen/approvals', optionalAuth, async (req, res) => {
-  try {
-    let dbOrders = [];
-    try {
-      const { rows } = await query(`
-        SELECT o.id, o.order_type, o.status, o.subtotal, o.tax AS vat, o.delivery_fee, o.total, o.notes,
-               o.requires_kitchen_approval, o.kitchen_approval_status, o.created_at, o.updated_at,
-               c.fullname AS customer_name, c.phone AS customer_phone,
-               COALESCE(d.delivery_address, c.delivery_address) AS delivery_address,
-               COALESCE(o.payment_method, 'ONLINE') AS payment_method,
-               COALESCE(
-                 json_agg(
-                   json_build_object(
-                     'id', oi.id,
-                     'product_id', oi.product_id,
-                     'name', oi.product_name_snapshot,
-                     'quantity', oi.quantity,
-                     'price', oi.unit_price,
-                     'item_status', oi.item_status
-                   )
-                 ) FILTER (WHERE oi.id IS NOT NULL), '[]'
-               ) AS items
-        FROM orders o
-        LEFT JOIN customers c ON o.customer_id = c.id
-        LEFT JOIN (
-          SELECT DISTINCT ON (order_id) order_id, delivery_address
-          FROM deliveries
-          ORDER BY order_id, created_at DESC
-        ) d ON o.id = d.order_id
-        LEFT JOIN order_items oi ON o.id = oi.order_id
-        WHERE (UPPER(o.status) = 'AWAITING_KITCHEN_APPROVAL' OR UPPER(o.kitchen_approval_status) = 'PENDING')
-          AND UPPER(COALESCE(o.kitchen_approval_status, '')) != 'APPROVED'
-          AND UPPER(COALESCE(o.kitchen_approval_status, '')) != 'REJECTED'
-          AND UPPER(o.status) NOT IN ('KITCHEN_REJECTED', 'CANCELLED', 'CONFIRMED', 'PREPARING', 'READY', 'COMPLETED', 'APPROVED_BY_KITCHEN')
-        GROUP BY o.id, c.fullname, c.phone, c.delivery_address, d.delivery_address
-        ORDER BY o.created_at ASC
-      `);
-      dbOrders = rows;
-    } catch (dbErr) {
-      console.warn('DB note (kitchen approvals):', dbErr.message);
-    }
-
-    const mergedMap = new Map();
-    dbOrders.forEach((row) => {
-      mergedMap.set(row.id, formatOrderResponse(row));
-    });
-
-    inMemoryOrders.forEach((order, id) => {
-      const norm = normalizeFlowStatus(order.status);
-      const appSt = String(order.kitchen_approval_status || order.kitchenApprovalStatus || '').toUpperCase();
-      if (appSt === 'APPROVED' || appSt === 'REJECTED') {
-        return;
-      }
-      if (['KITCHEN_REJECTED', 'CANCELLED', 'GCASH_AUTHORIZED', 'PENDING_COD', 'CONFIRMED', 'PREPARING', 'READY', 'COMPLETED', 'APPROVED_BY_KITCHEN'].includes(norm)) {
-        return;
-      }
-
-      const isPending = norm === 'AWAITING_KITCHEN_APPROVAL'
-        || appSt === 'PENDING'
-        || (order.requires_kitchen_approval === true && appSt !== 'APPROVED')
-        || (order.requiresKitchenApproval === true && appSt !== 'APPROVED');
-
-      if (isPending) {
-        mergedMap.set(id, formatOrderResponse(order));
-      }
-    });
-
-    const approvalOrders = Array.from(mergedMap.values());
-    return res.status(200).json({
-      success: true,
-      count: approvalOrders.length,
-      data: approvalOrders,
-    });
-  } catch (error) {
-    console.error('Error fetching kitchen approval orders:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to retrieve kitchen approvals',
-      error: error.message,
-    });
-  }
+// GET /api/kitchen/approvals - Get orders requiring quantity approval (no longer required)
+router.get('/kitchen/approvals', optionalAuth, async (_req, res) => {
+  return res.status(200).json({
+    success: true,
+    count: 0,
+    data: [],
+  });
 });
 
 // PATCH /api/kitchen/orders/:id/approve-quantities - Kitchen approves quantity accommodation
@@ -736,19 +603,17 @@ router.patch('/kitchen/orders/:id/approve-quantities', optionalAuth, async (req,
       String(order?.type || '').toUpperCase().includes('DINE') ||
       String(order?.type || '').toUpperCase().includes('TAKE')
     );
-    const rawMethod = String(order?.payment_method || order?.paymentMethod || dbOrder?.payment_method || 'GCASH').toUpperCase();
-    const isCod = rawMethod.includes('COD') || rawMethod === 'CASH';
-    // Kitchen quantity approval automatically permits customer to pay without requiring assistant authorization
+    // Kitchen quantity approval automatically permits customer to pay via GCash
     // For POS on-site orders, routes to APPROVED_BY_KITCHEN so cashier can collect payment and print receipt
-    const nextStatus = isPos ? 'APPROVED_BY_KITCHEN' : (isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED');
+    const nextStatus = isPos ? 'APPROVED_BY_KITCHEN' : 'GCASH_AUTHORIZED';
 
     if (!order && !dbOrder) {
       const fallbackRecord = {
         id,
         ref: id,
         status: nextStatus,
-        gcashAuthorized: !isCod,
-        gcash_authorized: !isCod,
+        gcashAuthorized: true,
+        gcash_authorized: true,
         kitchenApprovalStatus: 'APPROVED',
         kitchen_approval_status: 'APPROVED',
         kitchen_approved_at: new Date().toISOString(),
@@ -760,7 +625,7 @@ router.patch('/kitchen/orders/:id/approve-quantities', optionalAuth, async (req,
         success: true,
         message: isPos
           ? `Quantities approved for POS Order #${id}. Cashier may now collect payment and print official receipt.`
-          : `Quantities approved for Order #${id}. Customer is now automatically permitted to proceed to payment (${isCod ? 'COD Confirmation' : 'GCash'}).`,
+          : `Quantities approved for Order #${id}. Customer is now automatically permitted to proceed to GCash payment.`,
         data: fallbackRecord,
       });
     }
@@ -768,8 +633,8 @@ router.patch('/kitchen/orders/:id/approve-quantities', optionalAuth, async (req,
     // Update in-memory order
     if (order) {
       order.status = nextStatus;
-      order.gcashAuthorized = !isCod;
-      order.gcash_authorized = !isCod;
+      order.gcashAuthorized = true;
+      order.gcash_authorized = true;
       order.kitchenApprovalStatus = 'APPROVED';
       order.kitchen_approval_status = 'APPROVED';
       order.kitchen_approved_at = new Date().toISOString();
@@ -792,7 +657,7 @@ router.patch('/kitchen/orders/:id/approve-quantities', optionalAuth, async (req,
       console.warn('DB note (kitchen approve quantities):', dbErr.message);
     }
 
-    const formatted = formatOrderResponse(order || { ...(dbOrder || {}), status: nextStatus, gcashAuthorized: !isCod, gcash_authorized: !isCod, kitchen_approval_status: 'APPROVED' });
+    const formatted = formatOrderResponse(order || { ...(dbOrder || {}), status: nextStatus, gcashAuthorized: true, gcash_authorized: true, kitchen_approval_status: 'APPROVED' });
     emitOrderUpdate({ ...formatted, type: 'KITCHEN_QUANTITY_APPROVED' });
 
     console.log(`[KITCHEN] Approved quantity standard for Order #${id} -> Routed to ${nextStatus} (Automatically permitted to pay)`);
@@ -801,7 +666,7 @@ router.patch('/kitchen/orders/:id/approve-quantities', optionalAuth, async (req,
       success: true,
       message: isPos
         ? `Quantities approved for POS Order #${id}. Cashier may now collect payment and print official receipt.`
-        : `Quantities approved for Order #${id}. Customer is now automatically permitted to proceed to payment (${isCod ? 'COD Confirmation' : 'GCash'}).`,
+        : `Quantities approved for Order #${id}. Customer is now automatically permitted to proceed to GCash payment.`,
       data: formatted,
     });
   } catch (error) {
@@ -887,19 +752,6 @@ router.patch('/kitchen/orders/:id/reject-quantities', optionalAuth, async (req, 
       );
     } catch (dbErr) {
       console.warn('DB note (kitchen reject quantities):', dbErr.message);
-    }
-
-    // Restore any deducted remaining servings if order is declined
-    try {
-      const pool = await getDbPool();
-      const client = await pool.connect();
-      try {
-        await restoreOrderRemainingServings(client, id);
-      } finally {
-        client.release();
-      }
-    } catch (restoreErr) {
-      console.warn('Note restoring servings on kitchen reject:', restoreErr.message);
     }
 
     const formatted = formatOrderResponse(order || { ...(dbOrder || {}), status: 'KITCHEN_REJECTED', kitchen_approval_status: 'REJECTED', rejectionReason });

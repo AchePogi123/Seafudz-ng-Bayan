@@ -18,7 +18,6 @@ import {
     matchKnownLocation,
     SEAFUDZ_FLAGSHIP_STORE,
 } from '../utils/riderDispatchAlgorithms'
-import { getProductQuantityStandard, checkProductQuantityStandards } from '../utils/bulkOrder'
 import { validatePhilippinePhone } from '../utils/phoneValidation'
 
 interface CartItem {
@@ -137,7 +136,7 @@ const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
-    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
+    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PAY_IN_STORE', 'PENDING_STORE_PICKUP', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
     if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
     if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
@@ -154,8 +153,7 @@ export function getStatusRank(rawStatus?: string): number {
         case 'GCASH_PENDING_APPROVAL': return 0
         case 'GCASH_AUTHORIZED': return 1
         case 'RECEIPT_SUBMITTED': return 2
-        case 'PENDING':
-        case 'PENDING_COD': return 0
+        case 'PENDING': return 0
         case 'RECEIPT_REJECTED': return 1
         case 'CONFIRMED': return 3
         case 'OUT_OF_STOCK': return 3.5
@@ -532,25 +530,21 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     // Availability & Price sync
-    const { isAvailable, getRemainingServings } = useMenuAvailability()
+    const { isAvailable } = useMenuAvailability()
     const { getEffectivePrice } = useMenuPrices()
 
-    // Minimal Modern Stock / Servings Notice Modal State
+    // Minimal Modern Stock Notice Modal State
     const [stockNotice, setStockNotice] = useState<{
         title?: string
         itemName?: string
-        servingsLeft?: number | null
         message: string
     } | null>(null)
 
-    const showStockNotice = useCallback((itemName: string, servingsLeft: number | null, message?: string) => {
+    const showStockNotice = useCallback((itemName: string, message?: string) => {
         setStockNotice({
-            title: servingsLeft === 0 ? 'Out of Stock' : 'Portion Limit Reached',
+            title: 'Out of Stock',
             itemName,
-            servingsLeft,
-            message: message || (servingsLeft === 0
-                ? `Sorry, "${itemName}" is currently out of stock.`
-                : `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${itemName}.`),
+            message: message || `Sorry, "${itemName}" is currently unavailable.`,
         })
     }, [])
 
@@ -645,7 +639,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setReplacementSelections({})
         setReplacementTargetItem(null)
         setIsVerificationModalOpen(false)
-        setIsWaitingModalOpen(false)
 
         setActiveOrder(order)
         const currentUser = getActiveUser()
@@ -747,6 +740,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         return merged
     }
 
+    // Menu filter states
+    const [searchQuery, setSearchQuery] = useState('')
+    const [selectedCategory, setSelectedCategory] = useState('All Menu')
+
     // Detect orderId or tab=tracking/billing from URL (e.g., coming from Your Purchases)
     useEffect(() => {
         const params = new URLSearchParams(location.search)
@@ -815,6 +812,17 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         } else if (targetTab === 'tracking') {
             setActiveTab('tracking')
         }
+
+        const targetSearch = params.get('search')
+        if (targetSearch) {
+            setSearchQuery(targetSearch)
+            setActiveTab('menu')
+        }
+        const targetCategory = params.get('category')
+        if (targetCategory) {
+            setSelectedCategory(targetCategory)
+            setActiveTab('menu')
+        }
     }, [location.search])
 
     const dismissVerificationModal = () => {
@@ -833,7 +841,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             }
         })
         setIsVerificationModalOpen(false)
-        setIsWaitingModalOpen(false)
     }
 
     // Menu state using client items
@@ -841,10 +848,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [categories] = useState<string[]>(CLIENT_CATEGORIES)
     const outOfStockItems = useMemo(() => getOrderOutOfStockItems(activeOrder), [activeOrder])
 // availableReplacementItems replaced by menu replacement mode
-
-    // Menu filter states
-    const [searchQuery, setSearchQuery] = useState('')
-    const [selectedCategory, setSelectedCategory] = useState('All Menu')
 
     // Cart state with user-scoped localStorage persistence
     const [storedCartItems, setCartItems] = useState<CartItem[]>(() => {
@@ -885,10 +888,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setCartItems((prev) => prev.filter((ci) => activeItemIds.has(ci.item.id)))
     }
 
-    const { requiresApproval: hasQuantityStandardMet } = useMemo(() => {
-        return checkProductQuantityStandards(cartItems)
-    }, [cartItems])
-
     // Real-time catalog subscription: sync added/deleted products instantly without page refresh
     useEffect(() => {
         const unsubscribe = subscribeProductCatalogSync((detail) => {
@@ -903,9 +902,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     )
                     if (affected) {
                         setIsVerificationModalOpen(false)
-                        setIsWaitingModalOpen(false)
                         setIsCartDrawerOpen(true)
-                        showStockNotice(affected.item.name, 0, `"${affected.item.name}" was just removed from the menu by the restaurant and has been removed from your cart.`)
+                        showStockNotice(affected.item.name, `"${affected.item.name}" was just removed from the menu by the restaurant and has been removed from your cart.`)
                         return prev.filter((ci) => ci.item.id !== affected.item.id)
                     }
                     return prev
@@ -924,9 +922,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             const removed = prev.filter((ci) => !activeIds.has(ci.item.id))
             if (removed.length > 0) {
                 setIsVerificationModalOpen(false)
-                setIsWaitingModalOpen(false)
                 const names = removed.map((ci) => ci.item.name).join(', ')
-                showStockNotice(names, 0, `${names} is no longer available on the menu and has been removed from your cart.`)
+                showStockNotice(names, `${names} is no longer available on the menu and has been removed from your cart.`)
                 return prev.filter((ci) => activeIds.has(ci.item.id))
             }
             return prev
@@ -994,12 +991,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null)
     const [isCalculatingDeliveryFee, setIsCalculatingDeliveryFee] = useState(false)
     const [deliveryDistanceMessage, setDeliveryDistanceMessage] = useState('')
-    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'COD' | 'PAY_IN_STORE'>('GCash')
+    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'PAY_IN_STORE'>('GCash')
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [gcashRefNumber, setGcashRefNumber] = useState<string>('')
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
     const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false)
-    const [isWaitingModalOpen, setIsWaitingModalOpen] = useState(false)
     const [isConfirmOrderModalOpen, setIsConfirmOrderModalOpen] = useState(false)
     const [selectedReceiptPreview, setSelectedReceiptPreview] = useState<string | null>(null)
     const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null)
@@ -1022,18 +1018,17 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [isCancelConfirmModalOpen, isCancellingOrder])
 
-    // Close verification/waiting modals on Escape key press
+    // Close verification modal on Escape key press
     useEffect(() => {
-        if (!isVerificationModalOpen && !isWaitingModalOpen) return
+        if (!isVerificationModalOpen) return
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                if (isVerificationModalOpen) dismissVerificationModal()
-                if (isWaitingModalOpen) setIsWaitingModalOpen(false)
+                dismissVerificationModal()
             }
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [isVerificationModalOpen, isWaitingModalOpen])
+    }, [isVerificationModalOpen])
     // oos replacement inline select removed
     const [replacementSelections, setReplacementSelections] = useState<Record<string, any>>({})
     const [replacementTargetItem, setReplacementTargetItem] = useState<any | null>(null)
@@ -1482,12 +1477,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
 
                             if (rawStatus === 'GCASH_AUTHORIZED' && !isConfirmedOrLater) {
-                                setIsWaitingModalOpen(false)
                                 if (!isVerificationModalDismissed(currentOrderId) && !isVerificationModalDismissed((orderData as any)?.ref)) {
                                     setIsVerificationModalOpen(true)
                                 }
                             } else if (isConfirmedOrLater) {
-                                setIsWaitingModalOpen(false)
                                 setIsVerificationModalOpen(false)
                             }
 
@@ -1591,12 +1584,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                             if (shouldAdvance) {
                                 if (rawStatus === 'GCASH_AUTHORIZED' && !isConfirmedOrLater) {
-                                    setIsWaitingModalOpen(false)
                                     if (!isVerificationModalDismissed(currentOrderId) && !isVerificationModalDismissed(current.ref)) {
                                         setIsVerificationModalOpen(true)
                                     }
                                 } else if (isConfirmedOrLater) {
-                                    setIsWaitingModalOpen(false)
                                     setIsVerificationModalOpen(false)
                                 }
 
@@ -1856,19 +1847,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
 
-        const servingsLeft = getRemainingServings(item.id)
-        if (servingsLeft !== null && servingsLeft !== undefined) {
-            if (servingsLeft <= 0) {
-                showStockNotice(item.name, 0, `Sorry, "${item.name}" is currently out of stock.`)
-                return
-            }
-            const existing = cartItems.find((ci) => ci.item.id === item.id)
-            if (existing && existing.quantity >= servingsLeft) {
-                showStockNotice(item.name, servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${item.name}.`)
-                return
-            }
-        }
-
         if (e) {
             triggerDeliverAnimation(e, item.image || item.bundledImage)
         } else {
@@ -1893,15 +1871,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const handleIncrement = (itemId: string, e?: React.MouseEvent) => {
-        const servingsLeft = getRemainingServings(itemId)
         const ci = cartItems.find((c) => c.item.id === itemId)
-        if (servingsLeft !== null && servingsLeft !== undefined && ci) {
-            if (ci.quantity >= servingsLeft) {
-                showStockNotice(ci.item.name, servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci.item.name}.`)
-                return
-            }
-        }
-
         if (e) {
             triggerDeliverAnimation(e, ci?.item.image || ci?.item.bundledImage)
         } else {
@@ -1922,14 +1892,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const handleSetQuantity = (itemId: string, quantity: number) => {
-        const servingsLeft = getRemainingServings(itemId)
-        const ci = cartItems.find((c) => c.item.id === itemId)
-        let safeQuantity = Math.max(1, quantity)
-        if (servingsLeft !== null && servingsLeft !== undefined && safeQuantity > servingsLeft) {
-            showStockNotice(ci?.item.name || 'this item', servingsLeft, `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} available for ${ci?.item.name || 'this item'}.`)
-            safeQuantity = servingsLeft
-        }
-
+        const safeQuantity = Math.max(1, quantity)
         setCartItems((prev) =>
             prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: safeQuantity } : ci))
         )
@@ -2059,18 +2022,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setIsSubmittingOrder(true)
 
         try {
-            const isPayLater = paymentMethod === 'COD' || paymentMethod === 'PAY_IN_STORE'
-            const qtyCheck = checkProductQuantityStandards(cartItems)
-            const initialStatus = isPayLater
-                ? 'PENDING_COD'
-                : (qtyCheck.requiresApproval ? 'AWAITING_KITCHEN_APPROVAL' : 'GCASH_AUTHORIZED')
+            const isPayInStore = fulfillmentType === 'PICKUP' && paymentMethod === 'PAY_IN_STORE'
+            const initialStatus = isPayInStore ? 'PENDING_STORE_PICKUP' : 'GCASH_AUTHORIZED'
             const combinedAddress = fulfillmentType === 'PICKUP'
                 ? 'Store Pick-Up (Seafudz ng Bayan Store Counter, Caloocan)'
                 : (addressDetails.trim() ? `${address.trim()} (${addressDetails.trim()})` : address.trim())
 
-            const effectivePaymentMethod = fulfillmentType === 'PICKUP'
-                ? (paymentMethod === 'PAY_IN_STORE' ? 'Pay in Store' : 'GCash')
-                : paymentMethod
+            const effectivePaymentMethod = isPayInStore ? 'Pay in Store' : 'GCash'
 
             const orderPayload = {
                 type: fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : 'Delivery',
@@ -2094,8 +2052,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: fulfillmentType === 'PICKUP' ? 0 : deliveryFee,
                 total,
                 status: initialStatus,
-                gcashAuthorized: !isPayLater && !qtyCheck.requiresApproval,
-                gcash_authorized: !isPayLater && !qtyCheck.requiresApproval,
+                gcashAuthorized: !isPayInStore,
+                gcash_authorized: !isPayInStore,
                 items: cartItems.map((ci) => ({
                     id: ci.item.id,
                     name: ci.item.name,
@@ -2126,7 +2084,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 if (res.status === 409 || responseData.error === 'ITEM_DELETED' || responseData.error === 'ITEM_OUT_OF_STOCK') {
                     alert(`Cannot place order: ${responseData.message || 'One or more items in your cart are no longer available or have been deleted from the menu.'}`)
                     void refreshMenuItems()
-                    setIsWaitingModalOpen(false)
                     setIsVerificationModalOpen(false)
                     return
                 }
@@ -2162,7 +2119,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: serverOrder?.deliveryFee ?? (fulfillmentType === 'PICKUP' ? 0 : deliveryFee),
                 total: serverOrder?.total ?? total,
                 status: (serverOrder?.status || initialStatus).toUpperCase(),
-                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized || (!isPayLater && !qtyCheck.requiresApproval)),
+                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized || !isPayInStore),
                 createdAt: serverOrder?.created_at || serverOrder?.createdAt || new Date().toISOString(),
             }
 
@@ -2194,24 +2151,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             setCartItems([])
             setOrderNotes('')
 
-            const isOrderAwaitingKitchen = (serverOrder?.status || newOrder.status || '').toUpperCase() === 'AWAITING_KITCHEN_APPROVAL' ||
-                Boolean(serverOrder?.requiresKitchenApproval) ||
-                Boolean(serverOrder?.requires_kitchen_approval) ||
-                qtyCheck.requiresApproval
-
-            if (isPayLater) {
+            if (isPayInStore) {
                 setActiveTab('tracking')
                 setIsVerificationModalOpen(false)
-                setIsWaitingModalOpen(false)
-            } else if (isOrderAwaitingKitchen) {
-                // High quantity meeting standard: must wait for kitchen verification before payment
-                setActiveTab('billing')
-                setIsWaitingModalOpen(true)
-                setIsVerificationModalOpen(false)
             } else {
-                // Below quantity standard: customer is directed immediately to GCash payment!
+                // Customer is directed immediately to GCash payment!
                 setActiveTab('billing')
-                setIsWaitingModalOpen(false)
                 setIsVerificationModalOpen(true)
             }
             setIsCartDrawerOpen(false)
@@ -2357,8 +2302,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const renderProductCard = (item: MenuItem & { basePrice?: number }) => {
-        const servingsLeft = getRemainingServings(item.id)
-        const available = isAvailable(item.id) && (servingsLeft === null || servingsLeft === undefined || servingsLeft > 0)
+        const available = isAvailable(item.id)
         const cartItem = cartItems.find((ci) => ci.item.id === item.id)
         return (
             <div
@@ -2378,13 +2322,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
                         }`}
                     />
-                    {/* Lower-Right Remaining Servings Badge */}
-                    {servingsLeft !== null && servingsLeft !== undefined && servingsLeft > 0 && available && (
-                        <span className="absolute bottom-3 right-3 sm:bottom-3.5 sm:right-3.5 z-10 bg-white/95 text-neutral-800 text-xs sm:text-sm font-extrabold uppercase tracking-wider px-3 py-1.5 sm:px-3.5 sm:py-1.5 rounded-xl border border-neutral-200/80 shadow-md flex items-center justify-center">
-                            {servingsLeft} left
-                        </span>
-                    )}
-
                     {!available && (
                         <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">
                             <span className="bg-rose-600 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-lg border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
@@ -2835,7 +2772,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             type="button"
                                             onClick={() => {
                                                 setFulfillmentType("PICKUP")
-                                                if (paymentMethod === "COD") setPaymentMethod("PAY_IN_STORE")
                                             }}
                                             className={`py-2 px-3 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                                 fulfillmentType === "PICKUP"
@@ -2982,27 +2918,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </span>
                                         </button>
 
-                                        {/* COD or Pay in Store Option */}
-                                        {fulfillmentType === 'DELIVERY' ? (
-                                            <button
-                                                type="button"
-                                                onClick={() => setPaymentMethod('COD')}
-                                                className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'COD'
-                                                    ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
-                                                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
-                                                    }`}
-                                            >
-                                                <span className={`font-black text-sm ${paymentMethod === 'COD' ? 'text-white' : 'text-neutral-900'}`}>
-                                                    Cash on Delivery
-                                                </span>
-                                                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'COD'
-                                                    ? 'bg-white text-emerald-700 shadow-2xs'
-                                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                                    }`}>
-                                                    COD
-                                                </span>
-                                            </button>
-                                        ) : (
+                                        {/* Pay in Store Option (Pick-Up Only) */}
+                                        {fulfillmentType === 'PICKUP' && (
                                             <button
                                                 type="button"
                                                 onClick={() => setPaymentMethod('PAY_IN_STORE')}
@@ -3023,6 +2940,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             </button>
                                         )}
                                     </div>
+                                    {fulfillmentType === 'DELIVERY' && (
+                                        <p className="text-[11px] text-neutral-500 font-medium">
+                                            Online delivery orders are paid securely via GCash before dispatch.
+                                        </p>
+                                    )}
 
                                 </div>
 
@@ -3058,8 +2980,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                                 <div className="divide-y divide-neutral-50 max-h-[300px] overflow-y-auto pr-1">
                                     {cartItems.map((ci) => {
-                                        const standard = getProductQuantityStandard(ci.item.id || ci.item.name)
-                                        const isStandardMet = ci.quantity >= standard
                                         return (
                                             <div key={ci.item.id} className={`py-3 first:pt-0 ${!isAvailable(ci.item.id) ? 'rounded-lg bg-rose-50 px-2' : ''}`}>
                                                 <div className="flex justify-between items-start text-sm">
@@ -3067,17 +2987,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         <span className="font-medium text-neutral-700">
                                                             {ci.item.name} <span className="text-neutral-400">x{ci.quantity}</span>
                                                         </span>
-                                                        <div className="flex items-center gap-1.5 mt-0.5">
-                                                            {isStandardMet ? (
-                                                                <span className="text-[10px] font-semibold text-neutral-500">
-                                                                    Standard met ({standard}+)
-                                                                </span>
-                                                            ) : (
-                                                                <span className="text-[10px] text-neutral-400 font-medium">
-                                                                    Std: {standard}
-                                                                </span>
-                                                            )}
-                                                        </div>
                                                     </div>
                                                     <span className="font-bold text-neutral-800 shrink-0">
                                                         ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -3440,15 +3349,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             </div>
                         )}
 
-                        {/* COD Verification Banner */}
-                        {activeOrder.paymentMethod === 'COD' && activeOrder.status === 'PENDING_COD' && (
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-emerald-900 space-y-1">
-                                <p className="font-bold text-sm">Cash on Delivery (COD) Selected</p>
-                                <p className="text-xs text-emerald-700">
-                                    Cash on Delivery requires staff product availability verification before order confirmation. Staff is checking item availability now...
-                                </p>
-                            </div>
-                        )}
 
                         {/* Out of Stock Notice Banner */}
                         {normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' && (
@@ -4661,8 +4561,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 ) : (
                                     <div className="space-y-3.5 divide-y divide-neutral-100">
                                         {cartItems.map((ci) => {
-                                            const standard = getProductQuantityStandard(ci.item.id || ci.item.name)
-                                            const isStandardMet = ci.quantity >= standard
                                             return (
                                                 <div
                                                     key={ci.item.id}
@@ -4690,17 +4588,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                     <p className="font-bold text-neutral-800 text-sm sm:text-base leading-snug truncate">
                                                                         {ci.item.name}
                                                                     </p>
-                                                                    <div className="flex items-center gap-1.5 mt-0.5">
-                                                                        {isStandardMet ? (
-                                                                            <span className="text-[10px] font-semibold text-neutral-500">
-                                                                                Standard met ({standard}+)
-                                                                            </span>
-                                                                        ) : (
-                                                                            <span className="text-[10px] font-semibold text-neutral-400">
-                                                                                Std: {standard}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
                                                                 </div>
                                                                 <button
                                                                     type="button"
@@ -4800,13 +4687,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {/* Footer Summary & Checkout */}
                             {cartItems.length > 0 && (
                                 <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
-                                    {hasQuantityStandardMet && (
-                                        <div className="rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-neutral-600 text-center">
-                                            <p className="font-medium text-[11px] leading-tight">
-                                                Quantity standard met · Kitchen review required before payment
-                                            </p>
-                                        </div>
-                                    )}
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between text-xs text-neutral-500">
                                             <span>Order Subtotal</span>
@@ -4842,88 +4722,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 )}
             </div>
 
-            {/* 1. WAITING FOR KITCHEN AUTHORIZATION POPUP MODAL (Only when quantity meets or exceeds standard) */}
-            {isWaitingModalOpen && activeOrder && (() => {
-                const normStatus = normalizeStatus(activeOrder.status)
-                const isConfirmedOrLater = ['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normStatus)
-                if (isConfirmedOrLater) return null
-
-                const isPayLater = (activeOrder.paymentMethod || '').toLowerCase().includes('cod') ||
-                    (activeOrder.paymentMethod || '').toLowerCase().includes('store')
-                if (isPayLater) return null
-
-                if (normStatus === 'GCASH_AUTHORIZED' || Boolean(activeOrder.gcashAuthorized)) return null
-
-                const qtyCheck = checkProductQuantityStandards(activeOrder.items)
-                const isAwaitingKitchen = normStatus === 'AWAITING_KITCHEN_APPROVAL' ||
-                    Boolean((activeOrder as any).kitchenApprovalRequired) ||
-                    qtyCheck.requiresApproval
-
-                if (!isAwaitingKitchen) return null
-
-                const firstFlag = qtyCheck.flaggedItems[0]
-                const flaggedStandard = firstFlag?.standard || 5
-                const standardDesc = firstFlag?.type === 'category'
-                    ? `${firstFlag.category || 'category'} standard (${flaggedStandard}+ items)`
-                    : `quantity standard (${flaggedStandard}+ items)`
-
-                return (
-                    <div
-                        className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
-                        onClick={(e) => {
-                            if (e.target === e.currentTarget) {
-                                setIsWaitingModalOpen(false)
-                            }
-                        }}
-                    >
-                        <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200 text-center">
-                            <button
-                                onClick={() => setIsWaitingModalOpen(false)}
-                                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
-                            >
-                                ✕
-                            </button>
-
-                            <div className="text-center space-y-1">
-                                <div className="w-14 h-14 bg-neutral-100 text-neutral-500 rounded-full flex items-center justify-center mx-auto shadow-xs">
-                                    <svg className="w-6 h-6 text-neutral-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                </div>
-                                <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
-                                    Order #{activeOrder.id} Submitted
-                                </h3>
-                                <p className="text-xs font-semibold text-neutral-500">
-                                    Your order is currently awaiting kitchen verification.
-                                </p>
-                            </div>
-
-                            <div className="bg-neutral-50 border border-neutral-200 rounded-2xl p-5 text-center space-y-3">
-                                <h4 className="font-bold text-neutral-900 text-base sm:text-lg">
-                                    Please Wait for Kitchen Verification
-                                </h4>
-                                <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed">
-                                    Your order requires verification by the kitchen before payment because the quantity meets or exceeds our {standardDesc}.
-                                </p>
-                                <div className="bg-white rounded-xl p-3 border border-neutral-200 text-[11px] sm:text-xs text-neutral-600 font-medium leading-relaxed">
-                                    The GCash payment pop-up will automatically appear on your screen once the kitchen confirms your order.
-                                </div>
-                            </div>
-
-                            <div className="pt-2">
-                                <button
-                                    onClick={() => setIsWaitingModalOpen(false)}
-                                    className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
-                                >
-                                    Keep Waiting in Billing
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                )
-            })()}
-
-            {/* 2. AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
+            {/* AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (
                 <div
                     className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
@@ -5124,15 +4923,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             </div>
                         )}
 
-                        {/* COD Verification Details */}
-                        {activeOrder.paymentMethod === 'COD' && (
-                            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-left space-y-2">
-                                <span className="text-xs font-black text-emerald-900 uppercase">Cash on Delivery Verification</span>
-                                <p className="text-xs text-emerald-800 leading-relaxed">
-                                    Cash on Delivery requires staff product availability verification before order confirmation. Staff is checking item availability now...
-                                </p>
-                            </div>
-                        )}
 
                         {/* Confirmed / Sent to Kitchen Status */}
                         {['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes((activeOrder.status || '').toUpperCase()) && (
@@ -5415,20 +5205,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                         {/* Modal Title */}
                         <h3 id="stock-notice-modal-title" className="text-base font-bold text-neutral-900 tracking-tight">
-                            {stockNotice.title || 'Portion Limit Reached'}
+                            {stockNotice.title || 'Item Unavailable'}
                         </h3>
 
                         {/* Message Description */}
                         <p className="text-xs sm:text-sm text-neutral-600 leading-relaxed mt-2 font-normal">
                             {stockNotice.message}
                         </p>
-
-                        {/* Portion Counter Badge if available - Neutral styling, No emoji */}
-                        {stockNotice.servingsLeft !== undefined && stockNotice.servingsLeft !== null && stockNotice.servingsLeft > 0 && (
-                            <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-100 text-neutral-700 border border-neutral-200 text-[11px] font-semibold">
-                                <span>Maximum {stockNotice.servingsLeft} portion{stockNotice.servingsLeft === 1 ? '' : 's'} available</span>
-                            </div>
-                        )}
 
                         {/* Modern Action Button */}
                         <button

@@ -1,14 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
-import { getActiveUser, getStoredSessionToken } from '../cryptography/cryptoSession'
+import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
-import { notifyOrderSync, subscribeOrderSync, notifyProductCatalogSync } from '../utils/orderSync'
+import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
-import { useMenuAvailability, applyProductAvailabilityChange, applyProductServingsChange, PRODUCT_ALIASES } from '../utils/menuAvailability'
-import { CLIENT_CATEGORIES } from '../components/MenuCard'
-import { getProductQuantityStandard } from '../utils/bulkOrder'
+import { useMenuAvailability } from '../utils/menuAvailability'
 
 interface OrderItem {
   id?: number
@@ -17,8 +15,6 @@ interface OrderItem {
   quantity: number
   price?: number
   itemStatus?: string
-  remainingServings?: number | null
-  remaining_servings?: number | null
 }
 
 export interface KitchenOrder {
@@ -40,9 +36,8 @@ export interface KitchenOrder {
 export const KitchenMode: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
-  const canManageStock = ['kitchen', 'admin'].includes(currentUser?.role?.toLowerCase() || '')
   const { menuItems } = useProductImages()
-  const { isAvailable, unavailableIds, setAvailability } = useMenuAvailability()
+  const { setAvailability } = useMenuAvailability()
 
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
@@ -53,25 +48,6 @@ export const KitchenMode: React.FC = () => {
   const [outOfStockModalOrderId, setOutOfStockModalOrderId] = useState<string | null>(null)
   const [selectedOosItemIds, setSelectedOosItemIds] = useState<number[]>([])
   const [isSubmittingOos, setIsSubmittingOos] = useState(false)
-  const [isStockDrawerOpen, setIsStockDrawerOpen] = useState(false)
-  const [stockSearch, setStockSearch] = useState('')
-  const [stockCategory, setStockCategory] = useState('All Menu')
-  const [stockError, setStockError] = useState('')
-
-  // Kitchen Quantity Standards & Approvals state
-  const [approvalOrders, setApprovalOrders] = useState<any[]>([])
-  const [isProcessingApproval, setIsProcessingApproval] = useState<string | null>(null)
-  const [expandedApprovalOrders, setExpandedApprovalOrders] = useState<Record<string, boolean>>({})
-  const [servingsMap, setServingsMap] = useState<Record<string, number | null>>({})
-  const [servingsInputs, setServingsInputs] = useState<Record<string, string>>({})
-  const [savingServingsId, setSavingServingsId] = useState<string | null>(null)
-  const [servingsSuccessId, setServingsSuccessId] = useState<string | null>(null)
-
-  // Multiple selection for 86 board bulk servings
-  const [selectedStockProductIds, setSelectedStockProductIds] = useState<Set<string>>(new Set())
-  const [bulkServingsInput, setBulkServingsInput] = useState<string>('')
-  const [isBulkSavingServings, setIsBulkSavingServings] = useState<boolean>(false)
-  const [bulkServingsSuccess, setBulkServingsSuccess] = useState<boolean>(false)
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
@@ -110,24 +86,11 @@ export const KitchenMode: React.FC = () => {
           const orderType = (o.type || o.order_type || '').toLowerCase()
           const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || o.paymentReceipt || (o.id && String(o.id).startsWith('SFB-'))
 
-          // Critical: Orders awaiting kitchen quantity approval or rejected MUST NEVER appear in the cooking queue
-          const isApprovalPending = rawStatus === 'AWAITING_KITCHEN_APPROVAL'
-            || rawStatus === 'KITCHEN_REJECTED'
-            || o.kitchen_approval_status === 'PENDING'
-            || o.kitchenApprovalStatus === 'PENDING'
-            || (o.requires_kitchen_approval === true && o.kitchen_approval_status !== 'APPROVED')
-            || (o.requiresKitchenApproval === true && o.kitchenApprovalStatus !== 'APPROVED')
-
-          if (isApprovalPending) {
-            return false
-          }
-
           // Online delivery orders MUST NOT appear in kitchen until verified & confirmed by Assistant (status becomes CONFIRMED)
           const unconfirmedStatuses = [
             'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
             'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED',
-            'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
+            'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'AWAITING_RECEIPT', 'CANCELLED'
           ]
           if (rawStatus === 'CANCELLED' || rawStatus === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(rawStatus))) {
             return false
@@ -187,8 +150,6 @@ export const KitchenMode: React.FC = () => {
                 quantity: Number(ci.quantity || 1),
                 price: parseFloat(ci.item?.price || ci.unit_price || ci.price || 0),
                 itemStatus: ci.item_status || ci.itemStatus || 'ACTIVE',
-                remainingServings: ci.remaining_servings ?? ci.remainingServings ?? ci.item?.remaining_servings ?? null,
-                remaining_servings: ci.remaining_servings ?? ci.remainingServings ?? ci.item?.remaining_servings ?? null,
               }))
           } else if (Array.isArray(o.items) && o.items.length > 0) {
             parsedItems = o.items
@@ -208,8 +169,6 @@ export const KitchenMode: React.FC = () => {
                 quantity: Number(i.quantity || 1),
                 price: parseFloat(i.unit_price || i.price || 0),
                 itemStatus: i.item_status || i.itemStatus || 'ACTIVE',
-                remainingServings: i.remaining_servings ?? i.remainingServings ?? null,
-                remaining_servings: i.remaining_servings ?? i.remainingServings ?? null,
               }))
           } else if (typeof o.items === 'string' && o.items.trim()) {
             parsedItems = o.items.split(',').map((part: string, idx: number) => {
@@ -276,23 +235,10 @@ export const KitchenMode: React.FC = () => {
                 const orderType = (o.order_type || o.type || '').toLowerCase()
                 const isDelivery = orderType.includes('delivery') || o.deliveryAddress || o.customerName || (o.address && o.customer !== 'Walk-In') || (o.id && String(o.id).startsWith('SFB-'))
 
-                // Critical: Orders awaiting kitchen quantity approval or rejected MUST NEVER appear in the cooking queue
-                const isApprovalPending = raw === 'AWAITING_KITCHEN_APPROVAL'
-                  || raw === 'KITCHEN_REJECTED'
-                  || o.kitchen_approval_status === 'PENDING'
-                  || o.kitchenApprovalStatus === 'PENDING'
-                  || (o.requires_kitchen_approval === true && o.kitchen_approval_status !== 'APPROVED')
-                  || (o.requiresKitchenApproval === true && o.kitchenApprovalStatus !== 'APPROVED')
-
-                if (isApprovalPending) {
-                  return false
-                }
-
                 const unconfirmedStatuses = [
                   'PENDING', 'FLAGGED', 'UNCONFIRMED', 'AWAITING_VERIFICATION', 'UNVERIFIED',
                   'NEW', 'ORDER PLACED', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED',
-                  'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING_COD', 'AWAITING_RECEIPT', 'CANCELLED',
-                  'AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED'
+                  'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'AWAITING_RECEIPT', 'CANCELLED'
                 ]
                 if (raw === 'CANCELLED' || raw === 'OUT_OF_STOCK' || (isDelivery && unconfirmedStatuses.includes(raw))) {
                   return false
@@ -340,8 +286,6 @@ export const KitchenMode: React.FC = () => {
                       quantity: item.quantity || 1,
                       price: parseFloat(item.unit_price || item.price || 0),
                       itemStatus: item.item_status || item.itemStatus || 'ACTIVE',
-                      remainingServings: item.remaining_servings ?? item.remainingServings ?? null,
-                      remaining_servings: item.remaining_servings ?? item.remainingServings ?? null,
                     })),
                   notes: o.notes || '',
                   createdAt: o.created_at || new Date().toISOString(),
@@ -445,507 +389,15 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  const normalizeOrderId = (val: any): string => {
-    if (!val) return ''
-    return String(val).replace(/^#/, '').trim().toLowerCase()
-  }
-
-  const fetchApprovals = async () => {
-    try {
-      let apiApprovals: any[] = []
-      try {
-        const res = await fetch(`${API_BASE_URL}/kitchen/approvals`)
-        if (res.ok) {
-          const json = await res.json()
-          apiApprovals = Array.isArray(json.data) ? json.data : []
-        }
-      } catch (err) {
-        console.warn('Backend note (kitchen approvals):', err)
-      }
-
-      // Gather IDs that are already APPROVED, REJECTED, or CONFIRMED/COOKING
-      const approvedOrResolvedIds = new Set<string>()
-      const localApprovals: any[] = []
-
-      try {
-        const stored = localStorage.getItem('seafudz_orders')
-        if (stored) {
-          const parsed = JSON.parse(stored)
-          if (Array.isArray(parsed)) {
-            parsed.forEach((o: any) => {
-              const st = (o.status || '').toUpperCase()
-              const appSt = (o.kitchen_approval_status || o.kitchenApprovalStatus || '').toUpperCase()
-              const idClean = normalizeOrderId(o.id)
-              const refClean = normalizeOrderId(o.ref)
-
-              if (
-                appSt === 'APPROVED' ||
-                appSt === 'REJECTED' ||
-                st === 'APPROVED_BY_KITCHEN' ||
-                st === 'KITCHEN_REJECTED' ||
-                st === 'GCASH_AUTHORIZED' ||
-                st === 'PENDING_COD' ||
-                st === 'CONFIRMED' ||
-                st === 'PREPARING' ||
-                st === 'COOKING' ||
-                st === 'READY' ||
-                st === 'COMPLETED'
-              ) {
-                if (idClean) approvedOrResolvedIds.add(idClean)
-                if (refClean) approvedOrResolvedIds.add(refClean)
-              } else if (st === 'AWAITING_KITCHEN_APPROVAL' || appSt === 'PENDING') {
-                localApprovals.push(o)
-              }
-            })
-          }
-        }
-      } catch {}
-
-      // Filter out any orders that are already approved, rejected, or cooking
-      const filteredApiApprovals = apiApprovals.filter((a: any) => {
-        const idClean = normalizeOrderId(a.id)
-        const refClean = normalizeOrderId(a.ref)
-        const appSt = (a.kitchen_approval_status || a.kitchenApprovalStatus || '').toUpperCase()
-        const st = (a.status || '').toUpperCase()
-
-        if (appSt === 'APPROVED' || appSt === 'REJECTED') return false
-        if (['KITCHEN_REJECTED', 'CANCELLED', 'CONFIRMED', 'PREPARING', 'COOKING', 'READY', 'COMPLETED', 'APPROVED_BY_KITCHEN'].includes(st)) return false
-        if (idClean && approvedOrResolvedIds.has(idClean)) return false
-        if (refClean && approvedOrResolvedIds.has(refClean)) return false
-        return true
-      })
-
-      // Merge local approvals that are not yet in filteredApiApprovals
-      const seen = new Set(filteredApiApprovals.map((a: any) => normalizeOrderId(a.id || a.ref)))
-      for (const loc of localApprovals) {
-        const locKey = normalizeOrderId(loc.id || loc.ref)
-        if (locKey && !seen.has(locKey) && !approvedOrResolvedIds.has(locKey)) {
-          filteredApiApprovals.push(loc)
-          seen.add(locKey)
-        }
-      }
-
-      setApprovalOrders(filteredApiApprovals)
-    } catch (err) {
-      console.warn('Error fetching kitchen approvals:', err)
-    }
-  }
-
-  const fetchMenuServings = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/menu`)
-      if (res.ok) {
-        const json = await res.json()
-        if (Array.isArray(json.data)) {
-          const map: Record<string, number | null> = {}
-          const inputs: Record<string, string> = {}
-          for (const item of json.data) {
-            const servings = item.remaining_servings ?? null
-            const strVal = item.remaining_servings != null ? String(item.remaining_servings) : ''
-            map[item.id] = servings
-            inputs[item.id] = strVal
-            if (item.name) {
-              map[item.name.toLowerCase().trim()] = servings
-            }
-            const aliasId = PRODUCT_ALIASES[item.id]
-            if (aliasId) {
-              map[aliasId] = servings
-              inputs[aliasId] = strVal
-            }
-          }
-          setServingsMap(map)
-          setServingsInputs(inputs)
-        }
-      }
-    } catch {}
-  }
-
-  const handleApproveQuantities = async (orderId: string) => {
-    setIsProcessingApproval(orderId)
-    const targetCleanId = normalizeOrderId(orderId)
-
-    // 1. Optimistically remove from approvalOrders immediately
-    setApprovalOrders((prev) =>
-      prev.filter((o) => {
-        const idClean = normalizeOrderId(o.id)
-        const refClean = normalizeOrderId(o.ref)
-        return idClean !== targetCleanId && refClean !== targetCleanId
-      })
-    )
-
-    // 2. Update local storage seafudz_orders immediately
-    try {
-      const stored = localStorage.getItem('seafudz_orders')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        const updated = parsed.map((o: any) => {
-          const idClean = normalizeOrderId(o.id)
-          const refClean = normalizeOrderId(o.ref)
-          if (idClean === targetCleanId || refClean === targetCleanId) {
-            const isCod = String(o.paymentMethod || o.payment_method || '').toUpperCase().includes('COD')
-            return {
-              ...o,
-              status: isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED',
-              gcashAuthorized: !isCod,
-              gcash_authorized: !isCod,
-              kitchenApprovalStatus: 'APPROVED',
-              kitchen_approval_status: 'APPROVED',
-            }
-          }
-          return o
-        })
-        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      }
-    } catch {}
-
-    // 3. Update active customer orders in localStorage
-    try {
-      const updateActiveItem = (key: string) => {
-        const raw = localStorage.getItem(key)
-        if (!raw) return
-        try {
-          const obj = JSON.parse(raw)
-          const idClean = normalizeOrderId(obj.id)
-          const refClean = normalizeOrderId(obj.ref)
-          if (idClean === targetCleanId || refClean === targetCleanId) {
-            const isCod = String(obj.paymentMethod || obj.payment_method || '').toUpperCase().includes('COD')
-            obj.status = isCod ? 'PENDING_COD' : 'GCASH_AUTHORIZED'
-            obj.gcashAuthorized = !isCod
-            obj.gcash_authorized = !isCod
-            obj.kitchenApprovalStatus = 'APPROVED'
-            obj.kitchen_approval_status = 'APPROVED'
-            localStorage.setItem(key, JSON.stringify(obj))
-          }
-        } catch {}
-      }
-
-      updateActiveItem('seafudz_active_online_order')
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i)
-        if (k && k.startsWith('seafudz_active_online_order')) {
-          updateActiveItem(k)
-        }
-      }
-    } catch {}
-
-    // 4. Notify backend API
-    try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${encodeURIComponent(orderId)}/approve-quantities`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-      }).catch(() => {})
-    } catch {}
-
-    // 5. Synchronize and notify all listeners
-    await fetchApprovals()
-    await fetchKitchenOrders(true)
-    notifyOrderSync()
-    setIsProcessingApproval(null)
-  }
-
-  const handleRejectQuantities = async (orderId: string) => {
-    const reason = window.prompt(
-      'Provide a reason for declining this high-quantity order (optional):',
-      'Order exceeds kitchen preparation capacity at this time.'
-    )
-    if (reason === null) return
-
-    setIsProcessingApproval(orderId)
-    const targetCleanId = normalizeOrderId(orderId)
-
-    // 1. Optimistically remove from approvalOrders immediately
-    setApprovalOrders((prev) =>
-      prev.filter((o) => {
-        const idClean = normalizeOrderId(o.id)
-        const refClean = normalizeOrderId(o.ref)
-        return idClean !== targetCleanId && refClean !== targetCleanId
-      })
-    )
-
-    // 2. Update local storage seafudz_orders
-    try {
-      const stored = localStorage.getItem('seafudz_orders')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        const updated = parsed.map((o: any) => {
-          const idClean = normalizeOrderId(o.id)
-          const refClean = normalizeOrderId(o.ref)
-          if (idClean === targetCleanId || refClean === targetCleanId) {
-            return {
-              ...o,
-              status: 'KITCHEN_REJECTED',
-              kitchenApprovalStatus: 'REJECTED',
-              kitchen_approval_status: 'REJECTED',
-              rejectionReason: reason,
-            }
-          }
-          return o
-        })
-        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      }
-    } catch {}
-
-    // 3. Update active customer orders in localStorage
-    try {
-      const updateActiveItem = (key: string) => {
-        const raw = localStorage.getItem(key)
-        if (!raw) return
-        try {
-          const obj = JSON.parse(raw)
-          const idClean = normalizeOrderId(obj.id)
-          const refClean = normalizeOrderId(obj.ref)
-          if (idClean === targetCleanId || refClean === targetCleanId) {
-            obj.status = 'KITCHEN_REJECTED'
-            obj.kitchenApprovalStatus = 'REJECTED'
-            obj.kitchen_approval_status = 'REJECTED'
-            obj.rejectionReason = reason
-            localStorage.setItem(key, JSON.stringify(obj))
-          }
-        } catch {}
-      }
-
-      updateActiveItem('seafudz_active_online_order')
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i)
-        if (k && k.startsWith('seafudz_active_online_order')) {
-          updateActiveItem(k)
-        }
-      }
-    } catch {}
-
-    // 4. Notify backend API
-    try {
-      await fetch(`${API_BASE_URL}/kitchen/orders/${encodeURIComponent(orderId)}/reject-quantities`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason }),
-      }).catch(() => {})
-    } catch {}
-
-    await fetchApprovals()
-    await fetchKitchenOrders(true)
-    notifyOrderSync()
-    setIsProcessingApproval(null)
-  }
-
-  const handleSaveRemainingServings = async (productId: string) => {
-    const rawVal = servingsInputs[productId]
-    const numVal = rawVal === '' || rawVal === undefined ? null : parseInt(rawVal, 10)
-    if (numVal !== null && (isNaN(numVal) || numVal < 0)) {
-      alert('Please enter a valid non-negative number of servings, or leave blank for no limit.')
-      return
-    }
-
-    setSavingServingsId(productId)
-    try {
-      const activeUser = getActiveUser()
-      const isStaff = activeUser && ['kitchen', 'admin', 'cashier', 'assistant'].includes((activeUser.role || '').toLowerCase())
-      const token = isStaff ? (activeUser.sessionToken || getStoredSessionToken()) : null
-
-      const res = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(productId)}/remaining-servings`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ remaining_servings: numVal }),
-      })
-      if (res.ok) {
-        const json = await res.json()
-        const newServings = json.data?.remaining_servings ?? null
-        const aliasId = PRODUCT_ALIASES[productId]
-        setServingsMap((prev) => {
-          const next = { ...prev, [productId]: newServings }
-          if (aliasId) next[aliasId] = newServings
-          return next
-        })
-        setServingsInputs((prev) => {
-          const next = { ...prev, [productId]: newServings != null ? String(newServings) : '' }
-          if (aliasId) next[aliasId] = newServings != null ? String(newServings) : ''
-          return next
-        })
-        applyProductServingsChange(productId, newServings)
-        if (json.data?.is_available !== undefined) {
-          applyProductAvailabilityChange(productId, Boolean(json.data.is_available))
-        } else if (newServings !== null && newServings > 0) {
-          applyProductAvailabilityChange(productId, true)
-        }
-        setServingsSuccessId(productId)
-        setTimeout(() => setServingsSuccessId((prev) => (prev === productId ? null : prev)), 2000)
-        notifyOrderSync()
-        notifyProductCatalogSync()
-      } else {
-        const errJson = await res.json().catch(() => null)
-        alert(errJson?.message || 'Could not update remaining servings.')
-      }
-    } catch {
-      alert('Network error. Could not update remaining servings.')
-    } finally {
-      setSavingServingsId(null)
-    }
-  }
-
-  const toggleSelectStockProduct = (productId: string) => {
-    setSelectedStockProductIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(productId)) {
-        next.delete(productId)
-      } else {
-        next.add(productId)
-      }
-      return next
-    })
-  }
-
-  const toggleSelectAllFiltered = () => {
-    const allFilteredIds = filteredStockItems.map((item) => item.id)
-    const allSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedStockProductIds.has(id))
-    
-    setSelectedStockProductIds((prev) => {
-      const next = new Set(prev)
-      if (allSelected) {
-        allFilteredIds.forEach((id) => next.delete(id))
-      } else {
-        allFilteredIds.forEach((id) => next.add(id))
-      }
-      return next
-    })
-  }
-
-  const handleBatchSaveRemainingServings = async () => {
-    if (selectedStockProductIds.size === 0) {
-      alert('Please select at least one dish first.')
-      return
-    }
-
-    const rawVal = bulkServingsInput.trim()
-    const numVal = rawVal === '' ? null : parseInt(rawVal, 10)
-    if (numVal !== null && (isNaN(numVal) || numVal < 0)) {
-      alert('Remaining servings must be a positive number, 0, or blank for unlimited.')
-      return
-    }
-
-    const productIdsArray = Array.from(selectedStockProductIds)
-    setIsBulkSavingServings(true)
-
-    try {
-      const token = localStorage.getItem('token')
-      const res = await fetch(`${API_BASE_URL}/menu/batch-remaining-servings`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          productIds: productIdsArray,
-          remaining_servings: numVal,
-        }),
-      })
-
-      if (res.ok) {
-        // Update local maps
-        setServingsMap((prev) => {
-          const next = { ...prev }
-          productIdsArray.forEach((id) => {
-            next[id] = numVal
-            const alias = PRODUCT_ALIASES[id]
-            if (alias) next[alias] = numVal
-          })
-          return next
-        })
-
-        setServingsInputs((prev) => {
-          const next = { ...prev }
-          productIdsArray.forEach((id) => {
-            next[id] = numVal != null ? String(numVal) : ''
-            const alias = PRODUCT_ALIASES[id]
-            if (alias) next[alias] = numVal != null ? String(numVal) : ''
-          })
-          return next
-        })
-
-        productIdsArray.forEach((id) => {
-          applyProductServingsChange(id, numVal)
-          if (numVal === 0) {
-            applyProductAvailabilityChange(id, false)
-          } else if (numVal !== null && numVal > 0) {
-            applyProductAvailabilityChange(id, true)
-          }
-        })
-
-        setBulkServingsSuccess(true)
-        setTimeout(() => setBulkServingsSuccess(false), 2500)
-        notifyOrderSync()
-        notifyProductCatalogSync()
-      } else {
-        // Fallback: update individually in parallel if batch endpoint returns non-ok
-        let anySuccess = false
-        await Promise.all(
-          productIdsArray.map(async (id) => {
-            try {
-              const individualRes = await fetch(`${API_BASE_URL}/menu/${encodeURIComponent(id)}/remaining-servings`, {
-                method: 'PATCH',
-                headers: {
-                  'Content-Type': 'application/json',
-                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
-                body: JSON.stringify({ remaining_servings: numVal }),
-              })
-              if (individualRes.ok) {
-                anySuccess = true
-                applyProductServingsChange(id, numVal)
-              }
-            } catch {
-              // ignore individual error
-            }
-          })
-        )
-
-        if (anySuccess) {
-          setServingsMap((prev) => {
-            const next = { ...prev }
-            productIdsArray.forEach((id) => {
-              next[id] = numVal
-            })
-            return next
-          })
-          setServingsInputs((prev) => {
-            const next = { ...prev }
-            productIdsArray.forEach((id) => {
-              next[id] = numVal != null ? String(numVal) : ''
-            })
-            return next
-          })
-          setBulkServingsSuccess(true)
-          setTimeout(() => setBulkServingsSuccess(false), 2500)
-          notifyOrderSync()
-          notifyProductCatalogSync()
-        } else {
-          const errJson = await res.json().catch(() => null)
-          alert(errJson?.message || 'Could not batch update remaining servings.')
-        }
-      }
-    } catch {
-      alert('Network error. Could not batch update remaining servings.')
-    } finally {
-      setIsBulkSavingServings(false)
-    }
-  }
-
   useEffect(() => {
     void fetchKitchenOrders()
-    void fetchApprovals()
-    void fetchMenuServings()
 
     const unsubscribe = subscribeOrderSync(() => {
       void fetchKitchenOrders(true)
-      void fetchApprovals()
-      void fetchMenuServings()
     })
 
     const pollTimer = setInterval(() => {
       void fetchKitchenOrders()
-      void fetchApprovals()
     }, 2000)
 
     return () => {
@@ -1077,58 +529,16 @@ export const KitchenMode: React.FC = () => {
 
   const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
 
-  const isEstimatedServingItem = useCallback((item: OrderItem): boolean => {
-    // 1. Check if the order item captured remaining_servings at order time
-    const capturedServings = item.remainingServings ?? item.remaining_servings ?? (item as any).remaining_servings ?? (item as any).remainingServings
-    if (capturedServings !== undefined && capturedServings !== null) {
-      return true
-    }
-    // 2. Check if product currently has remaining_servings in servingsMap
-    if (item.productId && servingsMap[item.productId] !== undefined && servingsMap[item.productId] !== null) {
-      return true
-    }
-    // 3. Fallback: match by name directly in servingsMap
-    const nameKey = (item.name || '').toLowerCase().trim()
-    if (nameKey && servingsMap[nameKey] !== undefined && servingsMap[nameKey] !== null) {
-      return true
-    }
-    // 4. Fallback: match by product name in menuItems and check servingsMap or menu item
-    const matchedMenu = menuItems.find(
-      (m) => (item.productId && m.id === item.productId) || m.name.toLowerCase().trim() === nameKey
-    )
-    if (matchedMenu) {
-      if (servingsMap[matchedMenu.id] !== undefined && servingsMap[matchedMenu.id] !== null) {
-        return true
-      }
-      if ((matchedMenu as any).remaining_servings !== undefined && (matchedMenu as any).remaining_servings !== null) {
-        return true
-      }
-    }
-    return false
-  }, [servingsMap, menuItems])
-
   const canOrderBeFlaggedOos = useCallback((order: KitchenOrder): boolean => {
     const activeItems = (order.items || []).filter(
       (item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase())
     )
-    if (activeItems.length === 0) return false
-    // If all active items in the order have estimated servings set, the order cannot be flagged OOS
-    return activeItems.some((item) => !isEstimatedServingItem(item))
-  }, [isEstimatedServingItem])
+    return activeItems.length > 0
+  }, [])
 
   // Out-of-stock flagging handler
   const handleFlagOutOfStock = async () => {
     if (!outOfStockModalOrderId || selectedOosItemIds.length === 0) return
-
-    // Prevent flagging any items with kitchen estimated servings
-    const disallowedItems = selectedOosItemIds.filter((id) => {
-      const item = outOfStockOrder?.items.find((it, idx) => (it.id || idx + 1) === id)
-      return item ? isEstimatedServingItem(item) : false
-    })
-    if (disallowedItems.length > 0) {
-      alert('Items with kitchen estimated servings cannot be flagged as out of stock.')
-      return
-    }
 
     setIsSubmittingOos(true)
 
@@ -1187,48 +597,6 @@ export const KitchenMode: React.FC = () => {
       setIsSubmittingOos(false)
       setOutOfStockModalOrderId(null)
       setSelectedOosItemIds([])
-          }
-  }
-
-  const filteredStockItems = useMemo(() => menuItems.filter((item) => {
-    const matchesSearch = `${item.name} ${item.category}`.toLowerCase().includes(stockSearch.toLowerCase())
-    const normStockCat = stockCategory.toLowerCase().replace(/[^a-z0-9]/g, '')
-    const normItemCat = (item.category || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-    return matchesSearch && (stockCategory === 'All Menu' || normItemCat === normStockCat)
-  }), [menuItems, stockSearch, stockCategory])
-
-  const handleSetProductAvailability = async (productId: string, available: boolean) => {
-    setStockError('')
-    const aliasId = PRODUCT_ALIASES[productId]
-    if (available) {
-      setServingsMap((prev) => {
-        const next = { ...prev, [productId]: null }
-        if (aliasId) next[aliasId] = null
-        return next
-      })
-      setServingsInputs((prev) => {
-        const next = { ...prev, [productId]: '' }
-        if (aliasId) next[aliasId] = ''
-        return next
-      })
-    } else {
-      setServingsMap((prev) => {
-        const next = { ...prev, [productId]: 0 }
-        if (aliasId) next[aliasId] = 0
-        return next
-      })
-      setServingsInputs((prev) => {
-        const next = { ...prev, [productId]: '0' }
-        if (aliasId) next[aliasId] = '0'
-        return next
-      })
-    }
-    const updated = await setAvailability(productId, available)
-    if (!updated) {
-      setStockError('Could not update stock. Check your connection and kitchen/admin access.')
-    } else {
-      notifyOrderSync()
-      notifyProductCatalogSync()
     }
   }
 
@@ -1311,27 +679,9 @@ export const KitchenMode: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
           <div className="flex items-center gap-3">
             <h1 className="text-base sm:text-lg font-extrabold text-neutral-900">Kitchen Display Board</h1>
-            {approvalOrders.length > 0 && (
-              <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                {approvalOrders.length} Awaiting Approval
-              </span>
-            )}
           </div>
 
           <div className="flex items-center gap-2">
-            {canManageStock && (
-              <button
-                type="button"
-                onClick={() => setIsStockDrawerOpen(true)}
-                className="relative flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-extrabold text-emerald-800 transition-colors hover:bg-emerald-100 cursor-pointer"
-              >
-                <span>📋 Manage Item Stock</span>
-                <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-black text-white">
-                  {unavailableIds.length}
-                </span>
-              </button>
-            )}
             {isAdmin && (
               <button
                 onClick={() => setIsAdminCreateOpen(true)}
@@ -1356,158 +706,9 @@ export const KitchenMode: React.FC = () => {
           </div>
         </div>
 
-        {/* 3 Sections Live Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
-          {/* Section 1: Large Orders Column */}
-          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-amber-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-amber-100 mb-4 shrink-0">
-              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
-                Large Orders
-              </h2>
-              <span className="bg-amber-100 text-amber-800 font-semibold text-xs px-2.5 py-1 rounded-full">
-                {approvalOrders.length} Awaiting
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
-              {approvalOrders.length === 0 ? (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none text-center p-4">
-                  <p className="text-xs font-medium">No large orders awaiting review</p>
-                </div>
-              ) : (
-                approvalOrders.map((order) => {
-                  const itemsList: any[] = Array.isArray(order.items)
-                    ? order.items
-                    : Array.isArray(order.cartItems)
-                    ? order.cartItems
-                    : typeof order.items === 'string'
-                    ? JSON.parse(order.items || '[]')
-                    : []
-                  const flaggedList: any[] = Array.isArray(order.flagged_quantity_items)
-                    ? order.flagged_quantity_items
-                    : typeof order.flagged_quantity_items === 'string'
-                    ? JSON.parse(order.flagged_quantity_items || '[]')
-                    : []
-
-                  const isProcessing = isProcessingApproval === order.id
-                  const customerName = order.customer_name || order.customerName || order.customer || 'Customer'
-                  const orderType = order.order_type || order.type || 'Delivery'
-                  const paymentMethod = order.payment_method || order.paymentMethod || 'GCASH'
-                  const isCod = String(paymentMethod).toUpperCase().includes('COD')
-                  const isExpanded = Boolean(expandedApprovalOrders[order.id])
-                  const displayedItems = isExpanded || itemsList.length <= 3 ? itemsList : itemsList.slice(0, 3)
-
-                  return (
-                    <div
-                      key={order.id}
-                      className="bg-white hover:border-neutral-300 rounded-xl p-4 border border-neutral-200 transition-all flex flex-col justify-between shadow-2xs"
-                    >
-                      <div>
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <span className="text-xs font-mono font-bold text-neutral-500">
-                              Order #{order.id}
-                            </span>
-                            <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
-                              {customerName}
-                            </div>
-                            <div className="text-[11px] text-neutral-500 font-medium">
-                              {order.customer_phone ? `${order.customer_phone} • ` : ''}{orderType}
-                            </div>
-                          </div>
-                          <span
-                            className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                              isCod
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                : 'bg-blue-50 text-blue-700 border-blue-200'
-                            }`}
-                          >
-                            {paymentMethod}
-                          </span>
-                        </div>
-
-                        <div className="my-2.5 space-y-1.5 border-t border-b border-neutral-200 py-2.5">
-                          <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400 block mb-1">
-                            Ordered Items & Standards
-                          </span>
-                          {displayedItems.map((item: any, idx: number) => {
-                            const std = getProductQuantityStandard(item.name || '')
-                            const isFlagged = flaggedList.some(
-                              (f: any) =>
-                                (f.name && item.name && f.name.toLowerCase().trim() === item.name.toLowerCase().trim()) ||
-                                (f.product_id && (f.product_id === item.productId || f.product_id === item.product_id))
-                            ) || (std !== null && item.quantity >= std)
-
-                            return (
-                              <div
-                                key={idx}
-                                className="flex items-center justify-between text-xs p-2 rounded-lg bg-neutral-50 border border-neutral-200 text-neutral-800 font-medium"
-                              >
-                                <span className="truncate pr-2 font-semibold text-neutral-900">{item.name}</span>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {isFlagged && (
-                                    <span className="text-[9px] bg-red-600 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
-                                      STD: {std ?? '—'}
-                                    </span>
-                                  )}
-                                  <span className="text-base sm:text-lg font-black text-neutral-900 px-2 py-0.5 rounded bg-neutral-200/90 tracking-tight">
-                                    x{item.quantity}
-                                  </span>
-                                </div>
-                              </div>
-                            )
-                          })}
-
-                          {itemsList.length > 3 && (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedApprovalOrders((prev) => ({ ...prev, [order.id]: !prev[order.id] }))}
-                              className="w-full text-center py-1.5 text-xs font-bold text-neutral-600 hover:text-neutral-900 bg-neutral-100 hover:bg-neutral-200 rounded-lg transition-colors cursor-pointer mt-1"
-                            >
-                              {isExpanded ? 'Show less' : 'View all orders'}
-                            </button>
-                          )}
-                        </div>
-
-                        {order.notes && (
-                          <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-2 text-xs text-neutral-700 mb-2.5">
-                            <span className="font-bold">Note: </span>
-                            {order.notes}
-                          </div>
-                        )}
-
-                        <div className="text-right text-xs font-bold text-neutral-600 mb-3">
-                          Total: <span className="text-neutral-900 font-black">₱{parseFloat(order.total || 0).toFixed(2)}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex gap-2 pt-2 border-t border-neutral-200">
-                        <button
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={() => void handleApproveQuantities(order.id || order.ref)}
-                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 sm:py-2 rounded-lg text-xs transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1"
-                        >
-                          {isProcessing ? 'Processing...' : '✓ Approve'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isProcessing}
-                          onClick={() => void handleRejectQuantities(order.id || order.ref)}
-                          className="flex-1 bg-rose-100 hover:bg-rose-200 disabled:opacity-50 text-rose-800 border border-rose-200 font-bold py-1.5 sm:py-2 rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center gap-1"
-                        >
-                          ✕ Decline
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </section>
-
-          {/* Section 2: Queue Column */}
+        {/* 2 Sections Live Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 items-start">
+          {/* Section 1: Queue Column */}
           <section className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
             <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4 shrink-0">
               <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
@@ -1555,11 +756,6 @@ export const KitchenMode: React.FC = () => {
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span className="truncate">{item.name}</span>
-                              {isEstimatedServingItem(item) && (
-                                <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
-                                  Est. Serving
-                                </span>
-                              )}
                             </div>
                             <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
                               x{item.quantity}
@@ -1648,11 +844,6 @@ export const KitchenMode: React.FC = () => {
                           <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span className="truncate">{item.name}</span>
-                              {isEstimatedServingItem(item) && (
-                                <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
-                                  Est. Serving
-                                </span>
-                              )}
                             </div>
                             <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
                               x{item.quantity}
@@ -1785,11 +976,6 @@ export const KitchenMode: React.FC = () => {
                     <div key={idx} className="flex justify-between items-center py-1.5 text-xs font-semibold">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className="truncate">{item.name}</span>
-                        {isEstimatedServingItem(item) && (
-                          <span className="inline-flex items-center px-1.5 py-0.2 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200 shrink-0">
-                            Est. Serving
-                          </span>
-                        )}
                       </div>
                       <span className="bg-neutral-200 px-2 py-0.5 rounded font-bold shrink-0">x{item.quantity}</span>
                     </div>
@@ -1851,205 +1037,6 @@ export const KitchenMode: React.FC = () => {
         </div>
       )}
 
-      {isStockDrawerOpen && canManageStock && (
-        <div className="fixed inset-0 z-[60] flex justify-end bg-slate-950/60 transition-opacity">
-          <section className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-[#f8f7f2] shadow-2xl">
-            <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-700">Kitchen stock control</p>
-                <h2 className="mt-1 text-xl font-black text-slate-950">86 Board</h2>
-                <p className="mt-1 text-xs font-medium text-slate-500">Availability only. Product details remain Admin-managed.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsStockDrawerOpen(false)}
-                className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-lg font-bold text-slate-600 hover:bg-slate-200"
-                aria-label="Close stock board"
-              >
-                ×
-              </button>
-            </header>
-
-            <div className="space-y-3 border-b border-slate-200 bg-white px-5 py-4 sm:px-7">
-              <input
-                type="search"
-                value={stockSearch}
-                onChange={(event) => setStockSearch(event.target.value)}
-                placeholder="Search dishes or categories"
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
-              />
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {CLIENT_CATEGORIES.map((category) => (
-                  <button
-                    type="button"
-                    key={category}
-                    onClick={() => setStockCategory(category)}
-                    className={`shrink-0 rounded-full px-3 py-2 text-[11px] font-extrabold ${
-                      stockCategory === category ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    {category}
-                  </button>
-                ))}
-              </div>
-              {stockError && <p role="alert" className="text-xs font-bold text-rose-700">{stockError}</p>}
-            </div>
-
-            {/* Bulk Selection & Batch Servings Toolbar */}
-            <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 sm:px-7">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none text-xs font-bold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={
-                      filteredStockItems.length > 0 &&
-                      filteredStockItems.every((item) => selectedStockProductIds.has(item.id))
-                    }
-                    onChange={toggleSelectAllFiltered}
-                    className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                  />
-                  <span>
-                    {selectedStockProductIds.size === 0
-                      ? `Select all (${filteredStockItems.length})`
-                      : `${selectedStockProductIds.size} dish${selectedStockProductIds.size > 1 ? 'es' : ''} selected`}
-                  </span>
-                </label>
-
-                {selectedStockProductIds.size > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedStockProductIds(new Set())}
-                      className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline cursor-pointer mr-1"
-                    >
-                      Deselect all
-                    </button>
-                    <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-2.5 py-1 shadow-xs">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Est. Servings:</span>
-                      <input
-                        type="number"
-                        min="0"
-                        title="Bulk remaining servings (leave blank for unlimited)"
-                        value={bulkServingsInput}
-                        onChange={(e) => setBulkServingsInput(e.target.value)}
-                        className="w-14 px-1.5 py-0.5 text-xs border border-slate-200 rounded-md text-right font-bold focus:ring-1 focus:ring-emerald-500 focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        disabled={isBulkSavingServings}
-                        onClick={() => void handleBatchSaveRemainingServings()}
-                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer disabled:opacity-50 ${
-                          bulkServingsSuccess
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                        }`}
-                      >
-                        {isBulkSavingServings ? 'Applying...' : bulkServingsSuccess ? '✓ Applied!' : `Apply to Selected (${selectedStockProductIds.size})`}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex-1 space-y-2.5 overflow-y-auto p-4 sm:p-6 overscroll-contain">
-              {filteredStockItems.map((item) => {
-                const available = isAvailable(item.id)
-                const isSelected = selectedStockProductIds.has(item.id)
-                return (
-                  <article
-                    key={item.id}
-                    style={{ contain: "content" }}
-                    className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border p-3 shadow-xs transition-colors duration-150 sm:gap-4 sm:p-4 ${
-                      isSelected
-                        ? "border-emerald-500 ring-2 ring-emerald-500/20 bg-emerald-50/30"
-                        : available
-                        ? "border-slate-200 bg-white"
-                        : "border-rose-300 bg-rose-50/20"
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 flex-1">
-                      <div className="flex items-center shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleSelectStockProduct(item.id)}
-                          aria-label={`Select ${item.name}`}
-                          className="h-4.5 w-4.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                        />
-                      </div>
-                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-100 sm:h-20 sm:w-20">
-                        <img src={item.image} alt={item.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">{item.category}</span>
-                        <h3 className="truncate text-sm font-black text-slate-900 sm:text-base">{item.name}</h3>
-                        <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-black tracking-wider ${available ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
-                            {available ? "🟢 IN STOCK" : "🔴 OUT OF STOCK"}
-                          </span>
-                          {servingsMap[item.id] !== undefined && servingsMap[item.id] !== null && (
-                            <span className="inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-black bg-blue-50 text-blue-700 border border-blue-200">
-                              {servingsMap[item.id]} servings left
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-100">
-                      <div className="flex items-center gap-1.5">
-                        <div className="flex flex-col items-end">
-                          <span className="text-[9px] font-bold text-neutral-400">Servings:</span>
-                          <input
-                            type="number"
-                            min="0"
-                            title="Remaining servings before automatic 86"
-                            value={servingsInputs[item.id] ?? ''}
-                            onChange={(e) => setServingsInputs((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                            className="w-16 px-1.5 py-1 text-xs border border-neutral-300 rounded-lg text-right font-bold focus:ring-1 focus:ring-orange-500 focus:outline-none"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          disabled={savingServingsId === item.id}
-                          onClick={() => void handleSaveRemainingServings(item.id)}
-                          className={`px-2 py-1 text-xs font-bold rounded-lg border transition-all duration-150 cursor-pointer mt-3 disabled:opacity-50 disabled:cursor-not-allowed ${
-                            servingsSuccessId === item.id
-                              ? 'bg-emerald-600 text-white border-emerald-700 shadow-xs'
-                              : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border-neutral-300'
-                          }`}
-                          title="Set remaining available servings"
-                        >
-                          {savingServingsId === item.id ? '...' : servingsSuccessId === item.id ? '✓' : 'Set'}
-                        </button>
-                      </div>
-
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={available}
-                        aria-label={`${available ? "Mark" : "Set"} ${item.name} ${available ? "out of stock" : "in stock"}`}
-                        onClick={() => void handleSetProductAvailability(item.id, !available)}
-                        className={`relative inline-flex h-9 w-[76px] shrink-0 cursor-pointer items-center rounded-full p-1 transition-colors duration-200 ease-in-out focus:outline-none select-none shadow-inner active:scale-95 ${available ? "bg-emerald-600" : "bg-rose-600"}`}
-                      >
-                        <span className={`absolute text-[10px] font-black tracking-wider text-white transition-opacity duration-200 pointer-events-none select-none ${available ? "left-2.5 opacity-100" : "right-2.5 opacity-100"}`}>
-                          {available ? "ON" : "86"}
-                        </span>
-                        <span className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition-transform duration-200 ease-in-out ${available ? "translate-x-[40px]" : "translate-x-0"}`} />
-                      </button>
-                    </div>
-                  </article>
-                )
-              })}
-              {filteredStockItems.length === 0 && (
-                <p className="py-10 text-center text-sm font-semibold text-slate-500">No dishes match this search.</p>
-              )}
-            </div>
-          </section>
-        </div>
-      )}
-
       {/* OUT OF STOCK MODAL */}
       {outOfStockModalOrderId && outOfStockOrder && (
         <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -2078,14 +1065,11 @@ export const KitchenMode: React.FC = () => {
                   .map((item, idx) => {
                   const itemId = item.id || idx + 1
                   const isSelected = selectedOosItemIds.includes(itemId)
-                  const isEst = isEstimatedServingItem(item)
                   return (
                     <label
                       key={idx}
                       className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                        isEst
-                          ? 'bg-neutral-100/70 border-neutral-200 opacity-60 cursor-not-allowed'
-                          : isSelected
+                        isSelected
                           ? 'bg-red-50 border-red-300 ring-1 ring-red-200 cursor-pointer'
                           : 'bg-[#faf9f6] border-neutral-200 hover:border-neutral-300 cursor-pointer'
                       }`}
@@ -2093,25 +1077,18 @@ export const KitchenMode: React.FC = () => {
                       <input
                         type="checkbox"
                         checked={isSelected}
-                        disabled={isEst}
                         onChange={() => {
-                          if (isEst) return
                           setSelectedOosItemIds((prev) =>
                             isSelected
                               ? prev.filter((id) => id !== itemId)
                               : [...prev, itemId]
                           )
                         }}
-                        className="w-4 h-4 rounded accent-red-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="w-4 h-4 rounded accent-red-600 cursor-pointer"
                       />
                       <div className="flex-1">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs font-bold text-neutral-900">{item.name}</span>
-                          {isEst && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200">
-                              Estimated serving active
-                            </span>
-                          )}
                         </div>
                         {item.price ? (
                           <div className="text-[11px] text-neutral-500">₱{item.price?.toFixed(2)} × {item.quantity}</div>

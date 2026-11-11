@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../utils/supabase';
@@ -6,23 +6,17 @@ import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
 import { reverseGeocodeCoordinates, type Coordinates } from '../utils/locationServices';
 import { validatePhilippinePhone } from '../utils/phoneValidation';
+import {
+  DELIVERABLE_BARANGAYS_8KM,
+  getDeliverableBarangaysByGroup,
+  findNearestDeliverableBarangay,
+} from '../utils/deliveryCoverage';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
 
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowTerms(false);
-        setShowForgotPasswordModal(false);
-        setShowOtpModal(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
 
   const [authMode, setAuthMode] = useState<'welcome' | 'login' | 'signup'>(() => {
     return location.state?.from ? 'login' : 'welcome';
@@ -64,16 +58,22 @@ return () => {
   const fullname = `${firstName.trim()} ${lastName.trim()}`.trim();
 
   const handleFirstNameChange = (val: string) => {
-    setFirstName(val);
-    if (val.trim() && lastName.trim()) {
-      setUsername(`${val.trim().charAt(0).toUpperCase()}.${lastName.trim()}`);
+    const clean = val.replace(/[0-9]/g, '');
+    setFirstName(clean);
+    if (clean.trim() && lastName.trim()) {
+      setUsername(`${clean.trim().charAt(0).toUpperCase()}.${lastName.trim()}`);
+    } else {
+      setUsername('');
     }
   };
 
   const handleLastNameChange = (val: string) => {
-    setLastName(val);
-    if (firstName.trim() && val.trim()) {
-      setUsername(`${firstName.trim().charAt(0).toUpperCase()}.${val.trim()}`);
+    const clean = val.replace(/[0-9]/g, '');
+    setLastName(clean);
+    if (firstName.trim() && clean.trim()) {
+      setUsername(`${firstName.trim().charAt(0).toUpperCase()}.${clean.trim()}`);
+    } else {
+      setUsername('');
     }
   };
   const [username, setUsername] = useState('');
@@ -130,6 +130,101 @@ return () => {
   const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null);
   const [isFindingAddress, setIsFindingAddress] = useState(false);
   const [addressLookupMessage, setAddressLookupMessage] = useState('');
+  const [selectedBarangayId, setSelectedBarangayId] = useState('');
+  const [streetAddress, setStreetAddress] = useState('');
+
+  const deliverableGroups = useMemo(() => getDeliverableBarangaysByGroup(), []);
+  const selectedBarangay = useMemo(
+    () => DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === selectedBarangayId),
+    [selectedBarangayId]
+  );
+
+  const handleBarangaySelect = (barangayId: string) => {
+    setSelectedBarangayId(barangayId);
+    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === barangayId);
+    if (target) {
+      const full = streetAddress.trim()
+        ? `${streetAddress.trim()}, ${target.name}, ${target.city}`
+        : `${target.name}, ${target.city}`;
+      setAddress(full);
+      setAddressCoordinates({ lat: target.lat, lng: target.lng });
+      setAddressLookupMessage(
+        `✓ Selected area is within delivery range (${target.distanceKm === 0 ? 'Store Origin' : `${target.distanceKm} km`} from store).`
+      );
+    } else {
+      setAddress(streetAddress.trim());
+      setAddressCoordinates(null);
+      setAddressLookupMessage('');
+    }
+  };
+
+  const handleStreetAddressChange = (val: string) => {
+    setStreetAddress(val);
+    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === selectedBarangayId);
+    if (target) {
+      const full = val.trim()
+        ? `${val.trim()}, ${target.name}, ${target.city}`
+        : `${target.name}, ${target.city}`;
+      setAddress(full);
+    } else {
+      setAddress(val);
+    }
+  };
+
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setAddressLookupMessage('Location is not supported by this browser.');
+      return;
+    }
+
+    setIsFindingAddress(true);
+    setAddressLookupMessage('');
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const currentCoordinates = { lat: coords.latitude, lng: coords.longitude };
+        const coverageCheck = findNearestDeliverableBarangay(coords.latitude, coords.longitude);
+
+        if (!coverageCheck.isWithinRadius) {
+          setIsFindingAddress(false);
+          setAddressCoordinates(null);
+          setAddressLookupMessage(
+            `⚠️ Your detected location is ${coverageCheck.distanceToStoreKm.toFixed(1)} km away, outside our 8 km delivery coverage from Barangay 176 (Bagong Silang). Please select an address within 8 km.`
+          );
+          return;
+        }
+
+        // Within 8 km: auto-select the nearest deliverable barangay
+        if (coverageCheck.nearest) {
+          setSelectedBarangayId(coverageCheck.nearest.id);
+          setAddressCoordinates(currentCoordinates);
+          try {
+            const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates);
+            setStreetAddress(resolvedAddress);
+            setAddress(`${resolvedAddress}, ${coverageCheck.nearest.name}, ${coverageCheck.nearest.city}`);
+            setAddressLookupMessage(
+              `✓ Located within delivery zone: ${coverageCheck.nearest.name} (~${coverageCheck.distanceToStoreKm.toFixed(1)} km from store).`
+            );
+          } catch {
+            setAddress(`${coverageCheck.nearest.name}, ${coverageCheck.nearest.city}`);
+            setAddressLookupMessage(
+              `✓ Located within delivery zone: ${coverageCheck.nearest.name} (~${coverageCheck.distanceToStoreKm.toFixed(1)} km from store).`
+            );
+          }
+        }
+        setIsFindingAddress(false);
+      },
+      (error) => {
+        setIsFindingAddress(false);
+        setAddressLookupMessage(
+          error.code === 1
+            ? 'Location permission was denied. Please select your Barangay from the dropdown.'
+            : 'Could not get your location. Please select your Barangay from the dropdown.'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+    );
+  };
+
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -159,43 +254,6 @@ return () => {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [termsActiveTab, setTermsActiveTab] = useState<'terms' | 'privacy'>('terms');
 
-  const handleUseCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setAddressLookupMessage('Location is not supported by this browser.');
-      return;
-    }
-
-    setIsFindingAddress(true);
-    setAddressLookupMessage('');
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        const currentCoordinates = { lat: coords.latitude, lng: coords.longitude };
-        setAddressCoordinates(currentCoordinates);
-        try {
-          const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates);
-          setAddress(resolvedAddress);
-          setAddressLookupMessage('Current location added. Please check the address and add unit or gate details if needed.');
-        } catch (error) {
-          setAddress(`${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`);
-          setAddressLookupMessage(
-            `${error instanceof Error ? error.message : 'Could not find a readable address.'} Coordinates were added instead; add any helpful delivery details.`
-          );
-        } finally {
-          setIsFindingAddress(false);
-        }
-      },
-      (error) => {
-        setIsFindingAddress(false);
-        setAddressLookupMessage(
-          error.code === 1
-            ? 'Location permission was denied. Enter your delivery address manually.'
-            : 'Could not get your location. Check your device settings and try again.'
-        );
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-    );
-  };
-
   // Terms and Conditions modal
   const [showTerms, setShowTerms] = useState(false);
 
@@ -209,6 +267,18 @@ return () => {
 
   // Forgot Password Modal States
   const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowTerms(false);
+        setShowForgotPasswordModal(false);
+        setShowOtpModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [forgotEmail, setForgotEmail] = useState('');
   const [isSendingForgot, setIsSendingForgot] = useState(false);
   const [forgotError, setForgotError] = useState('');
@@ -402,7 +472,32 @@ return () => {
     setSuccessMessage('');
     setOtpError('');
 
-    if (!firstName.trim() || !lastName.trim() || !username || !email || !phone || !address.trim() || !password || !confirmPassword) {
+    if (!firstName.trim()) {
+      setErrorMessage('Please enter your first name.');
+      return;
+    }
+
+    if (!lastName.trim()) {
+      setErrorMessage('Please enter your last name.');
+      return;
+    }
+
+    if (/\d/.test(firstName) || /\d/.test(lastName)) {
+      setErrorMessage('Numbers are not allowed in first name or last name.');
+      return;
+    }
+
+    if (!selectedBarangayId) {
+      setErrorMessage('Please select your Barangay / Delivery Area from the 8 km delivery coverage list.');
+      return;
+    }
+
+    if (!streetAddress.trim() && !address.trim()) {
+      setErrorMessage('Please enter your house/unit number, street, or landmark.');
+      return;
+    }
+
+    if (!username || !email || !phone || !address.trim() || !password || !confirmPassword) {
       setErrorMessage('Please fill in all required fields including your delivery address.');
       return;
     }
@@ -641,6 +736,8 @@ return () => {
           password: password,
           phone: phone.trim(),
           address: address.trim(),
+          latitude: addressCoordinates?.lat,
+          longitude: addressCoordinates?.lng,
           role,
           token: verificationCode.trim(),
         }),
@@ -669,6 +766,9 @@ return () => {
       setEmailError('');
       setPhone('');
       setPhoneError('');
+      setSelectedBarangayId('');
+      setStreetAddress('');
+      setAddressCoordinates(null);
       setPasswordError('');
       setAddress('');
       setAddressCoordinates(null);
@@ -1106,28 +1206,52 @@ return () => {
                     Set up your profile to make ordering easier.
                   </p>
                   <p className="text-[11px] font-medium text-neutral-400 mt-1">
-                    <span className="font-bold text-[#a82c00]">*</span> Email and phone number are required.
+                    <span className="font-bold text-[#a82c00]">*</span> Indicates required fields.
                   </p>
                 </div>
 
                 {/* Name inputs */}
-                <div className="grid grid-cols-2 gap-2 mb-2.5">
-                  <input
-                    type="text"
-                    placeholder="First Name"
-                    required
-                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                    value={firstName}
-                    onChange={(e) => handleFirstNameChange(e.target.value)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Last Name"
-                    required
-                    className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                    value={lastName}
-                    onChange={(e) => handleLastNameChange(e.target.value)}
-                  />
+                <div className="grid grid-cols-2 gap-2.5 mb-2.5">
+                  <div>
+                    <label htmlFor="register-first-name" className="block text-xs font-semibold text-neutral-700 mb-1.5">
+                      First Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      id="register-first-name"
+                      type="text"
+                      placeholder="First Name"
+                      required
+                      pattern="[^0-9]*"
+                      onKeyDown={(e) => {
+                        if (/[0-9]/.test(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                      value={firstName}
+                      onChange={(e) => handleFirstNameChange(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="register-last-name" className="block text-xs font-semibold text-neutral-700 mb-1.5">
+                      Last Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      id="register-last-name"
+                      type="text"
+                      placeholder="Last Name"
+                      required
+                      pattern="[^0-9]*"
+                      onKeyDown={(e) => {
+                        if (/[0-9]/.test(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
+                      value={lastName}
+                      onChange={(e) => handleLastNameChange(e.target.value)}
+                    />
+                  </div>
                 </div>
 
                 {/* Username */}
@@ -1222,67 +1346,81 @@ return () => {
                   )}
                 </div>
 
-                {/* Delivery Address with "Use my current location" */}
+                {/* Deliverable Area Dropdown (Strictly Within 8 km) */}
                 <div className="mb-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                    <label htmlFor="register-address" className="block text-xs font-semibold text-neutral-700">
-                      Delivery Address <span className="text-[#FF6900] font-bold">*</span>
+                    <label htmlFor="register-barangay" className="block text-xs font-semibold text-neutral-700">
+                      Barangay / Delivery Area (Max 8 km) <span className="text-[#a82c00]" aria-hidden="true">*</span>
                     </label>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleUseCurrentLocation}
-                        disabled={isFindingAddress}
-                        className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
-                      >
-                        <svg className="w-3.5 h-3.5 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span>{isFindingAddress ? 'Finding location…' : 'Use my current location'}</span>
-                      </button>
-                      {addressCoordinates && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddressCoordinates(null);
-                            setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.');
-                          }}
-                          className="text-xs font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700 cursor-pointer"
-                        >
-                          Remove location pin
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUseCurrentLocation}
+                      disabled={isFindingAddress}
+                      className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                    >
+                      <svg className="w-3.5 h-3.5 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span>{isFindingAddress ? 'Detecting area…' : 'Detect closest area'}</span>
+                    </button>
                   </div>
-                  <textarea
-                    id="register-address"
+
+                  <select
+                    id="register-barangay"
                     required
-                    rows={2}
-                    disabled={isFindingAddress}
-                    placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      setAddressLookupMessage('');
-                    }}
-                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border resize-none"
+                    value={selectedBarangayId}
+                    onChange={(e) => handleBarangaySelect(e.target.value)}
+                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border cursor-pointer"
+                  >
+                    <option value="">-- Choose your Barangay / Delivery Area --</option>
+                    {Object.entries(deliverableGroups).map(([groupName, barangays]) => (
+                      <optgroup key={groupName} label={groupName}>
+                        {barangays.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} ({b.distanceKm === 0 ? 'Store Location' : `~${b.distanceKm} km`})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Specific House / Unit / Street Details */}
+                <div className="mb-2.5">
+                  <label htmlFor="register-street" className="block text-xs font-semibold text-neutral-700 mb-1.5">
+                    House / Unit No., Street, Landmark <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="register-street"
+                    type="text"
+                    required
+                    placeholder="e.g. Phase 2 Package 4 Block 5 Lot 12, Langit Road"
+                    value={streetAddress}
+                    onChange={(e) => handleStreetAddressChange(e.target.value)}
+                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
                   />
+
+                  {/* Coverage confirmation indicator */}
+                  {selectedBarangay && (
+                    <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80">
+                      <span>✓</span>
+                      <span>
+                        Verified within 8 km delivery coverage • {selectedBarangay.name} ({selectedBarangay.distanceKm === 0 ? 'Store Flagship Hub' : `~${selectedBarangay.distanceKm} km away`})
+                      </span>
+                    </div>
+                  )}
+
                   {addressLookupMessage && (
                     <p role="status" className="text-xs text-neutral-500 mt-1">
                       {addressLookupMessage}
                     </p>
                   )}
-                  {/* 8 km Delivery Radius Policy Details */}
-                  <div className="mt-1.5 p-2.5 rounded-xl bg-orange-50/90 border border-orange-200/80 text-[11px] text-orange-950 flex items-start gap-2">
-                    <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
-                    <div>
-                      <p className="font-bold text-orange-900">Store Delivery Radius Policy (Max 8 km)</p>
-                      <p className="text-orange-800/90 mt-0.5">
-                        Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our Caloocan store. Beyond 8 km, orders cannot be delivered.
-                      </p>
-                    </div>
-                  </div>
+
+                  <p className="text-[11px] text-neutral-400 mt-1.5 flex items-center gap-1">
+                    <span>📍</span>
+                    <span>Store: <strong>Barangay 176 (Bagong Silang), Caloocan</strong>. Deliveries restricted within 8 km.</span>
+                  </p>
                 </div>
 
                 {/* Password */}
@@ -1645,22 +1783,46 @@ return () => {
 
                 {/* Name inputs */}
                 <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="text"
-                    placeholder="First Name"
-                    required
-                    value={firstName}
-                    onChange={(e) => handleFirstNameChange(e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Last Name"
-                    required
-                    value={lastName}
-                    onChange={(e) => handleLastNameChange(e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                  />
+                  <div>
+                    <label htmlFor="mobile-first-name" className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                      First Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      id="mobile-first-name"
+                      type="text"
+                      placeholder="First Name"
+                      required
+                      pattern="[^0-9]*"
+                      onKeyDown={(e) => {
+                        if (/[0-9]/.test(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      value={firstName}
+                      onChange={(e) => handleFirstNameChange(e.target.value)}
+                      className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="mobile-last-name" className="block text-[11px] font-semibold text-neutral-700 mb-1">
+                      Last Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                    </label>
+                    <input
+                      id="mobile-last-name"
+                      type="text"
+                      placeholder="Last Name"
+                      required
+                      pattern="[^0-9]*"
+                      onKeyDown={(e) => {
+                        if (/[0-9]/.test(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      value={lastName}
+                      onChange={(e) => handleLastNameChange(e.target.value)}
+                      className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                    />
+                  </div>
                 </div>
 
                 {/* Username */}
@@ -1733,67 +1895,79 @@ return () => {
                   )}
                 </div>
 
-                {/* Delivery Address with "Use my current location" */}
+                {/* Deliverable Area Dropdown (Strictly Within 8 km) */}
                 <div className="space-y-1.5 text-left">
                   <div className="flex flex-wrap items-center justify-between gap-1">
-                    <label htmlFor="mobile-register-address" className="text-xs font-bold text-neutral-800">
-                      Delivery Address <span className="text-[#FF6900] font-bold">*</span>
+                    <label htmlFor="mobile-register-barangay" className="text-xs font-bold text-neutral-800">
+                      Barangay / Area (Max 8 km) <span className="text-[#a82c00]" aria-hidden="true">*</span>
                     </label>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={handleUseCurrentLocation}
-                        disabled={isFindingAddress}
-                        className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-1 text-[11px] font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1"
-                      >
-                        <svg className="w-3 h-3 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span>{isFindingAddress ? 'Finding location…' : 'Use my current location'}</span>
-                      </button>
-                      {addressCoordinates && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddressCoordinates(null);
-                            setAddressLookupMessage('GPS location pin removed. The rider will use the address text instead.');
-                          }}
-                          className="text-[11px] font-semibold text-neutral-500 underline underline-offset-2 hover:text-neutral-700 cursor-pointer"
-                        >
-                          Remove pin
-                        </button>
-                      )}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleUseCurrentLocation}
+                      disabled={isFindingAddress}
+                      className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      <span>{isFindingAddress ? 'Detecting…' : 'Detect closest'}</span>
+                    </button>
                   </div>
-                  <textarea
-                    id="mobile-register-address"
+
+                  <select
+                    id="mobile-register-barangay"
                     required
-                    rows={2}
-                    disabled={isFindingAddress}
-                    placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      setAddressLookupMessage('');
-                    }}
-                    className="w-full p-2.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border resize-none"
+                    value={selectedBarangayId}
+                    onChange={(e) => handleBarangaySelect(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border cursor-pointer"
+                  >
+                    <option value="">-- Choose Barangay / Area --</option>
+                    {Object.entries(deliverableGroups).map(([groupName, barangays]) => (
+                      <optgroup key={groupName} label={groupName}>
+                        {barangays.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name} ({b.distanceKm === 0 ? 'Store Location' : `~${b.distanceKm} km`})
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Specific House / Unit / Street */}
+                <div className="space-y-1.5 text-left">
+                  <label htmlFor="mobile-register-street" className="text-xs font-bold text-neutral-800">
+                    House / Unit No., Street, Landmark <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  </label>
+                  <input
+                    id="mobile-register-street"
+                    type="text"
+                    required
+                    placeholder="e.g. Phase 2 Package 4 Block 5 Lot 12, Langit Road"
+                    value={streetAddress}
+                    onChange={(e) => handleStreetAddressChange(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
                   />
+
+                  {selectedBarangay && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/80">
+                      <span>✓</span>
+                      <span>
+                        Within 8 km • {selectedBarangay.name} ({selectedBarangay.distanceKm === 0 ? 'Store Hub' : `~${selectedBarangay.distanceKm} km`})
+                      </span>
+                    </div>
+                  )}
+
                   {addressLookupMessage && (
                     <p role="status" className="text-[10px] text-neutral-500">
                       {addressLookupMessage}
                     </p>
                   )}
-                  {/* 8 km Delivery Radius Policy Details */}
-                  <div className="mt-1 p-2 rounded-xl bg-orange-50 border border-orange-200/80 text-[11px] text-orange-950 flex items-start gap-1.5 leading-snug">
-                    <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
-                    <div>
-                      <p className="font-bold text-orange-900">Max 8 km Delivery Radius</p>
-                      <p className="text-orange-800/90 mt-0.5">
-                        The store only acknowledges addresses within an <strong>8 km range</strong>. Beyond 8 km, orders cannot be delivered.
-                      </p>
-                    </div>
-                  </div>
+
+                  <p className="text-[10px] text-neutral-400 mt-0.5">
+                    📍 Store Origin: <strong>Barangay 176 (Bagong Silang), Caloocan</strong> (Max 8 km).
+                  </p>
                 </div>
 
                 {/* Passwords */}

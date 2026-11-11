@@ -19,7 +19,7 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
   const [address, setAddress] = useState('Metro Manila')
   const [orderType, setOrderType] = useState<'Dine In' | 'Take Out' | 'Delivery'>('Take Out')
   const [tableName, setTableName] = useState('Table 1')
-  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash' | 'COD'>('Cash')
+  const [paymentMethod, setPaymentMethod] = useState<'Cash' | 'GCash'>('Cash')
   const [paymentStatus, setPaymentStatus] = useState<'PAID' | 'PENDING'>('PAID')
   const [orderStatus, setOrderStatus] = useState<string>('COMPLETED')
   const [notes, setNotes] = useState('')
@@ -209,7 +209,6 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
               >
                 <option value="Cash">Cash</option>
                 <option value="GCash">GCash</option>
-                <option value="COD">COD</option>
               </select>
             </div>
 

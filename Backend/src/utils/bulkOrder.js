@@ -353,167 +353,19 @@ export function getCategoryQuantityStandard(category, fallback = 10) {
 /**
  * Returns the quantity standard for a given product ID or Name
  */
-export function getProductQuantityStandard(identifier, fallback = 10) {
-  if (!identifier) return fallback;
-  const raw = String(identifier).trim().toLowerCase();
-
-  // 1. Direct ID match
-  if (PRODUCT_QUANTITY_STANDARDS[raw] !== undefined) {
-    return PRODUCT_QUANTITY_STANDARDS[raw];
-  }
-
-  // 2. Normalized Name Pattern Matching
-  const clean = raw.replace(/[^a-z0-9]/g, '');
-
-  // Drinks (5 vs 10 vs 20)
-  if (clean.includes('15l') || clean.includes('15liters') || clean.includes('pitcher')) return 5;
-  if (clean.includes('mismo') || clean.includes('250ml') || clean.includes('mineralwater') || clean.includes('water500ml')) return 20;
-  if (clean.includes('blackcoffee') || (clean.includes('icetea') && clean.includes('glass'))) return 10;
-
-  // Add Ons (10) - checked before seafoods so 'Special Cajun Seafood Sauce' correctly gets 10 instead of 5
-  if (clean.includes('corn') || clean.includes('rice') || clean.includes('sauce') || clean.includes('sausage')) return 10;
-
-  // Seafoods (5)
-  if (
-    clean.includes('shrimp') ||
-    clean.includes('mixedseafood') ||
-    clean.includes('seafood') ||
-    clean.includes('tahong') ||
-    clean.includes('mussel')
-  ) {
-    return 5;
-  }
-
-  // Siomai (20)
-  if (clean.includes('siomai')) return 20;
-
-  // Value Meals (10)
-  if (clean.includes('pastil') || clean.includes('noodle') || clean.includes('chaofan')) return 10;
-
-  // Shake & Lemonade (10)
-  if (clean.includes('lemonade') || clean.includes('shake')) return 10;
-
-  // Desserts (10)
-  if (clean.includes('pudding') || clean.includes('yelo') || clean.includes('icecream')) return 10;
-
-  return fallback;
+export function getProductQuantityStandard(_identifier, _fallback = 10) {
+  return Infinity;
 }
 
-/**
- * Checks an array of order/cart items against both Product and Category Quantity Standards.
- *
- * Layer 1 (Product Standard): If an item's quantity >= individual standard, it is flagged.
- * Layer 2 (Category Standard): If the combined unapproved quantities of all products in a
- * category >= category standard, the category is flagged.
- *
- * If either layer flags an item/category, Kitchen approval is required before payment.
- *
- * @param {Array} items
- * @returns {{
- *   requiresApproval: boolean,
- *   flaggedItems: Array<{ id: string, name: string, quantity: number, standard: number, type?: string, category?: string }>,
- *   flaggedCategories: Array<{ category: string, quantity: number, standard: number }>,
- *   categoryTotals: Record<string, number>
- * }}
- */
-export function checkProductQuantityStandards(items) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return {
-      requiresApproval: false,
-      flaggedItems: [],
-      flaggedCategories: [],
-      categoryTotals: {},
-    };
-  }
-
-  const flaggedItems = [];
-  const categoryTotals = {};
-  const categoryItemsMap = {};
-
-  for (const item of items) {
-    const id = item.productId || item.product_id || item.item?.id || item.id || '';
-    const name = item.name || item.product_name_snapshot || item.item?.name || '';
-    const quantity = Number(item.quantity) || 1;
-
-    // Check if id is a known key in standards, else evaluate name, else fallback
-    const rawId = String(id).trim().toLowerCase();
-    const standard = (rawId && PRODUCT_QUANTITY_STANDARDS[rawId] !== undefined)
-      ? PRODUCT_QUANTITY_STANDARDS[rawId]
-      : (name ? getProductQuantityStandard(name) : (id ? getProductQuantityStandard(id) : 10));
-
-    // When kitchen has explicitly set estimated servings on an item, the portion capacity
-    // has already been pre-evaluated and approved by the kitchen. It does NOT require kitchen confirmation.
-    const rawServings = item.remaining_servings !== undefined
-      ? item.remaining_servings
-      : (item.remainingServings !== undefined
-          ? item.remainingServings
-          : (item.item ? (item.item.remaining_servings !== undefined ? item.item.remaining_servings : item.item.remainingServings) : undefined));
-    const hasEstimatedServings = rawServings !== null && rawServings !== undefined;
-
-    const category = getItemCategory(item);
-
-    // Layer 1: Individual product quantity standard
-    if (quantity >= standard && !hasEstimatedServings) {
-      flaggedItems.push({
-        id: String(id),
-        name: name || id || 'Seafood Dish',
-        quantity,
-        standard,
-        type: 'item',
-        category,
-      });
-    }
-
-    // Accumulate unapproved quantities by category for Layer 2
-    if (!hasEstimatedServings && category && category !== 'Other') {
-      categoryTotals[category] = (categoryTotals[category] || 0) + quantity;
-      if (!categoryItemsMap[category]) {
-        categoryItemsMap[category] = [];
-      }
-      categoryItemsMap[category].push({ id: String(id), name, quantity });
-    }
-  }
-
-  // Layer 2: Category combined quantity standards
-  const flaggedCategories = [];
-  for (const [category, totalQty] of Object.entries(categoryTotals)) {
-    const catStandard = CATEGORY_QUANTITY_STANDARDS[category];
-    if (catStandard !== undefined && totalQty >= catStandard) {
-      flaggedCategories.push({
-        category,
-        quantity: totalQty,
-        standard: catStandard,
-      });
-
-      const itemsInCat = categoryItemsMap[category] || [];
-      const hasMultipleItems = itemsInCat.length > 1;
-      const hasIndividualFlag = flaggedItems.some(
-        (fi) => fi.type === 'item' && (fi.category === category || getItemCategory(fi) === category)
-      );
-
-      // Flag category if multiple items combined to hit the limit, OR if no single item was flagged individually
-      if (hasMultipleItems || !hasIndividualFlag) {
-        flaggedItems.push({
-          id: `cat-${category.toLowerCase().replace(/[^a-z0-9]/g, '-')}`,
-          name: `${category} (Category Combined)`,
-          quantity: totalQty,
-          standard: catStandard,
-          type: 'category',
-          category,
-        });
-      }
-    }
-  }
-
+export function checkProductQuantityStandards(_items) {
   return {
-    requiresApproval: flaggedItems.length > 0,
-    flaggedItems,
-    flaggedCategories,
-    categoryTotals,
+    requiresApproval: false,
+    flaggedItems: [],
+    flaggedCategories: [],
+    categoryTotals: {},
   };
 }
 
-// Retain backwards compatibility for any legacy callers
-export function checkIfBulkOrder(items) {
-  return checkProductQuantityStandards(items).requiresApproval;
+export function checkIfBulkOrder(_items) {
+  return false;
 }

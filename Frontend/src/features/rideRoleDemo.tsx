@@ -61,7 +61,7 @@ const RIDER_DEMO_ORDERS: DeliveryJob[] = [
     total: 799,
     status: 'Ready',
     createdAt: new Date(Date.now() - 3 * 60_000).toISOString(),
-    paymentMethod: 'COD',
+    paymentMethod: 'GCash',
     coord: METRO_MANILA_LOCATIONS['bagong silang'],
   },
   {
@@ -100,30 +100,16 @@ const RIDER_DEMO_ORDERS: DeliveryJob[] = [
     total: 1199,
     status: 'Ready',
     createdAt: new Date(Date.now() - 9 * 60_000).toISOString(),
-    paymentMethod: 'COD',
+    paymentMethod: 'GCash',
     coord: METRO_MANILA_LOCATIONS.novaliches,
   },
 ]
 
-export const isCodOrder = (order?: { paymentMethod?: string; [key: string]: any } | null): boolean => {
-  if (!order) return false
-  const method = String(order.paymentMethod || order.payment_method || '').toUpperCase().trim()
-  return method.includes('COD') || method === 'CASH' || method.includes('DELIVERY')
+export const isCodOrder = (_order?: { paymentMethod?: string; [key: string]: any } | null): boolean => {
+  return false
 }
 
-export const getPaymentMethodDisplay = (paymentMethod?: string) => {
-  const norm = String(paymentMethod || '').toUpperCase().trim()
-  if (norm.includes('COD') || norm === 'CASH' || norm.includes('DELIVERY')) {
-    return {
-      type: 'COD' as const,
-      label: 'Cash on Delivery (COD)',
-      shortLabel: 'COD',
-      badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
-      pillClass: 'bg-amber-500 text-white',
-      tagText: 'Collect Cash',
-      icon: '💵',
-    }
-  }
+export const getPaymentMethodDisplay = (_paymentMethod?: string) => {
   return {
     type: 'GCASH' as const,
     label: 'GCash (Paid Online)',
@@ -332,22 +318,11 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
     const totalCombinedAmount = group.reduce((sum, o) => sum + (Number(o.total) || 0), 0)
     const totalDeliveryFee = group.reduce((sum, o) => sum + (Number(o.deliveryFee) || 0), 0)
 
-    let codAmountToCollect = 0
-    let onlineAmountPrepaid = 0
-    let hasCod = false
-    let hasOnline = false
-
-    group.forEach((o) => {
-      if (isCodOrder(o)) {
-        hasCod = true
-        codAmountToCollect += Number(o.total) || 0
-      } else {
-        hasOnline = true
-        onlineAmountPrepaid += Number(o.total) || 0
-      }
-    })
-
-    const isMixedPayment = hasCod && hasOnline
+    const codAmountToCollect = 0
+    const onlineAmountPrepaid = totalCombinedAmount
+    const hasCod = false
+    const hasOnline = true
+    const isMixedPayment = false
     const roadDistanceKm = group.find((o) => o.roadDistanceKm !== undefined)?.roadDistanceKm
 
     let latestTime = 0
@@ -419,8 +394,6 @@ export const RideRoleDemo: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [sortBy, setSortBy] = useState<'proximity' | 'newest'>('proximity')
-  const [riderReceivedAmount, setRiderReceivedAmount] = useState<string>('')
-  const [paymentError, setPaymentError] = useState<string | null>(null)
   const [deliveryProofImage, setDeliveryProofImage] = useState<string | null>(null)
   const [deliveryProofError, setDeliveryProofError] = useState<string | null>(null)
   const [isProcessingDeliveryProof, setIsProcessingDeliveryProof] = useState<boolean>(false)
@@ -429,8 +402,6 @@ export const RideRoleDemo: React.FC = () => {
   useEffect(() => {
     setDeliveryProofImage(null)
     setDeliveryProofError(null)
-    setRiderReceivedAmount('')
-    setPaymentError(null)
   }, [customerDetailsOrder?.id])
 
   const riderLocation = RIDER_START_LOCATION
@@ -1046,7 +1017,6 @@ export const RideRoleDemo: React.FC = () => {
 
   // Handle bundle start delivery
   const handleStartBundleDelivery = async (bundle: DeliveryBundle) => {
-    setPaymentError(null)
     const tripId = `TRIP-${bundle.bundleKey}-${Date.now()}`
     try {
       const savedTrips = JSON.parse(localStorage.getItem('seafudz_rider_dispatch_trips') || '{}')
@@ -1071,7 +1041,6 @@ export const RideRoleDemo: React.FC = () => {
 
   // Handle dispatching only the packages that are currently Ready (when some are still cooking)
   const handleStartReadyPackagesOnly = async (bundle: DeliveryBundle) => {
-    setPaymentError(null)
     const readyOrders = bundle.orders.filter((o) => String(o.status).toLowerCase() === 'ready')
     if (readyOrders.length === 0) return
 
@@ -1092,48 +1061,14 @@ export const RideRoleDemo: React.FC = () => {
       return
     }
 
-    if (bundle.hasCod) {
-      if (!riderReceivedAmount.trim() || isNaN(parseFloat(riderReceivedAmount))) {
-        setPaymentError(`Please enter the COD cash amount received (or tap "Exact ₱${bundle.codAmountToCollect.toFixed(2)}").`)
-        return
-      }
-      const parsed = parseFloat(riderReceivedAmount)
-      if (parsed < 0) {
-        setPaymentError('Payment amount cannot be negative.')
-        return
-      }
-      if (parsed < bundle.codAmountToCollect) {
-        setPaymentError(`Cash received (₱${parsed.toFixed(2)}) is less than total COD due (₱${bundle.codAmountToCollect.toFixed(2)}).`)
-        return
-      }
-    }
-
-    setPaymentError(null)
     setDeliveryProofError(null)
-    const parsedReceived = bundle.hasCod ? parseFloat(riderReceivedAmount) : 0
 
-    const codOrders = bundle.orders.filter((o) => isCodOrder(o))
-    const updates = bundle.orders.map((order) => {
-      if (isCodOrder(order)) {
-        let allocated = parsedReceived
-        if (codOrders.length > 1) {
-          const ratio = order.total / (bundle.codAmountToCollect || 1)
-          allocated = Math.round(parsedReceived * ratio * 100) / 100
-        }
-        return {
-          orderId: order.id,
-          newStatus: 'Completed' as const,
-          moneyReceived: allocated,
-          deliveryProof: deliveryProofImage,
-        }
-      }
-      return {
-        orderId: order.id,
-        newStatus: 'Completed' as const,
-        moneyReceived: 0,
-        deliveryProof: deliveryProofImage,
-      }
-    })
+    const updates = bundle.orders.map((order) => ({
+      orderId: order.id,
+      newStatus: 'Completed' as const,
+      moneyReceived: 0,
+      deliveryProof: deliveryProofImage,
+    }))
 
     await handleUpdateOrdersStatus(updates)
     setDeliveryProofImage(null)
@@ -1283,21 +1218,6 @@ export const RideRoleDemo: React.FC = () => {
     )
   }, [customerDetailsOrder, bundledDeliveries])
 
-  useEffect(() => {
-    if (activeBundle?.hasCod) {
-      const codOrderWithMoney = activeBundle.orders.find(
-        (o) => isCodOrder(o) && o.riderCashReceived != null
-      )
-      if (codOrderWithMoney?.riderCashReceived != null) {
-        setRiderReceivedAmount(String(codOrderWithMoney.riderCashReceived))
-      } else {
-        setRiderReceivedAmount('')
-      }
-    } else {
-      setRiderReceivedAmount('')
-    }
-    setPaymentError(null)
-  }, [activeBundle?.bundleKey, activeBundle?.status])
 
   return (
     <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 text-neutral-900 font-sans pb-24 lg:pb-6">
@@ -1429,22 +1349,10 @@ export const RideRoleDemo: React.FC = () => {
                                 <span>📦</span>
                                 <span>COMBINED DELIVERY ({bundle.orders.length} ORDERS)</span>
                               </span>
-                              {bundle.isMixedPayment ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-50 text-purple-800 border border-purple-200">
-                                  <span>🔀</span>
-                                  <span>Mixed (GCash + COD)</span>
-                                </span>
-                              ) : bundle.hasCod ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-200">
-                                  <span>💵</span>
-                                  <span>COD ({bundle.orders.length} Orders)</span>
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                  <span>📱</span>
-                                  <span>GCash Paid Online</span>
-                                </span>
-                              )}
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <span>📱</span>
+                                <span>GCash Paid Online</span>
+                              </span>
                             </div>
                             <h4 className="text-base font-black leading-tight mt-1.5 text-neutral-900">{bundle.customer}</h4>
                             <p className="text-xs text-neutral-500 mt-0.5">Phone: {bundle.phone}</p>
@@ -1497,7 +1405,6 @@ export const RideRoleDemo: React.FC = () => {
                         {/* Mini breakdown of companion packages */}
                         <div className="mt-1 mb-2 space-y-1.5 bg-white/70 p-2.5 rounded-2xl border border-orange-100">
                           {bundle.orders.map((ord, idx) => {
-                            const ordIsCod = isCodOrder(ord)
                             return (
                               <div key={ord.id} className="flex items-center justify-between text-xs border-b border-neutral-100 last:border-b-0 pb-1 last:pb-0">
                                 <div className="flex items-center gap-1.5 truncate">
@@ -1519,8 +1426,8 @@ export const RideRoleDemo: React.FC = () => {
                                     {ord.status === 'Ready' ? '✓ Ready' : ord.status === 'Out for Delivery' ? '🛵 Transit' : '🔥 Cooking'}
                                   </span>
                                   <span className="font-bold text-neutral-800 text-[11px]">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                  <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${ordIsCod ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                                    {ordIsCod ? 'COD' : 'GCash'}
+                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                    GCash
                                   </span>
                                 </div>
                               </div>
@@ -1534,19 +1441,9 @@ export const RideRoleDemo: React.FC = () => {
                             <span className="text-[#ff7b00] text-sm font-black">
                               ₱{bundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Total
                             </span>
-                            {bundle.isMixedPayment ? (
-                              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-black">
-                                Collect ₱{bundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} COD (1 Online, 1 COD)
-                              </span>
-                            ) : bundle.hasCod ? (
-                              <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-black">
-                                Collect ₱{bundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Cash
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-black">
-                                Prepaid Online (₱0 Cash)
-                              </span>
-                            )}
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-black">
+                              Prepaid Online (₱0 Cash)
+                            </span>
                           </div>
                           <span className="text-neutral-400 font-medium text-[11px]">{bundle.latestCreatedAt}</span>
                         </div>
@@ -1556,7 +1453,6 @@ export const RideRoleDemo: React.FC = () => {
 
                   // Render Single Delivery Card
                   const ord = bundle.primaryOrder
-                  const isCod = isCodOrder(ord)
                   const payInfo = getPaymentMethodDisplay(ord.paymentMethod)
                   return (
                     <div
@@ -1622,15 +1518,9 @@ export const RideRoleDemo: React.FC = () => {
                       <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
                         <div className="flex items-center gap-2">
                           <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          {isCod ? (
-                            <span className="px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold">
-                              Collect Cash
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
-                              Paid Online
-                            </span>
-                          )}
+                          <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
+                            Paid Online
+                          </span>
                         </div>
                         <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
                       </div>
@@ -1693,11 +1583,6 @@ export const RideRoleDemo: React.FC = () => {
                       <span>📦</span> BUNDLED DELIVERY ({activeBundle.orders.length} ORDERS)
                     </span>
                   )}
-                  {activeBundle.isMixedPayment && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                      <span>🔀</span> Split Payment (GCash + COD)
-                    </span>
-                  )}
                 </div>
                 <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900 mt-1">
                   {activeBundle.customer}
@@ -1738,22 +1623,10 @@ export const RideRoleDemo: React.FC = () => {
                 <div className="text-right">
                   <p className="text-xs font-bold uppercase text-neutral-400">Payment Summary</p>
                   <div className="mt-0.5 flex items-center gap-1.5 justify-end">
-                    {activeBundle.isMixedPayment ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-purple-50 text-purple-800 border border-purple-200">
-                        <span>🔀</span>
-                        <span>Mixed (GCash + COD)</span>
-                      </span>
-                    ) : activeBundle.hasCod ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-50 text-amber-800 border border-amber-200">
-                        <span>💵</span>
-                        <span>Cash on Delivery</span>
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
-                        <span>📱</span>
-                        <span>Paid Online via GCash</span>
-                      </span>
-                    )}
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <span>📱</span>
+                      <span>Paid Online via GCash</span>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1785,7 +1658,6 @@ export const RideRoleDemo: React.FC = () => {
                   {activeBundle.isBundle ? `Bundled Packages to Deliver (${activeBundle.orders.length} Orders)` : 'Order Items'}
                 </p>
                 {activeBundle.orders.map((ord, idx) => {
-                  const ordIsCod = isCodOrder(ord)
                   const ordPayInfo = getPaymentMethodDisplay(ord.paymentMethod)
                   return (
                     <div key={ord.id} className="rounded-2xl border border-neutral-200 bg-neutral-50/80 p-3.5 space-y-2 shadow-2xs">
@@ -1828,15 +1700,9 @@ export const RideRoleDemo: React.FC = () => {
                       {/* Subtotal and Cash Rule */}
                       <div className="flex items-center justify-between pt-1.5 border-t border-neutral-200/60 text-xs">
                         <span className="font-semibold">
-                          {ordIsCod ? (
-                            <span className="text-amber-800 font-bold flex items-center gap-1">
-                              <span>💵</span> Cash to collect: ₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          ) : (
-                            <span className="text-emerald-700 font-bold flex items-center gap-1">
-                              <span>📱</span> Paid via GCash (₱0.00 cash to collect)
-                            </span>
-                          )}
+                          <span className="text-emerald-700 font-bold flex items-center gap-1">
+                            <span>📱</span> Paid via GCash (₱0.00 cash to collect)
+                          </span>
                         </span>
                         <span className="font-mono font-bold text-neutral-800">
                           ₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1882,36 +1748,15 @@ export const RideRoleDemo: React.FC = () => {
                   </span>
                 </div>
 
-                {activeBundle.isMixedPayment && (
-                  <>
-                    <div className="flex justify-between items-center text-xs text-emerald-800 bg-emerald-50/80 px-2.5 py-1 rounded-xl">
-                      <span className="font-bold">Prepaid Online (GCash):</span>
-                      <span className="font-mono font-bold">
-                        ₱{activeBundle.onlineAmountPrepaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs text-amber-900 bg-amber-50/80 px-2.5 py-1 rounded-xl">
-                      <span className="font-bold">Cash on Delivery (COD Due):</span>
-                      <span className="font-mono font-bold">
-                        ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </>
-                )}
-
                 <div className="flex justify-between items-center pt-2 border-t border-neutral-100">
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wider text-neutral-800">Total Cash to Collect</p>
                     <p className="text-[10px] text-neutral-500">
-                      {activeBundle.hasCod
-                        ? activeBundle.isMixedPayment
-                          ? 'Collect ONLY the COD portion upon handover.'
-                          : 'Collect cash upon arrival.'
-                        : 'Fully paid online (₱0.00 cash).'}
+                      Fully paid online via GCash (₱0.00 cash).
                     </p>
                   </div>
-                  <span className={`font-mono font-black text-base ${activeBundle.hasCod ? 'text-[#ff7b00]' : 'text-emerald-700'}`}>
-                    ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <span className="font-mono font-black text-base text-emerald-700">
+                    ₱0.00
                   </span>
                 </div>
               </div>
@@ -1919,15 +1764,9 @@ export const RideRoleDemo: React.FC = () => {
               {/* Ready status note & actions: Rider has not started delivery yet */}
               {activeBundle.status === 'Ready' && (
                 <div className="space-y-3 pt-1">
-                  <div
-                    className={`rounded-xl border p-3 text-xs flex items-center gap-2.5 ${
-                      activeBundle.hasCod
-                        ? 'border-amber-200 bg-amber-50/80 text-amber-900'
-                        : 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
-                    }`}
-                  >
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs text-emerald-950 flex items-center gap-2.5">
                     <svg
-                      className={`w-5 h-5 shrink-0 ${activeBundle.hasCod ? 'text-amber-600' : 'text-emerald-600'}`}
+                      className="w-5 h-5 shrink-0 text-emerald-600"
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
@@ -1996,126 +1835,41 @@ export const RideRoleDemo: React.FC = () => {
               {/* Out for Delivery status: Item is in transit / being delivered */}
               {activeBundle.status === 'Out for Delivery' && (
                 <div className="space-y-3 pt-1">
-                  {activeBundle.hasCod ? (
-                    <>
-                      {/* Mixed / COD Payment Instructions */}
-                      <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs text-blue-900 flex items-center gap-2.5">
-                        <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span>
-                          {activeBundle.isMixedPayment
-                            ? `Package is in transit. Hand over all ${activeBundle.orders.length} packages to ${activeBundle.customer}. Collect ₱${activeBundle.codAmountToCollect.toFixed(2)} cash for the COD package.`
-                            : `Hand over all packages to the customer and collect cash payment.`}
-                        </span>
-                      </div>
+                  {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
+                    <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="font-bold">Customer paid online via GCash</p>
+                      <p className="text-emerald-800 mt-0.5">
+                        {activeBundle.isBundle
+                          ? `All ${activeBundle.orders.length} packages are prepaid. Hand over the items to customer. No cash collection is needed.`
+                          : `Order is out for delivery. Hand over the items to customer. No cash collection is needed.`}
+                      </p>
+                    </div>
+                  </div>
 
-                      {activeBundle.isMixedPayment && (
-                        <div className="rounded-xl border border-purple-200 bg-purple-50/90 p-3 text-xs text-purple-950 flex items-center gap-2">
-                          <span className="text-base shrink-0">⚠️</span>
-                          <span>
-                            <strong>Mixed Payment Rule:</strong> 1 package is prepaid online via GCash (₱0.00 cash). Do not charge the customer for it. Only collect ₱{activeBundle.codAmountToCollect.toFixed(2)} in cash for the COD package.
-                          </span>
-                        </div>
-                      )}
-
-                      <div className={`rounded-2xl border ${paymentError ? 'border-red-400 bg-red-50/50' : 'border-amber-300 bg-amber-50/80'} p-3.5 space-y-2.5 shadow-xs transition-colors`}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs font-bold uppercase tracking-wider text-amber-950">
-                              Cash Received from Customer
-                            </label>
-                            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-600 text-white shadow-2xs">
-                              COD
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRiderReceivedAmount(String(activeBundle.codAmountToCollect))
-                              setPaymentError(null)
-                            }}
-                            className="text-[10px] font-bold text-amber-800 bg-white border border-amber-300 px-2.5 py-1 rounded-lg hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
-                          >
-                            Exact (₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                          </button>
-                        </div>
-                        <div className="relative flex items-center">
-                          <span className="absolute left-3 text-neutral-500 font-bold text-sm">₱</span>
-                          <input
-                            type="number"
-                            step="any"
-                            value={riderReceivedAmount}
-                            onChange={(e) => {
-                              setRiderReceivedAmount(e.target.value)
-                              if (paymentError) setPaymentError(null)
-                            }}
-                            placeholder={String(activeBundle.codAmountToCollect)}
-                            className={`w-full pl-8 pr-3 py-2.5 text-sm font-black text-neutral-900 bg-white border ${paymentError ? 'border-red-500 focus:border-red-600 ring-2 ring-red-200' : 'border-amber-300 focus:border-amber-600'} rounded-xl focus:outline-none transition-all placeholder-neutral-300 shadow-2xs`}
-                          />
-                        </div>
-                        {paymentError && (
-                          <p className="text-xs font-bold text-red-600 flex items-center gap-1.5 pt-0.5">
-                            <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                            <span>{paymentError}</span>
-                          </p>
-                        )}
-                        {riderReceivedAmount !== '' && !isNaN(parseFloat(riderReceivedAmount)) && (
-                          <div className="flex items-center justify-between text-xs pt-1.5 border-t border-amber-200 font-semibold">
-                            <span className="text-neutral-600">
-                              {parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect ? 'Change due to customer:' : 'Short payment balance:'}
-                            </span>
-                            <span className={`font-mono font-black ${parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect ? 'text-emerald-700 text-sm' : 'text-amber-600 text-sm'}`}>
-                              {parseFloat(riderReceivedAmount) >= activeBundle.codAmountToCollect
-                                ? `₱${(parseFloat(riderReceivedAmount) - activeBundle.codAmountToCollect).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                : `Short by ₱${(activeBundle.codAmountToCollect - parseFloat(riderReceivedAmount)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
-                        <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <div>
-                          <p className="font-bold">Customer paid online via GCash</p>
-                          <p className="text-emerald-800 mt-0.5">
-                            {activeBundle.isBundle
-                              ? `All ${activeBundle.orders.length} packages are prepaid. Hand over the items to customer. No cash collection is needed.`
-                              : `Order is out for delivery. Hand over the items to customer. No cash collection is needed.`}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-neutral-600">Payment Method:</span>
-                          <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
-                            <span>📱</span> GCash (Prepaid Online)
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-bold text-neutral-600">Combined Order Value:</span>
-                          <span className="font-mono font-bold text-neutral-800">
-                            ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
-                          <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
-                          <span className="font-mono font-black text-emerald-700 text-sm">
-                            ₱0.00 (Prepaid Online)
-                          </span>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                  <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-neutral-600">Payment Method:</span>
+                      <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
+                        <span>📱</span> GCash (Prepaid Online)
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-neutral-600">Combined Order Value:</span>
+                      <span className="font-mono font-bold text-neutral-800">
+                        ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
+                      <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
+                      <span className="font-mono font-black text-emerald-700 text-sm">
+                        ₱0.00 (Prepaid Online)
+                      </span>
+                    </div>
+                  </div>
 
                   {/* Required Proof of Delivery Photo Section */}
                   <div className={`rounded-2xl border p-3.5 space-y-2.5 transition-all ${deliveryProofError ? 'border-red-400 bg-red-50/50' : 'border-neutral-200 bg-neutral-50/70'}`}>
@@ -2250,7 +2004,7 @@ export const RideRoleDemo: React.FC = () => {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
                     </svg>
                     <span>
-                      Mark {activeBundle.isBundle ? (activeBundle.hasCod ? `Both as Received & Paid` : `Both as Received`) : (activeBundle.hasCod ? `as Received & Paid` : `as Received`)}
+                      Mark {activeBundle.isBundle ? 'Both as Delivered' : 'as Delivered'}
                     </span>
                   </button>
                   {!deliveryProofImage && (
@@ -2268,7 +2022,7 @@ export const RideRoleDemo: React.FC = () => {
                   <div className="flex justify-between items-center font-bold text-neutral-800">
                     <span>Payment Mode:</span>
                     <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full text-[11px] bg-neutral-200 text-neutral-800">
-                      {activeBundle.isMixedPayment ? 'Mixed (GCash + COD)' : activeBundle.hasCod ? 'Cash on Delivery' : 'GCash Paid Online'}
+                      GCash Paid Online
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-neutral-600">
@@ -2277,21 +2031,12 @@ export const RideRoleDemo: React.FC = () => {
                       ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
-                  {activeBundle.hasCod ? (
-                    <div className="flex justify-between items-center font-bold text-neutral-800">
-                      <span>Cash Collected by Rider:</span>
-                      <span className="font-mono text-emerald-700 text-sm font-black">
-                        ₱{activeBundle.codAmountToCollect.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex justify-between items-center text-neutral-600">
-                      <span>Cash Collected by Rider:</span>
-                      <span className="font-mono font-bold text-emerald-700">
-                        ₱0.00 (Prepaid Online)
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex justify-between items-center text-neutral-600">
+                    <span>Cash Collected by Rider:</span>
+                    <span className="font-mono font-bold text-emerald-700">
+                      ₱0.00 (Prepaid Online)
+                    </span>
+                  </div>
                   <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
                     <span>Delivery Status:</span>
                     <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>

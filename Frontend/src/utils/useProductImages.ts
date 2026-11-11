@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { API_BASE_URL } from './api'
+import { subscribeProductCatalogSync } from './orderSync'
 
 const CACHE_KEY = 'sfb_product_images_v1'
 const IMAGE_EVENT = 'sfb_product_images_changed'
@@ -201,11 +202,15 @@ export function useProductImages() {
     window.addEventListener(IMAGE_EVENT, sync)
     window.addEventListener(CATALOG_EVENT, sync)
     window.addEventListener('focus', onFocus)
+    const unsubscribeCatalog = subscribeProductCatalogSync(() => {
+      void refresh()
+    })
     void fetchProductCatalog(false).catch(() => {})
     return () => {
       window.removeEventListener(IMAGE_EVENT, sync)
       window.removeEventListener(CATALOG_EVENT, sync)
       window.removeEventListener('focus', onFocus)
+      unsubscribeCatalog()
     }
   }, [refresh])
 

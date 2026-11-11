@@ -11,6 +11,7 @@ import AdminCustomerView from './features/AdminCustomerViewTemp'
 import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
 import AdminMenuManagement from './features/AdminMenuManagement'
+import AdminInventoryManagement from './features/AdminInventoryManagement'
 import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
 import ResetPassword from './features/ResetPassword'
@@ -145,6 +146,15 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['admin']}>
               <AdminMenuManagement />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/admin-inventory"
+          element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <AdminInventoryManagement />
             </ProtectedRoute>
           }
         />

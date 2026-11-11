@@ -391,39 +391,48 @@ const UserManagement = () => {
     )
 
     return (
-        <div className="font-sans bg-[#f7fafc] min-h-screen text-[#2d3748]">
+        <div className="font-sans bg-slate-50/50 min-h-screen text-[#2d3748] pb-16">
             {/* Admin Navbar */}
-            <div className="p-4 sm:p-6">
+            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
                 <NavbarAdmin />
             </div>
 
             {/* Main Content */}
-            <div className="w-full px-4 sm:px-8 lg:px-10 py-[2rem] sm:py-[3rem]">
-                <div className="flex justify-between items-center mb-[2.5rem] flex-wrap gap-[1.5rem]">
+            <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs gap-4">
                     <div>
-                        <h1 className="text-[2.2rem] font-extrabold text-[#1a202c] m-0 tracking-[-0.5px]">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">User & Staff Management</span>
+                        </div>
+                        <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
                             User Management
                         </h1>
-                        <p className="text-[1rem] text-[#718096] m-0">
+                        <p className="mt-0.5 text-xs sm:text-sm text-slate-500 font-medium">
                             Manage system access for staff and operational team
                         </p>
                     </div>
                     <button
-                        className="bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none py-[0.9rem] px-[1.8rem] rounded-[12px] font-bold text-[0.95rem] cursor-pointer shadow-[0_4px_15px_rgba(231,76,60,0.2)] transition-all duration-300 hover:translate-y-[-2px]"
+                        className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs cursor-pointer shadow-xs transition-all duration-200 hover:-translate-y-0.5"
                         onClick={handleOpenModal}
                     >
                         + Create New User
                     </button>
                 </div>
 
-                <div className="mb-[1.8rem]">
-                    <input
-                        type="text"
-                        className="w-full max-w-[450px] py-[0.9rem] px-[1.2rem] rounded-[12px] border border-[#e2e8f0] bg-white text-[0.95rem] text-[#2d3748] focus:outline-none focus:border-[#e74c3c] focus:shadow-[0_0_0_4px_rgba(231,76,60,0.1)]"
-                        placeholder="Search by name, role, username, or email..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div className="relative w-full sm:w-96">
+                        <input
+                            type="text"
+                            className="w-full py-2.5 px-4 pr-10 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:border-orange-500 shadow-2xs transition-all"
+                            placeholder="Search by name, role, username, or email..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <svg className="w-4 h-4 absolute right-3.5 top-3 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
                 </div>
 
                 {actionMessage && (
@@ -440,7 +449,7 @@ const UserManagement = () => {
                 )}
 
                 {/* Table */}
-                <div className="bg-white rounded-[20px] shadow-[0_10px_30px_rgba(0,0,0,0.02)] border border-black/[0.04] overflow-x-auto">
+                <div className="bg-white rounded-3xl shadow-xs border border-slate-200/80 overflow-hidden">
                     <table className="w-full border-collapse text-left text-[0.95rem]">
                         <thead>
                             <tr>

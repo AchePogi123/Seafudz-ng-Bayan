@@ -760,15 +760,15 @@ const SalesReportAdmin: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen bg-slate-50/70 text-slate-900 font-sans pb-16 antialiased">
+        <div className="min-h-screen bg-slate-50/50 text-slate-900 font-sans pb-16 antialiased">
             {/* Navigation Header */}
-            <div className="p-4 sm:p-6 print:hidden">
+            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
                 <NavbarAdmin />
             </div>
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
+            <main className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
                 {/* Top Section: Breadcrumb, Title & Primary Actions */}
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs print:hidden">
                     <div className="flex items-center gap-4">
                         <button
                             type="button"

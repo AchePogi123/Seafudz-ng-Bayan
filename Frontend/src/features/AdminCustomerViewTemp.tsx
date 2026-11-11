@@ -78,25 +78,29 @@ export const AdminCustomerView: React.FC = () => {
     )
 
     return (
-        <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-6 transition-all duration-300">
-            <div className="w-full flex flex-col gap-6 max-w-[1400px] mx-auto">
+        <div className="min-h-screen bg-slate-50/50 pb-16 font-sans text-slate-900 transition-all duration-300">
+            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
                 <NavbarAdmin />
+            </div>
 
+            <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
                 {/* Page Header */}
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-3xl border border-neutral-100 shadow-xs gap-4">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs gap-4">
                     <div>
-                        <div className="flex items-center gap-2">
-                            <h1 className="text-2xl font-black text-slate-800 tracking-tight">
-                                Customer Directory
-                            </h1>
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Customer Directory</span>
                         </div>
-                        <p className="text-xs text-slate-500 mt-1">
+                        <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                            Customer Directory
+                        </h1>
+                        <p className="mt-0.5 text-xs sm:text-sm text-slate-500 font-medium">
                             View registered customer accounts, review ordering histories, and manage access statuses.
                         </p>
                     </div>
 
-                    <div className="flex items-center gap-3 bg-neutral-50 px-4 py-2 rounded-2xl border border-neutral-200/60">
-                        <span className="text-xs font-bold text-neutral-500 uppercase">Total Accounts:</span>
+                    <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-200/80">
+                        <span className="text-xs font-bold text-slate-500 uppercase">Total Accounts:</span>
                         <span className="text-lg font-black text-orange-600">{customers.length}</span>
                     </div>
                 </div>
@@ -109,16 +113,16 @@ export const AdminCustomerView: React.FC = () => {
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search by name, email, phone, or ID..."
-                            className="w-full bg-white border border-neutral-200 rounded-2xl px-4 py-3 text-xs font-medium focus:outline-none focus:border-orange-500 shadow-2xs transition-all"
+                            className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-2.5 text-xs font-medium focus:outline-none focus:border-orange-500 shadow-2xs transition-all"
                         />
-                        <svg className="w-4 h-4 absolute right-4 top-3.5 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <svg className="w-4 h-4 absolute right-4 top-3 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                     </div>
                 </div>
 
                 {/* Customers Data Table */}
-                <div className="bg-white rounded-3xl border border-neutral-100 shadow-xs overflow-hidden">
+                <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xs overflow-hidden">
                     <div className="overflow-x-auto">
                         <table className="w-full text-left border-collapse">
                             <thead>

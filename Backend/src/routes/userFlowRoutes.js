@@ -8,6 +8,7 @@ import { handleRiderStatusUpdate, handleDeleteOrder } from './riderRoutes.js';
 import { handleCreateCustomerFlowOrder, handleGetCustomerFlowOrder } from './orderRoutes.js';
 
 import { realtimeEmitter, emitOrderUpdate } from '../utils/realtimeEvents.js';
+import { releaseOrderStock } from '../services/inventoryService.js';
 
 const router = Router();
 
@@ -781,6 +782,7 @@ async function executeOrderCancellation(id, options = {}) {
         console.warn('Pending refund on cancelled order note:', refErr.message);
       }
     }
+    await releaseOrderStock(id, { reason: `Order ${id} cancelled` }); // no-op if already returned
     const activeOrderObj = orderInMemory || (dbOrder ? formatOrderResponse(dbOrder) : { id, status: 'CANCELLED' });
     return { success: true, message: `Order ${id} is cancelled.`, order: activeOrderObj, requiresRefund: hasGcashPayment };
   }
@@ -831,6 +833,9 @@ async function executeOrderCancellation(id, options = {}) {
         [id]
       );
     } catch (e) {}
+
+    // Customer asked to cancel: the kitchen ticket is cancelled, so give the stock back now
+    await releaseOrderStock(id, { reason: `Order ${id} cancellation requested` });
 
     if (orderInMemory) {
       orderInMemory.status = 'CANCEL_REQUESTED';
@@ -919,6 +924,9 @@ async function executeOrderCancellation(id, options = {}) {
       [id]
     );
   } catch (e) {}
+
+  // Return the ingredients this order had taken from inventory
+  await releaseOrderStock(id, { reason: `Order ${id} cancelled` });
 
   const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCELLED' } : { id, status: 'CANCELLED' });
   const formattedResponse = formatOrderResponse(activeOrderObj);

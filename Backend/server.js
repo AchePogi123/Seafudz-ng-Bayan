@@ -13,6 +13,8 @@ import userFlowRoutes from './src/routes/userFlowRoutes.js';
 import tableRoutes from './src/routes/tableRoutes.js';
 import backupRoutes from './src/routes/backupRoutes.js';
 import exportRoutes from './src/routes/exportRoutes.js';
+import inventoryRoutes from './src/routes/inventoryRoutes.js';
+import { startUnpaidOrderReaper } from './src/services/unpaidOrderReaper.js';
 import { runMigrations } from './src/migrations/migrate.js';
 import { initBackupScheduler } from './src/services/backupService.js';
 import { apiLimiter, authLimiter, orderLimiter } from './src/middleware/rateLimiter.js';
@@ -122,6 +124,7 @@ app.use('/api', salesRoutes);
 app.use('/api', authRoutes);
 app.use('/api', tableRoutes);
 app.use('/api', userFlowRoutes);
+app.use('/api', inventoryRoutes);
 app.use('/api', backupRoutes);
 app.use('/api', exportRoutes);
 
@@ -145,6 +148,13 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     runMigrations().catch((mErr) => {
       console.warn('[WARN] Auto-migration startup note:', mErr.message);
     });
+
+    // Optional: hand ingredients back for orders that were never paid (set UNPAID_ORDER_HOLD_MINUTES)
+    try {
+      startUnpaidOrderReaper();
+    } catch (reaperErr) {
+      console.error('[ERROR] Failed to start unpaid order expiry:', reaperErr.message);
+    }
 
     // Initialize automated 30-day rolling database backup scheduler
     try {

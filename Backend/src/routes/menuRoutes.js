@@ -10,6 +10,7 @@ import {
 } from '../config/productImageStorage.js';
 import { requireActiveAdmin, requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { validateAndNormalizeProductImage } from '../utils/validateProductImage.js';
+import { getMenuServings } from '../services/inventoryService.js';
 import { realtimeEmitter } from '../utils/realtimeEvents.js';
 
 const router = Router();
@@ -90,7 +91,23 @@ router.get('/menu', async (req, res) => {
     }
 
     const { rows } = await query(sql, params);
-    const data = rows.map((row) => ({ ...row, image: getProductImageUrl(row.image) }));
+
+    // Servings left from live inventory (null = no recipe, so not stock-limited)
+    const servings = await getMenuServings({ query });
+    const data = rows.map((row) => {
+      const stock = servings.get(String(row.id));
+      const takeOut = stock?.servings.TAKE_OUT ?? null;
+      return {
+        ...row,
+        image: getProductImageUrl(row.image),
+        // per order type (dine-in skips takeout packaging); null = no recipe, not stock-limited
+        remaining_servings_by_fulfillment: stock ? stock.servings : null,
+        limited_by_fulfillment: stock ? stock.limitedBy : null,
+        // older clients: take-out figure
+        remaining_servings: takeOut,
+        limited_by: takeOut !== null && takeOut <= 5 ? stock.limitedBy.TAKE_OUT : null,
+      };
+    });
 
     return res.status(200).json({
       success: true,

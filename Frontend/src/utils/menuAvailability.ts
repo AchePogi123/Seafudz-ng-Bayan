@@ -86,9 +86,16 @@ export const PRODUCT_ALIASES: Record<string, string> = {
   'item-028': 'cucumber-lemonade-big-50',
 }
 
+export type MenuFulfillment = 'DINE_IN' | 'TAKE_OUT' | 'PICKUP' | 'DELIVERY'
+type ServingsByFulfillment = Partial<Record<MenuFulfillment, number>>
+
 const availabilityById: Record<string, boolean> = {}
-const servingsById: Record<string, number | null> = {}
+/** Servings left per order type; null = no recipe, so not stock-limited. */
+const servingsById: Record<string, ServingsByFulfillment | null> = {}
+/** Which order type this screen is selling (customer: delivery/pickup, POS: dine-in/take-out). */
+let activeFulfillment: MenuFulfillment = 'TAKE_OUT'
 let availabilityRequest: Promise<void> | null = null
+let refetchQueued = false
 let availabilityRevision = 0
 
 function publishAvailability(next: Record<string, boolean>) {
@@ -105,11 +112,14 @@ function publishAvailability(next: Record<string, boolean>) {
   }
 }
 
-function publishServings(next?: Record<string, number | null>) {
-  let changed = false
+const sameServings = (a: ServingsByFulfillment | null | undefined, b: ServingsByFulfillment | null) =>
+  JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+
+function publishServings(next?: Record<string, ServingsByFulfillment | null>, force = false) {
+  let changed = force
   if (next) {
     for (const [key, value] of Object.entries(next)) {
-      if (servingsById[key] !== value) {
+      if (!sameServings(servingsById[key], value)) {
         servingsById[key] = value
         changed = true
       }
@@ -140,23 +150,26 @@ export function applyProductAvailabilityChange(productId: string, isAvailable: b
   }
 }
 
-export function applyProductServingsChange(productId: string, remainingServings: number | null) {
-  const id = String(productId)
-  const val = remainingServings !== null && remainingServings !== undefined ? Number(remainingServings) : null
-  const aliasId = PRODUCT_ALIASES[id]
-
-  // Automatic out of stock when servings reaches 0; restore when servings > 0 or null (unlimited)
-  if (val === 0) {
-    applyProductAvailabilityChange(id, false)
-  } else {
-    applyProductAvailabilityChange(id, true)
-  }
-
-  const updates: Record<string, number | null> = { [id]: val }
-  if (aliasId) {
-    updates[aliasId] = val
+/**
+ * Applies servings pushed by the server after a stock change (only the products that use the
+ * changed ingredients/packaging are included, so shared-ingredient dishes update together).
+ */
+export function applyInventoryServings(products: Record<string, { servings?: ServingsByFulfillment } | undefined>) {
+  const updates: Record<string, ServingsByFulfillment | null> = {}
+  for (const [productId, entry] of Object.entries(products || {})) {
+    const value = entry?.servings ? { ...entry.servings } : null
+    updates[productId] = value
+    const aliasId = PRODUCT_ALIASES[productId]
+    if (aliasId) updates[aliasId] = value
   }
   publishServings(updates)
+}
+
+/** Tells the stock helpers which order type this screen is selling. */
+export function setMenuFulfillment(fulfillment: MenuFulfillment) {
+  if (activeFulfillment === fulfillment) return
+  activeFulfillment = fulfillment
+  publishServings(undefined, true)
 }
 
 export function getUnavailableItemIds(): string[] {
@@ -165,19 +178,53 @@ export function getUnavailableItemIds(): string[] {
     .map(([id]) => id)
 }
 
-export function isItemAvailable(itemId: string): boolean {
+/** The kitchen's manual sold-out switch only (ignores inventory). */
+export function isItemManuallyAvailable(itemId: string): boolean {
   const id = String(itemId)
   const aliasId = PRODUCT_ALIASES[id]
   const avail = availabilityById[id] !== undefined ? availabilityById[id] : (aliasId ? availabilityById[aliasId] : undefined)
   return avail !== false
 }
 
-export function getItemRemainingServings(_itemId: string): number | null {
-  return null
+function servingsFrom(
+  table: Record<string, ServingsByFulfillment | null>,
+  itemId: string,
+  fulfillment: MenuFulfillment
+): number | null {
+  const id = String(itemId)
+  const aliasId = PRODUCT_ALIASES[id]
+  const entry = table[id] !== undefined ? table[id] : (aliasId ? table[aliasId] : undefined)
+  if (!entry) return null
+  const value = entry[fulfillment]
+  return typeof value === 'number' ? value : null
 }
 
-async function fetchAvailability() {
-  if (availabilityRequest) return availabilityRequest
+/**
+ * Servings left according to live inventory for an order type (defaults to this screen's type);
+ * null means the dish has no recipe, so it is not stock-limited.
+ */
+export function getItemRemainingServings(itemId: string, fulfillment: MenuFulfillment = activeFulfillment): number | null {
+  return servingsFrom(servingsById, itemId, fulfillment)
+}
+
+/** Orderable = not switched off by the kitchen AND inventory can still make at least one. */
+export function isItemAvailable(itemId: string): boolean {
+  if (!isItemManuallyAvailable(itemId)) return false
+  const servings = getItemRemainingServings(itemId)
+  return servings === null || servings > 0
+}
+
+/** Re-reads the menu so sold-out flags and servings left are current (used on stock-change events). */
+export function refreshMenuAvailability(): Promise<void> {
+  return fetchAvailability()
+}
+
+async function fetchAvailability(): Promise<void> {
+  // A request already running was sent before the latest stock change: queue one more after it
+  if (availabilityRequest) {
+    refetchQueued = true
+    return availabilityRequest
+  }
 
   availabilityRequest = (async () => {
     try {
@@ -185,22 +232,31 @@ async function fetchAvailability() {
       if (!response.ok) return
       const payload = await response.json()
       const next: Record<string, boolean> = {}
+      const nextServings: Record<string, ServingsByFulfillment | null> = {}
       if (Array.isArray(payload?.data)) {
         for (const product of payload.data) {
           if (product?.id != null) {
             const pid = String(product.id)
+            const aliasId = PRODUCT_ALIASES[pid]
             if (typeof product.is_available === "boolean") {
               next[pid] = product.is_available
+              if (aliasId) next[aliasId] = product.is_available
             }
 
-            const aliasId = PRODUCT_ALIASES[pid]
-            if (aliasId && typeof product.is_available === "boolean") {
-              next[aliasId] = product.is_available
+            let servings: ServingsByFulfillment | null = null
+            if (product.remaining_servings_by_fulfillment && typeof product.remaining_servings_by_fulfillment === 'object') {
+              servings = { ...product.remaining_servings_by_fulfillment }
+            } else if (product.remaining_servings !== null && product.remaining_servings !== undefined) {
+              const n = Number(product.remaining_servings)
+              if (Number.isFinite(n)) servings = { DINE_IN: n, TAKE_OUT: n, PICKUP: n, DELIVERY: n }
             }
+            nextServings[pid] = servings
+            if (aliasId) nextServings[aliasId] = servings
           }
         }
       }
       publishAvailability(next)
+      publishServings(nextServings)
     } catch (error) {
       console.warn("Could not load product availability:", error)
     }
@@ -211,11 +267,15 @@ async function fetchAvailability() {
   } finally {
     availabilityRequest = null
   }
+  if (refetchQueued) {
+    refetchQueued = false
+    await fetchAvailability()
+  }
 }
 
 export async function setItemAvailability(itemId: string, available: boolean): Promise<boolean> {
   const id = String(itemId)
-  const previous = isItemAvailable(id)
+  const previous = isItemManuallyAvailable(id)
   if (previous === available) {
     return true
   }
@@ -253,12 +313,13 @@ export async function setItemAvailability(itemId: string, available: boolean): P
 }
 
 export function toggleItemAvailability(itemId: string): Promise<boolean> {
-  return setItemAvailability(itemId, !isItemAvailable(itemId))
+  return setItemAvailability(itemId, !isItemManuallyAvailable(itemId))
 }
 
 export function useMenuAvailability() {
   const [availability, setAvailability] = useState<Record<string, boolean>>(() => availabilityById)
-  const [servings, setServings] = useState<Record<string, number | null>>(() => servingsById)
+  const [servings, setServings] = useState<Record<string, ServingsByFulfillment | null>>(() => ({ ...servingsById }))
+  const [fulfillment, setFulfillmentState] = useState<MenuFulfillment>(activeFulfillment)
 
   useEffect(() => {
     const sync = (event?: Event) => {
@@ -266,8 +327,9 @@ export function useMenuAvailability() {
       setAvailability(detail || { ...availabilityById })
     }
     const syncServings = (event?: Event) => {
-      const detail = (event as CustomEvent<Record<string, number | null>> | undefined)?.detail
+      const detail = (event as CustomEvent<Record<string, ServingsByFulfillment | null>> | undefined)?.detail
       setServings(detail || { ...servingsById })
+      setFulfillmentState(activeFulfillment)
     }
 
     window.addEventListener(EVENT_NAME, sync)
@@ -283,7 +345,12 @@ export function useMenuAvailability() {
     return toggleItemAvailability(itemId)
   }, [])
 
-  const checkIsAvailable = useCallback(
+  const checkRemainingServings = useCallback(
+    (itemId: string, forFulfillment?: MenuFulfillment) => servingsFrom(servings, itemId, forFulfillment ?? fulfillment),
+    [servings, fulfillment]
+  )
+
+  const checkIsManuallyAvailable = useCallback(
     (itemId: string) => {
       const id = String(itemId)
       const aliasId = PRODUCT_ALIASES[id]
@@ -293,16 +360,19 @@ export function useMenuAvailability() {
     [availability]
   )
 
-  const checkRemainingServings = useCallback(
-    (_itemId: string) => {
-      return null
+  const checkIsAvailable = useCallback(
+    (itemId: string) => {
+      if (!checkIsManuallyAvailable(itemId)) return false
+      const left = checkRemainingServings(itemId)
+      return left === null || left > 0
     },
-    []
+    [checkIsManuallyAvailable, checkRemainingServings]
   )
 
   return {
     availability,
     unavailableIds: Object.entries(availability).filter(([, available]) => !available).map(([id]) => id),
+    isManuallyAvailable: checkIsManuallyAvailable,
     remainingServings: servings,
     getRemainingServings: checkRemainingServings,
     toggleAvailability: toggle,

@@ -3,6 +3,7 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
+import { syncInventoryForStatus, returnForItems, releaseOrderStock, broadcastInventoryChange } from '../services/inventoryService.js';
 
 const router = Router();
 
@@ -212,6 +213,9 @@ router.patch('/kitchen/orders/:id/status', optionalAuth, async (req, res) => {
       console.warn('DB update note (Kitchen Status Route):', dbErr.message);
     }
 
+    // Inventory: remember the kitchen started cooking, or return stock if the ticket was cancelled
+    await syncInventoryForStatus(id, finalStatus);
+
     if (updatedRow) {
       const existing = inMemoryOrders.get(id) || {};
       inMemoryOrders.set(id, {
@@ -259,6 +263,7 @@ router.delete('/kitchen/orders/:id', optionalAuth, async (req, res) => {
       SET status = 'CANCELLED', cancelled_at = NOW(), updated_at = NOW()
       WHERE order_id = $1
     `, [id]);
+    await releaseOrderStock(id, { reason: `Kitchen ticket for order ${id} cancelled` });
 
     const sql = `
       UPDATE orders
@@ -339,6 +344,12 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
           quantity: r.quantity,
         }));
 
+        // These dishes will not be cooked, so their ingredients are no longer needed for this order
+        await returnForItems(client, id, flaggedItems.map(r => r.id), {
+          reason: `Kitchen flagged items out of stock on order ${id}`,
+          performedBy: 'Kitchen',
+        });
+
         const prodIds = flaggedItems.map(r => r.productId).filter(Boolean);
         const prodNames = flaggedItems.map(r => r.name).filter(Boolean);
         if (prodIds.length > 0 || prodNames.length > 0) {
@@ -351,6 +362,7 @@ router.patch('/kitchen/orders/:id/flag-out-of-stock', optionalAuth, async (req, 
         }
       }
       await client.query('COMMIT');
+      broadcastInventoryChange();
     } catch (dbErr) {
       try { await client.query('ROLLBACK'); } catch {}
       console.warn('DB note (flag-out-of-stock):', dbErr.message);
@@ -526,6 +538,9 @@ export async function handleKitchenStatusUpdate(req, res) {
     } catch (dbErr) {
       console.warn('DB update note (Kitchen Flow):', dbErr.message);
     }
+
+    // Inventory: remember the kitchen started cooking, or return stock if cancelled
+    await syncInventoryForStatus(id, nextStatus);
 
     if (!updatedOrder) {
       const newRec = {

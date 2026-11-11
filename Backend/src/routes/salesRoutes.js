@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
+import { returnAllReservedStock } from '../services/inventoryService.js';
 import { inMemoryOrders } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
@@ -294,6 +295,7 @@ router.post('/sales/reset-transactions', async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      await returnAllReservedStock(client); // wiped orders no longer hold ingredients
       await client.query(`
         TRUNCATE TABLE 
           order_items, 

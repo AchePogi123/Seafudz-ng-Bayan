@@ -1,22 +1,48 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import type {
   Ingredient,
   IngredientCategory,
   MeasurementUnit,
   StockStatus,
+  StockTransaction,
   Supplier,
   InventoryItemType,
+  TransactionType,
 } from './inventoryTypes'
-import {
-  FOOD_CATEGORIES,
-  PACKAGING_CATEGORIES,
-  MEASUREMENT_UNITS,
-} from './inventoryTypes'
+import { FOOD_CATEGORIES, PACKAGING_CATEGORIES, MEASUREMENT_UNITS } from './inventoryTypes'
 import InventoryConfirmModal from './InventoryConfirmModal'
+import {
+  Badge,
+  Button,
+  Card,
+  Drawer,
+  EmptyState,
+  Field,
+  MOVEMENT_TONE,
+  Modal,
+  Notice,
+  Pagination,
+  RowMenu,
+  SearchInput,
+  SectionHeader,
+  Segmented,
+  StockMeter,
+  StockStatusBadge,
+  Toolbar,
+  TypeBadge,
+  cx,
+  fieldAria,
+  formatDate,
+  formatPeso,
+  formatQty,
+  movementLabel,
+} from './ui'
 
 interface IngredientsTabProps {
   ingredients: Ingredient[]
   suppliers: Supplier[]
+  transactions?: StockTransaction[]
+  initialStatus?: string
   onAddIngredient: (item: Omit<Ingredient, 'id' | 'updatedAt' | 'status'>) => void
   onEditIngredient: (item: Ingredient) => void
   onDeleteIngredient: (id: string) => void
@@ -24,32 +50,86 @@ interface IngredientsTabProps {
     id: string,
     delta: number,
     reason: string,
-    details?: { seller?: string; purchaseDate?: string }
+    details?: { seller?: string; purchaseDate?: string; movementType?: TransactionType }
   ) => void
 }
+
+type StatusFilter = 'ALL' | 'ATTENTION' | StockStatus
+type SortKey = 'DEFAULT' | 'NAME' | 'LOWEST'
+
+const STATUS_FILTERS: StatusFilter[] = ['ALL', 'ATTENTION', 'IN_STOCK', 'LOW_STOCK', 'OUT_OF_STOCK']
+
+/** Stock-out reasons and the ledger movement type each one records */
+const DEDUCT_REASONS: { value: string; type: TransactionType }[] = [
+  { value: 'Kitchen Consumption / Daily Usage', type: 'CONSUMPTION' },
+  { value: 'Food Waste / Spoilage Deduction', type: 'WASTE' },
+  { value: 'Packaging Damage / Defective Batch', type: 'WASTE' },
+  { value: 'Kitchen Preparation Loss / Trim', type: 'WASTE' },
+  { value: 'Physical Audit Count Reconciliation', type: 'ADJUSTMENT' },
+  { value: 'Other Manual Adjustment', type: 'ADJUSTMENT' },
+]
+
+const PURCHASE_UNITS: { value: string; label: string }[] = [
+  { value: 'kg', label: 'kg (kilograms)' },
+  { value: 'g', label: 'g (grams)' },
+  { value: 'L', label: 'L (liters)' },
+  { value: 'ml', label: 'ml (milliliters)' },
+  { value: 'pcs', label: 'pcs (pieces)' },
+  { value: 'packs', label: 'packs' },
+  { value: 'boxes', label: 'boxes' },
+  { value: 'cans', label: 'cans' },
+  { value: 'bottles', label: 'bottles' },
+  { value: 'tins', label: 'tins' },
+  { value: 'tub', label: 'tubs' },
+  { value: 'sack', label: 'sacks' },
+]
+
+const PAGE_SIZE = 12
+
+/** Converts a purchase quantity into the item's base unit where the units are related. */
+function toBaseUnit(qty: number, purchaseUnit: string, baseUnit: string) {
+  if (baseUnit === 'g' && purchaseUnit === 'kg') return qty * 1000
+  if (baseUnit === 'kg' && purchaseUnit === 'g') return qty / 1000
+  if (baseUnit === 'ml' && purchaseUnit === 'L') return qty * 1000
+  if (baseUnit === 'L' && purchaseUnit === 'ml') return qty / 1000
+  return qty
+}
+
+const today = () => new Date().toISOString().split('T')[0]
 
 export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   ingredients,
   suppliers,
+  transactions = [],
+  initialStatus,
   onAddIngredient,
   onEditIngredient,
   onDeleteIngredient,
   onAdjustStock,
 }) => {
-  // Search & Filters
+  /* ------------------------------------------------------------ Filters */
+  const normalizedInitial: StatusFilter = STATUS_FILTERS.includes(initialStatus as StatusFilter)
+    ? (initialStatus as StatusFilter)
+    : 'ALL'
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedType, setSelectedType] = useState<'ALL' | InventoryItemType>('ALL')
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL')
-  const [selectedStatus, setSelectedStatus] = useState<string>('ALL')
+  const [selectedStatus, setSelectedStatus] = useState<StatusFilter>(normalizedInitial)
+  const [sortKey, setSortKey] = useState<SortKey>('DEFAULT')
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 8
 
-  // Modal States
+  useEffect(() => {
+    setSelectedStatus(normalizedInitial)
+    setCurrentPage(1)
+  }, [normalizedInitial])
+
+  /* -------------------------------------------------------- Overlays */
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null)
   const [deletingIngredientId, setDeletingIngredientId] = useState<string | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
 
-  // Form Fields for Add / Edit
+  /* ------------------------------------------------- Add / edit form */
   const [formItemType, setFormItemType] = useState<InventoryItemType>('FOOD')
   const [formName, setFormName] = useState('')
   const [formCategory, setFormCategory] = useState<IngredientCategory>('Seafoods')
@@ -57,62 +137,103 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   const [formCurrentStock, setFormCurrentStock] = useState<number | ''>('')
   const [formMinStock, setFormMinStock] = useState<number | ''>('')
   const [formReorderQty, setFormReorderQty] = useState<number | ''>('')
+  const [formCost, setFormCost] = useState<number | ''>('')
   const [formSupplierId, setFormSupplierId] = useState<string>('')
   const [formStorageNotes, setFormStorageNotes] = useState('')
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+  const [formTouched, setFormTouched] = useState(false)
 
-  // Revised Manual Add Stock / Purchase Intake / Adjustment Modal State
+  /* ------------------------------------------------ Stock movement form */
   const [isStockModalOpen, setIsStockModalOpen] = useState(false)
   const [stockModalMode, setStockModalMode] = useState<'PURCHASE' | 'DEDUCT'>('PURCHASE')
   const [selectedStockItemId, setSelectedStockItemId] = useState<string>('')
   const [purchaseQty, setPurchaseQty] = useState<number | ''>('')
   const [purchaseUnit, setPurchaseUnit] = useState<string>('kg')
   const [sellerMarket, setSellerMarket] = useState<string>('')
-  const [purchaseDate, setPurchaseDate] = useState<string>(() => new Date().toISOString().split('T')[0])
+  const [purchaseDate, setPurchaseDate] = useState<string>(today)
   const [deductQty, setDeductQty] = useState<number | ''>('')
-  const [deductReason, setDeductReason] = useState<string>('Physical Audit Count Reconciliation')
-  const [stockModalError, setStockModalError] = useState<string>('')
+  const [deductReason, setDeductReason] = useState<string>(DEDUCT_REASONS[0].value)
+  const [stockErrors, setStockErrors] = useState<Record<string, string>>({})
 
-  // Item counts
-  const foodCount = useMemo(
-    () => ingredients.filter((i) => (i.itemType || 'FOOD') === 'FOOD').length,
-    [ingredients]
-  )
-  const packagingCount = useMemo(
-    () => ingredients.filter((i) => i.itemType === 'PACKAGING').length,
-    [ingredients]
-  )
+  /* ------------------------------------------------------- Derived data */
+  const foodCount = useMemo(() => ingredients.filter((i) => (i.itemType || 'FOOD') === 'FOOD').length, [ingredients])
+  const packagingCount = ingredients.length - foodCount
 
-  // Available categories based on selectedType
+  const categoryStats = useMemo(() => {
+    const map = new Map<string, { count: number; attention: number }>()
+    ingredients.forEach((i) => {
+      const cur = map.get(i.category) || { count: 0, attention: 0 }
+      cur.count += 1
+      if (i.status !== 'IN_STOCK') cur.attention += 1
+      map.set(i.category, cur)
+    })
+    return map
+  }, [ingredients])
+
   const availableCategories = useMemo(() => {
     if (selectedType === 'FOOD') return FOOD_CATEGORIES
     if (selectedType === 'PACKAGING') return PACKAGING_CATEGORIES
     return [...FOOD_CATEGORIES, ...PACKAGING_CATEGORIES]
   }, [selectedType])
 
-  // Filtered ingredients
   const filteredIngredients = useMemo(() => {
-    return ingredients.filter((item) => {
+    const q = searchQuery.trim().toLowerCase()
+    const list = ingredients.filter((item) => {
       const itemType = item.itemType || 'FOOD'
       const matchesType = selectedType === 'ALL' || itemType === selectedType
       const matchesSearch =
-        item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.storageNotes || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.supplierName || '').toLowerCase().includes(searchQuery.toLowerCase())
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        (item.storageNotes || '').toLowerCase().includes(q) ||
+        (item.supplierName || '').toLowerCase().includes(q)
       const matchesCategory = selectedCategory === 'ALL' || item.category === selectedCategory
-      const matchesStatus = selectedStatus === 'ALL' || item.status === selectedStatus
+      const matchesStatus =
+        selectedStatus === 'ALL' ||
+        (selectedStatus === 'ATTENTION' ? item.status !== 'IN_STOCK' : item.status === selectedStatus)
       return matchesType && matchesSearch && matchesCategory && matchesStatus
     })
-  }, [ingredients, selectedType, searchQuery, selectedCategory, selectedStatus])
+    if (sortKey === 'NAME') return [...list].sort((a, b) => a.name.localeCompare(b.name))
+    if (sortKey === 'LOWEST') {
+      const ratio = (i: Ingredient) => (i.minStockLevel > 0 ? i.currentStock / i.minStockLevel : i.currentStock > 0 ? 99 : 0)
+      return [...list].sort((a, b) => ratio(a) - ratio(b))
+    }
+    return list
+  }, [ingredients, selectedType, searchQuery, selectedCategory, selectedStatus, sortKey])
 
-  // Pagination
-  const totalPages = Math.ceil(filteredIngredients.length / itemsPerPage) || 1
-  const paginatedIngredients = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage
-    return filteredIngredients.slice(start, start + itemsPerPage)
-  }, [filteredIngredients, currentPage])
+  const totalPages = Math.max(1, Math.ceil(filteredIngredients.length / PAGE_SIZE))
+  const page = Math.min(currentPage, totalPages)
+  const paginatedIngredients = filteredIngredients.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  // Handlers
+  const hasActiveFilters =
+    Boolean(searchQuery) || selectedType !== 'ALL' || selectedCategory !== 'ALL' || selectedStatus !== 'ALL'
+
+  const clearFilters = () => {
+    setSearchQuery('')
+    setSelectedType('ALL')
+    setSelectedCategory('ALL')
+    setSelectedStatus('ALL')
+    setCurrentPage(1)
+  }
+
+  const pickCategory = (type: 'ALL' | InventoryItemType, category: string) => {
+    setSelectedType(type)
+    setSelectedCategory(category)
+    setCurrentPage(1)
+  }
+
+  const detailItem = useMemo(() => ingredients.find((i) => i.id === detailId) || null, [ingredients, detailId])
+  const detailMovements = useMemo(
+    () =>
+      detailId
+        ? transactions
+            .filter((t) => t.ingredientId === detailId)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 6)
+        : [],
+    [transactions, detailId]
+  )
+
+  /* ------------------------------------------------- Add / edit handlers */
   const resetForm = (itemType: InventoryItemType = 'FOOD') => {
     setFormItemType(itemType)
     setFormName('')
@@ -121,9 +242,11 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     setFormCurrentStock('')
     setFormMinStock('')
     setFormReorderQty('')
+    setFormCost('')
     setFormSupplierId('')
     setFormStorageNotes('')
     setFormErrors({})
+    setFormTouched(false)
   }
 
   const handleOpenAddModal = (defaultType?: InventoryItemType) => {
@@ -133,18 +256,25 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   }
 
   const handleOpenEditModal = (item: Ingredient) => {
-    const itemType = item.itemType || 'FOOD'
+    setDetailId(null)
     setEditingIngredient(item)
-    setFormItemType(itemType)
+    setFormItemType(item.itemType || 'FOOD')
     setFormName(item.name)
     setFormCategory(item.category)
     setFormBaseUnit(item.baseUnit)
     setFormCurrentStock(item.currentStock)
     setFormMinStock(item.minStockLevel)
     setFormReorderQty(item.preferredRestockQty)
+    setFormCost(item.costPerUnit || '')
     setFormSupplierId(item.supplierId || '')
     setFormStorageNotes(item.storageNotes || '')
     setFormErrors({})
+    setFormTouched(false)
+  }
+
+  const closeItemForm = () => {
+    setIsAddModalOpen(false)
+    setEditingIngredient(null)
   }
 
   const handleItemTypeSwitch = (type: InventoryItemType) => {
@@ -159,24 +289,41 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     }
   }
 
-  const validateForm = () => {
+  const computeFormErrors = () => {
     const errors: Record<string, string> = {}
-    if (!formName.trim()) {
-      errors.name = `${formItemType === 'FOOD' ? 'Ingredient' : 'Packaging'} name is required`
+    const noun = formItemType === 'FOOD' ? 'ingredient' : 'packaging item'
+    if (!formName.trim()) errors.name = `Enter a name for this ${noun}.`
+    else {
+      const dupe = ingredients.find(
+        (i) => i.name.trim().toLowerCase() === formName.trim().toLowerCase() && i.id !== editingIngredient?.id
+      )
+      if (dupe) errors.name = `"${dupe.name}" already exists in the catalog.`
     }
-    if (formMinStock === '' || Number(formMinStock) < 0) {
-      errors.minStock = 'Valid minimum stock threshold is required'
-    }
-    if (formReorderQty === '' || Number(formReorderQty) <= 0) {
-      errors.reorderQty = 'Reorder quantity must be > 0'
-    }
-    setFormErrors(errors)
-    return Object.keys(errors).length === 0
+    if (formCurrentStock !== '' && Number(formCurrentStock) < 0) errors.currentStock = 'Stock cannot be negative.'
+    if (formMinStock === '') errors.minStock = 'Enter the minimum level (0 is allowed).'
+    else if (Number(formMinStock) < 0) errors.minStock = 'Minimum level cannot be negative.'
+    if (formReorderQty === '') errors.reorderQty = 'Enter how much you usually reorder.'
+    else if (Number(formReorderQty) <= 0) errors.reorderQty = 'Reorder quantity must be more than 0.'
+    if (formCost !== '' && Number(formCost) < 0) errors.cost = 'Cost cannot be negative.'
+    return errors
   }
+
+  // Re-validate as the user types once they have tried to submit
+  useEffect(() => {
+    if (formTouched) setFormErrors(computeFormErrors())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formTouched, formName, formCurrentStock, formMinStock, formReorderQty, formCost, formItemType])
 
   const handleSaveIngredient = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!validateForm()) return
+    setFormTouched(true)
+    const errors = computeFormErrors()
+    setFormErrors(errors)
+    if (Object.keys(errors).length > 0) {
+      const first = Object.keys(errors)[0]
+      document.getElementById(`ing-${first}`)?.focus()
+      return
+    }
 
     const selectedSupplier = suppliers.find((s) => s.id === formSupplierId)
 
@@ -196,7 +343,7 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
         currentStock: updatedStock,
         minStockLevel: minLevel,
         preferredRestockQty: Number(formReorderQty) || 0,
-        costPerUnit: editingIngredient.costPerUnit || 0,
+        costPerUnit: Number(formCost) || 0,
         supplierId: formSupplierId || undefined,
         supplierName: selectedSupplier ? selectedSupplier.name : undefined,
         storageNotes: formStorageNotes.trim() || undefined,
@@ -213,7 +360,7 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
         currentStock: Number(formCurrentStock) || 0,
         minStockLevel: Number(formMinStock) || 0,
         preferredRestockQty: Number(formReorderQty) || 0,
-        costPerUnit: 0,
+        costPerUnit: Number(formCost) || 0,
         supplierId: formSupplierId || undefined,
         supplierName: selectedSupplier ? selectedSupplier.name : undefined,
         storageNotes: formStorageNotes.trim() || undefined,
@@ -223,8 +370,8 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     resetForm()
   }
 
-  // Helper for Opening Revised Manual Purchase Intake / Stock Modal
-  const handleOpenStockModal = (item?: Ingredient) => {
+  /* ---------------------------------------------- Stock movement handlers */
+  const handleOpenStockModal = (item?: Ingredient, mode: 'PURCHASE' | 'DEDUCT' = 'PURCHASE') => {
     const targetItem = item || (ingredients.length > 0 ? ingredients[0] : null)
     if (targetItem) {
       setSelectedStockItemId(targetItem.id)
@@ -237,10 +384,11 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     }
     setPurchaseQty('')
     setDeductQty('')
-    setPurchaseDate(new Date().toISOString().split('T')[0])
-    setStockModalMode('PURCHASE')
-    setDeductReason('Physical Audit Count Reconciliation')
-    setStockModalError('')
+    setPurchaseDate(today())
+    setStockModalMode(mode)
+    setDeductReason(DEDUCT_REASONS[0].value)
+    setStockErrors({})
+    setDetailId(null)
     setIsStockModalOpen(true)
   }
 
@@ -249,49 +397,37 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     [ingredients, selectedStockItemId]
   )
 
+  const purchaseDelta =
+    selectedStockItem && Number(purchaseQty) > 0
+      ? toBaseUnit(Number(purchaseQty), purchaseUnit, selectedStockItem.baseUnit)
+      : 0
+  const unitsConvert = selectedStockItem
+    ? toBaseUnit(1, purchaseUnit, selectedStockItem.baseUnit) !== 1
+    : false
+  const unitsMismatch =
+    selectedStockItem && !unitsConvert && purchaseUnit !== selectedStockItem.baseUnit
+
   const handleConfirmStockModal = (e: React.FormEvent) => {
     e.preventDefault()
-    setStockModalError('')
+    const errors: Record<string, string> = {}
 
     if (!selectedStockItem) {
-      setStockModalError('Please select an inventory item.')
+      setStockErrors({ item: 'Choose the item this movement is for.' })
       return
     }
 
     if (stockModalMode === 'PURCHASE') {
       const qVal = Number(purchaseQty)
-      if (!purchaseQty || isNaN(qVal) || qVal <= 0) {
-        setStockModalError('Please specify a valid quantity purchased greater than zero.')
-        return
-      }
-      if (!purchaseUnit) {
-        setStockModalError('Please select a purchase unit.')
-        return
-      }
-      if (!purchaseDate) {
-        setStockModalError('Please specify the purchase date.')
-        return
-      }
+      if (purchaseQty === '' || isNaN(qVal) || qVal <= 0) errors.purchaseQty = 'Enter a quantity greater than 0.'
+      if (!purchaseUnit) errors.purchaseUnit = 'Choose the unit you bought in.'
+      if (!purchaseDate) errors.purchaseDate = 'Enter the purchase date.'
+      else if (purchaseDate > today()) errors.purchaseDate = 'Purchase date cannot be in the future.'
+      setStockErrors(errors)
+      if (Object.keys(errors).length) return
 
-      // Conversion logic: if item base unit is 'g' and purchase unit is 'kg', convert kg -> g (* 1000)
-      const isKgToG = selectedStockItem.baseUnit === 'g' && purchaseUnit === 'kg'
-      const isGToKg = selectedStockItem.baseUnit === 'kg' && purchaseUnit === 'g'
-      const isLToMl = selectedStockItem.baseUnit === 'ml' && purchaseUnit === 'L'
-      const isMlToL = selectedStockItem.baseUnit === 'L' && purchaseUnit === 'ml'
-
-      let finalDelta = qVal
-      if (isKgToG) {
-        finalDelta = qVal * 1000
-      } else if (isGToKg) {
-        finalDelta = qVal / 1000
-      } else if (isLToMl) {
-        finalDelta = qVal * 1000
-      } else if (isMlToL) {
-        finalDelta = qVal / 1000
-      }
-
-      const conversionNote = isKgToG
-        ? ` (${qVal} kg converted to ${finalDelta.toLocaleString()} g)`
+      const finalDelta = toBaseUnit(qVal, purchaseUnit, selectedStockItem.baseUnit)
+      const conversionNote = unitsConvert
+        ? ` (${qVal} ${purchaseUnit} converted to ${finalDelta.toLocaleString()} ${selectedStockItem.baseUnit})`
         : ''
       const sellerNote = sellerMarket.trim() ? ` from ${sellerMarket.trim()}` : ''
       const reasonText = `Purchased ${qVal} ${purchaseUnit}${conversionNote}${sellerNote} • Date: ${purchaseDate}`
@@ -299,993 +435,924 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
       onAdjustStock(selectedStockItem.id, finalDelta, reasonText, {
         seller: sellerMarket.trim() || undefined,
         purchaseDate,
+        movementType: 'STOCK_RECEIVED',
       })
-
-      setIsStockModalOpen(false)
     } else {
-      // DEDUCT mode
       const dVal = Number(deductQty)
-      if (!deductQty || isNaN(dVal) || dVal <= 0) {
-        setStockModalError('Please specify a valid deduction quantity greater than zero.')
-        return
-      }
-      if (selectedStockItem.currentStock - dVal < 0) {
-        setStockModalError(
-          `Cannot deduct more than current stock (${selectedStockItem.currentStock.toLocaleString()} ${selectedStockItem.baseUnit}).`
-        )
-        return
-      }
+      if (deductQty === '' || isNaN(dVal) || dVal <= 0) errors.deductQty = 'Enter a quantity greater than 0.'
+      else if (selectedStockItem.currentStock - dVal < 0)
+        errors.deductQty = `Only ${formatQty(selectedStockItem.currentStock)} ${selectedStockItem.baseUnit} is on hand.`
+      setStockErrors(errors)
+      if (Object.keys(errors).length) return
 
+      const reasonMeta = DEDUCT_REASONS.find((r) => r.value === deductReason)
       onAdjustStock(
         selectedStockItem.id,
         -dVal,
-        `Stock Deduction: ${deductReason} (-${dVal} ${selectedStockItem.baseUnit})`
+        `Stock Deduction: ${deductReason} (-${dVal} ${selectedStockItem.baseUnit})`,
+        { movementType: reasonMeta?.type ?? 'ADJUSTMENT' }
       )
-
-      setIsStockModalOpen(false)
     }
+    setIsStockModalOpen(false)
   }
 
+  /* ------------------------------------------------------------- Render */
+  const formUnit = formBaseUnit
+
   return (
-    <div className="space-y-6">
-      {/* 1. TOP CONTROLS & FILTER BAR */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-xs flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-base font-black text-slate-900">
-              Raw Materials & Packaging Catalog
-            </h2>
-            <p className="text-xs text-slate-500">
-              Manage restaurant food ingredients and packaging materials (trays, bowls, takeout bags, cutlery, stickers) using unified inventory tracking.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
-            <button
-              type="button"
+    <div className="space-y-5">
+      <SectionHeader
+        title="Items"
+        description="Food ingredients and packaging materials, with live stock levels."
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              icon="restock"
               onClick={() => handleOpenStockModal()}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-orange-500 bg-orange-50 px-3.5 py-2.5 text-xs font-bold text-orange-700 hover:bg-orange-100 transition-all cursor-pointer shadow-2xs"
+              disabled={ingredients.length === 0}
             >
-              <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              <span>+ Record Purchase / Stock In</span>
-            </button>
+              Record stock
+            </Button>
+            <Button variant="primary" icon="plus" onClick={() => handleOpenAddModal()}>
+              Add item
+            </Button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+        {/* Category navigation */}
+        <Card className="hidden lg:block lg:sticky lg:top-4">
+          <nav className="inv-cat-list" aria-label="Categories">
             <button
               type="button"
-              onClick={() => handleOpenAddModal('FOOD')}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-orange-500 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer"
+              className="inv-cat"
+              aria-pressed={selectedType === 'ALL' && selectedCategory === 'ALL'}
+              onClick={() => pickCategory('ALL', 'ALL')}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-              </svg>
-              <span>+ Add Food Ingredient</span>
+              <span>All items</span>
+              <span className="inv-cat-count">{ingredients.length}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => handleOpenAddModal('PACKAGING')}
-              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-all cursor-pointer"
-            >
-              <span>+ Add Packaging</span>
-            </button>
-          </div>
-        </div>
+            {(
+              [
+                { type: 'FOOD' as const, label: 'Food', total: foodCount, cats: FOOD_CATEGORIES },
+                { type: 'PACKAGING' as const, label: 'Packaging', total: packagingCount, cats: PACKAGING_CATEGORIES },
+              ]
+            ).map((group) => (
+              <React.Fragment key={group.type}>
+                <button
+                  type="button"
+                  className="inv-cat mt-2 font-semibold"
+                  aria-pressed={selectedType === group.type && selectedCategory === 'ALL'}
+                  onClick={() => pickCategory(group.type, 'ALL')}
+                >
+                  <span>{group.label}</span>
+                  <span className="inv-cat-count">{group.total}</span>
+                </button>
+                {group.cats.map((cat) => {
+                  const stat = categoryStats.get(cat)
+                  if (!stat) return null
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      className="inv-cat pl-5"
+                      aria-pressed={selectedCategory === cat}
+                      onClick={() => pickCategory(group.type, cat)}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate">{cat}</span>
+                        {stat.attention > 0 && (
+                          <span className="inv-cat-alert" title={`${stat.attention} need attention`} />
+                        )}
+                      </span>
+                      <span className="inv-cat-count">{stat.count}</span>
+                    </button>
+                  )
+                })}
+              </React.Fragment>
+            ))}
+          </nav>
+        </Card>
 
-        {/* Inventory Category / Type Segmented Pill Tabs */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedType('ALL')
-              setSelectedCategory('ALL')
-              setCurrentPage(1)
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedType === 'ALL'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
-            }`}
-          >
-            <span>All Inventory</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                selectedType === 'ALL' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {ingredients.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedType('FOOD')
-              setSelectedCategory('ALL')
-              setCurrentPage(1)
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedType === 'FOOD'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/20'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
-            }`}
-          >
-            <span>Food Ingredients</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                selectedType === 'FOOD' ? 'bg-orange-600 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {foodCount}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedType('PACKAGING')
-              setSelectedCategory('ALL')
-              setCurrentPage(1)
-            }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedType === 'PACKAGING'
-                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/20'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200/70'
-            }`}
-          >
-            <span>Packaging Materials</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                selectedType === 'PACKAGING' ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {packagingCount}
-            </span>
-          </button>
-        </div>
-
-        {/* Search & Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3 pt-1">
-          <div className="relative sm:col-span-1 lg:col-span-2">
-            <svg
-              className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder={
-                selectedType === 'PACKAGING'
-                  ? 'Search packaging (e.g. tray, bowl, bag, cutlery, sticker)...'
-                  : 'Search ingredient or packaging by name or supplier...'
-              }
+        {/* Table */}
+        <Card className="overflow-hidden">
+          <Toolbar>
+            <SearchInput
+              label="Search items"
+              placeholder="Search by name, supplier or storage note"
               value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value)
+              onChange={(v) => {
+                setSearchQuery(v)
                 setCurrentPage(1)
               }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
             />
-          </div>
-
-          <div>
+            <div className="lg:hidden">
+              <Segmented
+                label="Item type"
+                value={selectedType}
+                onChange={(v) => pickCategory(v, 'ALL')}
+                options={[
+                  { value: 'ALL', label: 'All' },
+                  { value: 'FOOD', label: 'Food' },
+                  { value: 'PACKAGING', label: 'Packaging' },
+                ]}
+              />
+            </div>
             <select
+              aria-label="Category"
+              className="inv-select w-full sm:w-auto lg:hidden"
               value={selectedCategory}
               onChange={(e) => {
                 setSelectedCategory(e.target.value)
                 setCurrentPage(1)
               }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-orange-500 focus:outline-none"
             >
-              <option value="ALL">
-                {selectedType === 'ALL'
-                  ? `All Categories (${ingredients.length})`
-                  : selectedType === 'FOOD'
-                  ? `All Food Categories (${foodCount})`
-                  : `All Packaging Categories (${packagingCount})`}
-              </option>
+              <option value="ALL">All categories</option>
               {availableCategories.map((cat) => (
                 <option key={cat} value={cat}>
-                  {cat} ({ingredients.filter((i) => i.category === cat).length})
+                  {cat} ({categoryStats.get(cat)?.count ?? 0})
                 </option>
               ))}
             </select>
-          </div>
-
-          <div>
             <select
+              aria-label="Stock status"
+              className="inv-select w-full sm:w-auto"
               value={selectedStatus}
               onChange={(e) => {
-                setSelectedStatus(e.target.value)
+                setSelectedStatus(e.target.value as StatusFilter)
                 setCurrentPage(1)
               }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-orange-500 focus:outline-none"
             >
-              <option value="ALL">All Stock Statuses</option>
-              <option value="IN_STOCK">In Stock</option>
-              <option value="LOW_STOCK">Low Stock Alert</option>
-              <option value="OUT_OF_STOCK">Out of Stock</option>
+              <option value="ALL">All statuses</option>
+              <option value="ATTENTION">Needs attention</option>
+              <option value="IN_STOCK">In stock</option>
+              <option value="LOW_STOCK">Low stock</option>
+              <option value="OUT_OF_STOCK">Out of stock</option>
             </select>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. INGREDIENTS TABLE */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
-        {paginatedIngredients.length === 0 ? (
-          /* Empty State */
-          <div className="py-16 text-center flex flex-col items-center justify-center px-4">
-            <div
-              className={`h-16 w-16 rounded-3xl flex items-center justify-center mb-4 ${
-                selectedType === 'PACKAGING'
-                  ? 'bg-indigo-50 text-indigo-600'
-                  : 'bg-orange-50 text-orange-500'
-              }`}
+            <select
+              aria-label="Sort"
+              className="inv-select w-full sm:w-auto"
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as SortKey)}
             >
-              {selectedType === 'PACKAGING' ? (
-                <span className="text-sm font-bold uppercase tracking-wide">Packaging</span>
-              ) : (
-                <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              )}
+              <option value="DEFAULT">Sort: Recently added</option>
+              <option value="NAME">Sort: Name A–Z</option>
+              <option value="LOWEST">Sort: Lowest stock first</option>
+            </select>
+          </Toolbar>
+
+          {hasActiveFilters && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--inv-border)] bg-[var(--inv-surface-2)] px-4 py-2 text-[13px] text-[var(--inv-text-3)]">
+              <span aria-live="polite">
+                Showing <b className="font-semibold text-[var(--inv-text)]">{filteredIngredients.length}</b> of{' '}
+                {ingredients.length} items
+                {selectedCategory !== 'ALL' && <> in {selectedCategory}</>}
+              </span>
+              <button type="button" className="inv-link" onClick={clearFilters}>
+                Clear filters
+              </button>
             </div>
-            <h3 className="text-sm font-bold text-slate-900">
-              {ingredients.length === 0
-                ? 'Your Inventory Catalog is Currently Empty'
-                : selectedType === 'PACKAGING'
-                ? 'No Packaging Materials Found'
-                : selectedType === 'FOOD'
-                ? 'No Food Ingredients Found'
-                : 'No Matching Items Found'}
-            </h3>
-            <p className="mt-1 text-xs text-slate-400 max-w-md">
-              {ingredients.length === 0
-                ? 'Register food ingredients (proteins, produce, sauces) or packaging materials (food trays, plates, bowls, cups, lids, straws, plastic bags, spoons, forks, tissue, and sealing stickers) to configure your kitchen and takeout BOM.'
-                : selectedType === 'PACKAGING' && packagingCount === 0
-                ? 'No packaging materials have been registered yet. Add packaging items such as food trays, bowls, takeout bags, cutlery sets, and stickers to prepare for fulfillment BOM tracking.'
-                : 'No items match your active filters. Try adjusting your search query, type filter, or category selection.'}
-            </p>
-            {ingredients.length === 0 && (
-              <div className="mt-4 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleOpenAddModal('FOOD')}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer"
-                >
-                  + Add Food Ingredient
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleOpenAddModal('PACKAGING')}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-indigo-500 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all cursor-pointer"
-                >
-                  + Add Packaging Material
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-4">Item Name</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Category</th>
-                  <th className="py-3 px-4">Current Stock</th>
-                  <th className="py-3 px-4">Min. Threshold</th>
-                  <th className="py-3 px-4">Reorder Qty</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
-                {paginatedIngredients.map((item) => {
-                  const itemType = item.itemType || 'FOOD'
-                  const isPackaging = itemType === 'PACKAGING'
-                  return (
-                    <tr key={item.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3 px-4 font-bold text-slate-900">
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span>{item.name}</span>
-                          </div>
-                          {item.supplierName && (
-                            <p className="text-[10px] text-slate-400 font-normal">
-                              Supplied by {item.supplierName}
-                            </p>
-                          )}
+          )}
+
+          {paginatedIngredients.length === 0 ? (
+            ingredients.length === 0 ? (
+              <EmptyState
+                icon="box"
+                title="No items yet"
+                description="Add your first food ingredient or packaging material to start tracking stock."
+                action={
+                  <>
+                    <Button variant="primary" icon="plus" onClick={() => handleOpenAddModal('FOOD')}>
+                      Add food ingredient
+                    </Button>
+                    <Button variant="secondary" onClick={() => handleOpenAddModal('PACKAGING')}>
+                      Add packaging
+                    </Button>
+                  </>
+                }
+              />
+            ) : (
+              <EmptyState
+                icon="search"
+                title="No matching items"
+                description="Try a different search term or clear the filters to see all items."
+                action={
+                  <Button variant="secondary" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                }
+              />
+            )
+          ) : (
+            <div className="inv-table-wrap">
+              <table className="inv-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th scope="col" className="hidden md:table-cell">Type</th>
+                    <th scope="col" className="is-num">On hand</th>
+                    <th scope="col" className="hidden xl:table-cell">Level</th>
+                    <th scope="col" className="is-num hidden sm:table-cell">Minimum</th>
+                    <th scope="col">Status</th>
+                    <th scope="col" className="is-actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedIngredients.map((item) => (
+                    <tr
+                      key={item.id}
+                      className={cx(
+                        item.status === 'LOW_STOCK' && 'is-attention',
+                        item.status === 'OUT_OF_STOCK' && 'is-critical'
+                      )}
+                    >
+                      <td className="max-w-[280px]">
+                        <button type="button" className="inv-row-link block max-w-full truncate" onClick={() => setDetailId(item.id)}>
+                          {item.name}
+                        </button>
+                        <div className="inv-cell-secondary truncate">
+                          {item.category}
+                          {item.supplierName && <> · {item.supplierName}</>}
                         </div>
                       </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                            isPackaging
-                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                              : 'bg-orange-50 text-orange-700 border border-orange-200'
-                          }`}
-                        >
-                          <span>{isPackaging ? 'Packaging' : 'Food'}</span>
-                        </span>
+                      <td className="hidden md:table-cell">
+                        <TypeBadge itemType={item.itemType} />
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="inline-block rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-                          {item.category}
-                        </span>
+                      <td className="is-num">
+                        <span className="font-semibold text-[var(--inv-text)]">{formatQty(item.currentStock)}</span>{' '}
+                        <span className="text-[var(--inv-text-3)]">{item.baseUnit}</span>
                       </td>
-                      <td className="py-3 px-4 font-extrabold text-slate-900">
-                        {item.currentStock.toLocaleString()} {item.baseUnit}
+                      <td className="hidden xl:table-cell">
+                        <StockMeter
+                          compact
+                          current={item.currentStock}
+                          min={item.minStockLevel}
+                          unit={item.baseUnit}
+                          status={item.status}
+                        />
                       </td>
-                      <td className="py-3 px-4 text-slate-500">
-                        {item.minStockLevel.toLocaleString()} {item.baseUnit}
+                      <td className="is-num hidden text-[var(--inv-text-3)] sm:table-cell">
+                        {formatQty(item.minStockLevel)} {item.baseUnit}
                       </td>
-                      <td className="py-3 px-4 text-slate-500">
-                        {item.preferredRestockQty.toLocaleString()} {item.baseUnit}
+                      <td>
+                        <StockStatusBadge status={item.status} />
                       </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            item.status === 'IN_STOCK'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : item.status === 'LOW_STOCK'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-rose-50 text-rose-700 border border-rose-200'
-                          }`}
-                        >
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              item.status === 'IN_STOCK'
-                                ? 'bg-emerald-500'
-                                : item.status === 'LOW_STOCK'
-                                ? 'bg-amber-500'
-                                : 'bg-rose-500'
-                            }`}
+                      <td className="is-actions">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon="restock"
+                            className="hidden sm:inline-flex"
+                            onClick={() => handleOpenStockModal(item, 'PURCHASE')}
+                            aria-label={`Restock ${item.name}`}
+                          >
+                            Restock
+                          </Button>
+                          <RowMenu
+                            label={`More actions for ${item.name}`}
+                            items={[
+                              { label: 'View details', icon: 'eye', onSelect: () => setDetailId(item.id) },
+                              { label: 'Edit item', icon: 'edit', onSelect: () => handleOpenEditModal(item) },
+                              { label: 'Restock', icon: 'restock', onSelect: () => handleOpenStockModal(item, 'PURCHASE') },
+                              { label: 'Record usage or loss', icon: 'usage', onSelect: () => handleOpenStockModal(item, 'DEDUCT') },
+                              {
+                                label: 'Delete item',
+                                icon: 'trash',
+                                danger: true,
+                                separatorBefore: true,
+                                onSelect: () => setDeletingIngredientId(item.id),
+                              },
+                            ]}
                           />
-                          {item.status.replace('_', ' ')}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => handleOpenStockModal(item)}
-                            className="p-1 text-slate-500 hover:text-orange-600 transition-colors cursor-pointer"
-                            title="Record Purchase / Stock In"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenEditModal(item)}
-                            className="p-1 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                            title="Edit Details"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeletingIngredientId(item.id)}
-                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                            title="Delete Item"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
                         </div>
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-        {/* Pagination bar */}
-        {filteredIngredients.length > itemsPerPage && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-            <div>
-              Showing <span className="font-bold">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
-              <span className="font-bold">
-                {Math.min(currentPage * itemsPerPage, filteredIngredients.length)}
-              </span>{' '}
-              of <span className="font-bold">{filteredIngredients.length}</span> items
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => p - 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Previous
-              </button>
-              <span className="px-2 font-bold text-slate-700">
-                {currentPage} / {totalPages}
-              </span>
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => p + 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
+          <Pagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={filteredIngredients.length}
+            onChange={setCurrentPage}
+            noun="items"
+          />
+        </Card>
       </div>
 
-      {/* 3. ADD / EDIT INGREDIENT / PACKAGING MODAL */}
-      {(isAddModalOpen || editingIngredient) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
-            onClick={() => {
-              setIsAddModalOpen(false)
-              setEditingIngredient(null)
-            }}
-          />
-          <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 z-10 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-2xl ${
-                    formItemType === 'PACKAGING'
-                      ? 'bg-indigo-100 text-indigo-600'
-                      : 'bg-orange-100 text-orange-600'
-                  }`}
-                >
-                  {formItemType === 'PACKAGING' ? (
-                    <span className="text-sm font-bold uppercase tracking-wide">Packaging</span>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                    </svg>
-                  )}
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {editingIngredient
-                      ? `Edit ${formItemType === 'PACKAGING' ? 'Packaging Material' : 'Ingredient'}`
-                      : `Register New ${formItemType === 'PACKAGING' ? 'Packaging Material' : 'Ingredient'}`}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">
-                    Configure base units, stock thresholds, and replenishment costs
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
+      {/* Item details drawer */}
+      <Drawer
+        open={Boolean(detailItem)}
+        onClose={() => setDetailId(null)}
+        title={detailItem?.name ?? ''}
+        description={
+          detailItem && (
+            <span className="mt-1 flex flex-wrap items-center gap-2">
+              <TypeBadge itemType={detailItem.itemType} />
+              <StockStatusBadge status={detailItem.status} />
+            </span>
+          )
+        }
+        footer={
+          detailItem && (
+            <>
+              <Button
+                variant="danger-ghost"
+                icon="trash"
+                className="mr-auto"
                 onClick={() => {
-                  setIsAddModalOpen(false)
-                  setEditingIngredient(null)
+                  setDeletingIngredientId(detailItem.id)
                 }}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+                Delete
+              </Button>
+              <Button variant="secondary" icon="edit" onClick={() => handleOpenEditModal(detailItem)}>
+                Edit
+              </Button>
+              <Button variant="primary" icon="restock" onClick={() => handleOpenStockModal(detailItem, 'PURCHASE')}>
+                Restock
+              </Button>
+            </>
+          )
+        }
+      >
+        {detailItem && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-[var(--inv-border)] p-4">
+              <p className="text-[13px] text-[var(--inv-text-3)]">On hand</p>
+              <p className="mt-1 text-[28px] font-bold leading-tight tracking-tight text-[var(--inv-text)]">
+                {formatQty(detailItem.currentStock)}{' '}
+                <span className="text-base font-medium text-[var(--inv-text-3)]">{detailItem.baseUnit}</span>
+              </p>
+              <div className="mt-3">
+                <StockMeter
+                  current={detailItem.currentStock}
+                  min={detailItem.minStockLevel}
+                  unit={detailItem.baseUnit}
+                  status={detailItem.status}
+                />
+              </div>
+              <p className="mt-2 text-[13px] text-[var(--inv-text-3)]">
+                Minimum {formatQty(detailItem.minStockLevel)} {detailItem.baseUnit}
+                {detailItem.status !== 'IN_STOCK' && (
+                  <>
+                    {' '}
+                    · suggested reorder {formatQty(detailItem.preferredRestockQty)} {detailItem.baseUnit}
+                  </>
+                )}
+              </p>
+              <div className="mt-4 flex gap-2">
+                <Button size="sm" variant="secondary" icon="usage" onClick={() => handleOpenStockModal(detailItem, 'DEDUCT')}>
+                  Record usage
+                </Button>
+              </div>
             </div>
 
-            <form onSubmit={handleSaveIngredient} className="mt-4 space-y-4">
-              {/* Category / Type Selector (Food vs Packaging) */}
+            <dl className="inv-dl">
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Inventory Classification <span className="text-rose-500">*</span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleItemTypeSwitch('FOOD')}
-                    className={`p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      formItemType === 'FOOD'
-                        ? 'border-orange-500 bg-orange-50 text-orange-950 font-bold ring-2 ring-orange-500/20'
-                        : 'border-slate-200 bg-slate-50/50 text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs leading-none">Food Ingredient</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Seafoods, produce, dairy, sauces</p>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleItemTypeSwitch('PACKAGING')}
-                    className={`p-2.5 rounded-xl border text-left flex items-center gap-2.5 transition-all cursor-pointer ${
-                      formItemType === 'PACKAGING'
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-950 font-bold ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 bg-slate-50/50 text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div>
-                      <p className="text-xs leading-none">Packaging Material</p>
-                      <p className="text-[10px] text-slate-400 mt-0.5">Trays, bowls, bags, cutlery, stickers</p>
-                    </div>
-                  </button>
-                </div>
+                <dt>Category</dt>
+                <dd>{detailItem.category}</dd>
               </div>
-
-              {/* Item Name */}
               <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  {formItemType === 'FOOD' ? 'Ingredient Name' : 'Packaging Item Name'} <span className="text-rose-500">*</span>
-                </label>
+                <dt>Base unit</dt>
+                <dd>{detailItem.baseUnit}</dd>
+              </div>
+              <div>
+                <dt>Reorder quantity</dt>
+                <dd>
+                  {formatQty(detailItem.preferredRestockQty)} {detailItem.baseUnit}
+                </dd>
+              </div>
+              <div>
+                <dt>Unit cost</dt>
+                <dd>{detailItem.costPerUnit ? formatPeso(detailItem.costPerUnit) : '—'}</dd>
+              </div>
+              <div>
+                <dt>Stock value</dt>
+                <dd>{formatPeso(detailItem.currentStock * (detailItem.costPerUnit || 0))}</dd>
+              </div>
+              <div>
+                <dt>Supplier</dt>
+                <dd>{detailItem.supplierName || '—'}</dd>
+              </div>
+              <div>
+                <dt>Last restocked</dt>
+                <dd>{detailItem.lastRestockedAt ? formatDate(detailItem.lastRestockedAt) : '—'}</dd>
+              </div>
+              <div>
+                <dt>Last updated</dt>
+                <dd>{formatDate(detailItem.updatedAt)}</dd>
+              </div>
+            </dl>
+
+            {detailItem.storageNotes && (
+              <div>
+                <h3 className="mb-1.5 text-sm font-semibold text-[var(--inv-text)]">Storage notes</h3>
+                <p className="text-sm leading-relaxed text-[var(--inv-text-2)]">{detailItem.storageNotes}</p>
+              </div>
+            )}
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-[var(--inv-text)]">Recent movements</h3>
+              {detailMovements.length === 0 ? (
+                <p className="text-sm text-[var(--inv-text-3)]">No stock movements recorded for this item yet.</p>
+              ) : (
+                <ul className="divide-y divide-[var(--inv-border)] rounded-xl border border-[var(--inv-border)]">
+                  {detailMovements.map((tx) => (
+                    <li key={tx.id} className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                      <div className="min-w-0">
+                        <Badge tone={MOVEMENT_TONE[tx.type] ?? 'neutral'}>{movementLabel(tx.type)}</Badge>
+                        <p className="mt-1 text-[13px] text-[var(--inv-text-3)]">{formatDate(tx.timestamp, true)}</p>
+                      </div>
+                      <span
+                        className={cx(
+                          'shrink-0 text-sm font-semibold',
+                          tx.quantityDelta > 0 ? 'text-[var(--inv-success)]' : 'text-[var(--inv-text)]'
+                        )}
+                      >
+                        {tx.quantityDelta > 0 ? '+' : '−'}
+                        {formatQty(Math.abs(tx.quantityDelta))} {tx.unit}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* Add / edit item */}
+      <Modal
+        open={isAddModalOpen || Boolean(editingIngredient)}
+        onClose={closeItemForm}
+        size="lg"
+        title={editingIngredient ? `Edit ${editingIngredient.name}` : 'Add item'}
+        description={
+          editingIngredient
+            ? 'Update details, stock levels and supplier.'
+            : 'Register a food ingredient or packaging material.'
+        }
+        onSubmit={handleSaveIngredient}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeItemForm}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit">
+              {editingIngredient ? 'Save changes' : formItemType === 'PACKAGING' ? 'Add packaging' : 'Add ingredient'}
+            </Button>
+          </>
+        }
+      >
+        <div className="inv-form-section">
+          <p className="inv-form-section-title" id="ing-type-label">
+            Item type
+          </p>
+          <div className="inv-choice-group" role="radiogroup" aria-labelledby="ing-type-label">
+            {(
+              [
+                { value: 'FOOD', title: 'Food ingredient', desc: 'Seafood, produce, sauces, dairy' },
+                { value: 'PACKAGING', title: 'Packaging material', desc: 'Trays, bowls, bags, cutlery, stickers' },
+              ] as const
+            ).map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={formItemType === o.value}
+                className="inv-choice"
+                onClick={() => handleItemTypeSwitch(o.value)}
+              >
+                <span className="inv-choice-title">{o.title}</span>
+                <span className="inv-choice-desc">{o.desc}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="inv-form-section space-y-4">
+          <p className="inv-form-section-title">Details</p>
+          <Field label="Name" htmlFor="ing-name" required error={formErrors.name}>
+            <input
+              {...fieldAria('ing-name', formErrors.name)}
+              type="text"
+              className="inv-input"
+              autoComplete="off"
+              placeholder={formItemType === 'FOOD' ? 'e.g. Fresh white shrimp' : 'e.g. Paper bowl 500 ml'}
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+            />
+          </Field>
+          <div className="inv-grid-2">
+            <Field label="Category" htmlFor="ing-category" required>
+              <select
+                id="ing-category"
+                className="inv-select"
+                value={formCategory}
+                onChange={(e) => setFormCategory(e.target.value as IngredientCategory)}
+              >
+                {(formItemType === 'FOOD' ? FOOD_CATEGORIES : PACKAGING_CATEGORIES).map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="Base unit"
+              htmlFor="ing-unit"
+              required
+              hint="The unit stock is counted in."
+            >
+              <select
+                {...fieldAria('ing-unit', undefined, true)}
+                className="inv-select"
+                value={formBaseUnit}
+                onChange={(e) => setFormBaseUnit(e.target.value as MeasurementUnit)}
+              >
+                {MEASUREMENT_UNITS.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </div>
+
+        <div className="inv-form-section space-y-4">
+          <p className="inv-form-section-title">Stock levels</p>
+          <div className="inv-grid-2">
+            <Field
+              label={editingIngredient ? 'Current stock' : 'Opening stock'}
+              htmlFor="ing-currentStock"
+              optional={!editingIngredient}
+              error={formErrors.currentStock}
+              hint={editingIngredient ? 'To log a restock or usage, use Restock instead.' : 'Leave empty to start at 0.'}
+            >
+              <div className="inv-input-group">
                 <input
-                  type="text"
-                  placeholder={
-                    formItemType === 'FOOD'
-                      ? 'e.g. Fresh White Shrimp, Cajun Butter, Jasmine Rice'
-                      : 'e.g. Food Tray 3-Compartment, Paper Bowl 500ml, Plastic Bag (Medium), Spoon & Fork Set'
-                  }
-                  value={formName}
-                  onChange={(e) => setFormName(e.target.value)}
-                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                    formErrors.name ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                  }`}
-                />
-                {formErrors.name && <p className="mt-1 text-[11px] text-rose-500">{formErrors.name}</p>}
-              </div>
-
-              {/* Category & Base Unit */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Category <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={formCategory}
-                    onChange={(e) => setFormCategory(e.target.value as IngredientCategory)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  >
-                    {(formItemType === 'FOOD' ? FOOD_CATEGORIES : PACKAGING_CATEGORIES).map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Base Unit <span className="text-rose-500">*</span>
-                  </label>
-                  <select
-                    value={formBaseUnit}
-                    onChange={(e) => setFormBaseUnit(e.target.value as MeasurementUnit)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  >
-                    {MEASUREMENT_UNITS.map((u) => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Current Stock */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Initial Stock ({formBaseUnit})
-                </label>
-                <input
+                  {...fieldAria('ing-currentStock', formErrors.currentStock, true)}
                   type="number"
+                  inputMode="decimal"
                   min="0"
                   step="any"
+                  className="inv-input"
                   placeholder="0"
                   value={formCurrentStock}
                   onChange={(e) => setFormCurrentStock(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
                 />
+                <span className="inv-input-suffix">{formUnit}</span>
               </div>
+            </Field>
+            <div className="hidden sm:block" />
+            <Field
+              label="Minimum level"
+              htmlFor="ing-minStock"
+              required
+              error={formErrors.minStock}
+              hint="Marked as low stock at or below this."
+            >
+              <div className="inv-input-group">
+                <input
+                  {...fieldAria('ing-minStock', formErrors.minStock, true)}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  className="inv-input"
+                  placeholder={formItemType === 'PACKAGING' ? '50' : '1000'}
+                  value={formMinStock}
+                  onChange={(e) => setFormMinStock(e.target.value === '' ? '' : Number(e.target.value))}
+                />
+                <span className="inv-input-suffix">{formUnit}</span>
+              </div>
+            </Field>
+            <Field
+              label="Reorder quantity"
+              htmlFor="ing-reorderQty"
+              required
+              error={formErrors.reorderQty}
+              hint="How much you usually buy at once."
+            >
+              <div className="inv-input-group">
+                <input
+                  {...fieldAria('ing-reorderQty', formErrors.reorderQty, true)}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  className="inv-input"
+                  placeholder={formItemType === 'PACKAGING' ? '200' : '5000'}
+                  value={formReorderQty}
+                  onChange={(e) => setFormReorderQty(e.target.value === '' ? '' : Number(e.target.value))}
+                />
+                <span className="inv-input-suffix">{formUnit}</span>
+              </div>
+            </Field>
+          </div>
+          <Field
+            label="Unit cost"
+            htmlFor="ing-cost"
+            optional
+            error={formErrors.cost}
+            hint={`Price per ${formUnit}. Used for stock value, recipe cost and waste reports.`}
+          >
+            <div className="inv-input-group">
+              <span className="inv-input-prefix">₱</span>
+              <input
+                {...fieldAria('ing-cost', formErrors.cost, true)}
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                className="inv-input has-prefix"
+                placeholder="0.00"
+                value={formCost}
+                onChange={(e) => setFormCost(e.target.value === '' ? '' : Number(e.target.value))}
+              />
+            </div>
+          </Field>
+        </div>
 
-              {/* Minimum Stock & Reorder Quantity */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Min Stock Threshold ({formBaseUnit}) <span className="text-rose-500">*</span>
-                  </label>
+        <div className="inv-form-section space-y-4">
+          <p className="inv-form-section-title">Supplier and storage</p>
+          <Field label="Preferred supplier" htmlFor="ing-supplier" optional>
+            <select
+              id="ing-supplier"
+              className="inv-select"
+              value={formSupplierId}
+              onChange={(e) => setFormSupplierId(e.target.value)}
+            >
+              <option value="">No preferred supplier</option>
+              {suppliers.map((sup) => (
+                <option key={sup.id} value={sup.id}>
+                  {sup.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Storage and handling notes" htmlFor="ing-notes" optional>
+            <textarea
+              id="ing-notes"
+              rows={2}
+              className="inv-textarea"
+              placeholder={
+                formItemType === 'FOOD'
+                  ? 'e.g. Keep in walk-in freezer at -18°C. Shelf life 14 days.'
+                  : 'e.g. Dry packaging rack, cartons of 500 pcs.'
+              }
+              value={formStorageNotes}
+              onChange={(e) => setFormStorageNotes(e.target.value)}
+            />
+          </Field>
+        </div>
+      </Modal>
+
+      {/* Restock / usage */}
+      <Modal
+        open={isStockModalOpen}
+        onClose={() => setIsStockModalOpen(false)}
+        title={stockModalMode === 'PURCHASE' ? 'Restock item' : 'Record usage or loss'}
+        description={
+          stockModalMode === 'PURCHASE'
+            ? 'Add newly purchased stock to the balance.'
+            : 'Remove stock used in the kitchen, wasted, or corrected after a count.'
+        }
+        onSubmit={handleConfirmStockModal}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsStockModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant={stockModalMode === 'PURCHASE' ? 'primary' : 'danger'} type="submit">
+              {stockModalMode === 'PURCHASE' ? 'Add to stock' : 'Remove from stock'}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <Segmented
+            label="Movement direction"
+            value={stockModalMode}
+            onChange={(m) => {
+              setStockModalMode(m)
+              setStockErrors({})
+            }}
+            options={[
+              { value: 'PURCHASE', label: 'Stock in' },
+              { value: 'DEDUCT', label: 'Stock out' },
+            ]}
+          />
+
+          <Field label="Item" htmlFor="stk-item" required error={stockErrors.item}>
+            <select
+              {...fieldAria('stk-item', stockErrors.item)}
+              className="inv-select"
+              value={selectedStockItemId}
+              onChange={(e) => {
+                const newId = e.target.value
+                setSelectedStockItemId(newId)
+                const found = ingredients.find((i) => i.id === newId)
+                if (found) {
+                  setPurchaseUnit(found.baseUnit === 'g' ? 'kg' : found.baseUnit)
+                  if (!sellerMarket && found.supplierName) setSellerMarket(found.supplierName)
+                }
+              }}
+            >
+              <option value="" disabled>
+                Choose an item
+              </option>
+              <optgroup label="Food">
+                {ingredients
+                  .filter((i) => (i.itemType || 'FOOD') === 'FOOD')
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </optgroup>
+              <optgroup label="Packaging">
+                {ingredients
+                  .filter((i) => i.itemType === 'PACKAGING')
+                  .map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+              </optgroup>
+            </select>
+          </Field>
+
+          {selectedStockItem && (
+            <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--inv-surface-2)] px-3.5 py-2.5 text-sm">
+              <span className="text-[var(--inv-text-3)]">On hand now</span>
+              <span className="flex items-center gap-2">
+                <b className="font-semibold text-[var(--inv-text)]">
+                  {formatQty(selectedStockItem.currentStock)} {selectedStockItem.baseUnit}
+                </b>
+                <StockStatusBadge status={selectedStockItem.status} />
+              </span>
+            </div>
+          )}
+
+          {stockModalMode === 'PURCHASE' ? (
+            <>
+              <div className="inv-grid-2">
+                <Field label="Quantity bought" htmlFor="stk-purchaseQty" required error={stockErrors.purchaseQty}>
                   <input
+                    {...fieldAria('stk-purchaseQty', stockErrors.purchaseQty)}
                     type="number"
+                    inputMode="decimal"
                     min="0"
                     step="any"
-                    placeholder={formItemType === 'PACKAGING' ? 'e.g. 50' : 'e.g. 1000'}
-                    value={formMinStock}
-                    onChange={(e) => setFormMinStock(e.target.value === '' ? '' : Number(e.target.value))}
-                    className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                      formErrors.minStock ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                    }`}
+                    className="inv-input"
+                    placeholder="e.g. 5"
+                    value={purchaseQty}
+                    onChange={(e) => setPurchaseQty(e.target.value === '' ? '' : Number(e.target.value))}
                   />
-                  {formErrors.minStock && <p className="mt-1 text-[11px] text-rose-500">{formErrors.minStock}</p>}
-                </div>
+                </Field>
+                <Field label="Unit" htmlFor="stk-purchaseUnit" required error={stockErrors.purchaseUnit}>
+                  <select
+                    {...fieldAria('stk-purchaseUnit', stockErrors.purchaseUnit)}
+                    className="inv-select"
+                    value={purchaseUnit}
+                    onChange={(e) => setPurchaseUnit(e.target.value)}
+                  >
+                    {selectedStockItem && !PURCHASE_UNITS.some((u) => u.value === selectedStockItem.baseUnit) && (
+                      <option value={selectedStockItem.baseUnit}>{selectedStockItem.baseUnit}</option>
+                    )}
+                    {PURCHASE_UNITS.map((u) => (
+                      <option key={u.value} value={u.value}>
+                        {u.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Preferred Reorder Qty ({formBaseUnit}) <span className="text-rose-500">*</span>
-                  </label>
+              {selectedStockItem && purchaseDelta > 0 && (
+                <Notice tone={unitsMismatch ? 'warning' : 'success'}>
+                  {unitsConvert ? (
+                    <>
+                      {formatQty(Number(purchaseQty))} {purchaseUnit} = <b>{formatQty(purchaseDelta)} {selectedStockItem.baseUnit}</b>.
+                      New balance: <b>{formatQty(selectedStockItem.currentStock + purchaseDelta)} {selectedStockItem.baseUnit}</b>
+                    </>
+                  ) : unitsMismatch ? (
+                    <>
+                      This item is counted in <b>{selectedStockItem.baseUnit}</b>. {formatQty(purchaseDelta)} will be
+                      added as {selectedStockItem.baseUnit}, so check the unit before saving.
+                    </>
+                  ) : (
+                    <>
+                      New balance: <b>{formatQty(selectedStockItem.currentStock + purchaseDelta)} {selectedStockItem.baseUnit}</b>
+                    </>
+                  )}
+                </Notice>
+              )}
+
+              <div className="inv-grid-2">
+                <Field label="Supplier or market" htmlFor="stk-seller" optional>
                   <input
-                    type="number"
-                    min="1"
-                    step="any"
-                    placeholder={formItemType === 'PACKAGING' ? 'e.g. 200' : 'e.g. 5000'}
-                    value={formReorderQty}
-                    onChange={(e) => setFormReorderQty(e.target.value === '' ? '' : Number(e.target.value))}
-                    className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                      formErrors.reorderQty ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                    }`}
+                    id="stk-seller"
+                    type="text"
+                    className="inv-input"
+                    placeholder="e.g. Navotas Fish Port"
+                    value={sellerMarket}
+                    onChange={(e) => setSellerMarket(e.target.value)}
+                    list="seller-market-list"
                   />
-                  {formErrors.reorderQty && <p className="mt-1 text-[11px] text-rose-500">{formErrors.reorderQty}</p>}
-                </div>
+                  <datalist id="seller-market-list">
+                    <option value="Navotas Fish Port" />
+                    <option value="Balintawak Central Wholesale Produce" />
+                    <option value="Metro Pack & Green Disposables" />
+                    <option value="Golden Dairy & Oil Trading" />
+                    <option value="Local Wet Market" />
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.name} />
+                    ))}
+                  </datalist>
+                </Field>
+                <Field label="Purchase date" htmlFor="stk-purchaseDate" required error={stockErrors.purchaseDate}>
+                  <input
+                    {...fieldAria('stk-purchaseDate', stockErrors.purchaseDate)}
+                    type="date"
+                    max={today()}
+                    className="inv-input"
+                    value={purchaseDate}
+                    onChange={(e) => setPurchaseDate(e.target.value)}
+                  />
+                </Field>
               </div>
-
-              {/* Preferred Supplier */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">Preferred Supplier</label>
+            </>
+          ) : (
+            <>
+              <Field label="Reason" htmlFor="stk-reason" required>
                 <select
-                  value={formSupplierId}
-                  onChange={(e) => setFormSupplierId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
+                  id="stk-reason"
+                  className="inv-select"
+                  value={deductReason}
+                  onChange={(e) => setDeductReason(e.target.value)}
                 >
-                  <option value="">None / Multiple Suppliers</option>
-                  {suppliers.map((sup) => (
-                    <option key={sup.id} value={sup.id}>
-                      {sup.name} ({sup.contactPerson})
+                  {DEDUCT_REASONS.map((r) => (
+                    <option key={r.value} value={r.value}>
+                      {r.value}
                     </option>
                   ))}
                 </select>
-              </div>
-
-              {/* Storage Notes */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">Storage & Handling Notes</label>
-                <textarea
-                  rows={2}
-                  placeholder={
-                    formItemType === 'FOOD'
-                      ? 'e.g. Keep in walk-in freezer at -18°C. Shelf life 14 days.'
-                      : 'e.g. Dry packaging rack, cartons of 500 pcs, keep dry and clean.'
-                  }
-                  value={formStorageNotes}
-                  onChange={(e) => setFormStorageNotes(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                />
-              </div>
-
-              {/* Action Buttons */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddModalOpen(false)
-                    setEditingIngredient(null)
-                  }}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className={`rounded-xl px-4 py-2 text-xs font-bold text-white shadow-sm transition-all cursor-pointer ${
-                    formItemType === 'PACKAGING'
-                      ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
-                      : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
-                  }`}
-                >
-                  {editingIngredient
-                    ? 'Save Changes'
-                    : formItemType === 'PACKAGING'
-                    ? 'Register Packaging'
-                    : 'Register Ingredient'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* 4. REVISED MANUAL PURCHASE INTAKE & STOCK ADJUSTMENT MODAL */}
-      {isStockModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs transition-opacity"
-            onClick={() => setIsStockModalOpen(false)}
-          />
-          <div className="relative w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 z-10 max-h-[90vh] overflow-y-auto">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  {stockModalMode === 'PURCHASE' ? 'Record Purchase / Stock In' : 'Adjust Stock Count'}
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {stockModalMode === 'PURCHASE'
-                    ? 'Manually log newly purchased ingredients or packaging intake.'
-                    : 'Record wastage, spoilage or reconciliation adjustments.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsStockModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <form onSubmit={handleConfirmStockModal} className="mt-4 space-y-4">
-              {stockModalError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
-                  {stockModalError}
+              </Field>
+              <Field label="Quantity" htmlFor="stk-deductQty" required error={stockErrors.deductQty}>
+                <div className="inv-input-group">
+                  <input
+                    {...fieldAria('stk-deductQty', stockErrors.deductQty)}
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    className="inv-input"
+                    placeholder="0"
+                    value={deductQty}
+                    onChange={(e) => setDeductQty(e.target.value === '' ? '' : Number(e.target.value))}
+                  />
+                  <span className="inv-input-suffix">{selectedStockItem?.baseUnit ?? 'units'}</span>
                 </div>
+              </Field>
+              {selectedStockItem && Number(deductQty) > 0 && Number(deductQty) <= selectedStockItem.currentStock && (
+                <Notice tone={selectedStockItem.currentStock - Number(deductQty) <= selectedStockItem.minStockLevel ? 'warning' : 'info'}>
+                  New balance:{' '}
+                  <b>
+                    {formatQty(selectedStockItem.currentStock - Number(deductQty))} {selectedStockItem.baseUnit}
+                  </b>
+                  {selectedStockItem.currentStock - Number(deductQty) <= selectedStockItem.minStockLevel &&
+                    ' — this will put the item at or below its minimum level.'}
+                </Notice>
               )}
-
-              {/* Mode Toggle */}
-              <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setStockModalMode('PURCHASE')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockModalMode === 'PURCHASE'
-                      ? 'bg-white text-orange-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  + Add Purchased Stock
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setStockModalMode('DEDUCT')}
-                  className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    stockModalMode === 'DEDUCT'
-                      ? 'bg-white text-rose-700 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  - Deduct / Spoilage / Trim
-                </button>
-              </div>
-
-              {/* 1. Inventory Item (* Mandatory) */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Inventory Item <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={selectedStockItemId}
-                  onChange={(e) => {
-                    const newId = e.target.value
-                    setSelectedStockItemId(newId)
-                    const found = ingredients.find((i) => i.id === newId)
-                    if (found) {
-                      setPurchaseUnit(found.baseUnit === 'g' ? 'kg' : found.baseUnit)
-                      if (!sellerMarket && found.supplierName) {
-                        setSellerMarket(found.supplierName)
-                      }
-                    }
-                  }}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                >
-                  <option value="" disabled>-- Select Inventory Item --</option>
-                  {ingredients.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name} ({item.itemType === 'PACKAGING' ? 'Packaging' : 'Food'}) — On Hand: {item.currentStock.toLocaleString()} {item.baseUnit}
-                    </option>
-                  ))}
-                </select>
-                {selectedStockItem && (
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Current stock level: <strong className="text-slate-800">{selectedStockItem.currentStock.toLocaleString()} {selectedStockItem.baseUnit}</strong> (Min: {selectedStockItem.minStockLevel} {selectedStockItem.baseUnit})
-                  </p>
-                )}
-              </div>
-
-              {stockModalMode === 'PURCHASE' ? (
-                <>
-                  {/* 2. Quantity Purchased & Purchase Unit */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700">
-                        Quantity Purchased <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="number"
-                        min="0.001"
-                        step="any"
-                        placeholder="e.g. 5 or 2.5"
-                        value={purchaseQty}
-                        onChange={(e) => setPurchaseQty(e.target.value === '' ? '' : Number(e.target.value))}
-                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-bold text-slate-700">
-                        Purchase Unit <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        value={purchaseUnit}
-                        onChange={(e) => setPurchaseUnit(e.target.value)}
-                        className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                      >
-                        <option value="kg">kg (Kilograms) - Converts to g</option>
-                        <option value="g">g (Grams)</option>
-                        <option value="pcs">pcs (Pieces)</option>
-                        <option value="packs">packs (Packs)</option>
-                        <option value="boxes">boxes (Boxes)</option>
-                        <option value="cans">cans (Cans)</option>
-                        <option value="bottles">bottles (Bottles)</option>
-                        <option value="L">L (Liters) - Converts to ml</option>
-                        <option value="ml">ml (Milliliters)</option>
-                        <option value="tins">tins (Tins)</option>
-                        <option value="tub">tub (Tubs)</option>
-                        <option value="sack">sack (Sacks)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* 3. Automatic Conversion Card */}
-                  {selectedStockItem && Number(purchaseQty) > 0 && selectedStockItem.baseUnit === 'g' && purchaseUnit === 'kg' && (
-                    <div className="p-3.5 rounded-xl bg-orange-50 border border-orange-200 text-xs text-orange-950 space-y-1.5">
-                      <div className="flex items-center justify-between font-bold text-orange-900">
-                        <span className="flex items-center gap-1.5">
-                          <span className="text-sm">⚖️</span>
-                          <span>Automatic Unit Conversion (kg ➔ grams)</span>
-                        </span>
-                        <span className="px-2 py-0.5 rounded-md bg-orange-200/80 text-[10px] font-extrabold text-orange-900">
-                          1 kg = 1,000 g
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between pt-1">
-                        <span className="text-slate-600">Quantity received:</span>
-                        <span className="font-bold text-slate-800">
-                          {Number(purchaseQty)} kg = <span className="text-orange-700 text-sm font-extrabold">{(Number(purchaseQty) * 1000).toLocaleString()} grams</span>
-                        </span>
-                      </div>
-                      <div className="flex items-baseline justify-between text-[11px] text-slate-500 pt-1 border-t border-orange-200/60">
-                        <span>New balance after intake:</span>
-                        <span>
-                          {selectedStockItem.currentStock.toLocaleString()} g + {(Number(purchaseQty) * 1000).toLocaleString()} g ={' '}
-                          <strong className="text-emerald-700 font-bold">
-                            {(selectedStockItem.currentStock + Number(purchaseQty) * 1000).toLocaleString()} grams
-                          </strong>
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedStockItem && Number(purchaseQty) > 0 && !(selectedStockItem.baseUnit === 'g' && purchaseUnit === 'kg') && (
-                    <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-center justify-between">
-                      <span>Stock to be added:</span>
-                      <span className="font-bold text-slate-900">
-                        +{Number(purchaseQty).toLocaleString()} {purchaseUnit}
-                        <span className="text-[11px] font-normal text-slate-500 ml-1.5">
-                          (New Total: {(selectedStockItem.currentStock + Number(purchaseQty)).toLocaleString()} {selectedStockItem.baseUnit})
-                        </span>
-                      </span>
-                    </div>
-                  )}
-
-                  {/* 4. Seller / Market (Optional) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      Seller / Market <span className="text-slate-400 font-normal">(Optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Navotas Fish Port, Balintawak Market, Wet Market"
-                      value={sellerMarket}
-                      onChange={(e) => setSellerMarket(e.target.value)}
-                      list="seller-market-list"
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                    />
-                    <datalist id="seller-market-list">
-                      <option value="Navotas Fish Port" />
-                      <option value="Balintawak Central Wholesale Produce" />
-                      <option value="Metro Pack & Green Disposables" />
-                      <option value="Golden Dairy & Oil Trading" />
-                      <option value="Local Wet Market" />
-                      {suppliers.map((s) => (
-                        <option key={s.id} value={s.name} />
-                      ))}
-                    </datalist>
-                  </div>
-
-                  {/* 5. Purchase Date (* Mandatory) */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      Purchase Date <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={purchaseDate}
-                      onChange={(e) => setPurchaseDate(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  {/* Deduct Fields */}
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      Deduction Quantity ({selectedStockItem?.baseUnit || 'units'}) <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="any"
-                      placeholder="0"
-                      value={deductQty}
-                      onChange={(e) => setDeductQty(e.target.value === '' ? '' : Number(e.target.value))}
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700">
-                      Reason for Adjustment
-                    </label>
-                    <select
-                      value={deductReason}
-                      onChange={(e) => setDeductReason(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                    >
-                      <option value="Physical Audit Count Reconciliation">Physical Audit Count Reconciliation</option>
-                      <option value="Food Waste / Spoilage Deduction">Food Waste / Spoilage Deduction</option>
-                      <option value="Packaging Damage / Defective Batch">Packaging Damage / Defective Batch</option>
-                      <option value="Kitchen Preparation Loss / Trim">Kitchen Preparation Loss / Trim</option>
-                      <option value="Other Manual Adjustment">Other Manual Adjustment</option>
-                    </select>
-                  </div>
-                </>
-              )}
-
-              {/* Action Buttons */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setIsStockModalOpen(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className={`rounded-xl px-4 py-2 text-xs font-bold text-white shadow-sm transition-all cursor-pointer ${
-                    stockModalMode === 'PURCHASE'
-                      ? 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
-                      : 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/20'
-                  }`}
-                >
-                  {stockModalMode === 'PURCHASE' ? '+ Confirm Purchase & Add Stock' : 'Confirm Deduction'}
-                </button>
-              </div>
-            </form>
-          </div>
+            </>
+          )}
         </div>
-      )}
+      </Modal>
 
-      {/* 5. DELETE CONFIRMATION MODAL */}
       <InventoryConfirmModal
         isOpen={Boolean(deletingIngredientId)}
-        title="Remove Item from Catalog"
-        message="Are you sure you want to delete this inventory item? Any product recipes linked to it will need to be reconfigured."
-        confirmText="Delete Item"
+        title="Delete this item?"
+        message={`${
+          ingredients.find((i) => i.id === deletingIngredientId)?.name ?? 'This item'
+        } will be removed from the catalog along with its stock history. Items used in a recipe can't be deleted until they're removed from it.`}
+        confirmText="Delete item"
         isDestructive
         onConfirm={() => {
           if (deletingIngredientId) {
             onDeleteIngredient(deletingIngredientId)
+            if (detailId === deletingIngredientId) setDetailId(null)
             setDeletingIngredientId(null)
           }
         }}

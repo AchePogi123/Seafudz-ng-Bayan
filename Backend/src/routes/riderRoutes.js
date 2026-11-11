@@ -3,6 +3,7 @@ import { query } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
+import { syncInventoryForStatus, releaseOrderStock } from '../services/inventoryService.js';
 
 const router = Router();
 
@@ -263,6 +264,8 @@ export async function handleRiderStatusUpdate(req, res) {
       console.warn('DB update note (Rider Flow):', dbErr.message);
     }
 
+    await syncInventoryForStatus(id, nextStatus);
+
     if (!updatedOrder) {
       const newRec = {
         id,
@@ -302,6 +305,9 @@ export async function handleDeleteOrder(req, res) {
   try {
     const { id } = req.params;
     inMemoryOrders.delete(id);
+
+    // Deleting an order that was never served gives its ingredients back
+    await releaseOrderStock(id, { reason: `Order ${id} deleted`, skipIfCompleted: true });
 
     try {
       await query(`DELETE FROM order_items WHERE order_id = $1`, [id]);

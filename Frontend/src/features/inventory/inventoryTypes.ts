@@ -198,6 +198,7 @@ export type TransactionType =
   | 'CONSUMPTION'
   | 'WASTE'
   | 'ADJUSTMENT'
+  | 'ORDER_RETURN' // stock given back when an order is cancelled
 
 export interface StockTransaction {
   id: string

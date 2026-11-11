@@ -4,6 +4,17 @@ import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddle
 import { inMemoryOrders, formatOrderResponse } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 import { inMemoryProductAvailability } from './menuRoutes.js';
+import {
+  reserveForOrder,
+  returnForOrder,
+  returnForItems,
+  broadcastInventoryChange,
+  normalizeFulfillment,
+  withTransaction,
+  releaseOrderStock,
+  syncInventoryForStatus,
+  getOrderFulfillment,
+} from '../services/inventoryService.js';
 
 const router = Router();
 
@@ -433,6 +444,7 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     const createdOrder = orderRes.rows[0];
 
     // Insert order items
+    const reservableItems = [];
     for (const ci of cartItems) {
       const productId = ci.item ? ci.item.id : (ci.productId || ci.menuItemId || ci.id || null);
       const snapshotItemName = ci.item ? ci.item.name : (ci.name || ci.snapshot_item_name || 'Seafood Item');
@@ -444,8 +456,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       const itemSql = `
         INSERT INTO order_items (order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, notes)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
       `;
-      await client.query(itemSql, [
+      const insertedItem = await client.query(itemSql, [
         createdOrder.id,
         productId,
         snapshotItemName,
@@ -454,7 +467,28 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         itemSubtotal,
         itemNotes,
       ]);
+      reservableItems.push({
+        orderItemId: insertedItem.rows[0]?.id ?? null,
+        product_id: productId,
+        name: snapshotItemName,
+        quantity: itemQuantity,
+      });
     }
+
+    // Take the ingredients out of inventory (throws INSUFFICIENT_STOCK -> whole order rolls back)
+    const reservation = await reserveForOrder(
+      client,
+      createdOrder.id,
+      reservableItems,
+      normalizeFulfillment(
+        req.body.fulfillmentType,
+        req.body.fulfillment_type,
+        orderType !== 'ONLINE' ? orderType : undefined,
+        type,
+        deliveryAddress ? 'DELIVERY' : undefined
+      ),
+      { performedBy: req.user?.fullname || req.user?.name || req.user?.role || 'POS' }
+    );
 
     // Insert payment record
     const finalPaymentMethod = paymentMethod || 'CASH';
@@ -534,6 +568,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
 
     await client.query('COMMIT');
     client.release();
+    // after commit: recalculate every product sharing the consumed ingredients/packaging
+    if (reservation.reserved) broadcastInventoryChange(reservation.ingredientIds);
 
     const formattedOrder = formatOrderResponse(inMemPayload);
     emitOrderUpdate(formattedOrder);
@@ -560,8 +596,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     await client.query('ROLLBACK');
     client.release();
     console.error('Error creating order:', error);
-    if (error.code === 'ITEM_OUT_OF_STOCK' || error.code === 'ITEM_DELETED') {
-      return res.status(409).json({ success: false, error: error.code, message: error.message });
+    if (error.code === 'ITEM_OUT_OF_STOCK' || error.code === 'ITEM_DELETED' || error.code === 'INSUFFICIENT_STOCK') {
+      return res.status(409).json({ success: false, error: error.code, message: error.message, details: error.details });
     }
     return res.status(500).json({
       success: false,
@@ -576,6 +612,9 @@ router.delete('/orders/:id', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
     inMemoryOrders.delete(id);
+
+    // Deleting an order that was never served gives its ingredients back
+    await releaseOrderStock(id, { reason: `Order ${id} deleted`, skipIfCompleted: true });
 
     try {
       await query(`DELETE FROM refunds WHERE order_id = $1`, [id]);
@@ -788,18 +827,24 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
 
       // If items provided, recreate order_items in DB
       if (Array.isArray(items) && items.length > 0) {
+        // Inventory: give back what the old items took, then take what the edited items need
+        const editFulfillment = await getOrderFulfillment(client, id);
+        await returnForOrder(client, id, { wasteFood: false, reason: `Order ${id} edited`, performedBy: 'POS' });
         await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
+        const reservable = [];
         for (const item of items) {
           const itemName = item.name || item.product_name_snapshot || 'Item';
           const qty = item.quantity || 1;
           const price = item.price || item.unit_price || 0;
           const prodId = item.productId || item.product_id || null;
-          await client.query(
+          const ins = await client.query(
             `INSERT INTO order_items (order_id, product_id, product_name_snapshot, quantity, unit_price, subtotal)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
             [id, prodId, itemName, qty, price, qty * price]
           );
+          reservable.push({ orderItemId: ins.rows[0]?.id ?? null, product_id: prodId, name: itemName, quantity: qty });
         }
+        await reserveForOrder(client, id, reservable, editFulfillment, { performedBy: 'POS' });
       } else {
         const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
         if (effectiveStatus === 'CONFIRMED') {
@@ -841,9 +886,13 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
       }
 
       await client.query('COMMIT');
+      broadcastInventoryChange();
     } catch (dbErr) {
       if (client) {
         try { await client.query('ROLLBACK'); } catch {}
+      }
+      if (dbErr.code === 'INSUFFICIENT_STOCK') {
+        return res.status(409).json({ success: false, error: dbErr.code, message: dbErr.message, details: dbErr.details });
       }
       console.error('[PUT /orders/:id] DB update order ERROR:', dbErr);
     } finally {
@@ -851,6 +900,8 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
         client.release();
       }
     }
+
+    if (status) await syncInventoryForStatus(id, String(status).toUpperCase());
 
     console.log(`[UPDATE] Order ${id} updated in DB and memory`);
     try {
@@ -896,6 +947,7 @@ router.patch('/orders/:id/status', requireAuth, requireRole(['admin', 'cashier',
       RETURNING *
     `;
     const { rows } = await query(sql, [finalStatus, id]);
+    await syncInventoryForStatus(id, finalStatus);
 
     return res.status(200).json({
       success: true,
@@ -1111,6 +1163,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       const pool = await getDbPool();
       const client = await pool.connect();
       let persistedItems = [];
+      let reservation = null;
       try {
         await client.query('BEGIN');
 
@@ -1289,9 +1342,35 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           );
         }
 
+        // Take the ingredients out of inventory (INSUFFICIENT_STOCK rolls the whole order back)
+        reservation = await reserveForOrder(
+          client,
+          orderId,
+          persistedItems.map((item) => ({
+            orderItemId: item.id,
+            product_id: item.product_id,
+            name: item.product_name_snapshot,
+            quantity: item.quantity,
+          })),
+          isPos
+            ? normalizeFulfillment(req.body.fulfillmentType, req.body.orderType, req.body.type)
+            : fulfillmentType,
+          { performedBy: isPos ? 'POS' : cleanCustomer }
+        );
+
         await client.query('COMMIT');
+        // after commit: recalculate every product sharing the consumed ingredients/packaging
+        if (reservation?.reserved) broadcastInventoryChange(reservation.ingredientIds);
       } catch (dbErr) {
         try { await client.query('ROLLBACK'); } catch {}
+        if (dbErr.code === 'INSUFFICIENT_STOCK') {
+          return res.status(409).json({
+            success: false,
+            error: dbErr.code,
+            message: dbErr.message,
+            details: dbErr.details,
+          });
+        }
         console.error('Could not persist order:', dbErr.message);
         return res.status(500).json({
           success: false,

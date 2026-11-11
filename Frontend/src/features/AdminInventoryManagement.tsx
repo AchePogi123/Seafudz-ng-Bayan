@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
 import type {
@@ -8,921 +8,386 @@ import type {
   PurchaseOrder,
   StockTransaction,
   MeasurementUnit,
-  StockStatus,
+  TransactionType,
 } from './inventory/inventoryTypes'
-import InventoryDashboardTab from './inventory/InventoryDashboardTab'
-import IngredientsTab from './inventory/IngredientsTab'
-import RecipesBOMTab from './inventory/RecipesBOMTab'
-import SuppliersTab from './inventory/SuppliersTab'
-import PurchasesReceivingTab from './inventory/PurchasesReceivingTab'
-import StockHistoryTab from './inventory/StockHistoryTab'
-import InventoryReportsTab from './inventory/InventoryReportsTab'
+import InventoryConfirmModal from './inventory/InventoryConfirmModal'
+import { Icon, Button, TabSkeleton, Notice } from './inventory/ui'
 import InventoryToast, { type ToastMessage } from './inventory/InventoryToast'
-import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
+import {
+  ACTUAL_INGREDIENTS,
+  ACTUAL_RECIPES,
+  ACTUAL_SUPPLIERS,
+  loadStoredIngredients,
+  loadStoredRecipes,
+  loadStoredSuppliers,
+  loadStoredTransactions,
+  clearStoredInventory,
+} from './inventory/actualInventoryData'
+import { inventoryApi } from './inventory/inventoryApi'
+import { subscribeOrderSync } from '../utils/orderSync'
 import './inventory/admin-inventory.css'
 
-// Demo sample data (Only activated when user clicks "Load Sample Demo Data" toggle)
-const SAMPLE_INGREDIENTS: Ingredient[] = [
-  // --- Food Ingredients ---
-  {
-    id: 'ing-001',
-    name: 'Fresh White Shrimp (Large)',
-    sku: 'ING-SHR-01',
-    itemType: 'FOOD',
-    category: 'Seafoods',
-    baseUnit: 'g',
-    currentStock: 8500,
-    minStockLevel: 2500,
-    preferredRestockQty: 10000,
-    costPerUnit: 0.45,
-    supplierId: 'sup-001',
-    supplierName: 'Navotas Seafood Port Distributors',
-    storageNotes: 'Keep in walk-in freezer at -18°C. Thaw in cold running water.',
-    status: 'IN_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'ing-002',
-    name: 'Garlic Cloves (Peeled)',
-    sku: 'ING-GAR-02',
-    itemType: 'FOOD',
-    category: 'Vegetables & Produce',
-    baseUnit: 'g',
-    currentStock: 1200,
-    minStockLevel: 1500,
-    preferredRestockQty: 3000,
-    costPerUnit: 0.18,
-    supplierId: 'sup-002',
-    supplierName: 'Balintawak Central Wholesale Produce',
-    storageNotes: 'Chiller storage at 4°C.',
-    status: 'LOW_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'ing-003',
-    name: 'Pure Butter Blend',
-    sku: 'ING-BUT-03',
-    itemType: 'FOOD',
-    category: 'Dairy & Fats',
-    baseUnit: 'g',
-    currentStock: 4200,
-    minStockLevel: 1000,
-    preferredRestockQty: 5000,
-    costPerUnit: 0.28,
-    supplierId: 'sup-003',
-    supplierName: 'Golden Dairy & Oil Trading',
-    storageNotes: 'Refrigerate at 2°C to 5°C.',
-    status: 'IN_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'ing-004',
-    name: 'Jasmine Rice (Dinorado)',
-    sku: 'ING-RIC-04',
-    itemType: 'FOOD',
-    category: 'Grains & Noodles',
-    baseUnit: 'g',
-    currentStock: 35000,
-    minStockLevel: 10000,
-    preferredRestockQty: 50000,
-    costPerUnit: 0.055,
-    supplierId: 'sup-002',
-    supplierName: 'Balintawak Central Wholesale Produce',
-    storageNotes: 'Dry storage in sealed food-grade bins.',
-    status: 'IN_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'ing-005',
-    name: 'Cajun Seasoning Spice Mix',
-    sku: 'ING-SPICE-05',
-    itemType: 'FOOD',
-    category: 'Seasonings & Sauces',
-    baseUnit: 'g',
-    currentStock: 0,
-    minStockLevel: 800,
-    preferredRestockQty: 2500,
-    costPerUnit: 0.65,
-    supplierId: 'sup-003',
-    supplierName: 'Golden Dairy & Oil Trading',
-    storageNotes: 'Cool dry shelf, keep away from humidity.',
-    status: 'OUT_OF_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
+// Each section loads on demand; the skeleton covers the first fetch of its chunk.
+const InventoryDashboardTab = lazy(() => import('./inventory/InventoryDashboardTab'))
+const IngredientsTab = lazy(() => import('./inventory/IngredientsTab'))
+const RecipesBOMTab = lazy(() => import('./inventory/RecipesBOMTab'))
+const SuppliersTab = lazy(() => import('./inventory/SuppliersTab'))
+const PurchasesReceivingTab = lazy(() => import('./inventory/PurchasesReceivingTab'))
+const StockHistoryTab = lazy(() => import('./inventory/StockHistoryTab'))
+const InventoryReportsTab = lazy(() => import('./inventory/InventoryReportsTab'))
 
-  // --- Packaging Materials ---
-  {
-    id: 'pkg-001',
-    name: '3-Compartment Bento Food Tray (Microwaveable)',
-    sku: 'PKG-TRY-01',
-    itemType: 'PACKAGING',
-    category: 'Trays, Bowls & Containers',
-    baseUnit: 'pcs',
-    currentStock: 450,
-    minStockLevel: 150,
-    preferredRestockQty: 500,
-    costPerUnit: 6.5,
-    supplierId: 'sup-004',
-    supplierName: 'Metro Pack & Green Disposables',
-    storageNotes: 'Dry packaging storage shelf B2. Carton packs of 50.',
-    status: 'IN_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'pkg-002',
-    name: 'Heavy Duty Takeout Carrier Plastic Bag (Medium)',
-    sku: 'PKG-BAG-02',
-    itemType: 'PACKAGING',
-    category: 'Bags, Pouches & Carriers',
-    baseUnit: 'pcs',
-    currentStock: 80,
-    minStockLevel: 120,
-    preferredRestockQty: 400,
-    costPerUnit: 1.2,
-    supplierId: 'sup-004',
-    supplierName: 'Metro Pack & Green Disposables',
-    storageNotes: 'Kept in clean dry delivery supply drawer.',
-    status: 'LOW_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'pkg-003',
-    name: 'Individually Wrapped Spoon & Fork Set w/ Napkin',
-    sku: 'PKG-CUT-03',
-    itemType: 'PACKAGING',
-    category: 'Cutlery, Napkins & Packets',
-    baseUnit: 'pcs',
-    currentStock: 600,
-    minStockLevel: 200,
-    preferredRestockQty: 1000,
-    costPerUnit: 2.2,
-    supplierId: 'sup-004',
-    supplierName: 'Metro Pack & Green Disposables',
-    storageNotes: 'Store in dry cabinet near dispatch counter.',
-    status: 'IN_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'pkg-004',
-    name: 'Seafudz Branded Tamper-Evident Sealing Stickers',
-    sku: 'PKG-STK-04',
-    itemType: 'PACKAGING',
-    category: 'Labels & Sealing Stickers',
-    baseUnit: 'pcs',
-    currentStock: 0,
-    minStockLevel: 250,
-    preferredRestockQty: 1000,
-    costPerUnit: 0.85,
-    supplierId: 'sup-004',
-    supplierName: 'Metro Pack & Green Disposables',
-    storageNotes: 'Dry shelf. Keep away from humidity and heat.',
-    status: 'OUT_OF_STOCK',
-    updatedAt: new Date().toISOString(),
-  },
-]
+const INVENTORY_TABS = [
+  { id: 'dashboard', label: 'Overview' },
+  { id: 'ingredients', label: 'Items' },
+  { id: 'recipes', label: 'Recipes' },
+  { id: 'suppliers', label: 'Suppliers' },
+  { id: 'purchases', label: 'Purchasing' },
+  { id: 'history', label: 'Stock History' },
+  { id: 'reports', label: 'Reports' },
+] as const
 
-const SAMPLE_SUPPLIERS: Supplier[] = [
-  {
-    id: 'sup-001',
-    name: 'Navotas Seafood Port Distributors',
-    contactPerson: 'Mang Rogelio Tan',
-    contactNumber: '0917 888 1234',
-    email: 'navotasseafood@ph.example.com',
-    address: 'Stall 18, Navotas Fish Port Complex, Navotas City',
-    categoriesSupplied: ['Seafoods'],
-    leadTimeDays: 1,
-    notes: 'Daily early morning delivery (5:00 AM – 7:00 AM)',
-    status: 'ACTIVE',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sup-002',
-    name: 'Balintawak Central Wholesale Produce',
-    contactPerson: 'Aling Susan Ramos',
-    contactNumber: '0922 456 7890',
-    email: 'balintawak.wholesale@ph.example.com',
-    address: 'Block 4, Balintawak Cloverleaf Market, Quezon City',
-    categoriesSupplied: ['Vegetables & Produce', 'Grains & Noodles'],
-    leadTimeDays: 2,
-    notes: 'Vegetables and rice bulk wholesale',
-    status: 'ACTIVE',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sup-003',
-    name: 'Golden Dairy & Oil Trading',
-    contactPerson: 'Eric Villafuerte',
-    contactNumber: '0918 333 9988',
-    email: 'orders@goldendairy.ph',
-    address: '14 Industrial Road, Valenzuela City',
-    categoriesSupplied: ['Dairy & Fats', 'Seasonings & Sauces'],
-    leadTimeDays: 3,
-    notes: 'Butter, cooking oils, and imported seasonings',
-    status: 'ACTIVE',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sup-004',
-    name: 'Metro Pack & Green Disposables',
-    contactPerson: 'Cynthia Santos',
-    contactNumber: '0917 555 4321',
-    email: 'cynthia@metropack.ph',
-    address: '88 C3 Road, Caloocan City',
-    categoriesSupplied: [
-      'Trays, Bowls & Containers',
-      'Bags, Pouches & Carriers',
-      'Cutlery, Napkins & Packets',
-      'Labels & Sealing Stickers',
-    ],
-    leadTimeDays: 2,
-    notes: 'Primary supplier for food trays, takeout carrier bags, and cutlery sets',
-    status: 'ACTIVE',
-    createdAt: new Date().toISOString(),
-  },
-]
+type InventoryTabId = (typeof INVENTORY_TABS)[number]['id']
+
+/** True when this browser still holds inventory edits from before the server took over. */
+function findLegacyBrowserInventory() {
+  try {
+    const ingredients = loadStoredIngredients()
+    const baseline = new Map(ACTUAL_INGREDIENTS.map((i) => [i.id, i]))
+    const edited =
+      ingredients.length !== baseline.size ||
+      ingredients.some((i) => {
+        const b = baseline.get(i.id)
+        return !b || b.currentStock !== i.currentStock || b.minStockLevel !== i.minStockLevel || b.costPerUnit !== i.costPerUnit || b.name !== i.name
+      }) ||
+      loadStoredSuppliers().length !== ACTUAL_SUPPLIERS.length ||
+      loadStoredRecipes().length !== ACTUAL_RECIPES.length ||
+      loadStoredTransactions().length > 0
+    return edited
+  } catch {
+    return false
+  }
+}
+
+const errorMessage = (err: unknown, fallback: string) => (err instanceof Error && err.message ? err.message : fallback)
 
 export const AdminInventoryManagement: React.FC = () => {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
   // Active Tab: dashboard, ingredients, recipes, suppliers, purchases, history, reports
-  const currentTab = searchParams.get('tab') || 'dashboard'
+  const requestedTab = searchParams.get('tab')
+  const currentTab: InventoryTabId = INVENTORY_TABS.some((t) => t.id === requestedTab)
+    ? (requestedTab as InventoryTabId)
+    : 'dashboard'
 
-  // Application Data States (Default: 100% clean empty states as requested)
+  // Inventory lives on the server so every screen (customer, POS, kitchen) sees the same stock
   const [ingredients, setIngredients] = useState<Ingredient[]>([])
   const [recipes, setRecipes] = useState<ProductRecipe[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([])
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
-  const [isDemoDataLoaded, setIsDemoDataLoaded] = useState(false)
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [loadErrorText, setLoadErrorText] = useState('')
+  const [legacyData, setLegacyData] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const loadedOnce = useRef(false)
 
   // Toast Notification System
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
-  const addToast = (toast: Omit<ToastMessage, 'id'>) => {
+  const addToast = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random()}`
-    setToasts((prev) => [...prev, { ...toast, id }])
-  }
+    // keep the stack short so notices never cover the work area
+    setToasts((prev) => [...prev.slice(-2), { ...toast, id }])
+  }, [])
 
-  const dismissToast = (id: string) => {
+  const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
-  }
+  }, [])
+
+  const applyState = useCallback((state: Awaited<ReturnType<typeof inventoryApi.getState>>) => {
+    setIngredients(state.ingredients)
+    setRecipes(state.recipes)
+    setSuppliers(state.suppliers)
+    setPurchaseOrders(state.purchaseOrders)
+    setTransactions(state.transactions)
+  }, [])
+
+  const loadInventory = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoadState('loading')
+      try {
+        applyState(await inventoryApi.getState())
+        setLoadState('ready')
+        if (!loadedOnce.current) {
+          loadedOnce.current = true
+          setLegacyData(findLegacyBrowserInventory())
+        }
+      } catch (err) {
+        // a failed background refresh must not wipe a screen that already works
+        if (!silent || !loadedOnce.current) {
+          setLoadErrorText(errorMessage(err, 'Could not load inventory.'))
+          setLoadState('error')
+        }
+      }
+    },
+    [applyState]
+  )
+
+  useEffect(() => {
+    void loadInventory()
+  }, [loadInventory])
+
+  // Orders placed or cancelled elsewhere change stock: pick that up without a manual refresh
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const unsubscribe = subscribeOrderSync(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => void loadInventory(true), 1200)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      unsubscribe()
+    }
+  }, [loadInventory])
 
   // Handle Tab Switch
-  const handleTabChange = (tabId: string) => {
-    setSearchParams({ tab: tabId })
+  const handleTabChange = (tabId: string, params?: Record<string, string>) => {
+    setSearchParams({ tab: tabId, ...params })
   }
+  const statusParam = searchParams.get('status') || undefined
 
-  // Toggle Demo Data vs Clean Blank State
-  const toggleDemoData = () => {
-    if (!isDemoDataLoaded) {
-      setIngredients(SAMPLE_INGREDIENTS)
-      setSuppliers(SAMPLE_SUPPLIERS)
-      setRecipes([
-        {
-          productId: CLIENT_MENU_ITEMS[0]?.id || 'all-shrimp-alacarte-199',
-          productName: 'All Shrimp Alacarte',
-          productCategory: 'Seafoods',
-          productPrice: 199,
-          productImage: CLIENT_MENU_ITEMS[0]?.image,
-          yieldServings: 1,
-          ingredients: [
-            {
-              ingredientId: 'ing-001',
-              ingredientName: 'Fresh White Shrimp (Large)',
-              portionQuantity: 150,
-              unit: 'g',
-              estimatedCost: 67.5,
-            },
-            {
-              ingredientId: 'ing-002',
-              ingredientName: 'Garlic Cloves (Peeled)',
-              portionQuantity: 15,
-              unit: 'g',
-              estimatedCost: 2.7,
-            },
-            {
-              ingredientId: 'ing-003',
-              ingredientName: 'Pure Butter Blend',
-              portionQuantity: 20,
-              unit: 'g',
-              estimatedCost: 5.6,
-            },
-          ],
-          packagingRequirements: [
-            {
-              id: 'pkg-req-1',
-              packagingId: 'pkg-001',
-              packagingName: '3-Compartment Bento Food Tray (Microwaveable)',
-              category: 'Trays, Bowls & Containers',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 6.5,
-            },
-            {
-              id: 'pkg-req-2',
-              packagingId: 'pkg-002',
-              packagingName: 'Heavy Duty Takeout Carrier Plastic Bag (Medium)',
-              category: 'Bags, Pouches & Carriers',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'SHARED_ORDER',
-              sharedCapacity: 3,
-              estimatedCost: 0.4,
-            },
-            {
-              id: 'pkg-req-3',
-              packagingId: 'pkg-003',
-              packagingName: 'Individually Wrapped Spoon & Fork Set w/ Napkin',
-              category: 'Cutlery, Napkins & Packets',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 2.2,
-            },
-          ],
-          preparationInstructions:
-            'Sauté garlic and butter until golden, add shrimp on high heat for 3 mins. For takeout, pack inside 3-compartment bento tray and bundle with cutlery set.',
-          totalFoodCost: 75.8,
-          totalPackagingCost: 9.1,
-          totalRawCost: 84.9,
-          grossMarginPercent: 57,
-          isConfigured: true,
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          productId: CLIENT_MENU_ITEMS[1]?.id || 'all-shrimp-bowl-699',
-          productName: 'All Shrimp Bowl',
-          productCategory: 'Seafoods',
-          productPrice: 699,
-          productImage: CLIENT_MENU_ITEMS[1]?.image,
-          yieldServings: 1,
-          ingredients: [
-            {
-              ingredientId: 'ing-001',
-              ingredientName: 'Fresh White Shrimp (Large)',
-              portionQuantity: 350,
-              unit: 'g',
-              estimatedCost: 157.5,
-            },
-            {
-              ingredientId: 'ing-002',
-              ingredientName: 'Garlic Cloves (Peeled)',
-              portionQuantity: 25,
-              unit: 'g',
-              estimatedCost: 4.5,
-            },
-            {
-              ingredientId: 'ing-003',
-              ingredientName: 'Pure Butter Blend',
-              portionQuantity: 35,
-              unit: 'g',
-              estimatedCost: 9.8,
-            },
-            {
-              ingredientId: 'ing-004',
-              ingredientName: 'Jasmine Rice (Dinorado)',
-              portionQuantity: 200,
-              unit: 'g',
-              estimatedCost: 11.0,
-            },
-          ],
-          packagingRequirements: [
-            {
-              id: 'pkg-req-4',
-              packagingId: 'pkg-001',
-              packagingName: '3-Compartment Bento Food Tray (Microwaveable)',
-              category: 'Trays, Bowls & Containers',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 6.5,
-            },
-          ],
-          preparationInstructions: 'Cook garlic butter shrimp until pink and aromatic. Serve in large sharing bowl with steamed Jasmine rice.',
-          totalFoodCost: 182.8,
-          totalPackagingCost: 6.5,
-          totalRawCost: 189.3,
-          grossMarginPercent: 73,
-          isConfigured: true,
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          productId: CLIENT_MENU_ITEMS[2]?.id || 'all-shrimp-tray-1099',
-          productName: 'All Shrimp Party Tray',
-          productCategory: 'Seafoods',
-          productPrice: 1099,
-          productImage: CLIENT_MENU_ITEMS[2]?.image,
-          yieldServings: 1,
-          ingredients: [
-            {
-              ingredientId: 'ing-001',
-              ingredientName: 'Fresh White Shrimp (Large)',
-              portionQuantity: 800,
-              unit: 'g',
-              estimatedCost: 360.0,
-            },
-            {
-              ingredientId: 'ing-002',
-              ingredientName: 'Garlic Cloves (Peeled)',
-              portionQuantity: 50,
-              unit: 'g',
-              estimatedCost: 9.0,
-            },
-            {
-              ingredientId: 'ing-003',
-              ingredientName: 'Pure Butter Blend',
-              portionQuantity: 70,
-              unit: 'g',
-              estimatedCost: 19.6,
-            },
-          ],
-          packagingRequirements: [
-            {
-              id: 'pkg-req-5',
-              packagingId: 'pkg-002',
-              packagingName: 'Heavy Duty Takeout Carrier Plastic Bag (Medium)',
-              category: 'Bags, Pouches & Carriers',
-              quantity: 2,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 2.4,
-            },
-          ],
-          preparationInstructions: 'Fiesta party tray portion. Sauté in double batches and arrange neatly in aluminum party tray.',
-          totalFoodCost: 388.6,
-          totalPackagingCost: 2.4,
-          totalRawCost: 391.0,
-          grossMarginPercent: 64,
-          isConfigured: true,
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          productId: CLIENT_MENU_ITEMS[7]?.id || 'chicken-pastil-35',
-          productName: 'Chicken Pastil',
-          productCategory: 'Value Meals',
-          productPrice: 35,
-          productImage: CLIENT_MENU_ITEMS[7]?.image,
-          yieldServings: 1,
-          ingredients: [
-            {
-              ingredientId: 'ing-004',
-              ingredientName: 'Jasmine Rice (Dinorado)',
-              portionQuantity: 150,
-              unit: 'g',
-              estimatedCost: 8.25,
-            },
-            {
-              ingredientId: 'ing-002',
-              ingredientName: 'Garlic Cloves (Peeled)',
-              portionQuantity: 10,
-              unit: 'g',
-              estimatedCost: 1.8,
-            },
-            {
-              ingredientId: 'ing-003',
-              ingredientName: 'Pure Butter Blend',
-              portionQuantity: 10,
-              unit: 'g',
-              estimatedCost: 2.8,
-            },
-          ],
-          packagingRequirements: [
-            {
-              id: 'pkg-req-6',
-              packagingId: 'pkg-003',
-              packagingName: 'Individually Wrapped Spoon & Fork Set w/ Napkin',
-              category: 'Cutlery, Napkins & Packets',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 2.2,
-            },
-          ],
-          preparationInstructions: 'Top steaming Jasmine rice with shredded chicken pastil filling.',
-          totalFoodCost: 12.85,
-          totalPackagingCost: 2.2,
-          totalRawCost: 15.05,
-          grossMarginPercent: 57,
-          isConfigured: true,
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          productId: CLIENT_MENU_ITEMS[3]?.id || 'mixed-seafoods-alacarte-99',
-          productName: 'Mixed Seafoods Alacarte (Mini)',
-          productCategory: 'Seafoods',
-          productPrice: 99,
-          productImage: CLIENT_MENU_ITEMS[3]?.image,
-          yieldServings: 1,
-          ingredients: [
-            {
-              ingredientId: 'ing-001',
-              ingredientName: 'Fresh White Shrimp (Large)',
-              portionQuantity: 80,
-              unit: 'g',
-              estimatedCost: 36.0,
-            },
-            {
-              ingredientId: 'ing-002',
-              ingredientName: 'Garlic Cloves (Peeled)',
-              portionQuantity: 10,
-              unit: 'g',
-              estimatedCost: 1.8,
-            },
-            {
-              ingredientId: 'ing-003',
-              ingredientName: 'Pure Butter Blend',
-              portionQuantity: 15,
-              unit: 'g',
-              estimatedCost: 4.2,
-            },
-            {
-              ingredientId: 'ing-005',
-              ingredientName: 'Cajun Seasoning Spice Mix',
-              portionQuantity: 10,
-              unit: 'g',
-              estimatedCost: 6.5,
-            },
-          ],
-          packagingRequirements: [
-            {
-              id: 'pkg-req-7',
-              packagingId: 'pkg-001',
-              packagingName: '3-Compartment Bento Food Tray (Microwaveable)',
-              category: 'Trays, Bowls & Containers',
-              quantity: 1,
-              unit: 'pcs',
-              fulfillmentType: 'TAKEOUT',
-              scope: 'PER_ITEM',
-              estimatedCost: 6.5,
-            },
-          ],
-          preparationInstructions: 'Cajun seafood mini mix. Requires Cajun Seasoning Spice Mix.',
-          totalFoodCost: 48.5,
-          totalPackagingCost: 6.5,
-          totalRawCost: 55.0,
-          grossMarginPercent: 44,
-          isConfigured: true,
-          updatedAt: new Date().toISOString(),
-        },
-      ])
-      setPurchaseOrders([
-        {
-          id: 'po-001',
-          poNumber: 'PO-2026-001',
-          supplierId: 'sup-001',
-          supplierName: 'Navotas Seafood Port Distributors',
-          orderDate: new Date(Date.now() - 86400000).toISOString(),
-          expectedDeliveryDate: new Date(Date.now() + 86400000).toISOString(),
-          status: 'PENDING',
-          items: [
-            {
-              id: 'poi-1',
-              ingredientId: 'ing-001',
-              ingredientName: 'Fresh White Shrimp (Large)',
-              itemType: 'FOOD',
-              category: 'Seafoods',
-              orderedQuantity: 10000,
-              receivedQuantity: 0,
-              unit: 'g',
-              unitCost: 0.45,
-              totalCost: 4500,
-            },
-          ],
-          totalAmount: 4500,
-          notes: 'Deliver early morning batch in ice insulated tubs.',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: 'po-002',
-          poNumber: 'PO-2026-002',
-          supplierId: 'sup-004',
-          supplierName: 'Metro Pack & Green Disposables',
-          orderDate: new Date(Date.now() - 86400000 * 2).toISOString(),
-          expectedDeliveryDate: new Date(Date.now() + 86400000).toISOString(),
-          status: 'PENDING',
-          items: [
-            {
-              id: 'poi-2',
-              ingredientId: 'pkg-001',
-              ingredientName: '3-Compartment Bento Food Tray (Microwaveable)',
-              itemType: 'PACKAGING',
-              category: 'Trays, Bowls & Containers',
-              orderedQuantity: 500,
-              receivedQuantity: 0,
-              unit: 'pcs',
-              unitCost: 6.5,
-              totalCost: 3250,
-            },
-            {
-              id: 'poi-3',
-              ingredientId: 'pkg-002',
-              ingredientName: 'Heavy Duty Takeout Carrier Plastic Bag (Medium)',
-              itemType: 'PACKAGING',
-              category: 'Bags, Pouches & Carriers',
-              orderedQuantity: 400,
-              receivedQuantity: 0,
-              unit: 'pcs',
-              unitCost: 1.2,
-              totalCost: 480,
-            },
-          ],
-          totalAmount: 3730,
-          notes: 'Sturdy carton boxes for delivery food trays.',
-          createdAt: new Date().toISOString(),
-        },
-      ])
-      setTransactions([
-        {
-          id: 'tx-001',
-          referenceNo: 'REC-2026-001',
-          timestamp: new Date(Date.now() - 3600000 * 6).toISOString(),
-          ingredientId: 'ing-001',
-          ingredientName: 'Fresh White Shrimp (Large)',
-          itemType: 'FOOD',
-          category: 'Seafoods',
-          type: 'STOCK_RECEIVED',
-          quantityDelta: 8500,
-          unit: 'g',
-          stockAfter: 8500,
-          performedBy: 'Store Admin',
-          reason: 'Initial intake for flagship branch launch',
-        },
-        {
-          id: 'tx-002',
-          referenceNo: 'REC-2026-002',
-          timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-          ingredientId: 'pkg-001',
-          ingredientName: '3-Compartment Bento Food Tray (Microwaveable)',
-          itemType: 'PACKAGING',
-          category: 'Trays, Bowls & Containers',
-          type: 'STOCK_RECEIVED',
-          quantityDelta: 450,
-          unit: 'pcs',
-          stockAfter: 450,
-          performedBy: 'Store Admin',
-          reason: 'Initial intake of food trays from Metro Pack',
-        },
-        {
-          id: 'tx-003',
-          referenceNo: 'ORD-2026-089',
-          timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-          ingredientId: 'ing-001',
-          ingredientName: 'Fresh White Shrimp (Large)',
-          itemType: 'FOOD',
-          category: 'Seafoods',
-          type: 'CONSUMPTION',
-          quantityDelta: -450,
-          unit: 'g',
-          stockAfter: 8050,
-          performedBy: 'Kitchen Cook',
-          reason: 'Cooked 3x All Shrimp Bowls',
-        },
-        {
-          id: 'tx-004',
-          referenceNo: 'ORD-2026-089',
-          timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-          ingredientId: 'pkg-001',
-          ingredientName: '3-Compartment Bento Food Tray (Microwaveable)',
-          itemType: 'PACKAGING',
-          category: 'Trays, Bowls & Containers',
-          type: 'CONSUMPTION',
-          quantityDelta: -3,
-          unit: 'pcs',
-          stockAfter: 447,
-          performedBy: 'Dispatch Rider',
-          reason: 'Takeout packaging consumed for 3x dishes',
-        },
-      ])
-      setIsDemoDataLoaded(true)
+  // Snap to the canonical tab when the URL carries an unknown ?tab= value
+  useEffect(() => {
+    if (requestedTab && requestedTab !== currentTab) {
+      setSearchParams({ tab: currentTab }, { replace: true })
+    }
+  }, [requestedTab, currentTab, setSearchParams])
+
+  const fail = (title: string, err: unknown) =>
+    addToast({ type: 'error', title, description: errorMessage(err, 'Something went wrong. Please try again.') })
+
+  // Reload baseline (official catalog + recipes)
+  const [isBaselineConfirmOpen, setIsBaselineConfirmOpen] = useState(false)
+  const handleRestoreActualBaseline = async () => {
+    setIsBaselineConfirmOpen(false)
+    try {
+      applyState(
+        await inventoryApi.replaceAll({
+          ingredients: ACTUAL_INGREDIENTS,
+          recipes: ACTUAL_RECIPES,
+          suppliers: ACTUAL_SUPPLIERS,
+        })
+      )
       addToast({
         type: 'success',
-        title: 'Demo Sample Data Loaded',
-        description:
-          'Sample food ingredients, packaging materials, BOM recipes, and POs are now visible for testing.',
+        title: 'Baseline data restored',
+        description: `${ACTUAL_RECIPES.length} menu recipes, ${ACTUAL_INGREDIENTS.length} ingredients and packaging items, and standard units reloaded from official specification.`,
       })
-    } else {
-      setIngredients([])
-      setRecipes([])
-      setSuppliers([])
-      setPurchaseOrders([])
-      setTransactions([])
-      setIsDemoDataLoaded(false)
-      addToast({
-        type: 'info',
-        title: 'Catalog Cleared to Empty State',
-        description: 'Returned to blank, clean UI-ready inventory tables.',
-      })
+    } catch (err) {
+      fail('Could not reload the baseline', err)
     }
+  }
+
+  // One-time move of edits that only existed in this browser
+  const handleImportLegacy = async () => {
+    setIsImporting(true)
+    try {
+      applyState(
+        await inventoryApi.replaceAll({
+          ingredients: loadStoredIngredients(),
+          recipes: loadStoredRecipes(),
+          suppliers: loadStoredSuppliers(),
+        })
+      )
+      clearStoredInventory()
+      setLegacyData(false)
+      addToast({ type: 'success', title: 'Browser inventory saved to the server' })
+    } catch (err) {
+      fail('Could not import this browser’s inventory', err)
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  const handleDiscardLegacy = () => {
+    clearStoredInventory()
+    setLegacyData(false)
   }
 
   // --- Handlers: Ingredients & Packaging ---
-  const handleAddIngredient = (item: Omit<Ingredient, 'id' | 'updatedAt' | 'status'>) => {
-    const id = `${item.itemType === 'PACKAGING' ? 'pkg' : 'ing'}-${Date.now()}`
-    let status: StockStatus = 'IN_STOCK'
-    if (item.currentStock <= 0) status = 'OUT_OF_STOCK'
-    else if (item.currentStock <= item.minStockLevel) status = 'LOW_STOCK'
-
-    const newIng: Ingredient = {
-      ...item,
-      id,
-      status,
-      updatedAt: new Date().toISOString(),
-    }
-
-    setIngredients((prev) => [newIng, ...prev])
-
-    if (item.currentStock > 0) {
-      setTransactions((prev) => [
-        {
-          id: `tx-${Date.now()}`,
-          referenceNo: `INTAKE-${Date.now().toString().slice(-4)}`,
-          timestamp: new Date().toISOString(),
-          ingredientId: id,
-          ingredientName: item.name,
-          itemType: item.itemType || 'FOOD',
-          category: item.category,
-          type: 'STOCK_RECEIVED',
-          quantityDelta: item.currentStock,
-          unit: item.baseUnit,
-          stockAfter: item.currentStock,
-          performedBy: 'Store Admin',
-          reason: `Initial stock intake upon ${item.itemType === 'PACKAGING' ? 'packaging' : 'ingredient'} registration`,
-        },
-        ...prev,
-      ])
-    }
-
-    addToast({
-      type: 'success',
-      title: item.itemType === 'PACKAGING' ? 'Packaging Material Registered' : 'Ingredient Registered',
-      description: `"${item.name}" has been added to the catalog.`,
-    })
+  const upsertIngredient = (ing: Ingredient) =>
+    setIngredients((prev) => (prev.some((i) => i.id === ing.id) ? prev.map((i) => (i.id === ing.id ? ing : i)) : [ing, ...prev]))
+  const prependTransactions = (txs: (StockTransaction | null | undefined)[]) => {
+    const list = txs.filter(Boolean) as StockTransaction[]
+    if (list.length > 0) setTransactions((prev) => [...list, ...prev])
   }
 
-  const handleEditIngredient = (updated: Ingredient) => {
-    setIngredients((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
-    addToast({
-      type: 'success',
-      title: updated.itemType === 'PACKAGING' ? 'Packaging Material Updated' : 'Ingredient Updated',
-      description: `Changes to "${updated.name}" have been saved.`,
-    })
+  const handleAddIngredient = async (item: Omit<Ingredient, 'id' | 'updatedAt' | 'status'>) => {
+    try {
+      const { ingredient, transaction } = await inventoryApi.createIngredient(item)
+      upsertIngredient(ingredient)
+      prependTransactions([transaction])
+      addToast({
+        type: 'success',
+        title: item.itemType === 'PACKAGING' ? 'Packaging Material Registered' : 'Ingredient Registered',
+        description: `"${item.name}" has been added to the catalog.`,
+      })
+    } catch (err) {
+      fail('Could not add the item', err)
+    }
   }
 
-  const handleDeleteIngredient = (id: string) => {
+  const handleEditIngredient = async (updated: Ingredient) => {
+    try {
+      const { ingredient, transaction } = await inventoryApi.updateIngredient(updated)
+      upsertIngredient(ingredient)
+      prependTransactions([transaction])
+      addToast({
+        type: 'success',
+        title: updated.itemType === 'PACKAGING' ? 'Packaging Material Updated' : 'Ingredient Updated',
+        description: `Changes to "${updated.name}" have been saved.`,
+      })
+    } catch (err) {
+      fail('Could not save changes', err)
+    }
+  }
+
+  const handleDeleteIngredient = async (id: string) => {
     const target = ingredients.find((i) => i.id === id)
-    setIngredients((prev) => prev.filter((item) => item.id !== id))
-    addToast({
-      type: 'info',
-      title: 'Item Removed',
-      description: target ? `"${target.name}" was deleted from the catalog.` : 'Item deleted.',
-    })
+    try {
+      await inventoryApi.deleteIngredient(id)
+      setIngredients((prev) => prev.filter((item) => item.id !== id))
+      setTransactions((prev) => prev.filter((t) => t.ingredientId !== id))
+      addToast({
+        type: 'info',
+        title: 'Item Removed',
+        description: target ? `"${target.name}" was deleted from the catalog.` : 'Item deleted.',
+      })
+    } catch (err) {
+      fail('Could not delete the item', err)
+    }
   }
 
-  const handleAdjustStock = (
+  const handleAdjustStock = async (
     id: string,
     delta: number,
     reason: string,
-    details?: { seller?: string; purchaseDate?: string }
+    details?: { seller?: string; purchaseDate?: string; movementType?: TransactionType }
   ) => {
-    let affectedItemName = ''
-    let affectedItemUnit = ''
-
-    setIngredients((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item
-        affectedItemName = item.name
-        affectedItemUnit = item.baseUnit
-        const newStock = Math.max(0, item.currentStock + delta)
-        let status: StockStatus = 'IN_STOCK'
-        if (newStock <= 0) status = 'OUT_OF_STOCK'
-        else if (newStock <= item.minStockLevel) status = 'LOW_STOCK'
-
-        // Log transaction
-        const isDeduction = delta < 0
-        setTransactions((txs) => [
-          {
-            id: `tx-${Date.now()}`,
-            referenceNo: isDeduction
-              ? `ADJ-${Date.now().toString().slice(-4)}`
-              : `RCV-${Date.now().toString().slice(-4)}`,
-            timestamp: details?.purchaseDate
-              ? new Date(`${details.purchaseDate}T12:00:00`).toISOString()
-              : new Date().toISOString(),
-            ingredientId: item.id,
-            ingredientName: item.name,
-            itemType: item.itemType || 'FOOD',
-            category: item.category,
-            type: isDeduction ? 'ADJUSTMENT' : 'STOCK_RECEIVED',
-            quantityDelta: delta,
-            unit: item.baseUnit,
-            stockAfter: newStock,
-            performedBy: 'Store Admin',
-            reason,
-          },
-          ...txs,
-        ])
-
-        return {
-          ...item,
-          currentStock: newStock,
-          status,
-          supplierName: details?.seller || item.supplierName,
-          lastRestockedAt: delta > 0 ? new Date().toISOString() : item.lastRestockedAt,
-          updatedAt: new Date().toISOString(),
-        }
+    try {
+      const { ingredient, transaction } = await inventoryApi.recordMovement({
+        ingredientId: id,
+        delta,
+        type: details?.movementType,
+        reason,
+        seller: details?.seller,
+        purchaseDate: details?.purchaseDate,
       })
-    )
-
-    addToast({
-      type: 'success',
-      title: delta > 0 ? 'Stock Intake Recorded' : 'Stock Adjusted',
-      description:
-        delta > 0
-          ? `Added +${delta.toLocaleString()} ${affectedItemUnit || ''} to ${affectedItemName || 'item'}.`
-          : `Deducted ${Math.abs(delta).toLocaleString()} ${affectedItemUnit || ''} from ${affectedItemName || 'item'}.`,
-    })
+      upsertIngredient(ingredient)
+      prependTransactions([transaction])
+      addToast({
+        type: 'success',
+        title: delta > 0 ? 'Stock Intake Recorded' : 'Stock Adjusted',
+        description:
+          delta > 0
+            ? `Added +${delta.toLocaleString()} ${ingredient.baseUnit} to ${ingredient.name}.`
+            : `Deducted ${Math.abs(delta).toLocaleString()} ${ingredient.baseUnit} from ${ingredient.name}.`,
+      })
+    } catch (err) {
+      fail('Could not update stock', err)
+    }
   }
 
   // --- Handlers: Recipes ---
-  const handleSaveRecipe = (recipe: ProductRecipe) => {
-    setRecipes((prev) => {
-      const filtered = prev.filter((r) => r.productId !== recipe.productId)
-      return [recipe, ...filtered]
-    })
-    addToast({
-      type: 'success',
-      title: 'Recipe (BOM) Saved',
-      description: `Food portions and packaging requirements configured for "${recipe.productName}".`,
-    })
+  const handleSaveRecipe = async (recipe: ProductRecipe) => {
+    try {
+      const saved = await inventoryApi.saveRecipe(recipe)
+      setRecipes((prev) => [saved, ...prev.filter((r) => r.productId !== saved.productId)])
+      addToast({
+        type: 'success',
+        title: 'Recipe (BOM) Saved',
+        description: `Food portions and packaging requirements configured for "${recipe.productName}".`,
+      })
+    } catch (err) {
+      fail('Could not save the recipe', err)
+    }
   }
 
-  const handleDeleteRecipe = (productId: string) => {
-    setRecipes((prev) => prev.filter((r) => r.productId !== productId))
-    addToast({
-      type: 'info',
-      title: 'Recipe Configuration Cleared',
-      description: 'Raw consumption tracking unlinked for this menu item.',
-    })
+  const handleDeleteRecipe = async (productId: string) => {
+    try {
+      await inventoryApi.deleteRecipe(productId)
+      setRecipes((prev) => prev.filter((r) => r.productId !== productId))
+      addToast({
+        type: 'info',
+        title: 'Recipe Configuration Cleared',
+        description: 'Raw consumption tracking unlinked for this menu item.',
+      })
+    } catch (err) {
+      fail('Could not remove the recipe', err)
+    }
   }
 
   // --- Handlers: Suppliers ---
-  const handleAddSupplier = (supplier: Omit<Supplier, 'id' | 'createdAt'>) => {
-    const newSup: Supplier = {
-      ...supplier,
-      id: `sup-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+  const handleAddSupplier = async (supplier: Omit<Supplier, 'id' | 'createdAt'>) => {
+    try {
+      const created = await inventoryApi.createSupplier(supplier)
+      setSuppliers((prev) => [created, ...prev])
+      addToast({
+        type: 'success',
+        title: 'Supplier Registered',
+        description: `"${supplier.name}" added to authorized vendor list.`,
+      })
+    } catch (err) {
+      fail('Could not add the supplier', err)
     }
-    setSuppliers((prev) => [newSup, ...prev])
-    addToast({
-      type: 'success',
-      title: 'Supplier Registered',
-      description: `"${supplier.name}" added to authorized vendor list.`,
-    })
   }
 
-  const handleEditSupplier = (supplier: Supplier) => {
-    setSuppliers((prev) => prev.map((s) => (s.id === supplier.id ? supplier : s)))
-    addToast({
-      type: 'success',
-      title: 'Supplier Updated',
-      description: `Contact and delivery details for "${supplier.name}" saved.`,
-    })
+  const handleEditSupplier = async (supplier: Supplier) => {
+    try {
+      const saved = await inventoryApi.updateSupplier(supplier)
+      setSuppliers((prev) => prev.map((s) => (s.id === saved.id ? saved : s)))
+      addToast({
+        type: 'success',
+        title: 'Supplier Updated',
+        description: `Contact and delivery details for "${supplier.name}" saved.`,
+      })
+    } catch (err) {
+      fail('Could not save the supplier', err)
+    }
   }
 
-  const handleDeleteSupplier = (id: string) => {
+  const handleDeleteSupplier = async (id: string) => {
     const target = suppliers.find((s) => s.id === id)
-    setSuppliers((prev) => prev.filter((s) => s.id !== id))
-    addToast({
-      type: 'info',
-      title: 'Supplier Removed',
-      description: target ? `"${target.name}" removed from vendor directory.` : 'Supplier deleted.',
-    })
+    try {
+      await inventoryApi.deleteSupplier(id)
+      setSuppliers((prev) => prev.filter((s) => s.id !== id))
+      addToast({
+        type: 'info',
+        title: 'Supplier Removed',
+        description: target ? `"${target.name}" removed from vendor directory.` : 'Supplier deleted.',
+      })
+    } catch (err) {
+      fail('Could not delete the supplier', err)
+    }
   }
 
   // --- Handlers: Purchases & Receiving ---
-  const handleCreatePO = (po: Omit<PurchaseOrder, 'id' | 'createdAt'>) => {
-    const newPO: PurchaseOrder = {
-      ...po,
-      id: `po-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+  const handleCreatePO = async (po: Omit<PurchaseOrder, 'id' | 'createdAt'>) => {
+    try {
+      const created = await inventoryApi.createPurchaseOrder(po)
+      setPurchaseOrders((prev) => [created, ...prev])
+      addToast({
+        type: 'success',
+        title: 'Purchase Order Created',
+        description: `${created.poNumber} has been submitted with total value ₱${created.totalAmount.toFixed(2)}.`,
+      })
+    } catch (err) {
+      fail('Could not create the purchase order', err)
     }
-    setPurchaseOrders((prev) => [newPO, ...prev])
-    addToast({
-      type: 'success',
-      title: 'Purchase Order Created',
-      description: `${newPO.poNumber} has been submitted with total value ₱${newPO.totalAmount.toFixed(2)}.`,
-    })
   }
 
-  const handleReceiveStock = (
+  const handleReceiveStock = async (
     poId: string,
     receivedItems: {
       itemId: string
@@ -932,135 +397,59 @@ export const AdminInventoryManagement: React.FC = () => {
       batchNumber?: string
       expirationDate?: string
     }[],
-    isFullyReceived: boolean,
+    _isFullyReceived: boolean,
     notes?: string
   ) => {
-    // 1. Update PO records
-    setPurchaseOrders((prev) =>
-      prev.map((po) => {
-        if (po.id !== poId) return po
-        const updatedItems = po.items.map((it) => {
-          const matched = receivedItems.find((r) => r.itemId === it.id)
-          if (!matched) return it
-          return {
-            ...it,
-            receivedQuantity: it.receivedQuantity + matched.receivedQty,
-            batchNumber: matched.batchNumber || it.batchNumber,
-            expirationDate: matched.expirationDate || it.expirationDate,
-          }
-        })
-        return {
-          ...po,
-          items: updatedItems,
-          status: isFullyReceived ? 'FULLY_RECEIVED' : 'PARTIALLY_RECEIVED',
-          receivedAt: new Date().toISOString(),
-          receivedBy: 'Store Admin',
-        }
+    try {
+      const result = await inventoryApi.receivePurchaseOrder(poId, { items: receivedItems, notes })
+      setPurchaseOrders((prev) => prev.map((p) => (p.id === poId ? result.purchaseOrder : p)))
+      result.ingredients.forEach(upsertIngredient)
+      prependTransactions([...result.transactions].reverse())
+      addToast({
+        type: 'success',
+        title: 'Inbound Stock Intake Confirmed',
+        description: 'Delivered items successfully received and added to physical inventory balance.',
       })
-    )
-
-    // 2. Increment ingredient stocks and log transactions
-    receivedItems.forEach((r) => {
-      if (r.receivedQty <= 0) return
-      setIngredients((prev) =>
-        prev.map((ing) => {
-          if (ing.id !== r.ingredientId) return ing
-          const newStock = ing.currentStock + r.receivedQty
-          let status: StockStatus = 'IN_STOCK'
-          if (newStock <= 0) status = 'OUT_OF_STOCK'
-          else if (newStock <= ing.minStockLevel) status = 'LOW_STOCK'
-          return {
-            ...ing,
-            currentStock: newStock,
-            status,
-            lastRestockedAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }
-        })
-      )
-
-      const targetIng = ingredients.find((i) => i.id === r.ingredientId)
-      const ingName = targetIng ? targetIng.name : 'Raw Material / Packaging'
-      const ingCategory = targetIng ? targetIng.category : 'Packaging & Disposables'
-      const ingType = targetIng ? targetIng.itemType : 'FOOD'
-
-      setTransactions((prev) => [
-        {
-          id: `tx-${Date.now()}-${Math.random()}`,
-          referenceNo: `RCV-${Date.now().toString().slice(-4)}`,
-          timestamp: new Date().toISOString(),
-          ingredientId: r.ingredientId,
-          ingredientName: ingName,
-          itemType: ingType,
-          category: ingCategory,
-          type: 'STOCK_RECEIVED',
-          quantityDelta: r.receivedQty,
-          unit: r.unit,
-          stockAfter: (targetIng ? targetIng.currentStock : 0) + r.receivedQty,
-          performedBy: 'Store Admin',
-          reason: `Goods received against PO. Batch: ${r.batchNumber || 'N/A'}${notes ? ` • ${notes}` : ''}`,
-        },
-        ...prev,
-      ])
-    })
-
-    addToast({
-      type: 'success',
-      title: 'Inbound Stock Intake Confirmed',
-      description: `Delivered items successfully received and added to physical inventory balance.`,
-    })
+    } catch (err) {
+      fail('Could not receive the delivery', err)
+    }
   }
 
-  const handleCancelPO = (poId: string) => {
-    setPurchaseOrders((prev) =>
-      prev.map((po) => (po.id === poId ? { ...po, status: 'CANCELLED' } : po))
-    )
-    addToast({
-      type: 'info',
-      title: 'Purchase Order Cancelled',
-      description: 'Order marked as cancelled. No inventory was updated.',
-    })
+  const handleCancelPO = async (poId: string) => {
+    try {
+      const cancelled = await inventoryApi.cancelPurchaseOrder(poId)
+      setPurchaseOrders((prev) => prev.map((po) => (po.id === poId ? cancelled : po)))
+      addToast({
+        type: 'info',
+        title: 'Purchase Order Cancelled',
+        description: 'Order marked as cancelled. No inventory was updated.',
+      })
+    } catch (err) {
+      fail('Could not cancel the order', err)
+    }
   }
 
   // --- Handlers: Stock History & Audit ---
-  const handleAddTransaction = (
+  const handleAddTransaction = async (
     tx: Omit<StockTransaction, 'id' | 'timestamp' | 'referenceNo' | 'stockAfter'>
   ) => {
-    const targetIng = ingredients.find((i) => i.id === tx.ingredientId)
-    const currentStock = targetIng ? targetIng.currentStock : 0
-    const newStock = Math.max(0, currentStock + tx.quantityDelta)
-
-    // Update ingredient
-    setIngredients((prev) =>
-      prev.map((ing) => {
-        if (ing.id !== tx.ingredientId) return ing
-        let status: StockStatus = 'IN_STOCK'
-        if (newStock <= 0) status = 'OUT_OF_STOCK'
-        else if (newStock <= ing.minStockLevel) status = 'LOW_STOCK'
-        return {
-          ...ing,
-          currentStock: newStock,
-          status,
-          updatedAt: new Date().toISOString(),
-        }
+    try {
+      const { ingredient, transaction } = await inventoryApi.recordMovement({
+        ingredientId: tx.ingredientId,
+        delta: tx.quantityDelta,
+        type: tx.type,
+        reason: tx.reason,
       })
-    )
-
-    // Add transaction
-    const newTx: StockTransaction = {
-      ...tx,
-      id: `tx-${Date.now()}`,
-      referenceNo: `MAN-${Date.now().toString().slice(-4)}`,
-      timestamp: new Date().toISOString(),
-      stockAfter: newStock,
+      upsertIngredient(ingredient)
+      prependTransactions([transaction])
+      addToast({
+        type: 'success',
+        title: 'Stock Movement Logged',
+        description: `${tx.type.replace(/_/g, ' ').toLowerCase()} of ${Math.abs(tx.quantityDelta)} ${tx.unit} committed to ledger.`,
+      })
+    } catch (err) {
+      fail('Could not record the movement', err)
     }
-    setTransactions((prev) => [newTx, ...prev])
-
-    addToast({
-      type: 'success',
-      title: 'Stock Movement Logged',
-      description: `${tx.type.replace('_', ' ')} of ${Math.abs(tx.quantityDelta)} ${tx.unit} committed to ledger.`,
-    })
   }
 
   // --- Handlers: Reports ---
@@ -1072,180 +461,210 @@ export const AdminInventoryManagement: React.FC = () => {
     })
   }
 
+  const lowCount = ingredients.filter((i) => i.status === 'LOW_STOCK').length
+  const outCount = ingredients.filter((i) => i.status === 'OUT_OF_STOCK').length
+  const pendingPOs = purchaseOrders.filter((po) => po.status === 'PENDING').length
+
+  const tabCounts: Partial<Record<InventoryTabId, number>> = {
+    ingredients: lowCount + outCount,
+    purchases: pendingPOs,
+  }
+  const tabCountLabel: Partial<Record<InventoryTabId, string>> = {
+    ingredients: 'need attention',
+    purchases: 'pending',
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 pb-16 font-sans">
+    <div className="min-h-screen bg-[#f6f7f9] text-slate-800 pb-16 font-sans">
       <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-5 print:hidden">
         <NavbarAdmin />
       </div>
 
-      {/* Full Width Body Container */}
-      <main className="admin-inventory-workspace w-full px-4 sm:px-6 lg:px-10 pt-6 space-y-6">
-        {/* Header row: Back link + Title + Location & Actions */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <button
-                type="button"
-                onClick={() => navigate('/admin-dashboard')}
-                className="group inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-orange-600 transition-colors cursor-pointer"
-              >
-                <svg
-                  className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-0.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                </svg>
-                <span>Back to Dashboard</span>
-              </button>
-              <span className="text-slate-300">/</span>
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white border border-slate-200/80 text-slate-600 text-[11px] font-medium shadow-2xs">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                Caloocan Flagship Hub
-              </span>
+      <main className="admin-inventory-workspace mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-10 pt-6 space-y-6">
+        <header className="space-y-5">
+          <button type="button" onClick={() => navigate('/admin-dashboard')} className="inv-back cursor-pointer">
+            <Icon name="arrowLeft" className="h-4 w-4" />
+            Back to Dashboard
+          </button>
+
+          <div className="inv-page-header">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="inv-page-title">Inventory</h1>
+                <span className="inv-location">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  Caloocan Flagship Hub
+                </span>
+              </div>
+              <p className="inv-page-sub">
+                {loadState === 'ready' ? `${ingredients.length} items tracked · ${recipes.length} recipes configured` : 'Loading inventory…'}
+              </p>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-              Inventory
-            </h1>
-            <p className="text-sm text-slate-500 mt-0.5">
-              Manage food ingredients, packaging, recipes, suppliers, purchasing and stock records
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Interactive Demo Toggle */}
-            <button
-              type="button"
-              onClick={toggleDemoData}
-              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
-                isDemoDataLoaded
-                  ? 'bg-orange-50 border-orange-200 text-orange-700 hover:bg-orange-100'
-                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 shadow-2xs'
-              }`}
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="refresh"
+              onClick={() => setIsBaselineConfirmOpen(true)}
+              title="Reset inventory catalog and recipes to the official baseline"
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${isDemoDataLoaded ? 'bg-orange-500 animate-pulse' : 'bg-slate-300'}`} />
-              <span>{isDemoDataLoaded ? 'Reset Demo Data' : 'Load Sample Demo Data'}</span>
-            </button>
+              Reload baseline
+            </Button>
           </div>
-        </div>
 
-        {/* Master 7-Tab Navigation Bar - Sleek Segmented Pills matching AdminDashboard */}
-        <nav
-          className="flex items-center gap-0.5 bg-slate-100 p-1 rounded-xl overflow-x-auto no-scrollbar border border-slate-200/60"
-          aria-label="Inventory sections"
-        >
-          {(
-            [
-              { id: 'dashboard', label: 'Dashboard' },
-              { id: 'ingredients', label: 'Ingredients & Packaging' },
-              { id: 'recipes', label: 'Recipes (BOM)' },
-              { id: 'suppliers', label: 'Suppliers' },
-              { id: 'purchases', label: 'Purchases & Receiving' },
-              { id: 'history', label: 'Stock History' },
-              { id: 'reports', label: 'Reports' },
-            ] as const
-          ).map((tab) => {
-            const isActive = currentTab === tab.id
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => handleTabChange(tab.id)}
-                id={`inventory-tab-${tab.id}`}
-                aria-current={isActive ? 'page' : undefined}
-                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors shrink-0 cursor-pointer ${
-                  isActive
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <span>{tab.label}</span>
-              </button>
-            )
-          })}
-        </nav>
+          <nav className="inv-tabs no-scrollbar" aria-label="Inventory sections">
+            {INVENTORY_TABS.map((tab) => {
+              const isActive = currentTab === tab.id
+              const count = tabCounts[tab.id]
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => handleTabChange(tab.id)}
+                  id={`inventory-tab-${tab.id}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  className="inv-tab"
+                >
+                  {tab.label}
+                  {count !== undefined && count > 0 && (
+                    <span className="inv-tab-count">
+                      {count}
+                      <span className="sr-only"> {tabCountLabel[tab.id]}</span>
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </nav>
+        </header>
 
-        {/* Tab Content Panels */}
         <section
+          key={currentTab}
           id="inventory-tab-panel"
-          className="min-w-0 outline-none"
-          role="region"
+          className="inv-panel-enter min-w-0 outline-none"
           aria-labelledby={`inventory-tab-${currentTab}`}
-          tabIndex={0}
         >
-        {currentTab === 'dashboard' && (
-          <InventoryDashboardTab
-            ingredients={ingredients}
-            purchaseOrders={purchaseOrders}
-            transactions={transactions}
-            onNavigateTab={handleTabChange}
-            onOpenAddIngredient={() => handleTabChange('ingredients')}
-            onOpenCreatePO={() => handleTabChange('purchases')}
-          />
-        )}
+          {legacyData && loadState === 'ready' && (
+            <div className="mb-5">
+              <Notice tone="warning">
+                <p className="font-semibold">This browser has inventory saved from before the server took over.</p>
+                <p className="mt-0.5 text-sm">
+                  Save it to the server to replace the shared inventory with it, or discard it. Stock history from this browser can’t be moved.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" variant="primary" loading={isImporting} onClick={handleImportLegacy}>
+                    Save to server
+                  </Button>
+                  <Button size="sm" variant="secondary" disabled={isImporting} onClick={handleDiscardLegacy}>
+                    Discard
+                  </Button>
+                </div>
+              </Notice>
+            </div>
+          )}
 
-        {currentTab === 'ingredients' && (
-          <IngredientsTab
-            ingredients={ingredients}
-            suppliers={suppliers}
-            onAddIngredient={handleAddIngredient}
-            onEditIngredient={handleEditIngredient}
-            onDeleteIngredient={handleDeleteIngredient}
-            onAdjustStock={handleAdjustStock}
-          />
-        )}
+          {loadState === 'loading' && <TabSkeleton />}
 
-        {currentTab === 'recipes' && (
-          <RecipesBOMTab
-            ingredients={ingredients}
-            recipes={recipes}
-            onSaveRecipe={handleSaveRecipe}
-            onDeleteRecipe={handleDeleteRecipe}
-          />
-        )}
+          {loadState === 'error' && (
+            <div className="inv-card">
+              <div className="inv-empty">
+                <div className="inv-empty-icon">
+                  <Icon name="alertCircle" className="h-5 w-5" />
+                </div>
+                <p className="inv-empty-title">Inventory couldn’t be loaded</p>
+                <p className="inv-empty-desc">{loadErrorText}</p>
+                <div className="inv-empty-action">
+                  <Button variant="primary" icon="refresh" onClick={() => void loadInventory()}>
+                    Try again
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
 
-        {currentTab === 'suppliers' && (
-          <SuppliersTab
-            suppliers={suppliers}
-            onAddSupplier={handleAddSupplier}
-            onEditSupplier={handleEditSupplier}
-            onDeleteSupplier={handleDeleteSupplier}
-          />
-        )}
+          <Suspense fallback={<TabSkeleton />}>
+            {loadState === 'ready' && currentTab === 'dashboard' && (
+              <InventoryDashboardTab
+                ingredients={ingredients}
+                purchaseOrders={purchaseOrders}
+                transactions={transactions}
+                onNavigateTab={handleTabChange}
+                onOpenAddIngredient={() => handleTabChange('ingredients')}
+                onOpenCreatePO={() => handleTabChange('purchases')}
+              />
+            )}
 
-        {currentTab === 'purchases' && (
-          <PurchasesReceivingTab
-            purchaseOrders={purchaseOrders}
-            suppliers={suppliers}
-            ingredients={ingredients}
-            onCreatePO={handleCreatePO}
-            onReceiveStock={handleReceiveStock}
-            onCancelPO={handleCancelPO}
-          />
-        )}
+            {loadState === 'ready' && currentTab === 'ingredients' && (
+              <IngredientsTab
+                ingredients={ingredients}
+                suppliers={suppliers}
+                transactions={transactions}
+                initialStatus={statusParam}
+                onAddIngredient={handleAddIngredient}
+                onEditIngredient={handleEditIngredient}
+                onDeleteIngredient={handleDeleteIngredient}
+                onAdjustStock={handleAdjustStock}
+              />
+            )}
 
-        {currentTab === 'history' && (
-          <StockHistoryTab
-            transactions={transactions}
-            ingredients={ingredients}
-            onAddTransaction={handleAddTransaction}
-          />
-        )}
+            {loadState === 'ready' && currentTab === 'recipes' && (
+              <RecipesBOMTab
+                ingredients={ingredients}
+                recipes={recipes}
+                onSaveRecipe={handleSaveRecipe}
+                onDeleteRecipe={handleDeleteRecipe}
+              />
+            )}
 
-        {currentTab === 'reports' && (
-          <InventoryReportsTab
-            ingredients={ingredients}
-            purchaseOrders={purchaseOrders}
-            transactions={transactions}
-            onExportReport={handleExportReport}
-          />
-        )}
+            {loadState === 'ready' && currentTab === 'suppliers' && (
+              <SuppliersTab
+                suppliers={suppliers}
+                onAddSupplier={handleAddSupplier}
+                onEditSupplier={handleEditSupplier}
+                onDeleteSupplier={handleDeleteSupplier}
+              />
+            )}
+
+            {loadState === 'ready' && currentTab === 'purchases' && (
+              <PurchasesReceivingTab
+                purchaseOrders={purchaseOrders}
+                suppliers={suppliers}
+                ingredients={ingredients}
+                onCreatePO={handleCreatePO}
+                onReceiveStock={handleReceiveStock}
+                onCancelPO={handleCancelPO}
+              />
+            )}
+
+            {loadState === 'ready' && currentTab === 'history' && (
+              <StockHistoryTab
+                transactions={transactions}
+                ingredients={ingredients}
+                onAddTransaction={handleAddTransaction}
+              />
+            )}
+
+            {loadState === 'ready' && currentTab === 'reports' && (
+              <InventoryReportsTab
+                ingredients={ingredients}
+                purchaseOrders={purchaseOrders}
+                transactions={transactions}
+                onExportReport={handleExportReport}
+              />
+            )}
+          </Suspense>
         </section>
       </main>
 
-      {/* Global Toast Alerts */}
+      <InventoryConfirmModal
+        isOpen={isBaselineConfirmOpen}
+        title="Reload baseline data?"
+        message="This resets every inventory item, recipe and supplier to the official baseline values. Changes you made here will be replaced. Stock history is kept."
+        confirmText="Reload baseline"
+        isDestructive
+        onConfirm={handleRestoreActualBaseline}
+        onCancel={() => setIsBaselineConfirmOpen(false)}
+      />
+
       <InventoryToast toasts={toasts} onDismiss={dismissToast} />
     </div>
   )

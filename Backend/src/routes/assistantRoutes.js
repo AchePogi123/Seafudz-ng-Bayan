@@ -3,6 +3,13 @@ import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { inMemoryOrders, normalizeFlowStatus, formatOrderResponse, calculateFinancialLedger } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
+import {
+  reserveForOrder,
+  returnForOrder,
+  returnForItems,
+  getOrderFulfillment,
+  broadcastInventoryChange,
+} from '../services/inventoryService.js';
 
 const router = Router();
 
@@ -766,8 +773,12 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
           );
 
           await client.query(`UPDATE order_items SET item_status = 'REFUNDED' WHERE order_id = $1`, [id]);
+
+          // Whole order refunded: whatever it still held in inventory goes back
+          await returnForOrder(client, id, { reason: `Order ${id} fully refunded (out of stock)` });
         } else {
           // resolution === 'REPLACE'
+          const replacementItems = [];
           if (!Array.isArray(customerReplacements) || customerReplacements.length === 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({ success: false, message: 'The customer replacement selection is missing.' });
@@ -775,12 +786,17 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
 
           for (const replacement of customerReplacements) {
             const oldItemId = replacement.oldItemId;
-            await client.query(
+            const replacedRows = await client.query(
               `UPDATE order_items
                SET item_status = 'REPLACED'
-               WHERE order_id = $1 AND (id::text = $2 OR product_id = $2 OR product_name_snapshot = $2) AND item_status <> 'REPLACED'`,
+               WHERE order_id = $1 AND (id::text = $2 OR product_id = $2 OR product_name_snapshot = $2) AND item_status <> 'REPLACED'
+               RETURNING id`,
               [id, String(oldItemId)]
             );
+            // The dish that could not be made no longer needs its ingredients
+            await returnForItems(client, id, replacedRows.rows.map((r) => r.id), {
+              reason: `Item replaced on order ${id}`,
+            });
 
             const prodRes = await client.query(
               `SELECT id, name, price, is_available FROM products
@@ -797,12 +813,19 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             const qty = Number(replacement.quantity) || 1;
             const subtotal = Math.round(verifiedPrice * qty * 100) / 100;
 
-            await client.query(
+            const newItemRow = await client.query(
               `INSERT INTO order_items (order_id, product_id, product_name_snapshot, unit_price, quantity, subtotal, item_status, replacement_for_item_id)
-               VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)`,
+               VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7) RETURNING id`,
               [id, verifiedId, verifiedName, verifiedPrice, qty, subtotal, Number.isInteger(Number(oldItemId)) ? Number(oldItemId) : null]
             );
+            replacementItems.push({ orderItemId: newItemRow.rows[0]?.id ?? null, product_id: verifiedId, name: verifiedName, quantity: qty });
           }
+
+          // The replacement dishes take their ingredients (409 if short -> nothing changes)
+          await reserveForOrder(client, id, replacementItems, await getOrderFulfillment(client, id), {
+            append: true,
+            performedBy: 'Assistant',
+          });
 
           const origTotal = parseFloat(dbOrder.total || 0);
           const deliveryFee = parseFloat(dbOrder.delivery_fee || 0);
@@ -912,8 +935,17 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
       }
 
       await client.query('COMMIT');
+      broadcastInventoryChange();
     } catch (dbErr) {
       try { await client.query('ROLLBACK'); } catch {}
+      if (dbErr.code === 'INSUFFICIENT_STOCK') {
+        return res.status(409).json({
+          success: false,
+          error: dbErr.code,
+          message: `The replacement cannot be prepared: ${dbErr.message}`,
+          details: dbErr.details,
+        });
+      }
       databaseError = dbErr;
       console.warn('DB note (resolve-out-of-stock):', dbErr.message);
     } finally {
@@ -1202,7 +1234,11 @@ router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, 
         [id]
       );
 
+      // 6. Make sure the cancelled order's ingredients are back in stock (no-op if already returned)
+      await returnForOrder(client, id, { reason: `Order ${id} cancellation refunded` });
+
       await client.query('COMMIT');
+      broadcastInventoryChange();
     } catch (dbErr) {
       try { await client.query('ROLLBACK'); } catch {}
       databaseError = dbErr;

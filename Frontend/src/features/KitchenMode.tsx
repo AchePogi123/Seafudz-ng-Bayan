@@ -7,6 +7,7 @@ import { AdminEditTransactionModal } from '../components/AdminEditTransactionMod
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability } from '../utils/menuAvailability'
+import KitchenStockPanel from '../components/KitchenStockPanel'
 
 interface OrderItem {
   id?: number
@@ -42,6 +43,7 @@ export const KitchenMode: React.FC = () => {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false)
+  const [isStockPanelOpen, setIsStockPanelOpen] = useState<boolean>(false)
   const [now, setNow] = useState<number>(() => Date.now())
 
   // Out-of-Stock flagging states
@@ -692,6 +694,14 @@ export const KitchenMode: React.FC = () => {
             )}
 
             <button
+              onClick={() => setIsStockPanelOpen(true)}
+              className="flex items-center gap-2 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+              title="See what the kitchen can still make"
+            >
+              Menu stock
+            </button>
+
+            <button
               onClick={() => setIsHistoryModalOpen(true)}
               className="flex items-center gap-2 bg-neutral-900 hover:bg-black text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
               title="View Processed Orders"
@@ -890,6 +900,8 @@ export const KitchenMode: React.FC = () => {
       </div>
 
       {/* Processed Orders Modal */}
+      <KitchenStockPanel open={isStockPanelOpen} onClose={() => setIsStockPanelOpen(false)} menuItems={menuItems} />
+
       {isHistoryModalOpen && (
         <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-3 sm:p-6 z-50 animate-fadeIn">
           <div className="bg-white w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-neutral-100 flex flex-col max-h-[92vh]">

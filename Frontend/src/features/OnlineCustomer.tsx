@@ -3,11 +3,11 @@ import { DrawnWaves } from '../components/DrawnWaves'
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
-import { CLIENT_CATEGORIES } from '../components/MenuCard'
+import { CLIENT_CATEGORIES, LOW_SERVINGS_THRESHOLD } from '../components/MenuCard'
 import type { MenuItem } from '../components/MenuCard'
 import { ProductImage } from '../components/ProductImage'
 import { API_BASE_URL } from '../utils/api'
-import { useMenuAvailability } from '../utils/menuAvailability'
+import { useMenuAvailability, refreshMenuAvailability, setMenuFulfillment } from '../utils/menuAvailability'
 import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
@@ -530,7 +530,7 @@ export const OnlineCustomer: React.FC = () => {
     }
 
     // Availability & Price sync
-    const { isAvailable } = useMenuAvailability()
+    const { isAvailable, getRemainingServings } = useMenuAvailability()
     const { getEffectivePrice } = useMenuPrices()
 
     // Minimal Modern Stock Notice Modal State
@@ -981,6 +981,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     // Checkout Form states
     const [fulfillmentType, setFulfillmentType] = useState<'DELIVERY' | 'PICKUP'>('DELIVERY')
+
+    // Servings left depend on packaging, which depends on delivery vs pickup
+    useEffect(() => {
+        setMenuFulfillment(fulfillmentType)
+        return () => setMenuFulfillment('TAKE_OUT')
+    }, [fulfillmentType])
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
     const [address, setAddress] = useState('')
@@ -1844,8 +1850,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [allEffectiveItems, searchQuery, selectedCategory])
 
     // Handlers
+
+    /** Keeps a cart quantity within the servings inventory can still make (the server re-checks at checkout). */
+    const limitToStock = (itemId: string, itemName: string, wanted: number): number => {
+        const left = getRemainingServings(itemId)
+        if (left === null || wanted <= left) return wanted
+        showStockNotice(itemName, left > 0 ? `Only ${left} left of "${itemName}" right now.` : `"${itemName}" just sold out.`)
+        return Math.max(0, left)
+    }
+
     const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
+        const inCart = cartItems.find((ci) => ci.item.id === item.id)?.quantity ?? 0
+        if (limitToStock(item.id, item.name, inCart + 1) <= inCart) return
 
         if (e) {
             triggerDeliverAnimation(e, item.image || item.bundledImage)
@@ -1872,6 +1889,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleIncrement = (itemId: string, e?: React.MouseEvent) => {
         const ci = cartItems.find((c) => c.item.id === itemId)
+        if (ci && limitToStock(itemId, ci.item.name, ci.quantity + 1) <= ci.quantity) return
         if (e) {
             triggerDeliverAnimation(e, ci?.item.image || ci?.item.bundledImage)
         } else {
@@ -1892,7 +1910,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }
 
     const handleSetQuantity = (itemId: string, quantity: number) => {
-        const safeQuantity = Math.max(1, quantity)
+        const target = cartItems.find((c) => c.item.id === itemId)
+        const allowed = target ? limitToStock(itemId, target.item.name, Math.max(1, quantity)) : Math.max(1, quantity)
+        const safeQuantity = Math.max(1, allowed)
         setCartItems((prev) =>
             prev.map((ci) => (ci.item.id === itemId ? { ...ci, quantity: safeQuantity } : ci))
         )
@@ -2084,6 +2104,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 if (res.status === 409 || responseData.error === 'ITEM_DELETED' || responseData.error === 'ITEM_OUT_OF_STOCK') {
                     alert(`Cannot place order: ${responseData.message || 'One or more items in your cart are no longer available or have been deleted from the menu.'}`)
                     void refreshMenuItems()
+                    void refreshMenuAvailability()
                     setIsVerificationModalOpen(false)
                     return
                 }
@@ -2322,6 +2343,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
                         }`}
                     />
+                    {available && (() => {
+                        const left = getRemainingServings(item.id)
+                        return left !== null && left > 0 && left <= LOW_SERVINGS_THRESHOLD ? (
+                            <span className="absolute top-3 right-3 bg-amber-100 text-amber-900 font-bold text-xs px-3 py-1 rounded-lg border border-amber-300 shadow-xs">
+                                Only {left} left
+                            </span>
+                        ) : null
+                    })()}
                     {!available && (
                         <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">
                             <span className="bg-rose-600 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-lg border border-rose-400/30 flex items-center gap-1.5 animate-pulse">

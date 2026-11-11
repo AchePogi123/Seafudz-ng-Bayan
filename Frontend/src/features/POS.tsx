@@ -18,7 +18,7 @@ import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
 import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { NoticeModal } from '../components/NoticeModal'
 import { useProductImages } from '../utils/useProductImages'
-import { useMenuAvailability } from '../utils/menuAvailability'
+import { useMenuAvailability, refreshMenuAvailability, setMenuFulfillment } from '../utils/menuAvailability'
 
 interface ParsedDishItem {
   name: string
@@ -90,7 +90,7 @@ export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
   const { getEffectivePrice, updatePrice } = useMenuPrices()
-  const { isAvailable } = useMenuAvailability()
+  const { isAvailable, getRemainingServings } = useMenuAvailability()
 
   const { menuItems, refresh: refreshMenuItems } = useProductImages()
   const [categories] = useState<string[]>(CLIENT_CATEGORIES)
@@ -131,6 +131,12 @@ export const POS: React.FC = () => {
   }, [menuItems, storedCartItems])
   const hasUnavailableItems = cartItems.some((ci) => !isAvailable(ci.item.id))
   const [orderType, setOrderType] = useState('Take Out')
+
+  // Dine-in uses no takeout packaging, so it can have more servings left than take-out
+  useEffect(() => {
+    setMenuFulfillment(orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT')
+    return () => setMenuFulfillment('TAKE_OUT')
+  }, [orderType])
   const [customerName, setCustomerName] = useState('')
   const [orderNotes, setOrderNotes] = useState('')
   const [isSuccessModalOpen, setIsSuccessModalOpen] = useState(false)
@@ -1018,8 +1024,21 @@ export const POS: React.FC = () => {
     )
   }
 
+  /** Keeps a cart quantity within the servings inventory can still make (the server re-checks on payment). */
+  const limitToStock = (itemId: string, itemName: string, wanted: number): number => {
+    const left = getRemainingServings(itemId)
+    if (left === null || wanted <= left) return wanted
+    showNotice(
+      left > 0 ? `Only ${left} left of "${itemName}" in stock.` : `"${itemName}" just ran out of stock.`,
+      'Not Enough Stock'
+    )
+    return Math.max(0, left)
+  }
+
   const handleAddToCart = (item: MenuItem) => {
     if (!isAvailable(item.id)) return
+    const inCart = cartItems.find((ci) => ci.item.id === item.id)?.quantity ?? 0
+    if (limitToStock(item.id, item.name, inCart + 1) <= inCart) return
 
     const basePrice = item.basePrice || getEffectivePrice(item.id, item.price)
     const effectiveItem: MenuItem = {
@@ -1041,6 +1060,8 @@ export const POS: React.FC = () => {
   }
 
   const handleIncrement = (itemId: string) => {
+    const current = cartItems.find((ci) => ci.item.id === itemId)
+    if (current && limitToStock(itemId, current.item.name, current.quantity + 1) <= current.quantity) return
     setCartItems((prevItems) =>
       prevItems.map((ci) =>
         ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci
@@ -1059,7 +1080,9 @@ export const POS: React.FC = () => {
   }
 
   const handleSetQuantity = (itemId: string, quantity: number) => {
-    const finalQty = Math.max(1, quantity)
+    const target = cartItems.find((ci) => ci.item.id === itemId)
+    const allowed = target ? limitToStock(itemId, target.item.name, Math.max(1, quantity)) : Math.max(1, quantity)
+    const finalQty = Math.max(1, allowed)
     setCartItems((prevItems) =>
       prevItems.map((ci) =>
         ci.item.id === itemId ? { ...ci, quantity: finalQty } : ci
@@ -1199,6 +1222,7 @@ export const POS: React.FC = () => {
         if (response.status === 409 || result.error === 'ITEM_DELETED' || result.error === 'ITEM_OUT_OF_STOCK') {
           showNotice(result.message || 'An item in this order is no longer available or was removed from the menu.', 'Item Unavailable')
           void refreshMenuItems()
+          void refreshMenuAvailability()
           setIsSuccessModalOpen(false)
           return
         }

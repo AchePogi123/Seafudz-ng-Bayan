@@ -1,5 +1,28 @@
 import React, { useState, useMemo } from 'react'
 import type { Ingredient, PurchaseOrder, StockTransaction, InventoryItemType } from './inventoryTypes'
+import {
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  Segmented,
+  StockStatusBadge,
+  TypeBadge,
+  formatPeso,
+  formatQty,
+} from './ui'
+
+const Metric: React.FC<{ label: string; value: string; note?: string; tone?: 'danger' }> = ({ label, value, note, tone }) => (
+  <div className="inv-stat">
+    <span className="inv-stat-label">{label}</span>
+    <span className="inv-stat-value" style={tone === 'danger' ? { color: 'var(--inv-danger)' } : undefined}>
+      {value}
+    </span>
+    {note && <span className="inv-stat-note">{note}</span>}
+  </div>
+)
+
+const HORIZON_LABEL = { TODAY: 'today', WEEK: 'the last 7 days', MONTH: 'the last 30 days', YEAR: 'this year' } as const
 
 interface InventoryReportsTabProps {
   ingredients: Ingredient[]
@@ -157,10 +180,19 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
       totals.set(transaction.ingredientId, current)
     })
 
+    // Stock given back by cancelled orders is not real usage
+    transactions.forEach((transaction) => {
+      if (transaction.type !== 'ORDER_RETURN') return
+      if (new Date(transaction.timestamp).getTime() < reportStart.getTime()) return
+      if (reportTypeFilter !== 'ALL' && (transaction.itemType || 'FOOD') !== reportTypeFilter) return
+      const current = totals.get(transaction.ingredientId)
+      if (current) current.quantity = Math.max(0, current.quantity - Math.abs(transaction.quantityDelta))
+    })
+
     return Array.from(totals.values())
       .sort((a, b) => b.movementCount - a.movementCount)
       .slice(0, 4)
-  }, [consumptionTransactions])
+  }, [consumptionTransactions, transactions, reportStart, reportTypeFilter])
 
   // Waste transactions
   const wasteTxs = useMemo(() => {
@@ -239,391 +271,285 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
       .sort((a, b) => b.amount - a.amount)
   }, [purchaseOrdersInPeriod])
 
+  const reorderItems = ingredients
+    .filter((i) => i.currentStock <= i.minStockLevel)
+    .filter((i) => reportTypeFilter === 'ALL' || (i.itemType || 'FOOD') === reportTypeFilter)
+    .sort((a, b) => a.currentStock / Math.max(a.minStockLevel, 1) - b.currentStock / Math.max(b.minStockLevel, 1))
+
+  const maxBucket = Math.max(...consumptionBuckets.map((b) => b.count), 1)
+  const period = HORIZON_LABEL[dateHorizon]
+
   return (
-    <div className="space-y-6">
-      {/* 1. TOP HEADER & EXPORT ACTIONS */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h2 className="text-base font-black text-slate-900">Inventory Reports</h2>
-          <p className="text-xs text-slate-500">
-            Review recorded stock consumption, purchases, waste and current stock valuation.
-          </p>
+    <div className="space-y-5">
+      <div className="inv-section-header">
+        <div className="min-w-0">
+          <h2 className="inv-section-title">Reports</h2>
+          <p className="inv-section-desc">Usage, purchasing, waste and stock value for {period}.</p>
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Horizon toggle */}
-          <div className="flex items-center rounded-xl bg-slate-100 p-1 text-xs">
-            {(
-              [
-                { label: 'Today', value: 'TODAY' },
-                { label: 'This Week', value: 'WEEK' },
-                { label: 'This Month', value: 'MONTH' },
-                { label: 'This Year', value: 'YEAR' },
-              ] as const
-            ).map((h) => (
-              <button
-                key={h.value}
-                type="button"
-                onClick={() => setDateHorizon(h.value)}
-                className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                  dateHorizon === h.value ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                {h.label}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => onExportReport('EXCEL')}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-all cursor-pointer shadow-xs"
-          >
-            <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            Excel (.xlsx)
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onExportReport('PDF')}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-all cursor-pointer shadow-xs"
-          >
-            <svg className="w-4 h-4 text-rose-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-            </svg>
+        <div className="inv-section-actions">
+          <Button variant="secondary" icon="download" onClick={() => onExportReport('EXCEL')}>
+            Export Excel
+          </Button>
+          <Button variant="secondary" icon="print" onClick={() => onExportReport('PDF')}>
             Print PDF
-          </button>
+          </Button>
         </div>
       </div>
 
-      {/* 2. SUB-REPORT NAVIGATION TABS & INVENTORY CLASSIFICATION FILTER */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 gap-3">
-        <div className="flex border-b sm:border-b-0 border-slate-200 gap-6 overflow-x-auto no-scrollbar">
-          <button
-            type="button"
-            onClick={() => setActiveReportSubTab('CONSUMPTION')}
-            aria-pressed={activeReportSubTab === 'CONSUMPTION'}
-            className={`pb-3 text-xs font-bold transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-              activeReportSubTab === 'CONSUMPTION'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Material Consumption
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveReportSubTab('PURCHASING')}
-            aria-pressed={activeReportSubTab === 'PURCHASING'}
-            className={`pb-3 text-xs font-bold transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-              activeReportSubTab === 'PURCHASING'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Purchasing & Procurement
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveReportSubTab('WASTE')}
-            aria-pressed={activeReportSubTab === 'WASTE'}
-            className={`pb-3 text-xs font-bold transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-              activeReportSubTab === 'WASTE'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Waste & Shrinkage
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveReportSubTab('VALUATION')}
-            aria-pressed={activeReportSubTab === 'VALUATION'}
-            className={`pb-3 text-xs font-bold transition-colors cursor-pointer border-b-2 -mb-px shrink-0 ${
-              activeReportSubTab === 'VALUATION'
-                ? 'border-orange-500 text-orange-600'
-                : 'border-transparent text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            Stock Valuation & Reorder
-          </button>
-        </div>
-
-        {/* Classification Filter */}
-        <div className="flex items-center gap-1.5 pb-2 sm:pb-0">
-          <button
-            type="button"
-            onClick={() => setReportTypeFilter('ALL')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              reportTypeFilter === 'ALL'
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            All Inventory
-          </button>
-          <button
-            type="button"
-            onClick={() => setReportTypeFilter('FOOD')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              reportTypeFilter === 'FOOD'
-                ? 'bg-orange-500 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Food
-          </button>
-          <button
-            type="button"
-            onClick={() => setReportTypeFilter('PACKAGING')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              reportTypeFilter === 'PACKAGING'
-                ? 'bg-indigo-600 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            Packaging
-          </button>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <Segmented
+          label="Report"
+          value={activeReportSubTab}
+          onChange={setActiveReportSubTab}
+          options={[
+            { value: 'CONSUMPTION', label: 'Usage' },
+            { value: 'PURCHASING', label: 'Purchasing' },
+            { value: 'WASTE', label: 'Waste' },
+            { value: 'VALUATION', label: 'Stock value & reorder' },
+          ]}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented
+            size="sm"
+            label="Item type"
+            value={reportTypeFilter}
+            onChange={setReportTypeFilter}
+            options={[
+              { value: 'ALL', label: 'All items' },
+              { value: 'FOOD', label: 'Food' },
+              { value: 'PACKAGING', label: 'Packaging' },
+            ]}
+          />
+          {activeReportSubTab !== 'VALUATION' && (
+            <select
+              aria-label="Period"
+              className="inv-select inv-select--sm w-auto"
+              value={dateHorizon}
+              onChange={(e) => setDateHorizon(e.target.value as typeof dateHorizon)}
+            >
+              <option value="TODAY">Today</option>
+              <option value="WEEK">Last 7 days</option>
+              <option value="MONTH">Last 30 days</option>
+              <option value="YEAR">This year</option>
+            </select>
+          )}
         </div>
       </div>
 
-      {/* 3. REPORT VIEWS */}
       {activeReportSubTab === 'CONSUMPTION' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-900">
-                      {reportTypeFilter === 'PACKAGING'
-                        ? 'Packaging consumption'
-                        : reportTypeFilter === 'FOOD'
-                        ? 'Food ingredient consumption'
-                        : 'Recorded stock consumption'}
-                    </h3>
-                    <p className="text-[11px] text-slate-500">
-                      Number of recorded consumption movements for the selected period
-                    </p>
-                  </div>
-                  <span className="text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-md">
-                    {dateHorizon}
-                  </span>
-                </div>
-
-                <div className="min-h-56 mt-4 flex items-end border-b border-slate-200 pb-2">
-                  {consumptionTransactions.length === 0 ? (
-                    <p className="w-full py-12 text-center text-sm text-slate-500">
-                      No consumption movements recorded for this period.
-                    </p>
-                  ) : (
-                    <div className="w-full flex items-end justify-between gap-2 sm:gap-4">
-                      {consumptionBuckets.map((bucket) => {
-                        const maxCount = Math.max(...consumptionBuckets.map((entry) => entry.count), 1)
-                        const barHeight = bucket.count === 0 ? 0 : Math.max(4, (bucket.count / maxCount) * 144)
-                        return (
-                          <div
-                            key={bucket.label}
-                            className="flex flex-1 flex-col items-center justify-end gap-2"
-                            aria-label={`${bucket.label}: ${bucket.count} movements`}
-                          >
-                            <span className="text-[11px] font-semibold text-slate-700">
-                              {bucket.count || ''}
-                            </span>
-                            <div
-                              className={`w-full max-w-10 rounded-t-sm ${
-                                reportTypeFilter === 'PACKAGING' ? 'bg-indigo-600' : 'bg-orange-500'
-                              }`}
-                              style={{ height: `${barHeight}px` }}
-                            />
-                            <span className="text-[10px] font-medium text-slate-500">{bucket.label}</span>
-                          </div>
-                        )
-                      })}
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+          <Card className="xl:col-span-2">
+            <CardHeader
+              title="Usage movements"
+              description={`Recorded usage entries over ${period}`}
+              actions={
+                <span className="text-sm text-[var(--inv-text-3)]">
+                  <b className="font-semibold text-[var(--inv-text)]">{consumptionTransactions.length}</b> total
+                </span>
+              }
+            />
+            <div className="inv-card-body">
+              {consumptionTransactions.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon="history"
+                  title="No usage recorded in this period"
+                  description="Usage appears here when stock is recorded as kitchen usage."
+                />
+              ) : (
+                <div className="flex h-56 items-end gap-2 sm:gap-4" role="list" aria-label="Usage movements by period">
+                  {consumptionBuckets.map((bucket) => (
+                    <div
+                      key={bucket.label}
+                      role="listitem"
+                      className="group flex h-full flex-1 flex-col items-center justify-end gap-2"
+                      aria-label={`${bucket.label}: ${bucket.count} movements`}
+                    >
+                      <span className="text-xs font-medium text-[var(--inv-text-2)]">{bucket.count || ''}</span>
+                      <div
+                        className="w-full max-w-10 rounded-t-md bg-[var(--inv-brand)] opacity-85 transition-opacity group-hover:opacity-100"
+                        style={{ height: `${bucket.count === 0 ? 2 : Math.max(6, (bucket.count / maxBucket) * 170)}px` }}
+                      />
+                      <span className="text-center text-[11px] leading-tight text-[var(--inv-text-3)]">{bucket.label}</span>
                     </div>
-                  )}
+                  ))}
                 </div>
-              </div>
-
-              <div className="pt-4 flex items-center justify-between gap-3 text-xs text-slate-600">
-                <span>Recorded movements</span>
-                <span className="font-semibold text-slate-800">{consumptionTransactions.length}</span>
-              </div>
+              )}
             </div>
+          </Card>
 
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-6 shadow-xs flex flex-col justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 pb-3 border-b border-slate-100">
-                  Items with most recorded movements
-                </h3>
-                {topConsumedItems.length === 0 ? (
-                  <p className="mt-4 py-8 text-sm text-slate-500">
-                    No consumption records in this period.
-                  </p>
-                ) : (
-                  <div className="mt-2 overflow-x-auto">
-                    <table className="inventory-compact-table w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-slate-100 text-[10px] font-bold uppercase text-slate-500">
-                          <th className="py-2 pr-3">Item</th>
-                          <th className="py-2 px-2 text-right">Moves</th>
-                          <th className="py-2 pl-2 text-right">Quantity</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-xs">
-                        {topConsumedItems.map((item) => (
-                          <tr key={item.id}>
-                            <td className="py-3 pr-3">
-                              <span className="font-semibold text-slate-800">{item.name}</span>
-                              <span className="block text-[10px] text-slate-500">
-                                {item.itemType === 'PACKAGING' ? 'Packaging' : 'Food'}
-                              </span>
-                            </td>
-                            <td className="px-2 py-3 text-right text-slate-600">{item.movementCount}</td>
-                            <td className="py-3 pl-2 text-right font-semibold text-slate-800">
-                              {item.quantity.toLocaleString()} {item.unit}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 text-xs text-slate-600">
-                Quantities are summed from recorded consumption movements.
-              </div>
-            </div>
-          </div>
+          <Card>
+            <CardHeader title="Most used items" description="By number of usage entries" />
+            {topConsumedItems.length === 0 ? (
+              <EmptyState compact icon="box" title="Nothing to rank yet" />
+            ) : (
+              <table className="inv-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Item</th>
+                    <th scope="col" className="is-num">Entries</th>
+                    <th scope="col" className="is-num">Quantity</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topConsumedItems.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        <div className="inv-cell-primary">{item.name}</div>
+                        <div className="inv-cell-secondary">
+                          <TypeBadge itemType={item.itemType} />
+                        </div>
+                      </td>
+                      <td className="is-num">{item.movementCount}</td>
+                      <td className="is-num font-semibold text-[var(--inv-text)]">
+                        {formatQty(item.quantity)} {item.unit}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
         </div>
       )}
 
       {activeReportSubTab === 'PURCHASING' && (
-        <div className="space-y-6">
-          <div className="inventory-kpi-grid grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-            <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Spend</span>
-              <p className="text-2xl font-black text-slate-900 mt-1">
-                ₱{totalPurchasesSpend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Non-cancelled purchase orders</p>
-            </div>
-            <div className="p-5 rounded-2xl border border-orange-200 bg-orange-50/30 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-orange-600">Food Spend</span>
-              <p className="text-2xl font-black text-orange-950 mt-1">
-                ₱{totalFoodSpend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Food ingredient line items</p>
-            </div>
-            <div className="p-5 rounded-2xl border border-indigo-200 bg-indigo-50/30 shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Packaging Spend</span>
-              <p className="text-2xl font-black text-indigo-950 mt-1">
-                ₱{totalPackagingSpend.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Trays, bags, cutlery, stickers</p>
-            </div>
-            <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Pending purchase orders</span>
-              <p className="text-2xl font-black text-slate-900 mt-1">{pendingOrdersCount}</p>
-              <p className="text-xs text-slate-500 mt-1">Awaiting receipt</p>
-            </div>
+        <div className="space-y-5">
+          <div className="inv-stats">
+            <Metric label="Total spend" value={formatPeso(totalPurchasesSpend)} note="Excludes cancelled orders" />
+            <Metric label="Food" value={formatPeso(totalFoodSpend)} note="Food ingredient lines" />
+            <Metric label="Packaging" value={formatPeso(totalPackagingSpend)} note="Packaging lines" />
+            <Metric label="Pending orders" value={String(pendingOrdersCount)} note="Awaiting delivery" />
           </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900 mb-4">Spend by supplier</h3>
+          <Card>
+            <CardHeader title="Spend by supplier" description={`Orders placed over ${period}`} />
             {supplierPurchaseSummary.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500">
-                No purchase orders are available to summarize.
-              </p>
+              <EmptyState compact icon="cart" title="No purchase orders in this period" />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              <div className="inv-table-wrap">
+                <table className="inv-table">
                   <thead>
-                    <tr className="border-b border-slate-100 text-[11px] font-bold uppercase text-slate-500">
-                      <th className="px-3 py-3">Supplier</th>
-                      <th className="px-3 py-3 text-right">Orders</th>
-                      <th className="px-3 py-3 text-right">Order value</th>
+                    <tr>
+                      <th scope="col">Supplier</th>
+                      <th scope="col" className="is-num">Orders</th>
+                      <th scope="col" className="is-num">Order value</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
+                  <tbody>
                     {supplierPurchaseSummary.map((supplier) => (
                       <tr key={supplier.supplierName}>
-                        <td className="px-3 py-3 font-semibold text-slate-800">{supplier.supplierName}</td>
-                        <td className="px-3 py-3 text-right text-slate-600">{supplier.orders}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-slate-800">
-                          ₱{supplier.amount.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                        </td>
+                        <td className="inv-cell-primary">{supplier.supplierName}</td>
+                        <td className="is-num">{supplier.orders}</td>
+                        <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(supplier.amount)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-          </div>
+          </Card>
         </div>
       )}
 
       {activeReportSubTab === 'WASTE' && (
-        <div className="space-y-6">
-          <div className="inventory-kpi-grid grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                {reportTypeFilter === 'PACKAGING'
-                  ? 'Total Packaging Loss'
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Metric
+              label={
+                reportTypeFilter === 'PACKAGING'
+                  ? 'Packaging loss'
                   : reportTypeFilter === 'FOOD'
-                  ? 'Total Food Waste Loss'
-                  : 'Total Waste & Shrinkage Loss'}
-              </span>
-              <p className="text-2xl font-black text-rose-600 mt-1">
-                ₱{totalWasteLoss.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Recorded shrinkage, damages & spoilage</p>
-            </div>
-            <div className="p-5 rounded-2xl border border-slate-200 bg-white shadow-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Loss Ratio</span>
-              <p className="text-2xl font-black text-slate-900 mt-1">
-                {selectedValuation > 0
-                  ? `${((totalWasteLoss / selectedValuation) * 100).toFixed(1)}%`
-                  : '0.0%'}
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Waste value vs selected stock valuation</p>
-            </div>
+                  ? 'Food waste loss'
+                  : 'Waste and shrinkage loss'
+              }
+              value={formatPeso(totalWasteLoss)}
+              note="Estimated from unit cost"
+              tone={totalWasteLoss > 0 ? 'danger' : undefined}
+            />
+            <Metric
+              label="Loss ratio"
+              value={selectedValuation > 0 ? `${((totalWasteLoss / selectedValuation) * 100).toFixed(1)}%` : '0.0%'}
+              note="Waste value vs. current stock value"
+            />
           </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900 mb-2">Recorded waste reasons</h3>
-            <p className="text-xs text-slate-500 mb-6">
-              Reasons recorded with stock waste movements
-            </p>
-
+          <Card>
+            <CardHeader title="Waste by reason" description="Reasons recorded with waste entries" />
             {wasteBreakdown.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500">
-                No waste transactions are recorded for this selection.
-              </p>
+              <EmptyState compact icon="checkCircle" title="No waste recorded in this period" />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+              <div className="inv-table-wrap">
+                <table className="inv-table">
                   <thead>
-                    <tr className="border-b border-slate-100 text-[11px] font-bold uppercase text-slate-500">
-                      <th className="px-3 py-3">Recorded reason</th>
-                      <th className="px-3 py-3">Classification</th>
-                      <th className="px-3 py-3 text-right">Movements</th>
-                      <th className="px-3 py-3 text-right">Estimated value</th>
+                    <tr>
+                      <th scope="col">Reason</th>
+                      <th scope="col">Type</th>
+                      <th scope="col" className="is-num">Entries</th>
+                      <th scope="col" className="is-num">Est. value</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
+                  <tbody>
                     {wasteBreakdown.map((item) => (
                       <tr key={`${item.itemType}:${item.reason}`}>
-                        <td className="px-3 py-3 font-semibold text-slate-800">{item.reason}</td>
-                        <td className="px-3 py-3 text-slate-600">
-                          {item.itemType === 'PACKAGING' ? 'Packaging' : 'Food'}
+                        <td className="max-w-[360px] text-[var(--inv-text)]">{item.reason}</td>
+                        <td>
+                          <TypeBadge itemType={item.itemType} />
                         </td>
-                        <td className="px-3 py-3 text-right text-slate-600">{item.count}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-slate-800">
-                          ₱{item.loss.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
+                        <td className="is-num">{item.count}</td>
+                        <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(item.loss)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {activeReportSubTab === 'VALUATION' && (
+        <div className="space-y-5">
+          <div className="inv-stats">
+            <Metric label="Total stock value" value={formatPeso(totalValuation)} note="Caloocan Flagship Hub" />
+            <Metric label="Food" value={formatPeso(foodValuation)} note={`${foodItems.length} items`} />
+            <Metric label="Packaging" value={formatPeso(packagingValuation)} note={`${packagingItems.length} items`} />
+            <Metric label="To reorder" value={String(reorderItems.length)} note="At or below minimum" />
+          </div>
+          <Card>
+            <CardHeader title="Reorder list" description="Lowest relative to minimum first" />
+            {reorderItems.length === 0 ? (
+              <EmptyState compact icon="checkCircle" title="Nothing needs reordering" description="All items are above their minimum levels." />
+            ) : (
+              <div className="inv-table-wrap max-h-[480px] overflow-y-auto">
+                <table className="inv-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Item</th>
+                      <th scope="col" className="is-num">On hand</th>
+                      <th scope="col" className="is-num hidden sm:table-cell">Minimum</th>
+                      <th scope="col" className="is-num hidden md:table-cell">Suggested order</th>
+                      <th scope="col">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reorderItems.map((item) => (
+                      <tr key={item.id}>
+                        <td>
+                          <div className="inv-cell-primary">{item.name}</div>
+                          <div className="inv-cell-secondary">
+                            <TypeBadge itemType={item.itemType} />
+                          </div>
+                        </td>
+                        <td className="is-num font-semibold text-[var(--inv-text)]">
+                          {formatQty(item.currentStock)} {item.baseUnit}
+                        </td>
+                        <td className="is-num hidden sm:table-cell">
+                          {formatQty(item.minStockLevel)} {item.baseUnit}
+                        </td>
+                        <td className="is-num hidden md:table-cell">
+                          {formatQty(item.preferredRestockQty)} {item.baseUnit}
+                        </td>
+                        <td>
+                          <StockStatusBadge status={item.status} />
                         </td>
                       </tr>
                     ))}
@@ -631,85 +557,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
                 </table>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {activeReportSubTab === 'VALUATION' && (
-        <div className="space-y-6">
-          <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h3 className="text-sm font-bold text-slate-800">Total branch inventory valuation</h3>
-              <p className="text-3xl font-black text-slate-900 mt-1">
-                ₱{totalValuation.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-              <div className="flex items-center gap-4 mt-2 text-xs">
-                <span className="inline-flex items-center gap-1 font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200">
-                  <span>Food Ingredients:</span> ₱{foodValuation.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </span>
-                <span className="inline-flex items-center gap-1 font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-200">
-                  <span>Packaging Materials:</span> ₱{packagingValuation.toLocaleString('en-PH', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-            </div>
-            <div className="shrink-0">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold border border-emerald-200">
-                <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                Caloocan Flagship Valuation
-              </span>
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-slate-900 mb-3">Reorder Urgency Summary</h3>
-            <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
-              {ingredients.filter((i) => {
-                const isBelow = i.currentStock <= i.minStockLevel
-                const matchesType =
-                  reportTypeFilter === 'ALL' || (i.itemType || 'FOOD') === reportTypeFilter
-                return isBelow && matchesType
-              }).length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-400">
-                  No items currently require urgent replenishment.
-                </div>
-              ) : (
-                ingredients
-                  .filter((i) => {
-                    const isBelow = i.currentStock <= i.minStockLevel
-                    const matchesType =
-                      reportTypeFilter === 'ALL' || (i.itemType || 'FOOD') === reportTypeFilter
-                    return isBelow && matchesType
-                  })
-                  .map((item) => {
-                    const isPackaging = item.itemType === 'PACKAGING'
-                    return (
-                      <div key={item.id} className="py-2.5 flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
-                              isPackaging
-                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                                : 'bg-orange-50 text-orange-700 border border-orange-200'
-                            }`}
-                          >
-                            {isPackaging ? 'Packaging' : 'Food'}
-                          </span>
-                          <span className="font-bold text-slate-800">{item.name}</span>
-                          <span className="text-[10px] text-slate-400">
-                            Min: {item.minStockLevel} {item.baseUnit}
-                          </span>
-                        </div>
-                        <div className="text-right">
-                          <span className="font-black text-amber-600">
-                            {item.currentStock} {item.baseUnit} left
-                          </span>
-                        </div>
-                      </div>
-                    )
-                  })
-              )}
-            </div>
-          </div>
+          </Card>
         </div>
       )}
     </div>

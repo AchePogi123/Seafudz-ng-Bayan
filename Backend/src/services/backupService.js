@@ -135,8 +135,16 @@ function sqlEscapeValue(val, udtName = '') {
   if (val instanceof Date) {
     return `'${val.toISOString()}'`;
   }
+  if (Array.isArray(val) && udtName.startsWith('_')) {
+    const elemType = udtName.slice(1);
+    const escapedItems = val.map((item) => {
+      if (item === null || item === undefined) return 'NULL';
+      return `'${String(item).replace(/'/g, "''")}'`;
+    });
+    return `ARRAY[${escapedItems.join(', ')}]::${elemType}[]`;
+  }
   if (typeof val === 'object') {
-    // JSON or array
+    // JSON (including JSON arrays stored in json/jsonb columns)
     const jsonStr = JSON.stringify(val);
     const escaped = jsonStr.replace(/'/g, "''");
     return `'${escaped}'::jsonb`;
@@ -241,7 +249,10 @@ export async function generateNativePostgresDumpStream(writableStream) {
 
     const colDefs = colRes.rows.map((col) => {
       let typeDef = col.data_type;
-      if (col.data_type === 'character varying') {
+      if (col.data_type === 'ARRAY') {
+        const elemType = col.udt_name.startsWith('_') ? col.udt_name.slice(1) : col.udt_name;
+        typeDef = `${elemType}[]`;
+      } else if (col.data_type === 'character varying') {
         typeDef = col.character_maximum_length ? `varchar(${col.character_maximum_length})` : 'varchar';
       } else if (col.data_type === 'USER-DEFINED') {
         typeDef = col.udt_name;

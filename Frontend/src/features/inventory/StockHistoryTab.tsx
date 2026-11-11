@@ -1,5 +1,44 @@
 import React, { useState, useMemo } from 'react'
 import type { StockTransaction, TransactionType, Ingredient, InventoryItemType } from './inventoryTypes'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  MOVEMENT_TONE,
+  Modal,
+  Notice,
+  Pagination,
+  SearchInput,
+  SectionHeader,
+  Segmented,
+  Toolbar,
+  TypeBadge,
+  cx,
+  fieldAria,
+  formatDate,
+  formatQty,
+  movementLabel,
+} from './ui'
+
+const PAGE_SIZE = 15
+
+const FILTER_OPTIONS: { value: TransactionType; label: string }[] = [
+  { value: 'STOCK_RECEIVED', label: 'Stock received' },
+  { value: 'CONSUMPTION', label: 'Used (orders and kitchen)' },
+  { value: 'ORDER_RETURN', label: 'Returned from cancelled orders' },
+  { value: 'WASTE', label: 'Waste or spoilage' },
+  { value: 'ADJUSTMENT', label: 'Count correction' },
+]
+
+/** Types an admin can record by hand */
+const MOVEMENT_OPTIONS: { value: TransactionType; label: string; hint: string }[] = [
+  { value: 'STOCK_RECEIVED', label: 'Stock received', hint: 'Adds to stock.' },
+  { value: 'CONSUMPTION', label: 'Kitchen usage', hint: 'Removes from stock.' },
+  { value: 'WASTE', label: 'Waste or spoilage', hint: 'Removes from stock.' },
+  { value: 'ADJUSTMENT', label: 'Count correction', hint: 'Use a negative number to reduce stock.' },
+]
 
 interface StockHistoryTabProps {
   transactions: StockTransaction[]
@@ -18,7 +57,6 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
   const [selectedType, setSelectedType] = useState<'ALL' | TransactionType>('ALL')
   const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'WEEK' | 'MONTH'>('ALL')
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 10
 
   // Manual Transaction Modal State
   const [isManualModalOpen, setIsManualModalOpen] = useState(false)
@@ -26,7 +64,7 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
   const [manualType, setManualType] = useState<TransactionType>('ADJUSTMENT')
   const [manualQty, setManualQty] = useState<number | ''>('')
   const [manualReason, setManualReason] = useState('Stock Count Audit Reconciliation')
-  const [manualError, setManualError] = useState('')
+  const [manualErrors, setManualErrors] = useState<Record<string, string>>({})
 
   // Separate Food and Packaging ingredients from catalog
   const foodIngredients = useMemo(
@@ -68,30 +106,54 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
   }, [transactions, searchQuery, selectedType, itemTypeFilter, dateFilter])
 
   // Pagination
-  const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage) || 1
-  const paginatedTransactions = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage
-    return filteredTransactions.slice(start, start + itemsPerPage)
-  }, [filteredTransactions, currentPage])
+  const sortedTransactions = useMemo(
+    () => [...filteredTransactions].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
+    [filteredTransactions]
+  )
+  const totalPages = Math.max(1, Math.ceil(sortedTransactions.length / PAGE_SIZE))
+  const page = Math.min(currentPage, totalPages)
+  const paginatedTransactions = sortedTransactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const hasActiveFilters =
+    Boolean(searchQuery) || itemTypeFilter !== 'ALL' || selectedType !== 'ALL' || dateFilter !== 'ALL'
+  const clearFilters = () => {
+    setSearchQuery('')
+    setItemTypeFilter('ALL')
+    setSelectedType('ALL')
+    setDateFilter('ALL')
+    setCurrentPage(1)
+  }
+
+  const manualItem = ingredients.find((i) => i.id === manualIngredientId)
+  const manualDelta = (() => {
+    const qty = Number(manualQty)
+    if (!qty) return 0
+    if (manualType === 'CONSUMPTION' || manualType === 'WASTE') return -Math.abs(qty)
+    if (manualType === 'STOCK_RECEIVED') return Math.abs(qty)
+    return qty
+  })()
 
   const handleOpenManualModal = () => {
     setManualIngredientId(ingredients[0]?.id || '')
     setManualType('ADJUSTMENT')
     setManualQty('')
     setManualReason('Physical Audit Count Reconciliation')
-    setManualError('')
+    setManualErrors({})
     setIsManualModalOpen(true)
   }
 
   const handleSaveManualTransaction = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!manualIngredientId) {
-      setManualError('Select an ingredient or packaging item.')
-      return
-    }
+    const errors: Record<string, string> = {}
     const qty = Number(manualQty)
-    if (!qty || qty === 0) {
-      setManualError('Enter a valid non-zero quantity.')
+    if (!manualIngredientId) errors.item = 'Choose the item this movement is for.'
+    if (manualQty === '' || !qty) errors.qty = 'Enter a quantity other than 0.'
+    else if (manualItem && manualItem.currentStock + manualDelta < 0)
+      errors.qty = `Only ${formatQty(manualItem.currentStock)} ${manualItem.baseUnit} is on hand.`
+    if (!manualReason.trim()) errors.reason = 'Add a short reason so the entry can be audited.'
+    setManualErrors(errors)
+    if (Object.keys(errors).length) {
+      document.getElementById(`mv-${Object.keys(errors)[0]}`)?.focus()
       return
     }
 
@@ -122,261 +184,158 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
   }
 
   return (
-    <div className="space-y-6">
-      {/* 1. TOP CONTROLS & FILTER BAR */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-xs flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-base font-black text-slate-900">
-              Inventory Stock Movement Ledger
-            </h2>
-            <p className="text-xs text-slate-500">
-              Immutable audit trail recording raw food ingredient intake, fulfillment packaging consumption, kitchen waste, and count adjustments.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleOpenManualModal}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer self-start sm:self-auto"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Record Manual Entry
-          </button>
-        </div>
+    <div className="space-y-5">
+      <SectionHeader
+        title="Stock history"
+        description="Every receipt, usage, waste and correction, newest first."
+        actions={
+          <Button variant="primary" icon="plus" onClick={handleOpenManualModal} disabled={ingredients.length === 0}>
+            Record movement
+          </Button>
+        }
+      />
 
-        {/* Classification Tabs: All, Food, Packaging */}
-        <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => {
-              setItemTypeFilter('ALL')
+      <Card className="overflow-hidden">
+        <Toolbar>
+          <SearchInput
+            label="Search stock history"
+            placeholder="Search reference, item, person or reason"
+            value={searchQuery}
+            onChange={(v) => {
+              setSearchQuery(v)
               setCurrentPage(1)
             }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              itemTypeFilter === 'ALL'
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <span>All Movements</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                itemTypeFilter === 'ALL' ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {transactions.length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setItemTypeFilter('FOOD')
+          />
+          <Segmented
+            label="Item type"
+            value={itemTypeFilter}
+            onChange={(v) => {
+              setItemTypeFilter(v)
               setCurrentPage(1)
             }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              itemTypeFilter === 'FOOD'
-                ? 'bg-orange-500 text-white shadow-sm shadow-orange-500/20'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
-          >
-            <span>Food Movements</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                itemTypeFilter === 'FOOD' ? 'bg-orange-600 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {transactions.filter((t) => (t.itemType || 'FOOD') === 'FOOD').length}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setItemTypeFilter('PACKAGING')
+            options={[
+              { value: 'ALL', label: 'All' },
+              { value: 'FOOD', label: 'Food' },
+              { value: 'PACKAGING', label: 'Packaging' },
+            ]}
+          />
+          <select
+            aria-label="Movement type"
+            className="inv-select w-full sm:w-auto"
+            value={selectedType}
+            onChange={(e) => {
+              setSelectedType(e.target.value as 'ALL' | TransactionType)
               setCurrentPage(1)
             }}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              itemTypeFilter === 'PACKAGING'
-                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/20'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-            }`}
           >
-            <span>Packaging Movements</span>
-            <span
-              className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                itemTypeFilter === 'PACKAGING' ? 'bg-indigo-700 text-white' : 'bg-slate-200 text-slate-700'
-              }`}
-            >
-              {transactions.filter((t) => t.itemType === 'PACKAGING').length}
+            <option value="ALL">All movement types</option>
+            {FILTER_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Date range"
+            className="inv-select w-full sm:w-auto"
+            value={dateFilter}
+            onChange={(e) => {
+              setDateFilter(e.target.value as 'ALL' | 'TODAY' | 'WEEK' | 'MONTH')
+              setCurrentPage(1)
+            }}
+          >
+            <option value="ALL">Any date</option>
+            <option value="TODAY">Last 24 hours</option>
+            <option value="WEEK">Last 7 days</option>
+            <option value="MONTH">Last 30 days</option>
+          </select>
+        </Toolbar>
+
+        {hasActiveFilters && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--inv-border)] bg-[var(--inv-surface-2)] px-4 py-2 text-[13px] text-[var(--inv-text-3)]">
+            <span aria-live="polite">
+              <b className="font-semibold text-[var(--inv-text)]">{sortedTransactions.length}</b> of {transactions.length}{' '}
+              movements match
             </span>
-          </button>
-        </div>
-
-        {/* Filter Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-4 gap-3 pt-1">
-          <div className="relative sm:col-span-1 lg:col-span-2">
-            <svg
-              className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search reference #, item, actor, or reason..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value)
-                setCurrentPage(1)
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-8 pr-3 py-2 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:border-orange-500 focus:outline-none"
-            />
+            <button type="button" className="inv-link" onClick={clearFilters}>
+              Clear filters
+            </button>
           </div>
+        )}
 
-          <div>
-            <select
-              value={selectedType}
-              onChange={(e) => {
-                setSelectedType(e.target.value as 'ALL' | TransactionType)
-                setCurrentPage(1)
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-orange-500 focus:outline-none"
-            >
-              <option value="ALL">All Transaction Types</option>
-              <option value="STOCK_RECEIVED">Stock Received (Intake / PO)</option>
-              <option value="CONSUMPTION">Consumption (Orders & Prep)</option>
-              <option value="WASTE">Waste, Crushed & Spoilage</option>
-              <option value="ADJUSTMENT">Manual Stock Reconciliation</option>
-            </select>
-          </div>
-
-          <div>
-            <select
-              value={dateFilter}
-              onChange={(e) => {
-                setDateFilter(e.target.value as 'ALL' | 'TODAY' | 'WEEK' | 'MONTH')
-                setCurrentPage(1)
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-orange-500 focus:outline-none"
-            >
-              <option value="ALL">All Recorded Dates</option>
-              <option value="TODAY">Last 24 Hours</option>
-              <option value="WEEK">Last 7 Days</option>
-              <option value="MONTH">Last 30 Days</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. LEDGER TABLE */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
         {paginatedTransactions.length === 0 ? (
-          /* Empty State */
-          <div className="py-16 text-center flex flex-col items-center justify-center px-4">
-            <div className="h-16 w-16 rounded-3xl bg-slate-100 text-slate-400 flex items-center justify-center mb-4">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            <h3 className="text-sm font-bold text-slate-900">No Stock Movements Logged</h3>
-            <p className="mt-1 text-xs text-slate-400 max-w-sm">
-              {transactions.length === 0
-                ? 'Your stock history is empty. Record a manual movement or receive a purchase order to see entries here.'
-                : 'No stock transactions match your current search, item type, or transaction type filters.'}
-            </p>
-            {transactions.length === 0 && (
-              <button
-                type="button"
-                onClick={handleOpenManualModal}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer"
-              >
-                + Record Manual Transaction
-              </button>
-            )}
-          </div>
+          transactions.length === 0 ? (
+            <EmptyState
+              icon="history"
+              title="No stock movements yet"
+              description="Restocks, received purchase orders, kitchen usage and corrections will be listed here."
+              action={
+                ingredients.length > 0 && (
+                  <Button variant="primary" icon="plus" onClick={handleOpenManualModal}>
+                    Record movement
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <EmptyState
+              icon="search"
+              title="No matching movements"
+              description="Try a wider date range or clear the filters."
+              action={
+                <Button variant="secondary" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          )
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="inv-table-wrap">
+            <table className="inv-table">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-4">Timestamp</th>
-                  <th className="py-3 px-4">Ref #</th>
-                  <th className="py-3 px-4">Item Name</th>
-                  <th className="py-3 px-4">Classification</th>
-                  <th className="py-3 px-4">Transaction Type</th>
-                  <th className="py-3 px-4">Delta Quantity</th>
-                  <th className="py-3 px-4">Stock Balance After</th>
-                  <th className="py-3 px-4">Logged By</th>
-                  <th className="py-3 px-4">Audit Reason & Notes</th>
+                <tr>
+                  <th scope="col">Date</th>
+                  <th scope="col">Item</th>
+                  <th scope="col">Movement</th>
+                  <th scope="col" className="is-num">Change</th>
+                  <th scope="col" className="is-num hidden sm:table-cell">Balance</th>
+                  <th scope="col" className="hidden lg:table-cell">Reason</th>
+                  <th scope="col" className="hidden md:table-cell">By</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
+              <tbody>
                 {paginatedTransactions.map((tx) => {
                   const isPositive = tx.quantityDelta > 0
-                  const isPackaging = tx.itemType === 'PACKAGING'
-
                   return (
-                    <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                        {new Date(tx.timestamp).toLocaleString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}
+                    <tr key={tx.id}>
+                      <td className="whitespace-nowrap">
+                        <div className="text-[var(--inv-text)]">{formatDate(tx.timestamp, true)}</div>
+                        <div className="inv-cell-secondary">{tx.referenceNo}</div>
                       </td>
-                      <td className="py-3 px-4 font-black text-slate-900 whitespace-nowrap">
-                        {tx.referenceNo}
+                      <td className="max-w-[240px]">
+                        <div className="inv-cell-primary truncate">{tx.ingredientName}</div>
+                        <div className="inv-cell-secondary">
+                          <TypeBadge itemType={tx.itemType} />
+                        </div>
                       </td>
-                      <td className="py-3 px-4 font-bold text-slate-900">
-                        {tx.ingredientName}
+                      <td>
+                        <Badge tone={MOVEMENT_TONE[tx.type] ?? 'neutral'}>{movementLabel(tx.type)}</Badge>
                       </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            isPackaging
-                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                              : 'bg-orange-50 text-orange-700 border border-orange-200'
-                          }`}
-                        >
-                          <span>{isPackaging ? 'Packaging' : 'Food'}</span>
+                      <td className="is-num">
+                        <span className={cx('font-semibold', isPositive ? 'text-[var(--inv-success)]' : 'text-[var(--inv-danger)]')}>
+                          {isPositive ? '+' : '−'}
+                          {formatQty(Math.abs(tx.quantityDelta))} {tx.unit}
                         </span>
                       </td>
-                      <td className="py-3 px-4">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            tx.type === 'STOCK_RECEIVED'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : tx.type === 'CONSUMPTION'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : tx.type === 'WASTE'
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                              : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}
-                        >
-                          {tx.type.replace('_', ' ')}
+                      <td className="is-num hidden sm:table-cell">
+                        {formatQty(tx.stockAfter)} {tx.unit}
+                      </td>
+                      <td className="hidden max-w-[280px] lg:table-cell">
+                        <span className="line-clamp-2 text-[13px]" title={tx.reason || ''}>
+                          {tx.reason || '—'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 font-black">
-                        <span className={isPositive ? 'text-emerald-600' : 'text-rose-600'}>
-                          {isPositive ? `+${tx.quantityDelta}` : tx.quantityDelta} {tx.unit}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-bold text-slate-800">
-                        {tx.stockAfter} {tx.unit}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500 whitespace-nowrap">
-                        {tx.performedBy}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 max-w-xs truncate" title={tx.reason || ''}>
-                        {tx.reason || '—'}
-                      </td>
+                      <td className="hidden whitespace-nowrap md:table-cell">{tx.performedBy}</td>
                     </tr>
                   )
                 })}
@@ -385,161 +344,117 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
           </div>
         )}
 
-        {/* Pagination bar */}
-        {filteredTransactions.length > itemsPerPage && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-            <div>
-              Showing <span className="font-bold">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
-              <span className="font-bold">
-                {Math.min(currentPage * itemsPerPage, filteredTransactions.length)}
-              </span>{' '}
-              of <span className="font-bold">{filteredTransactions.length}</span> ledger movements
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => p - 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Previous
-              </button>
-              <span className="px-2 font-bold text-slate-700">
-                {currentPage} / {totalPages}
-              </span>
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => p + 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={sortedTransactions.length}
+          onChange={setCurrentPage}
+          noun="movements"
+        />
+      </Card>
 
-      {/* 3. RECORD MANUAL ENTRY MODAL */}
-      {isManualModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsManualModalOpen(false)} />
-          <div className="relative w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200 z-10">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-100 text-orange-600">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                </div>
-                <h3 className="text-sm font-bold text-slate-900">Record Stock Movement</h3>
-              </div>
-              <button onClick={() => setIsManualModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveManualTransaction} className="mt-4 space-y-4">
-              {manualError && (
-                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-semibold">
-                  {manualError}
-                </div>
+      <Modal
+        open={isManualModalOpen}
+        onClose={() => setIsManualModalOpen(false)}
+        title="Record stock movement"
+        description="Log a receipt, kitchen usage, waste, or a correction after a physical count."
+        onSubmit={handleSaveManualTransaction}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setIsManualModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit">
+              Save movement
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <Field label="Item" htmlFor="mv-item" required error={manualErrors.item}>
+            <select
+              {...fieldAria('mv-item', manualErrors.item)}
+              className="inv-select"
+              value={manualIngredientId}
+              onChange={(e) => setManualIngredientId(e.target.value)}
+            >
+              <option value="">Choose an item</option>
+              {foodIngredients.length > 0 && (
+                <optgroup label="Food">
+                  {foodIngredients.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name} — {formatQty(i.currentStock)} {i.baseUnit}
+                    </option>
+                  ))}
+                </optgroup>
               )}
+              {packagingIngredients.length > 0 && (
+                <optgroup label="Packaging">
+                  {packagingIngredients.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name} — {formatQty(i.currentStock)} {i.baseUnit}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </Field>
 
-              {/* Item selection */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Select Item (Food or Packaging) <span className="text-rose-500">*</span>
-                </label>
-                <select
-                  value={manualIngredientId}
-                  onChange={(e) => setManualIngredientId(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                >
-                  <option value="">-- Choose Item --</option>
-                  {foodIngredients.length > 0 && (
-                    <optgroup label="Food Ingredients">
-                      {foodIngredients.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name} (Current: {i.currentStock} {i.baseUnit})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {packagingIngredients.length > 0 && (
-                    <optgroup label="Packaging Materials">
-                      {packagingIngredients.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name} (Current: {i.currentStock} {i.baseUnit})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
+          <Field
+            label="Movement type"
+            htmlFor="mv-type"
+            hint={MOVEMENT_OPTIONS.find((o) => o.value === manualType)?.hint}
+          >
+            <select
+              {...fieldAria('mv-type', undefined, true)}
+              className="inv-select"
+              value={manualType}
+              onChange={(e) => setManualType(e.target.value as TransactionType)}
+            >
+              {MOVEMENT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-              {/* Movement Type */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">Movement Nature</label>
-                <select
-                  value={manualType}
-                  onChange={(e) => setManualType(e.target.value as TransactionType)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                >
-                  <option value="STOCK_RECEIVED">Stock Received (Manual Restock Intake)</option>
-                  <option value="CONSUMPTION">Consumption (Kitchen Prep / Fulfillment)</option>
-                  <option value="WASTE">Waste (Crushed packaging, food spoilage)</option>
-                  <option value="ADJUSTMENT">Manual Reconciliation (Physical Audit)</option>
-                </select>
-              </div>
+          <Field label="Quantity" htmlFor="mv-qty" required error={manualErrors.qty}>
+            <div className="inv-input-group">
+              <input
+                {...fieldAria('mv-qty', manualErrors.qty)}
+                type="number"
+                inputMode="decimal"
+                step="any"
+                className="inv-input"
+                placeholder="e.g. 50"
+                value={manualQty}
+                onChange={(e) => setManualQty(e.target.value === '' ? '' : Number(e.target.value))}
+              />
+              <span className="inv-input-suffix">{manualItem?.baseUnit || 'units'}</span>
+            </div>
+          </Field>
 
-              {/* Quantity */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Quantity ({ingredients.find((i) => i.id === manualIngredientId)?.baseUnit || 'units'})
-                </label>
-                <input
-                  type="number"
-                  min="0.1"
-                  step="any"
-                  placeholder="e.g. 50"
-                  value={manualQty}
-                  onChange={(e) => setManualQty(e.target.value === '' ? '' : Number(e.target.value))}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                />
-              </div>
+          {manualItem && manualDelta !== 0 && manualItem.currentStock + manualDelta >= 0 && (
+            <Notice tone="info">
+              {formatQty(manualItem.currentStock)} → <b>{formatQty(manualItem.currentStock + manualDelta)} {manualItem.baseUnit}</b>{' '}
+              ({manualDelta > 0 ? '+' : '−'}
+              {formatQty(Math.abs(manualDelta))})
+            </Notice>
+          )}
 
-              {/* Reason */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">Audit Justification</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Physical inventory count discrepancy, damaged packaging box"
-                  value={manualReason}
-                  onChange={(e) => setManualReason(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setIsManualModalOpen(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-orange-600 cursor-pointer"
-                >
-                  Post Movement
-                </button>
-              </div>
-            </form>
-          </div>
+          <Field label="Reason" htmlFor="mv-reason" required error={manualErrors.reason}>
+            <input
+              {...fieldAria('mv-reason', manualErrors.reason)}
+              type="text"
+              className="inv-input"
+              placeholder="e.g. Physical count found 2 kg less"
+              value={manualReason}
+              onChange={(e) => setManualReason(e.target.value)}
+            />
+          </Field>
         </div>
-      )}
+      </Modal>
     </div>
   )
 }

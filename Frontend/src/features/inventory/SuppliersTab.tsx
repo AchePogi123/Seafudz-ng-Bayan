@@ -1,7 +1,23 @@
 import React, { useState, useMemo } from 'react'
 import type { Supplier, IngredientCategory } from './inventoryTypes'
-import { ALL_CATEGORIES } from './inventoryTypes'
+import { FOOD_CATEGORIES, PACKAGING_CATEGORIES } from './inventoryTypes'
 import InventoryConfirmModal from './InventoryConfirmModal'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Field,
+  Icon,
+  Modal,
+  Pagination,
+  RowMenu,
+  SearchInput,
+  SectionHeader,
+  Segmented,
+  Toolbar,
+  fieldAria,
+} from './ui'
 
 interface SuppliersTabProps {
   suppliers: Supplier[]
@@ -10,7 +26,7 @@ interface SuppliersTabProps {
   onDeleteSupplier: (id: string) => void
 }
 
-const CATEGORIES: IngredientCategory[] = ALL_CATEGORIES
+const PAGE_SIZE = 10
 
 export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   suppliers,
@@ -22,7 +38,6 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL')
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 8
 
   // Modal States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
@@ -55,11 +70,10 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   }, [suppliers, searchQuery, statusFilter])
 
   // Pagination
-  const totalPages = Math.ceil(filteredSuppliers.length / itemsPerPage) || 1
-  const paginatedSuppliers = useMemo(() => {
-    const start = (currentPage - 1) * itemsPerPage
-    return filteredSuppliers.slice(start, start + itemsPerPage)
-  }, [filteredSuppliers, currentPage])
+  const totalPages = Math.max(1, Math.ceil(filteredSuppliers.length / PAGE_SIZE))
+  const page = Math.min(currentPage, totalPages)
+  const paginatedSuppliers = filteredSuppliers.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const activeCount = suppliers.filter((s) => s.status === 'ACTIVE').length
 
   // Reset Form
   const resetForm = () => {
@@ -102,11 +116,18 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
 
   const validateForm = () => {
     const errors: Record<string, string> = {}
-    if (!name.trim()) errors.name = 'Supplier company name is required'
-    if (!contactPerson.trim()) errors.contactPerson = 'Contact person name is required'
-    if (!contactNumber.trim()) errors.contactNumber = 'Contact phone/mobile is required'
-    if (!address.trim()) errors.address = 'Business address is required'
+    if (!name.trim()) errors.name = 'Enter the supplier or company name.'
+    if (!contactPerson.trim()) errors.contactPerson = 'Enter a contact person.'
+    if (!contactNumber.trim()) errors.contactNumber = 'Enter a phone or mobile number.'
+    else if (!/^[+\d][\d\s()-]{6,}$/.test(contactNumber.trim()))
+      errors.contactNumber = 'Use digits only, e.g. 0917 123 4567.'
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      errors.email = 'Enter a valid email address, or leave it empty.'
+    if (leadTimeDays !== '' && Number(leadTimeDays) < 1) errors.leadTime = 'Lead time must be at least 1 day.'
+    if (!address.trim()) errors.address = 'Enter the business or warehouse address.'
     setFormErrors(errors)
+    const first = Object.keys(errors)[0]
+    if (first) document.getElementById(`sup-${first}`)?.focus()
     return Object.keys(errors).length === 0
   }
 
@@ -145,185 +166,161 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
     resetForm()
   }
 
+  const closeForm = () => {
+    setIsAddModalOpen(false)
+    setEditingSupplier(null)
+  }
+
+  const deletingSupplier = suppliers.find((s) => s.id === deletingSupplierId)
+
   return (
-    <div className="space-y-6">
-      {/* 1. TOP CONTROLS & FILTER BAR */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5 shadow-xs flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h2 className="text-base font-black text-slate-900">Vendors & Supplier Directory</h2>
-            <p className="text-xs text-slate-500">
-              Manage commercial seafood dealers, packaging providers, and grocery distributors.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleOpenAddModal}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-2.5 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer self-start sm:self-auto"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            Add Supplier
-          </button>
-        </div>
+    <div className="space-y-5">
+      <SectionHeader
+        title="Suppliers"
+        description={`${activeCount} active of ${suppliers.length} vendors for seafood, produce and packaging.`}
+        actions={
+          <Button variant="primary" icon="plus" onClick={handleOpenAddModal}>
+            Add supplier
+          </Button>
+        }
+      />
 
-        {/* Search & Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
-          <div className="relative sm:col-span-2">
-            <svg
-              className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search by vendor name, representative, phone, or address..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value)
-                setCurrentPage(1)
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 pl-9 pr-3.5 py-2 text-xs text-slate-900 placeholder-slate-400 focus:bg-white focus:border-orange-500 focus:outline-none"
-            />
-          </div>
+      <Card className="overflow-hidden">
+        <Toolbar>
+          <SearchInput
+            label="Search suppliers"
+            placeholder="Search by name, contact, phone or address"
+            value={searchQuery}
+            onChange={(v) => {
+              setSearchQuery(v)
+              setCurrentPage(1)
+            }}
+          />
+          <Segmented
+            label="Supplier status"
+            value={statusFilter}
+            onChange={(v) => {
+              setStatusFilter(v)
+              setCurrentPage(1)
+            }}
+            options={[
+              { value: 'ALL', label: 'All', count: suppliers.length },
+              { value: 'ACTIVE', label: 'Active', count: activeCount },
+              { value: 'INACTIVE', label: 'Inactive', count: suppliers.length - activeCount },
+            ]}
+          />
+        </Toolbar>
 
-          <div>
-            <select
-              value={statusFilter}
-              onChange={(e) => {
-                setStatusFilter(e.target.value as 'ALL' | 'ACTIVE' | 'INACTIVE')
-                setCurrentPage(1)
-              }}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2 text-xs text-slate-700 focus:bg-white focus:border-orange-500 focus:outline-none"
-            >
-              <option value="ALL">All Vendor Statuses ({suppliers.length})</option>
-              <option value="ACTIVE">Active Partners</option>
-              <option value="INACTIVE">Inactive / Archived</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. SUPPLIERS TABLE */}
-      <div className="rounded-2xl border border-slate-200/80 bg-white shadow-xs overflow-hidden">
         {paginatedSuppliers.length === 0 ? (
-          /* Empty State */
-          <div className="py-16 text-center flex flex-col items-center justify-center px-4">
-            <div className="h-16 w-16 rounded-3xl bg-orange-50 text-orange-500 flex items-center justify-center mb-4">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-              </svg>
-            </div>
-            <h3 className="text-sm font-bold text-slate-900">No Suppliers Registered</h3>
-            <p className="mt-1 text-xs text-slate-400 max-w-sm">
-              {suppliers.length === 0
-                ? 'Your vendor list is currently blank. Register your suppliers to track purchasing records and delivery lead times.'
-                : 'No suppliers match your current search query.'}
-            </p>
-            {suppliers.length === 0 && (
-              <button
-                type="button"
-                onClick={handleOpenAddModal}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 transition-all cursor-pointer"
-              >
-                + Register First Supplier
-              </button>
-            )}
-          </div>
+          suppliers.length === 0 ? (
+            <EmptyState
+              icon="building"
+              title="No suppliers yet"
+              description="Add the vendors you buy from to use them on purchase orders and track delivery lead times."
+              action={
+                <Button variant="primary" icon="plus" onClick={handleOpenAddModal}>
+                  Add supplier
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon="search"
+              title="No matching suppliers"
+              description="Try a different search term or status."
+              action={
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearchQuery('')
+                    setStatusFilter('ALL')
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          )
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="inv-table-wrap">
+            <table className="inv-table">
               <thead>
-                <tr className="border-b border-slate-100 bg-slate-50/75 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-4">Supplier Company</th>
-                  <th className="py-3 px-4">Contact Person</th>
-                  <th className="py-3 px-4">Phone / Email</th>
-                  <th className="py-3 px-4">Address</th>
-                  <th className="py-3 px-4">Categories Supplied</th>
-                  <th className="py-3 px-4">Lead Time</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+                <tr>
+                  <th scope="col">Supplier</th>
+                  <th scope="col" className="hidden md:table-cell">Contact</th>
+                  <th scope="col" className="hidden lg:table-cell">Supplies</th>
+                  <th scope="col" className="is-num hidden sm:table-cell">Lead time</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" className="is-actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 text-xs">
+              <tbody>
                 {paginatedSuppliers.map((s) => (
-                  <tr key={s.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="py-3 px-4 font-bold text-slate-900">
-                      <div>
-                        <span>{s.name}</span>
-                        {s.notes && <p className="text-[10px] text-slate-400 font-normal truncate max-w-xs">{s.notes}</p>}
+                  <tr key={s.id}>
+                    <td className="max-w-[300px]">
+                      <button type="button" className="inv-row-link block max-w-full truncate" onClick={() => handleOpenEditModal(s)}>
+                        {s.name}
+                      </button>
+                      <div className="inv-cell-secondary truncate" title={s.address}>
+                        {s.address}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-slate-700 font-medium">{s.contactPerson}</td>
-                    <td className="py-3 px-4 text-slate-600">
-                      <div>
-                        <span className="font-semibold">{s.contactNumber}</span>
-                        {s.email && <p className="text-[10px] text-slate-400">{s.email}</p>}
+                    <td className="hidden md:table-cell">
+                      <div className="text-[var(--inv-text)]">{s.contactPerson}</div>
+                      <div className="inv-cell-secondary">
+                        <a className="hover:underline" href={`tel:${s.contactNumber.replace(/\s/g, '')}`}>
+                          {s.contactNumber}
+                        </a>
+                        {s.email && <> · {s.email}</>}
                       </div>
                     </td>
-                    <td className="py-3 px-4 text-slate-500 truncate max-w-[200px]" title={s.address}>
-                      {s.address}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1 max-w-[220px]">
+                    <td className="hidden lg:table-cell">
+                      <div className="flex max-w-[260px] flex-wrap gap-1">
                         {s.categoriesSupplied && s.categoriesSupplied.length > 0 ? (
-                          s.categoriesSupplied.slice(0, 2).map((cat) => (
-                            <span key={cat} className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-700">
-                              {cat}
-                            </span>
-                          ))
+                          <>
+                            {s.categoriesSupplied.slice(0, 2).map((cat) => (
+                              <Badge key={cat}>{cat}</Badge>
+                            ))}
+                            {s.categoriesSupplied.length > 2 && (
+                              <Badge title={s.categoriesSupplied.slice(2).join(', ')}>
+                                +{s.categoriesSupplied.length - 2}
+                              </Badge>
+                            )}
+                          </>
                         ) : (
-                          <span className="text-[10px] text-slate-400">General</span>
-                        )}
-                        {s.categoriesSupplied && s.categoriesSupplied.length > 2 && (
-                          <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-bold text-slate-500">
-                            +{s.categoriesSupplied.length - 2}
-                          </span>
+                          <span className="text-[13px] text-[var(--inv-text-3)]">General</span>
                         )}
                       </div>
                     </td>
-                    <td className="py-3 px-4 font-semibold text-slate-700">
-                      {s.leadTimeDays ? `${s.leadTimeDays} days` : '1-2 days'}
+                    <td className="is-num hidden sm:table-cell">
+                      {s.leadTimeDays ? `${s.leadTimeDays} ${s.leadTimeDays === 1 ? 'day' : 'days'}` : '1–2 days'}
                     </td>
-                    <td className="py-3 px-4">
-                      <span
-                        className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          s.status === 'ACTIVE'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-slate-100 text-slate-500'
-                        }`}
-                      >
-                        {s.status}
-                      </span>
+                    <td>
+                      <Badge tone={s.status === 'ACTIVE' ? 'success' : 'neutral'} dot>
+                        {s.status === 'ACTIVE' ? 'Active' : 'Inactive'}
+                      </Badge>
                     </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="inline-flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditModal(s)}
-                          className="p-1 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-                          title="Edit Supplier"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingSupplierId(s.id)}
-                          className="p-1 text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                          title="Delete Supplier"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
+                    <td className="is-actions">
+                      <RowMenu
+                        label={`Actions for ${s.name}`}
+                        items={[
+                          { label: 'Edit supplier', icon: 'edit', onSelect: () => handleOpenEditModal(s) },
+                          {
+                            label: s.status === 'ACTIVE' ? 'Mark inactive' : 'Mark active',
+                            icon: 'refresh',
+                            onSelect: () => onEditSupplier({ ...s, status: s.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE' }),
+                          },
+                          {
+                            label: 'Delete supplier',
+                            icon: 'trash',
+                            danger: true,
+                            separatorBefore: true,
+                            onSelect: () => setDeletingSupplierId(s.id),
+                          },
+                        ]}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -332,253 +329,176 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
           </div>
         )}
 
-        {/* Pagination */}
-        {filteredSuppliers.length > itemsPerPage && (
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-            <div>
-              Showing <span className="font-bold">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
-              <span className="font-bold">
-                {Math.min(currentPage * itemsPerPage, filteredSuppliers.length)}
-              </span>{' '}
-              of <span className="font-bold">{filteredSuppliers.length}</span> suppliers
-            </div>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => p - 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Previous
-              </button>
-              <span className="px-2 font-bold text-slate-700">
-                {currentPage} / {totalPages}
-              </span>
-              <button
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => p + 1)}
-                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40 cursor-pointer"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+        <Pagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={filteredSuppliers.length}
+          onChange={setCurrentPage}
+          noun="suppliers"
+        />
+      </Card>
 
-      {/* 3. ADD / EDIT SUPPLIER MODAL */}
-      {(isAddModalOpen || editingSupplier) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
-          <div
-            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm"
-            onClick={() => {
-              setIsAddModalOpen(false)
-              setEditingSupplier(null)
-            }}
-          />
-          <div className="relative w-full max-w-lg rounded-3xl bg-white p-6 sm:p-7 shadow-2xl border border-slate-200 z-10">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-orange-100 text-orange-600">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-900">
-                    {editingSupplier ? 'Edit Supplier Details' : 'Register New Supplier'}
-                  </h3>
-                  <p className="text-[11px] text-slate-500">Contact information and delivery terms</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsAddModalOpen(false)
-                  setEditingSupplier(null)
-                }}
-                className="text-slate-400 hover:text-slate-600 transition-colors p-1 cursor-pointer"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+      <Modal
+        open={isAddModalOpen || Boolean(editingSupplier)}
+        onClose={closeForm}
+        size="lg"
+        title={editingSupplier ? `Edit ${editingSupplier.name}` : 'Add supplier'}
+        description="Contact details, what they supply, and delivery terms."
+        onSubmit={handleSubmit}
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeForm}>
+              Cancel
+            </Button>
+            <Button variant="primary" type="submit">
+              {editingSupplier ? 'Save changes' : 'Add supplier'}
+            </Button>
+          </>
+        }
+      >
+        <div className="inv-form-section space-y-4">
+          <p className="inv-form-section-title">Company</p>
+          <Field label="Supplier name" htmlFor="sup-name" required error={formErrors.name}>
+            <input
+              {...fieldAria('sup-name', formErrors.name)}
+              type="text"
+              className="inv-input"
+              placeholder="e.g. Navotas Premier Seafood Wholesale"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <Field label="Business or warehouse address" htmlFor="sup-address" required error={formErrors.address}>
+            <textarea
+              {...fieldAria('sup-address', formErrors.address)}
+              rows={2}
+              className="inv-textarea"
+              placeholder="e.g. Stall 14 Fish Port Complex, North Bay Blvd, Navotas City"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+            />
+          </Field>
+        </div>
 
-            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-              {/* Supplier Company Name */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Company / Vendor Name <span className="text-rose-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Navotas Premier Seafood Wholesale Corp."
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                    formErrors.name ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                  }`}
-                />
-                {formErrors.name && <p className="mt-1 text-[11px] text-rose-500">{formErrors.name}</p>}
-              </div>
-
-              {/* Contact Person & Number */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Contact Person <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Roberto Gomez"
-                    value={contactPerson}
-                    onChange={(e) => setContactPerson(e.target.value)}
-                    className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                      formErrors.contactPerson ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                    }`}
-                  />
-                  {formErrors.contactPerson && <p className="mt-1 text-[11px] text-rose-500">{formErrors.contactPerson}</p>}
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    Contact Phone / Mobile <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 0917 123 4567"
-                    value={contactNumber}
-                    onChange={(e) => setContactNumber(e.target.value)}
-                    className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                      formErrors.contactNumber ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                    }`}
-                  />
-                  {formErrors.contactNumber && <p className="mt-1 text-[11px] text-rose-500">{formErrors.contactNumber}</p>}
-                </div>
-              </div>
-
-              {/* Email & Lead Time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">Email Address (Optional)</label>
-                  <input
-                    type="email"
-                    placeholder="vendor@company.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">Lead Time (Days)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    placeholder="e.g. 2"
-                    value={leadTimeDays}
-                    onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : Number(e.target.value))}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Business Address */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700">
-                  Business / Warehouse Address <span className="text-rose-500">*</span>
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="e.g. Stall 14 Fish Port Complex, North Bay Boulevard, Navotas City"
-                  value={address}
-                  onChange={(e) => setAddress(e.target.value)}
-                  className={`mt-1 w-full rounded-xl border px-3 py-2 text-xs focus:outline-none ${
-                    formErrors.address ? 'border-rose-400 bg-rose-50/50' : 'border-slate-200 focus:border-orange-500'
-                  }`}
-                />
-                {formErrors.address && <p className="mt-1 text-[11px] text-rose-500">{formErrors.address}</p>}
-              </div>
-
-              {/* Categories Supplied */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">Categories Supplied</label>
-                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-1.5 border border-slate-200 rounded-xl bg-slate-50/50">
-                  {CATEGORIES.map((cat) => {
-                    const isSelected = selectedCategories.includes(cat)
-                    return (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => toggleCategory(cat)}
-                        className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
-                          isSelected
-                            ? 'bg-orange-500 border-orange-500 text-white'
-                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {isSelected ? `✓ ${cat}` : `+ ${cat}`}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-
-              {/* Notes & Status */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">Status</label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as 'ACTIVE' | 'INACTIVE')}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  >
-                    <option value="ACTIVE">Active Partner</option>
-                    <option value="INACTIVE">Inactive / Archived</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700">Terms / Notes</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Net 15, Minimum ₱5,000 order"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:border-orange-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Buttons */}
-              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsAddModalOpen(false)
-                    setEditingSupplier(null)
-                  }}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-sm shadow-orange-500/20 hover:bg-orange-600 cursor-pointer"
-                >
-                  {editingSupplier ? 'Save Changes' : 'Register Supplier'}
-                </button>
-              </div>
-            </form>
+        <div className="inv-form-section">
+          <p className="inv-form-section-title">Contact</p>
+          <div className="inv-grid-2">
+            <Field label="Contact person" htmlFor="sup-contactPerson" required error={formErrors.contactPerson}>
+              <input
+                {...fieldAria('sup-contactPerson', formErrors.contactPerson)}
+                type="text"
+                className="inv-input"
+                placeholder="e.g. Roberto Gomez"
+                value={contactPerson}
+                onChange={(e) => setContactPerson(e.target.value)}
+              />
+            </Field>
+            <Field label="Phone or mobile" htmlFor="sup-contactNumber" required error={formErrors.contactNumber}>
+              <input
+                {...fieldAria('sup-contactNumber', formErrors.contactNumber)}
+                type="tel"
+                inputMode="tel"
+                className="inv-input"
+                placeholder="0917 123 4567"
+                value={contactNumber}
+                onChange={(e) => setContactNumber(e.target.value)}
+              />
+            </Field>
+            <Field label="Email" htmlFor="sup-email" optional error={formErrors.email}>
+              <input
+                {...fieldAria('sup-email', formErrors.email)}
+                type="email"
+                className="inv-input"
+                placeholder="orders@vendor.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
           </div>
         </div>
-      )}
 
-      {/* 4. DELETE CONFIRMATION MODAL */}
+        <div className="inv-form-section space-y-4">
+          <p className="inv-form-section-title">Supply and terms</p>
+          <div>
+            <p className="inv-label mb-2" id="sup-cats-label">
+              Categories supplied <span className="inv-optional">Optional</span>
+            </p>
+            <div className="space-y-3" role="group" aria-labelledby="sup-cats-label">
+              {(
+                [
+                  { label: 'Food', cats: FOOD_CATEGORIES },
+                  { label: 'Packaging', cats: PACKAGING_CATEGORIES },
+                ] as Array<{ label: string; cats: IngredientCategory[] }>
+              ).map((group) => (
+                <div key={group.label}>
+                  <p className="mb-1.5 text-[13px] text-[var(--inv-text-3)]">{group.label}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {group.cats.map((cat) => {
+                      const isSelected = selectedCategories.includes(cat)
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          className="inv-chip"
+                          aria-pressed={isSelected}
+                          onClick={() => toggleCategory(cat)}
+                        >
+                          {isSelected && <Icon name="check" strokeWidth={2.4} />}
+                          {cat}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="inv-grid-2">
+            <Field label="Lead time" htmlFor="sup-leadTime" error={formErrors.leadTime} hint="Days from order to delivery.">
+              <div className="inv-input-group">
+                <input
+                  {...fieldAria('sup-leadTime', formErrors.leadTime, true)}
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  className="inv-input"
+                  placeholder="2"
+                  value={leadTimeDays}
+                  onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : Number(e.target.value))}
+                />
+                <span className="inv-input-suffix">days</span>
+              </div>
+            </Field>
+            <Field label="Status" htmlFor="sup-status">
+              <select
+                id="sup-status"
+                className="inv-select"
+                value={status}
+                onChange={(e) => setStatus(e.target.value as 'ACTIVE' | 'INACTIVE')}
+              >
+                <option value="ACTIVE">Active</option>
+                <option value="INACTIVE">Inactive</option>
+              </select>
+            </Field>
+          </div>
+          <Field label="Terms and notes" htmlFor="sup-notes" optional>
+            <input
+              id="sup-notes"
+              type="text"
+              className="inv-input"
+              placeholder="e.g. Net 15, minimum ₱5,000 order"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+          </Field>
+        </div>
+      </Modal>
+
       <InventoryConfirmModal
         isOpen={Boolean(deletingSupplierId)}
-        title="Delete Supplier"
-        message="Are you sure you want to remove this supplier? Purchase history linked to this vendor will be archived."
-        confirmText="Delete Supplier"
+        title="Delete this supplier?"
+        message={`${deletingSupplier?.name ?? 'This supplier'} will be removed from the directory. Past purchase orders keep the supplier name. To stop using them without deleting, mark them inactive instead.`}
+        confirmText="Delete supplier"
         isDestructive
         onConfirm={() => {
           if (deletingSupplierId) {
@@ -592,4 +512,3 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   )
 }
 export default SuppliersTab
-

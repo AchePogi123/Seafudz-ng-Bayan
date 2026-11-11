@@ -373,6 +373,9 @@ export const CLIENT_MENU_ITEMS: MenuItem[] = [
   },
 ]
 
+/** Show an "Only N left" hint when inventory can make this many servings or fewer. */
+export const LOW_SERVINGS_THRESHOLD = 5
+
 export interface MenuCardProps {
   item: MenuItem
   onAddToCart: (item: MenuItem) => void
@@ -388,13 +391,15 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   item,
   onAddToCart,
   isAvailable = true,
-  remainingServings: _remainingServings,
+  remainingServings,
   onToggleAvailability,
   showAvailabilityToggle = false,
   allowPriceEdit = false,
   onUpdatePrice,
 }) => {
   const effectiveAvailable = isAvailable
+  const servingsLeft = typeof remainingServings === 'number' ? remainingServings : null
+  const isRunningLow = effectiveAvailable && servingsLeft !== null && servingsLeft > 0 && servingsLeft <= LOW_SERVINGS_THRESHOLD
   const currentRole = getActiveUser()?.role?.toLowerCase()
   const canManageAvailability = currentRole === 'kitchen' || currentRole === 'admin'
   const canEditPrice = currentRole === 'admin'
@@ -442,6 +447,12 @@ export const MenuCard: React.FC<MenuCardProps> = ({
         <span className="absolute top-2.5 left-2.5 bg-white/95 backdrop-blur-xs text-neutral-800 font-bold text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-md border border-neutral-200/60 shadow-2xs">
           {item.category}
         </span>
+
+        {isRunningLow && (
+          <span className="absolute top-2.5 right-2.5 bg-amber-100 text-amber-900 font-bold text-[11px] px-2.5 py-0.5 rounded-md border border-amber-300 shadow-2xs">
+            Only {servingsLeft} left
+          </span>
+        )}
 
         {/* Unavailable Banner if item is out of stock */}
         {!effectiveAvailable && (

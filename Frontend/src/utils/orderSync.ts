@@ -1,5 +1,5 @@
 import { API_BASE_URL } from './api'
-import { applyProductAvailabilityChange } from './menuAvailability'
+import { applyProductAvailabilityChange, refreshMenuAvailability, applyInventoryServings } from './menuAvailability'
 import { refreshProductCatalog } from './useProductImages'
 
 const SYNC_KEY = 'seafudz_order_sync_timestamp'
@@ -89,6 +89,15 @@ const initSseConnection = () => {
         if (data?.type === 'PRODUCT_AVAILABILITY_CHANGED' && data.productId != null) {
           applyProductAvailabilityChange(String(data.productId), Boolean(data.isAvailable))
           notifyProductCatalogSync(data)
+          notifyOrderSync()
+          return
+        }
+        if (data?.type === 'INVENTORY_CHANGED') {
+          // Stock moved. The server sends the recalculated servings of every product that uses the
+          // changed ingredients/packaging (so dishes sharing an ingredient update together);
+          // a full-refresh signal re-reads the whole menu instead.
+          if (data.products && !data.full) applyInventoryServings(data.products)
+          else void refreshMenuAvailability()
           notifyOrderSync()
           return
         }

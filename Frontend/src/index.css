@@ -425,3 +425,56 @@ button, input, select, textarea {
 .animate-palm-sway-subtle {
   animation: palm-sway-subtle 3.8s ease-in-out infinite 0.6s;
 }
+
+/* ---------------------------------------------------------------------------
+   Order status tracking (online customer)
+
+   The parts a browser draws for us still belong to the design: selection, the
+   caret and the focus ring shipped as Chrome's blue against an orange product.
+   --------------------------------------------------------------------------- */
+
+.order-status-view ::selection {
+  background-color: #ffedd5; /* orange-100 */
+  color: #7c2d12;            /* orange-900 */
+}
+
+.order-status-view {
+  caret-color: #f97316; /* orange-500 */
+}
+
+.order-status-view :focus-visible {
+  outline: 2px solid #f97316;
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+/* The one authored entrance: the panel settles in once, on arrival. Everything
+   inside it is still, so the current step stays the thing that moves the eye. */
+@keyframes order-status-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.order-status-view {
+  animation: order-status-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .order-status-view {
+    animation: none;
+  }
+
+  .order-status-view *,
+  .order-status-view *::before,
+  .order-status-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

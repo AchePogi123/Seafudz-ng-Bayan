@@ -8,6 +8,7 @@ import {
   returnForOrder,
   returnForItems,
   getOrderFulfillment,
+  ensureOrderReserved,
   broadcastInventoryChange,
 } from '../services/inventoryService.js';
 
@@ -236,12 +237,18 @@ router.patch('/assistant/orders/:id/verify', optionalAuth, async (req, res) => {
     await client.query('COMMIT');
     client.release();
 
+    // Paid and on its way to the kitchen: now the ingredients leave inventory.
+    const stock = await ensureOrderReserved(id, { performedBy: 'Assistant (payment verified)' });
+
     const formatted = formatOrderResponse(orderRes.rows[0]);
     emitOrderUpdate(formatted);
 
     return res.status(200).json({
       success: true,
-      message: `Online Payment Verified for Order #${id}! Forwarded to Kitchen Queue.`,
+      message: stock?.reason === 'INSUFFICIENT_STOCK'
+        ? `Online Payment Verified for Order #${id}, but stock ran out: ${stock.shortage?.message || 'an ingredient is short'}.`
+        : `Online Payment Verified for Order #${id}! Forwarded to Kitchen Queue.`,
+      ...(stock?.reason === 'INSUFFICIENT_STOCK' ? { stockWarning: stock.shortage } : {}),
       data: formatted,
     });
   } catch (error) {
@@ -383,12 +390,20 @@ router.patch('/assistant/orders/:id/upload-receipt', async (req, res) => {
       console.warn('DB update note (Upload Receipt):', err.message);
     }
 
+    // The customer has paid and sent the GCash reference / screenshot: this is where the order's
+    // ingredients leave inventory. The assistant's later approval only checks the proof, so
+    // waiting for it would leave a paid order unstocked. Idempotent, so approving changes nothing.
+    const stock = await ensureOrderReserved(id, { performedBy: 'Customer (payment submitted)' });
+
     const formatted = formatOrderResponse(order);
     emitOrderUpdate(formatted);
 
     return res.status(200).json({
       success: true,
-      message: `Receipt uploaded for order #${id}`,
+      message: stock?.reason === 'INSUFFICIENT_STOCK'
+        ? `Receipt uploaded for order #${id}, but stock ran out: ${stock.shortage?.message || 'an ingredient is short'}.`
+        : `Receipt uploaded for order #${id}`,
+      ...(stock?.reason === 'INSUFFICIENT_STOCK' ? { stockWarning: stock.shortage } : {}),
       data: formatted,
     });
   } catch (error) {
@@ -629,12 +644,18 @@ router.patch('/assistant/orders/:id/verify-receipt', optionalAuth, async (req, r
       console.warn('DB update note (Verify Receipt):', err.message);
     }
 
+    // The GCash payment is confirmed: this is where the order's ingredients leave inventory.
+    const stock = await ensureOrderReserved(id, { performedBy: 'Assistant (receipt approved)' });
+
     const formatted = formatOrderResponse(order);
     emitOrderUpdate(formatted);
 
     return res.status(200).json({
       success: true,
-      message: `Receipt approved for order #${id}. Sent to kitchen!`,
+      message: stock?.reason === 'INSUFFICIENT_STOCK'
+        ? `Receipt approved for order #${id}, but stock ran out: ${stock.shortage?.message || 'an ingredient is short'}.`
+        : `Receipt approved for order #${id}. Sent to kitchen!`,
+      ...(stock?.reason === 'INSUFFICIENT_STOCK' ? { stockWarning: stock.shortage } : {}),
       data: formatted,
     });
   } catch (error) {
@@ -1298,6 +1319,7 @@ export async function handleAssistantStatusUpdate(req, res) {
 
     const nextStatus = normalizeFlowStatus(status);
     let updatedOrder = null;
+    let stockResult = null;
 
     if (inMemoryOrders.has(id)) {
       const existing = inMemoryOrders.get(id);
@@ -1333,6 +1355,10 @@ export async function handleAssistantStatusUpdate(req, res) {
         } finally {
           client.release();
         }
+
+        // Confirmed = paid (GCash verified, or cash taken at the counter for a pick-up order):
+        // the ingredients leave inventory here, not when the customer placed the order.
+        stockResult = await ensureOrderReserved(id, { performedBy: 'Assistant' });
       }
 
       if (rows.length > 0 && !updatedOrder) {
@@ -1361,7 +1387,10 @@ export async function handleAssistantStatusUpdate(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: `Order ${id} status updated to ${nextStatus} by Assistant`,
+      message: stockResult?.reason === 'INSUFFICIENT_STOCK'
+        ? `Order ${id} is now ${nextStatus}, but stock ran out: ${stockResult.shortage?.message || 'an ingredient is short'}.`
+        : `Order ${id} status updated to ${nextStatus} by Assistant`,
+      ...(stockResult?.reason === 'INSUFFICIENT_STOCK' ? { stockWarning: stockResult.shortage } : {}),
       data: updatedOrder,
     });
   } catch (error) {

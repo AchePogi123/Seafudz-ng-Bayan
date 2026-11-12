@@ -573,7 +573,8 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     await client.query('COMMIT');
     client.release();
     // after commit: recalculate every product sharing the consumed ingredients/packaging
-    if (reservation.reserved) broadcastInventoryChange(reservation.ingredientIds);
+    // (a dry-run check moves no stock but still claims it until the order is paid for)
+    if (reservation.ingredientIds?.length) broadcastInventoryChange(reservation.ingredientIds);
     // keep inventory in step with the status the order was saved with: one recorded as already
     // served (admin "create transaction") is consumed straight away, a cancelled one holds nothing
     await syncInventoryForStatus(createdOrder.id, posStatus);
@@ -1355,7 +1356,10 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           );
         }
 
-        // Take the ingredients out of inventory (INSUFFICIENT_STOCK rolls the whole order back)
+        // POS orders are paid at the counter, so they take their ingredients now.
+        // An online customer has NOT paid yet at this point: only check that the stock is there
+        // (INSUFFICIENT_STOCK rolls the whole order back). The ingredients are deducted when the
+        // assistant verifies the payment and the order goes to the kitchen — see ensureOrderReserved.
         reservation = await reserveForOrder(
           client,
           orderId,
@@ -1368,12 +1372,14 @@ export async function handleCreateCustomerFlowOrder(req, res) {
           isPos
             ? normalizeFulfillment(req.body.fulfillmentType, req.body.orderType, req.body.type)
             : fulfillmentType,
-          { performedBy: isPos ? 'POS' : cleanCustomer }
+          { performedBy: isPos ? 'POS' : cleanCustomer, dryRun: !isPos }
         );
 
         await client.query('COMMIT');
-        // after commit: recalculate every product sharing the consumed ingredients/packaging
-        if (reservation?.reserved) broadcastInventoryChange(reservation.ingredientIds);
+        // After commit, recalculate every product sharing these ingredients/packaging. An unpaid
+        // online order takes no stock, but it has a claim on it from now until it is paid or
+        // expires, so the servings other customers are shown have to drop too.
+        if (reservation?.ingredientIds?.length) broadcastInventoryChange(reservation.ingredientIds);
       } catch (dbErr) {
         try { await client.query('ROLLBACK'); } catch {}
         if (dbErr.code === 'INSUFFICIENT_STOCK') {

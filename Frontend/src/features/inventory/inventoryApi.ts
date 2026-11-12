@@ -9,12 +9,21 @@ import type {
   TransactionType,
 } from './inventoryTypes'
 
+/** A product on sale that has no configured recipe, so no amount of stock can ever sell it out. */
+export interface UnlinkedProduct {
+  productId: string
+  productName: string
+  category?: string | null
+}
+
 export interface InventoryState {
   ingredients: Ingredient[]
   suppliers: Supplier[]
   recipes: ProductRecipe[]
   transactions: StockTransaction[]
   purchaseOrders: PurchaseOrder[]
+  /** Products with nothing linking them to stock — they stay orderable whatever the stockroom holds */
+  productsWithoutRecipes?: UnlinkedProduct[]
 }
 
 export class InventoryApiError extends Error {

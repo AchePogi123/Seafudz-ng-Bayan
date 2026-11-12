@@ -19,6 +19,7 @@ import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { NoticeModal } from '../components/NoticeModal'
 import { useProductImages } from '../utils/useProductImages'
 import { useMenuAvailability, refreshMenuAvailability, setMenuFulfillment } from '../utils/menuAvailability'
+import { useCartStockGuard, overageMessage } from '../utils/cartStock'
 
 interface ParsedDishItem {
   name: string
@@ -1093,6 +1094,26 @@ export const POS: React.FC = () => {
   const handleRemove = (itemId: string) => {
     setCartItems((prevItems) => prevItems.filter((ci) => ci.item.id !== itemId))
   }
+
+  /**
+   * `limitToStock` caps each line against that dish's own servings. Two dishes sharing an
+   * ingredient each report what that ingredient alone allows, so a cart holding both can still add
+   * up to more than the kitchen has. This asks the server to weigh the cart as one order and
+   * brings any line that no longer fits back down, before the cashier takes the money.
+   */
+  useCartStockGuard(
+    cartItems.map((ci) => ({ productId: ci.item.id, name: ci.item.name, quantity: ci.quantity })),
+    orderType === 'Dine In' ? 'DINE_IN' : 'TAKE_OUT',
+    useCallback((trims) => {
+      const byId = new Map(trims.map((t) => [t.productId, t.to]))
+      setCartItems((prev) =>
+        prev
+          .map((ci) => (byId.has(ci.item.id) ? { ...ci, quantity: byId.get(ci.item.id)! } : ci))
+          .filter((ci) => ci.quantity > 0)
+      )
+      showNotice(trims.map((t) => overageMessage(t.name, t.to)).join(' '), 'Not Enough Stock')
+    }, [showNotice])
+  )
 
   const handleConfirmOrder = () => {
     if (cartItems.length === 0) return

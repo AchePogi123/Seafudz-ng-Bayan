@@ -167,6 +167,27 @@ function onlineOrder(id, lines, fulfillmentType = 'DELIVERY') {
   });
 }
 
+/** The customer pays by GCash and sends the reference number / screenshot. */
+const submitReceipt = (id) =>
+  api('PATCH', `/assistant/orders/${id}/upload-receipt`, { paymentReference: `GC-${id}`, paymentReceipt: 'data:image/png;base64,ZmFrZQ==' });
+
+/** The assistant approves the proof (or takes the cash for a pick-up) and sends it to the kitchen. */
+const confirmPayment = (id) => api('PATCH', `/assistant/orders/${id}/status`, { status: 'CONFIRMED' });
+
+/**
+ * An online order the customer has actually paid for, so it is holding stock: GCash orders submit
+ * the reference / receipt, pay-in-store pick-ups are confirmed at the counter.
+ * Placing an online order only CHECKS the stock; the ingredients leave inventory here.
+ */
+async function paidOnlineOrder(id, lines, fulfillmentType = 'DELIVERY') {
+  const placed = await onlineOrder(id, lines, fulfillmentType);
+  if (placed.status === 201) {
+    const paid = fulfillmentType === 'PICKUP' ? await confirmPayment(id) : await submitReceipt(id);
+    assert.equal(paid.status, 200, JSON.stringify(paid.json));
+  }
+  return placed;
+}
+
 const cancel = (id) => api('PATCH', `/user-flow/orders/${id}/cancel`, { status: 'CANCELLED' });
 const kitchenStatus = (id, status) => api('PATCH', `/kitchen/orders/${id}/status`, { status });
 
@@ -576,10 +597,10 @@ test('scenario 10: packaging follows the order type, shared packaging is counted
   assert.equal((await posOrder(nextId('S10'), [['alacarte', 1]], 'TAKE_OUT')).status, 201);
   now = await assertStock(now, { ...food, tray: -1, bag: -1 }, 'take-out');
 
-  assert.equal((await onlineOrder(nextId('S10'), [['alacarte', 1]], 'PICKUP')).status, 201);
+  assert.equal((await paidOnlineOrder(nextId('S10'), [['alacarte', 1]], 'PICKUP')).status, 201);
   now = await assertStock(now, { ...food, tray: -1, bag: -1 }, 'pick-up');
 
-  assert.equal((await onlineOrder(nextId('S10'), [['alacarte', 1]], 'DELIVERY')).status, 201);
+  assert.equal((await paidOnlineOrder(nextId('S10'), [['alacarte', 1]], 'DELIVERY')).status, 201);
   now = await assertStock(now, { ...food, tray: -1, bag: -1, seal: -1 }, 'delivery');
 
   // four dishes on two lines share bags: ceil(4 / 3) = 2, not one per dish or per line
@@ -837,10 +858,63 @@ test('an order edit and a new order for the same ingredients at the same moment 
   }, 'after the races');
 });
 
+test('a GCash order takes its ingredients when the customer sends the reference, not before', { skip }, async () => {
+  const before = await stocks();
+  const used = { shrimp: -150, garlic: -5, butter: -50, tray: -1, bag: -1, seal: -1 };
+  const id = nextId('PAYFIRST');
+
+  // The customer confirms the cart but has not paid yet: nothing leaves inventory.
+  assert.equal((await onlineOrder(id, [['alacarte', 1]], 'DELIVERY')).status, 201);
+  await assertStock(before, {}, 'after the customer placed the order');
+  assert.equal((await ledger(id)).length, 0, 'an unpaid order holds nothing');
+  assert.equal((await movements(id)).length, 0, 'an unpaid order records no movement');
+
+  // The customer pays and sends the GCash reference + screenshot: the stock moves now.
+  assert.equal((await submitReceipt(id)).status, 200);
+  assert.equal(await orderStatus(id), 'RECEIPT_SUBMITTED');
+  await assertStock(before, used, 'after the customer submitted the payment proof');
+  assert.ok((await ledger(id)).every((r) => r.state === 'RESERVED'));
+
+  // Re-sending the proof, and the assistant then approving it, must not deduct a second time.
+  assert.equal((await submitReceipt(id)).status, 200);
+  await assertStock(before, used, 'resubmitting the proof does not deduct twice');
+  assert.equal((await api('PATCH', `/assistant/orders/${id}/verify-receipt`, {})).status, 200);
+  await assertStock(before, used, 'approving the proof does not deduct twice');
+
+  assert.equal((await cancel(id)).status, 200);
+  await assertStock(before, {}, 'after cancelling the paid order');
+});
+
+test('a pay-in-store pick-up takes its ingredients when the counter confirms it', { skip }, async () => {
+  const before = await stocks();
+  const used = { shrimp: -150, garlic: -5, butter: -50, tray: -1, bag: -1 };
+  const id = nextId('PICKPAY');
+
+  assert.equal((await onlineOrder(id, [['alacarte', 1]], 'PICKUP')).status, 201);
+  await assertStock(before, {}, 'nothing held while the customer has not paid at the counter');
+
+  assert.equal((await confirmPayment(id)).status, 200);
+  await assertStock(before, used, 'after the counter confirmed the pick-up');
+  assert.equal((await confirmPayment(id)).status, 200);
+  await assertStock(before, used, 'confirming twice does not deduct twice');
+
+  assert.equal((await cancel(id)).status, 200);
+  await assertStock(before, {}, 'after cancelling the confirmed pick-up');
+});
+
+test('an unpaid online order that is cancelled never touched stock at all', { skip }, async () => {
+  const before = await stocks();
+  const id = nextId('UNPAID');
+  assert.equal((await onlineOrder(id, [['bowl', 1]], 'PICKUP')).status, 201);
+  assert.equal((await cancel(id)).status, 200);
+  await assertStock(before, {}, 'after cancelling before payment');
+  assert.equal((await movements(id)).length, 0, 'no consumption and no return to undo');
+});
+
 test('kitchen declining a large order returns the stock it was holding', { skip }, async () => {
   const before = await stocks();
   const id = nextId('DECLINE');
-  assert.equal((await onlineOrder(id, [['party', 2]], 'DELIVERY')).status, 201);
+  assert.equal((await paidOnlineOrder(id, [['party', 2]], 'DELIVERY')).status, 201);
   await assertStock(before, { shrimp: -1600, butter: -500, tray: -4, bag: -1 }, 'after order');
 
   const res = await api('PATCH', `/kitchen/orders/${id}/reject-quantities`, { reason: 'ZZT too large' });
@@ -854,7 +928,7 @@ test('kitchen declining a large order returns the stock it was holding', { skip 
 test('out-of-stock replacement: the removed dish is returned, the new one deducted, the shared bag not doubled', { skip }, async () => {
   const before = await stocks();
   const id = nextId('SWAP');
-  assert.equal((await onlineOrder(id, [['alacarte', 1], ['bowl', 1]], 'DELIVERY')).status, 201);
+  assert.equal((await paidOnlineOrder(id, [['alacarte', 1], ['bowl', 1]], 'DELIVERY')).status, 201);
   await assertStock(before, { shrimp: -450, garlic: -15, butter: -150, tray: -2, bag: -1, seal: -1 }, 'after order');
 
   const bowlItem = await orderItemId(id, 'bowl');
@@ -980,4 +1054,103 @@ test('receiving a purchase order only adds stock for lines that are on that orde
   assert.equal(ok.status, 200, JSON.stringify(ok.json));
   assert.equal(ok.json.data.purchaseOrder.status, 'FULLY_RECEIVED');
   await assertStock(before, { shrimp: 1000 }, 'after a valid receipt');
+});
+
+/* ------------------------------------------- unpaid orders have a claim on stock (no overselling) */
+
+test('a placed-but-unpaid order holds its share back from the menu, and gives it back when cancelled', { skip }, async () => {
+  await setStock('shrimp', 900); // 6 ala carte (150 g each)
+  const before = await servings('alacarte');
+  assert.equal(before.DELIVERY, 6);
+
+  const id = nextId('CLAIM');
+  assert.equal((await onlineOrder(id, [['alacarte', 4]])).status, 201);
+
+  // nothing has left the stockroom: the customer has not paid yet
+  assert.equal((await stocks()).shrimp, 900);
+  // ...but the menu may only promise what is left over
+  assert.equal((await servings('alacarte')).DELIVERY, 2, 'unpaid order holds 4 back');
+
+  await cancel(id);
+  assert.equal((await servings('alacarte')).DELIVERY, 6, 'cancelling releases the claim');
+  assert.equal((await stocks()).shrimp, 900);
+});
+
+test('two customers cannot both be promised the last servings', { skip }, async () => {
+  await setStock('shrimp', 600); // exactly 4 ala carte
+
+  const first = nextId('RACE-A');
+  assert.equal((await onlineOrder(first, [['alacarte', 4]])).status, 201, 'the first order takes them all');
+
+  // the second customer asks for the same four while the first is still unpaid
+  const second = await onlineOrder(nextId('RACE-B'), [['alacarte', 4]]);
+  assert.equal(second.status, 409, JSON.stringify(second.json));
+  assert.equal(second.json.error, 'INSUFFICIENT_STOCK');
+  assert.equal((await stocks()).shrimp, 600, 'a refused order moves nothing');
+
+  // once the first order is paid for, the stock really does leave
+  assert.equal((await submitReceipt(first)).status, 200);
+  assert.equal((await stocks()).shrimp, 0);
+});
+
+test('an order that is paid for keeps its stock: the claim becomes a real deduction, not both', { skip }, async () => {
+  await setStock('shrimp', 900);
+  const id = nextId('ONCE');
+  assert.equal((await onlineOrder(id, [['alacarte', 2]])).status, 201);
+  assert.equal((await servings('alacarte')).DELIVERY, 4, 'claimed while unpaid');
+
+  assert.equal((await submitReceipt(id)).status, 200);
+  assert.equal((await stocks()).shrimp, 600, 'deducted once');
+  assert.equal((await servings('alacarte')).DELIVERY, 4, 'not counted twice now that it is deducted');
+});
+
+/* ------------------------------------------------------- carts that share ingredients are capped */
+
+test('the cart check counts dishes that share an ingredient together', { skip }, async () => {
+  await setStock('shrimp', 900); // 6 ala carte (150 g) OR 3 bowls (300 g)
+
+  // each dish on its own says what the shrimp alone allows
+  assert.equal((await servings('alacarte')).TAKE_OUT, 6);
+  assert.equal((await servings('bowl')).TAKE_OUT, 3);
+
+  const check = (items) => api('POST', '/menu/stock-check', { fulfillment: 'TAKE_OUT', items });
+
+  // ...but 3 ala carte (450 g) + 2 bowls (600 g) is 1050 g, more than there is
+  const over = await check([
+    { productId: DISH.alacarte.id, quantity: 3 },
+    { productId: DISH.bowl.id, quantity: 2 },
+  ]);
+  assert.equal(over.status, 200);
+  assert.equal(over.json.data.ok, false, JSON.stringify(over.json.data));
+  // with 3 ala carte already in the cart, only 450 g is left: one bowl
+  assert.equal(over.json.data.products[DISH.bowl.id].maxQuantity, 1);
+
+  const fits = await check([
+    { productId: DISH.alacarte.id, quantity: 3 },
+    { productId: DISH.bowl.id, quantity: 1 },
+  ]);
+  assert.equal(fits.json.data.ok, true, JSON.stringify(fits.json.data));
+});
+
+test('the cart check never reserves anything', { skip }, async () => {
+  const before = await stocks();
+  await api('POST', '/menu/stock-check', {
+    fulfillment: 'TAKE_OUT',
+    items: [{ productId: DISH.party.id, quantity: 2 }],
+  });
+  await assertStock(before, {}, 'after a cart check');
+});
+
+test('a cart check holds back what unpaid orders have already claimed', { skip }, async () => {
+  await setStock('shrimp', 900);
+  const id = nextId('CARTCLAIM');
+  assert.equal((await onlineOrder(id, [['alacarte', 4]])).status, 201);
+
+  const res = await api('POST', '/menu/stock-check', {
+    fulfillment: 'DELIVERY',
+    items: [{ productId: DISH.alacarte.id, quantity: 3 }],
+  });
+  assert.equal(res.json.data.ok, false, 'only 2 are left to promise');
+  assert.equal(res.json.data.products[DISH.alacarte.id].maxQuantity, 2);
+  await cancel(id);
 });

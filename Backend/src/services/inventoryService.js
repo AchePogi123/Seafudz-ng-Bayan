@@ -2,7 +2,11 @@
  * Inventory <-> order integration.
  *
  * Rules (decided with the owner):
- *  - Ingredients are deducted the moment an order is placed (reserveForOrder).
+ *  - POS / counter orders are paid on the spot, so they deduct when the order is placed.
+ *  - Online customer orders only have their stock CHECKED when placed (reserveForOrder with
+ *    `dryRun`); the ingredients are deducted once the customer has actually paid — when the GCash
+ *    reference / receipt is submitted, or when a pay-in-store pick-up is confirmed at the counter
+ *    (ensureOrderReserved). The assistant's approval of the proof changes nothing on its own.
  *  - Cancelling before the kitchen starts returns everything.
  *  - Cancelling after the kitchen started: food is written off as waste,
  *    packaging goes back to stock.
@@ -20,6 +24,7 @@ import {
   aggregateLines,
   computeServings,
   computeServingsForFulfillment,
+  computePerServingNeeds,
   FULFILLMENTS,
   normalizeFulfillment,
   stockStatus,
@@ -154,6 +159,151 @@ function toOrderItems(rawItems) {
   }));
 }
 
+/**
+ * Online orders are only CHECKED when they are placed; their ingredients do not leave stock until
+ * the payment is verified. Between those two moments the stock is still on the shelf but is already
+ * spoken for, so this works out how much of it placed-but-unpaid orders are counting on.
+ *
+ * That figure is held back from the servings the menu shows and from the check a new order passes,
+ * so two customers cannot both be sold the last tray and leave the second one to be turned away
+ * after paying.
+ *
+ * Only orders younger than UNPAID_DEMAND_HOLD_MINUTES count: an abandoned cart must not keep a
+ * dish off the menu for ever. Orders that already hold a ledger row took their stock long ago.
+ *
+ * @returns {Promise<Map<string, number>>} ingredientId -> quantity promised, in its base unit
+ */
+const UNPAID_STATUSES = [
+  'PENDING', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_REJECTED',
+  'PENDING_COD', 'PAY_IN_STORE', 'PENDING_STORE_PICKUP',
+];
+const unpaidHoldMinutes = () => {
+  const n = Number(process.env.UNPAID_DEMAND_HOLD_MINUTES);
+  return Number.isFinite(n) && n > 0 ? n : 120;
+};
+
+export async function loadPendingDemand(queryable, { excludeOrderId, inTransaction = false } = {}) {
+  // Inside a caller's transaction this has to run under a savepoint: holding stock back is a
+  // refinement, but a failed statement would abort the transaction and take the order down with it.
+  if (inTransaction) await queryable.query('SAVEPOINT inv_pending');
+  try {
+    const demand = await readPendingDemand(queryable, excludeOrderId);
+    if (inTransaction) await queryable.query('RELEASE SAVEPOINT inv_pending');
+    return demand;
+  } catch (err) {
+    if (inTransaction) await queryable.query('ROLLBACK TO SAVEPOINT inv_pending');
+    console.warn(`${INFO} Could not read pending unpaid demand: ${err.message}`);
+    return new Map();
+  }
+}
+
+async function readPendingDemand(queryable, excludeOrderId) {
+  const demand = new Map();
+  const { rows } = await queryable.query(
+    `SELECT o.id AS order_id, o.inventory_fulfillment, o.fulfillment_type,
+            oi.id AS order_item_id, oi.product_id, oi.product_name_snapshot, oi.quantity
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.status = ANY($1::text[])
+        AND o.created_at > NOW() - ($2 || ' minutes')::interval
+        AND ($3::text IS NULL OR o.id <> $3)
+        AND COALESCE(oi.item_status, 'ACTIVE') <> 'CANCELLED'
+        AND NOT EXISTS (SELECT 1 FROM order_inventory_ledger l WHERE l.order_id = o.id)
+      ORDER BY o.id, oi.id`,
+    [UNPAID_STATUSES, String(unpaidHoldMinutes()), excludeOrderId ? String(excludeOrderId) : null]
+  );
+  if (rows.length === 0) return demand;
+
+  const byOrder = new Map();
+  for (const r of rows) {
+    const entry = byOrder.get(r.order_id) || {
+      fulfillment: normalizeFulfillment(r.inventory_fulfillment, r.fulfillment_type),
+      items: [],
+    };
+    entry.items.push({
+      orderItemId: r.order_item_id,
+      productId: r.product_id,
+      name: r.product_name_snapshot || '',
+      quantity: Number(r.quantity) || 1,
+    });
+    byOrder.set(r.order_id, entry);
+  }
+
+  const allItems = [...byOrder.values()].flatMap((o) => o.items);
+  const { recipes, resolve } = await loadRecipesForItems(queryable, allItems);
+  if (recipes.size === 0) return demand;
+  const ingredientMeta = await loadIngredientMeta(queryable, recipeItemIds(recipes));
+
+  for (const { fulfillment, items } of byOrder.values()) {
+    const resolved = items.map((it) => ({ ...it, productId: resolve(it) })).filter((it) => it.productId);
+    if (resolved.length === 0) continue;
+    for (const [ingredientId, qty] of aggregateLines(
+      computeRequirementLines({ items: resolved, recipes, ingredientMeta, fulfillment })
+    )) {
+      demand.set(ingredientId, round4((demand.get(ingredientId) || 0) + qty));
+    }
+  }
+  return demand;
+}
+
+/**
+ * The stock items an order's dishes are made of, whether or not it has taken them yet.
+ * Used to refresh exactly the right menu entries when an unpaid order appears or goes away:
+ * such an order moves no stock, but it does change what is still free to promise.
+ */
+export async function orderIngredientIds(queryable, orderId) {
+  try {
+    const { rows } = await queryable.query(
+      `SELECT product_id, product_name_snapshot FROM order_items
+        WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') <> 'CANCELLED'`,
+      [String(orderId)]
+    );
+    if (rows.length === 0) return [];
+    const items = rows.map((r) => ({ productId: r.product_id, name: r.product_name_snapshot || '' }));
+    const { recipes, resolve } = await loadRecipesForItems(queryable, items);
+    const used = new Map();
+    for (const it of items) {
+      const r = recipes.get(resolve(it));
+      if (r) used.set(r.productId, r);
+    }
+    return recipeItemIds(used);
+  } catch (err) {
+    console.warn(`${INFO} Could not list the stock items order ${orderId} uses: ${err.message}`);
+    return [];
+  }
+}
+
+/** Every stock item referenced by a set of recipes (food and packaging). */
+function recipeItemIds(recipes) {
+  const ids = new Set();
+  for (const r of recipes.values()) {
+    r.ingredients.forEach((i) => ids.add(i.ingredientId));
+    r.packaging.forEach((p) => ids.add(p.packagingId));
+  }
+  return [...ids];
+}
+
+/** Read-only ingredient metadata (no row locks), for the display and check paths. */
+async function loadIngredientMeta(queryable, ids) {
+  if (ids.length === 0) return new Map();
+  const { rows } = await queryable.query(
+    `SELECT id, base_unit, item_type FROM inventory_ingredients WHERE id = ANY($1::text[])`,
+    [ids]
+  );
+  return new Map(rows.map((r) => [r.id, { baseUnit: r.base_unit, itemType: r.item_type }]));
+}
+
+/** Stock on hand minus what placed-but-unpaid orders are already counting on (never below 0). */
+function availableAfterDemand(stockById, demand) {
+  const available = new Map();
+  if (!demand || demand.size === 0) return available;
+  for (const [id, entry] of stockById) {
+    const promised = demand.get(id) || 0;
+    if (promised > 0) available.set(id, Math.max(0, round4(Number(entry.stock) - promised)));
+  }
+  return available;
+}
+
 async function loadIngredientsLocked(client, ids) {
   if (ids.length === 0) return new Map();
   const { rows } = await client.query(
@@ -235,6 +385,10 @@ async function logMovement(client, ing, { orderId, type, delta, stockAfter, reas
  * Takes the ingredients an order needs out of stock.
  * Throws InsufficientStockError (409) when anything is short; the caller's transaction should roll back.
  * Idempotent: if the order already holds a reservation, nothing happens (use `append` to add new items).
+ *
+ * `opts.dryRun` only checks: it still throws when stock is short, but nothing is deducted and no
+ * ledger row is written. Used when an unpaid online order is placed, so a sold-out cart is
+ * refused straight away while the stock itself stays available until the payment is verified.
  */
 export async function reserveForOrder(client, orderId, rawItems, fulfillmentInput, opts = {}) {
   if (!(await hasInventoryTables(client))) return { reserved: false, reason: 'NO_INVENTORY_TABLES' };
@@ -260,7 +414,7 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
   if (resolvedItems.length === 0) return { reserved: false, reason: 'NO_RECIPES' };
   const resolvedHeld = heldItems.filter((it) => recipes.has(it.productId));
 
-  if (!opts.append) {
+  if (!opts.append && !opts.dryRun) {
     // A fresh reservation: remember the order type, and clear any "kitchen started" mark left by
     // an earlier order that used the same id (the POS re-uses its short order numbers).
     await optionalStatement(
@@ -300,11 +454,19 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
   if (lines.length === 0) return { reserved: false, reason: 'NOTHING_TO_RESERVE' };
   const totals = aggregateLines(lines);
 
+  // An unpaid order is only being checked, so the stock it needs is still on the shelf while other
+  // unpaid orders are counting on it too. Hold their share back, or the same last tray gets
+  // promised to everyone and all but the first are turned away *after* paying.
+  const pending = opts.dryRun
+    ? await loadPendingDemand(client, { excludeOrderId: orderId, inTransaction: true })
+    : null;
+
   // Verify stock
   const shortages = [];
   for (const [ingredientId, needed] of totals) {
     const ing = locked.get(ingredientId);
-    const available = Number(ing?.current_stock) || 0;
+    const onHand = Number(ing?.current_stock) || 0;
+    const available = pending ? Math.max(0, round4(onHand - (pending.get(ingredientId) || 0))) : onHand;
     if (!ing || available + 1e-9 < needed) {
       shortages.push({ ingredientId, name: ing?.name || ingredientId, unit: ing?.base_unit, needed, available });
     }
@@ -314,12 +476,13 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
     const stockById = new Map(
       [...locked.values()].map((r) => [r.id, { baseUnit: r.base_unit, stock: Number(r.current_stock), name: r.name }])
     );
+    const available = pending ? availableAfterDemand(stockById, pending) : undefined;
     const affected = [];
     for (const it of resolvedItems) {
       const r = recipes.get(it.productId);
       const usesShort = r.ingredients.some((i) => shortIds.has(i.ingredientId)) || r.packaging.some((p) => shortIds.has(p.packagingId));
       if (!usesShort) continue;
-      const { servings } = computeServings(r, stockById);
+      const { servings } = computeServings(r, stockById, available);
       affected.push({ name: it.name || it.productId, productId: it.productId, remaining: servings ?? 0 });
     }
     const first = affected[0];
@@ -330,6 +493,9 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
       : `Not enough "${shortages[0].name}" in stock to prepare this order.`;
     throw new InsufficientStockError(message, { shortages, items: affected });
   }
+
+  // Checking only (unpaid order): stock is enough, but nothing is taken yet.
+  if (opts.dryRun) return { reserved: false, reason: 'DRY_RUN', ingredientIds: [...totals.keys()] };
 
   // Apply
   for (const [ingredientId, needed] of totals) {
@@ -558,6 +724,67 @@ export async function lockStockForOrderChange(client, orderId, rawItems = []) {
   await loadIngredientsLocked(client, [...ids].sort());
 }
 
+/**
+ * Deducts an order's ingredients once, when its payment has been confirmed and it is sent to the
+ * kitchen. Online orders are only *checked* when the customer places them (reserveForOrder with
+ * `dryRun`), so this is the point where the stock actually moves.
+ *
+ * Safe to call repeatedly and from any confirmation path: an order that already has ledger rows
+ * (reserved, returned, wasted or consumed) is left alone, so nothing is ever deducted twice.
+ * Never throws — a stock problem must not block the assistant or the kitchen; when stock ran out
+ * between placing and paying, the shortage is returned so the caller can warn the staff.
+ *
+ * @returns {Promise<{reserved: boolean, reason?: string, ingredientIds?: string[], shortage?: object}|null>}
+ */
+export async function ensureOrderReserved(orderId, opts = {}) {
+  try {
+    const result = await withTransaction(async (client) => {
+      if (!(await hasInventoryTables(client))) return null;
+
+      // Any ledger row at all (RESERVED / RETURNED / WASTED / CONSUMED) means this order has
+      // already been through inventory once: never take its ingredients a second time.
+      const held = await client.query(
+        `SELECT 1 FROM order_inventory_ledger WHERE order_id = $1 LIMIT 1`,
+        [String(orderId)]
+      );
+      if (held.rows.length > 0) return { reserved: false, reason: 'ALREADY_RESERVED' };
+
+      const { rows: items } = await client.query(
+        `SELECT id AS order_item_id, product_id, product_name_snapshot, quantity
+           FROM order_items
+          WHERE order_id = $1 AND COALESCE(item_status, 'ACTIVE') <> 'CANCELLED'
+          ORDER BY id`,
+        [String(orderId)]
+      );
+      if (items.length === 0) return { reserved: false, reason: 'NO_ITEMS' };
+
+      const fulfillment = await getOrderFulfillment(client, orderId);
+      return reserveForOrder(client, orderId, items, fulfillment, { performedBy: opts.performedBy });
+    });
+    if (result?.reserved) broadcastInventoryChange(result.ingredientIds);
+    return result;
+  } catch (err) {
+    if (err.code === 'INSUFFICIENT_STOCK') {
+      // The customer has already paid and the order is on its way to the kitchen, so this cannot
+      // simply be swallowed: the staff have to know the food is not there. The reply carries the
+      // shortage, and this event reaches every screen that is open, including ones that were not
+      // the cause of it. The order keeps no ledger rows, so a later confirmation or the kitchen
+      // taking it on will try again and succeed once the stock is topped up.
+      console.warn(`${INFO} Order ${orderId} could not be stocked at confirmation: ${err.message}`);
+      emitOrderUpdate({
+        type: 'INVENTORY_SHORTFALL',
+        orderId: String(orderId),
+        message: err.message,
+        details: err.details,
+        timestamp: Date.now(),
+      });
+      return { reserved: false, reason: 'INSUFFICIENT_STOCK', shortage: { message: err.message, details: err.details } };
+    }
+    console.error(`${INFO} Could not reserve stock for confirmed order ${orderId}:`, err.message);
+    return null;
+  }
+}
+
 /** Runs fn(client) in its own transaction. */
 export async function withTransaction(fn) {
   const pool = await getDbPool();
@@ -583,8 +810,18 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
   const s = String(status || '').toUpperCase();
   const served = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(s);
   const started = served || ['PREPARING', 'COOKING', 'READY', 'OUT_FOR_DELIVERY'].includes(s);
+  const confirmed = ['RECEIPT_SUBMITTED', 'CONFIRMED', 'PENDING_PREPARATION'].includes(s);
   const cancelled = ['CANCELLED', 'CANCEL_REQUESTED', 'KITCHEN_REJECTED'].includes(s);
-  if (!started && !cancelled) return null;
+  if (!started && !confirmed && !cancelled) return null;
+
+  // The customer has paid by the time an order reaches RECEIPT_SUBMITTED / CONFIRMED, and it is
+  // certainly paid for once the kitchen has it: that is where its stock moves.
+  // Idempotent, so an order the POS already reserved at the counter is untouched.
+  if (started || confirmed) {
+    await ensureOrderReserved(orderId, { performedBy: opts.performedBy });
+    if (confirmed && !started) return null;
+  }
+
   try {
     const result = await withTransaction(async (client) => {
       if (!(await hasInventoryTables(client))) return null;
@@ -595,7 +832,7 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
       }
       return returnForOrder(client, orderId, opts);
     });
-    if (result && (result.released > 0 || result.wasted > 0)) broadcastInventoryChange(result.ingredientIds);
+    await announceRelease(orderId, result);
     return result;
   } catch (err) {
     console.error(`${INFO} Could not sync inventory for order ${orderId} (${status}):`, err.message);
@@ -603,11 +840,25 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
   }
 }
 
+/**
+ * Tells the screens what changed after an order let go of stock.
+ * An order that is cancelled before it was paid for returns nothing — it never took anything — but
+ * its claim on the stock is gone, so the dishes it was holding back have to be recalculated too.
+ */
+async function announceRelease(orderId, result) {
+  if (result && (result.released > 0 || result.wasted > 0)) {
+    broadcastInventoryChange(result.ingredientIds);
+    return;
+  }
+  const ids = await orderIngredientIds({ query: dbQuery }, orderId);
+  if (ids.length > 0) broadcastInventoryChange(ids);
+}
+
 /** Convenience: return stock for a cancelled / deleted order inside its own transaction. */
 export async function releaseOrderStock(orderId, opts = {}) {
   try {
     const result = await withTransaction((client) => returnForOrder(client, orderId, opts));
-    if (result && (result.released > 0 || result.wasted > 0)) broadcastInventoryChange(result.ingredientIds);
+    await announceRelease(orderId, result);
     return result;
   } catch (err) {
     console.error(`${INFO} Could not return stock for order ${orderId}:`, err.message);
@@ -621,6 +872,9 @@ export async function releaseOrderStock(orderId, opts = {}) {
  *  - ingredientIds: only products whose BOM (food or packaging) references one of them
  * Each product gets a value per order type, because packaging differs between dine-in,
  * take-out/pickup and delivery. The smallest-capacity item in the BOM is the limit.
+ *
+ * What placed-but-unpaid orders are already counting on is held back, so the menu shows what a
+ * new customer can really be promised rather than what is merely still on the shelf.
  *
  * @returns {Promise<Map<string, { servings: Record<string, number>, limitedBy: Record<string, string|null> }>>}
  */
@@ -688,13 +942,16 @@ export async function computeProductServings(queryable, { ingredientIds } = {}) 
     });
   }
 
+  const pending = await loadPendingDemand(queryable);
+  const available = availableAfterDemand(stockById, pending);
+
   const out = new Map();
   for (const [productId, recipe] of recipes) {
     if (recipe.ingredients.length === 0 && recipe.packaging.length === 0) continue;
     const servings = {};
     const limitedBy = {};
     for (const f of FULFILLMENTS) {
-      const r = computeServingsForFulfillment(recipe, stockById, f);
+      const r = computeServingsForFulfillment(recipe, stockById, f, available);
       if (r.servings === null) continue;
       servings[f] = r.servings;
       limitedBy[f] = r.limitedBy;
@@ -702,6 +959,86 @@ export async function computeProductServings(queryable, { ingredientIds } = {}) 
     if (Object.keys(servings).length > 0) out.set(productId, { servings, limitedBy });
   }
   return out;
+}
+
+/**
+ * Checks a whole cart at once, so dishes that share an ingredient are counted together.
+ *
+ * The per-product "servings left" on the menu is each dish measured on its own against full stock.
+ * Two dishes made of the same shrimp both report what the shrimp alone allows, so a cart holding
+ * both can quietly ask for more shrimp than exists and only be refused at checkout. This adds the
+ * cart up as one order and answers, per dish, how many of it the REST of the cart still leaves room
+ * for — which is what the screens need to cap a quantity honestly.
+ *
+ * Read-only: it reserves nothing. Stock that placed-but-unpaid orders are counting on is held back,
+ * the same as on the menu.
+ *
+ * @param {{items: Array<{productId: string, name?: string, quantity: number}>, fulfillment: string}} cart
+ * @returns {Promise<{ok: boolean, products: Record<string, {maxQuantity: number, requested: number}>, shortages: Array<object>}>}
+ */
+export async function checkCartStock(queryable, { items: rawItems, fulfillment: fulfillmentInput } = {}) {
+  const fulfillment = normalizeFulfillment(fulfillmentInput);
+  const items = toOrderItems(rawItems).filter((it) => it.quantity > 0);
+  const empty = { ok: true, products: {}, shortages: [], fulfillment };
+  if (items.length === 0) return empty;
+
+  const { recipes, resolve } = await loadRecipesForItems(queryable, items);
+  const resolved = items.map((it) => ({ ...it, productId: resolve(it), requestedId: it.productId }));
+  const priced = resolved.filter((it) => it.productId);
+  if (priced.length === 0) return empty;
+
+  const stockIds = recipeItemIds(recipes);
+  const { rows } = await queryable.query(
+    `SELECT id, name, base_unit, item_type, current_stock FROM inventory_ingredients WHERE id = ANY($1::text[])`,
+    [stockIds]
+  );
+  const stockById = new Map(
+    rows.map((r) => [r.id, { baseUnit: r.base_unit, stock: Number(r.current_stock), name: r.name }])
+  );
+  const ingredientMeta = new Map(rows.map((r) => [r.id, { baseUnit: r.base_unit, itemType: r.item_type }]));
+
+  const pending = await loadPendingDemand(queryable);
+  const freeStock = (id) =>
+    Math.max(0, round4((Number(stockById.get(id)?.stock) || 0) - (pending.get(id) || 0)));
+
+  // What the cart needs as ONE order (shared packaging rounded up per order, not per dish)
+  const cartTotals = aggregateLines(
+    computeRequirementLines({ items: priced, recipes, ingredientMeta, fulfillment })
+  );
+
+  const shortages = [];
+  for (const [ingredientId, needed] of cartTotals) {
+    const available = freeStock(ingredientId);
+    if (available + 1e-9 < needed) {
+      shortages.push({
+        ingredientId,
+        name: stockById.get(ingredientId)?.name || ingredientId,
+        unit: stockById.get(ingredientId)?.baseUnit,
+        needed,
+        available,
+      });
+    }
+  }
+
+  // Per dish: how many the rest of the cart leaves room for.
+  const products = {};
+  for (const it of priced) {
+    const { needs, missing } = computePerServingNeeds(recipes.get(it.productId), stockById, fulfillment);
+    let max = missing.length > 0 ? 0 : Infinity;
+    for (const [ingredientId, perServing] of needs) {
+      // everything the cart needs of this item except what this dish's own servings account for
+      const others = Math.max(0, round4((cartTotals.get(ingredientId) || 0) - perServing * it.quantity));
+      const room = Math.floor(Math.max(0, freeStock(ingredientId) - others) / perServing + 1e-9);
+      if (room < max) max = room;
+    }
+    const key = String(it.requestedId || it.productId);
+    products[key] = {
+      maxQuantity: Number.isFinite(max) ? Math.max(0, max) : null,
+      requested: it.quantity,
+    };
+  }
+
+  return { ok: shortages.length === 0, products, shortages, fulfillment };
 }
 
 /** Every product's servings (GET /menu). Returns an empty map if inventory tables are missing. */

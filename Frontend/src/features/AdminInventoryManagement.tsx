@@ -23,7 +23,7 @@ import {
   loadStoredTransactions,
   clearStoredInventory,
 } from './inventory/actualInventoryData'
-import { inventoryApi } from './inventory/inventoryApi'
+import { inventoryApi, type UnlinkedProduct } from './inventory/inventoryApi'
 import { subscribeOrderSync } from '../utils/orderSync'
 import './inventory/admin-inventory.css'
 
@@ -89,6 +89,8 @@ export const AdminInventoryManagement: React.FC = () => {
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
   const [loadErrorText, setLoadErrorText] = useState('')
   const [legacyData, setLegacyData] = useState(false)
+  // Products on sale with no recipe: stock can never sell them out, so the admin has to be told
+  const [unlinkedProducts, setUnlinkedProducts] = useState<UnlinkedProduct[]>([])
   const [isImporting, setIsImporting] = useState(false)
   const loadedOnce = useRef(false)
 
@@ -111,6 +113,7 @@ export const AdminInventoryManagement: React.FC = () => {
     setSuppliers(state.suppliers)
     setPurchaseOrders(state.purchaseOrders)
     setTransactions(state.transactions)
+    setUnlinkedProducts(state.productsWithoutRecipes || [])
   }, [])
 
   const loadInventory = useCallback(
@@ -556,6 +559,32 @@ export const AdminInventoryManagement: React.FC = () => {
                   </Button>
                   <Button size="sm" variant="secondary" disabled={isImporting} onClick={handleDiscardLegacy}>
                     Discard
+                  </Button>
+                </div>
+              </Notice>
+            </div>
+          )}
+
+          {unlinkedProducts.length > 0 && loadState === 'ready' && (
+            <div className="mb-5">
+              <Notice tone="warning">
+                <p className="font-semibold">
+                  {unlinkedProducts.length} product{unlinkedProducts.length === 1 ? '' : 's'} on the menu
+                  {unlinkedProducts.length === 1 ? ' has' : ' have'} no recipe.
+                </p>
+                <p className="mt-0.5 text-sm">
+                  Stock only reaches a dish through its recipe, so {unlinkedProducts.length === 1 ? 'this one' : 'these'} can
+                  never run out: {unlinkedProducts.length === 1 ? 'it stays' : 'they stay'} orderable on the customer menu and
+                  the POS no matter what is in the stockroom. Give {unlinkedProducts.length === 1 ? 'it' : 'each'} a recipe on
+                  the Recipes tab to link {unlinkedProducts.length === 1 ? 'it' : 'them'} to stock.
+                </p>
+                <p className="mt-2 text-sm font-semibold">
+                  {unlinkedProducts.slice(0, 8).map((p) => p.productName).join(', ')}
+                  {unlinkedProducts.length > 8 ? ` and ${unlinkedProducts.length - 8} more` : ''}
+                </p>
+                <div className="mt-3">
+                  <Button size="sm" variant="secondary" onClick={() => handleTabChange('recipes')}>
+                    Go to Recipes
                   </Button>
                 </div>
               </Notice>

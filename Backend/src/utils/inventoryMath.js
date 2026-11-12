@@ -132,31 +132,84 @@ export function aggregateLines(lines) {
 }
 
 /**
- * How many servings the food ingredients allow.
+ * What ONE serving of a dish needs, summed per stock item and expressed in that item's base unit.
+ *
+ * Summing first matters: the same item can appear on more than one recipe line (a sauce that is
+ * both an ingredient and a dipping cup's filling, or two packaging rows for the same box). Dividing
+ * stock by each line on its own and taking the smallest answer would say a dish needing 2 trays per
+ * serving can be made 5 times from 5 trays. The per-item total is the honest figure.
+ *
  * @param {object} recipe
  * @param {Map<string, {baseUnit: string, stock: number, name: string}>} stockById
- * @returns {{ servings: number, limitedBy: string|null }}
+ * @param {string|null} fulfillment order type whose packaging counts; null = food only
+ * @returns {{ needs: Map<string, number>, missing: string[] }} missing = recipe items not in the catalog
  */
-export function computeServings(recipe, stockById) {
-  let min = Infinity;
-  let limitedBy = null;
+export function computePerServingNeeds(recipe, stockById, fulfillment = null) {
+  const needs = new Map();
+  const missing = [];
+  const add = (id, qty) => {
+    if (qty > 0) needs.set(id, round((needs.get(id) || 0) + qty));
+  };
+
   for (const ing of recipe.ingredients || []) {
     const stock = stockById.get(ing.ingredientId);
     if (!stock) {
-      min = 0;
-      limitedBy = ing.ingredientName || ing.ingredientId;
-      break;
+      missing.push(ing.ingredientName || ing.ingredientId);
+      continue;
     }
-    const portion = convertQty(ing.portion, ing.unit, stock.baseUnit);
-    if (!(portion > 0)) continue;
-    const possible = Math.floor((Number(stock.stock) || 0) / portion + 1e-9);
+    add(ing.ingredientId, convertQty(ing.portion, ing.unit, stock.baseUnit));
+  }
+
+  if (fulfillment) {
+    for (const pkg of recipe.packaging || []) {
+      if (!packagingApplies(pkg.fulfillmentType, fulfillment)) continue;
+      const stock = stockById.get(pkg.packagingId);
+      if (!stock) {
+        missing.push(pkg.packagingName || pkg.packagingId);
+        continue;
+      }
+      const perUnit = convertQty(pkg.quantity, pkg.unit, stock.baseUnit);
+      // Shared packaging counts its per-dish share (1 bag for 3 dishes = 1/3 bag each)
+      const shared = String(pkg.scope).toUpperCase() === 'SHARED_ORDER';
+      add(pkg.packagingId, shared ? perUnit / Math.max(1, Number(pkg.sharedCapacity) || 1) : perUnit);
+    }
+  }
+
+  return { needs, missing };
+}
+
+/**
+ * How many servings a per-serving requirement allows, given the stock on hand.
+ * `available` overrides the catalog stock for items it names (used to hold back the stock that
+ * placed-but-unpaid orders are already counting on).
+ * @returns {{ servings: number|null, limitedBy: string|null }} null servings = nothing limits it
+ */
+function servingsFromNeeds({ needs, missing }, stockById, available) {
+  if (missing.length > 0) return { servings: 0, limitedBy: missing[0] };
+  let min = Infinity;
+  let limitedBy = null;
+  for (const [id, perServing] of needs) {
+    const stock = stockById.get(id);
+    const onHand = available?.has(id) ? available.get(id) : Number(stock?.stock) || 0;
+    const possible = Math.floor(onHand / perServing + 1e-9);
     if (possible < min) {
       min = possible;
-      limitedBy = stock.name;
+      limitedBy = stock?.name || id;
     }
   }
   if (!Number.isFinite(min)) return { servings: null, limitedBy: null };
   return { servings: Math.max(0, min), limitedBy };
+}
+
+/**
+ * How many servings the food ingredients allow.
+ * @param {object} recipe
+ * @param {Map<string, {baseUnit: string, stock: number, name: string}>} stockById
+ * @param {Map<string, number>} [available] stock to use instead of the catalog figure, per item
+ * @returns {{ servings: number, limitedBy: string|null }}
+ */
+export function computeServings(recipe, stockById, available) {
+  return servingsFromNeeds(computePerServingNeeds(recipe, stockById, null), stockById, available);
 }
 
 export const FULFILLMENTS = ['DINE_IN', 'TAKE_OUT', 'PICKUP', 'DELIVERY'];
@@ -165,33 +218,11 @@ export const FULFILLMENTS = ['DINE_IN', 'TAKE_OUT', 'PICKUP', 'DELIVERY'];
  * Servings for one order type: the limiting item across the whole BOM —
  * food ingredients plus the packaging that order type actually uses
  * (same rules as packagingApplies / computeRequirementLines).
- * Shared packaging counts its per-dish share (1 bag for 3 dishes = 1/3 bag each).
+ * @param {Map<string, number>} [available] stock to use instead of the catalog figure, per item
  * @returns {{ servings: number|null, limitedBy: string|null }} null servings = nothing to limit it
  */
-export function computeServingsForFulfillment(recipe, stockById, fulfillment) {
-  const food = computeServings(recipe, stockById);
-  let min = food.servings === null ? Infinity : food.servings;
-  let limitedBy = food.limitedBy;
-
-  for (const pkg of recipe.packaging || []) {
-    if (!packagingApplies(pkg.fulfillmentType, fulfillment)) continue;
-    const stock = stockById.get(pkg.packagingId);
-    if (!stock) {
-      return { servings: 0, limitedBy: pkg.packagingName || pkg.packagingId };
-    }
-    const perUnit = convertQty(pkg.quantity, pkg.unit, stock.baseUnit);
-    const shared = String(pkg.scope).toUpperCase() === 'SHARED_ORDER';
-    const perDish = shared ? perUnit / Math.max(1, Number(pkg.sharedCapacity) || 1) : perUnit;
-    if (!(perDish > 0)) continue;
-    const possible = Math.floor((Number(stock.stock) || 0) / perDish + 1e-9);
-    if (possible < min) {
-      min = possible;
-      limitedBy = stock.name;
-    }
-  }
-
-  if (!Number.isFinite(min)) return { servings: null, limitedBy: null };
-  return { servings: Math.max(0, min), limitedBy };
+export function computeServingsForFulfillment(recipe, stockById, fulfillment, available) {
+  return servingsFromNeeds(computePerServingNeeds(recipe, stockById, fulfillment), stockById, available);
 }
 
 export function stockStatus(stock, min) {

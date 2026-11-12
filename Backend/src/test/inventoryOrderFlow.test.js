@@ -177,7 +177,7 @@ test('an order the kitchen cannot cover is rejected with a clear message', { ski
   await restoreStock();
 });
 
-test('online customer order: consumed on placing, returned when the customer cancels', { skip }, async () => {
+test('online customer order: nothing consumed until the payment is verified, returned when cancelled', { skip }, async () => {
   const before = await stockMap();
   const placed = await api('POST', '/user-flow/orders', {
     id: 'E2E-5',
@@ -191,6 +191,15 @@ test('online customer order: consumed on placing, returned when the customer can
     items: [{ id: PRODUCT, name: NAME, quantity: 2, price: 199 }],
   });
   assert.equal(placed.status, 201, JSON.stringify(placed.json));
+
+  // The customer has only confirmed a cart: the ingredients are still on the shelf.
+  const unpaid = await stockMap();
+  for (const [id, v] of before) assert.equal(unpaid.get(id).stock, v.stock, `${id} untouched while unpaid`);
+
+  // The customer pays at the counter and the order is confirmed: now the stock moves.
+  // (A GCash order moves it earlier, when the reference / receipt is submitted.)
+  const confirmed = await api('PATCH', '/user-flow/orders/E2E-5/status', { status: 'CONFIRMED' });
+  assert.equal(confirmed.status, 200, JSON.stringify(confirmed.json));
   const mid = await stockMap();
   assert.ok([...before.values()].some((b) => mid.get(b.id).stock < b.stock), 'stock consumed');
   const pkg = [...before.values()].filter((b) => b.item_type === 'PACKAGING');
@@ -222,7 +231,7 @@ test('online customer order that cannot be covered returns 409 and creates nothi
   assert.equal(exists.rows.length, 0);
 });
 
-test('unpaid orders past the hold time are cancelled and their stock returned', { skip }, async () => {
+test('unpaid orders past the hold time are cancelled and anything they hold is returned', { skip }, async () => {
   const { cancelStaleOrders } = await import('../services/unpaidOrderReaper.js');
   // expire whatever is already stale in this database first, so the comparison below
   // only sees the order this test creates

@@ -184,7 +184,43 @@ async function loadState(q) {
     recipes: buildRecipes(rec.rows, ri.rows, rp.rows),
     transactions: tx.rows.map(mapTransaction),
     purchaseOrders: buildPurchaseOrders(po.rows, poi.rows),
+    productsWithoutRecipes: await loadProductsWithoutRecipes(q),
   };
+}
+
+/**
+ * Products that are on sale but have no configured recipe.
+ *
+ * Stock only reaches a dish through its recipe, so a product without one can never run out: it
+ * stays orderable on the customer menu and the POS no matter what is in the stockroom. That is the
+ * right default for a brand-new product — better than hiding it — but the admin has to be told,
+ * which is what this list is for.
+ *
+ * The seeded `item-0xx` rows are left out: they are legacy duplicates of the slug-id products that
+ * carry the recipes, and are not what the menu sells.
+ */
+async function loadProductsWithoutRecipes(q) {
+  // Under a savepoint: this is a nice-to-have, and a failed statement would otherwise abort the
+  // caller's whole transaction and take the rest of the inventory state down with it.
+  await q.query('SAVEPOINT inv_unlinked');
+  try {
+    const { rows } = await q.query(
+      `SELECT p.id, p.name, c.name AS category
+         FROM products p
+         LEFT JOIN categories c ON c.id = p.category_id
+         LEFT JOIN product_recipes r ON r.product_id = p.id AND r.is_configured = TRUE
+        WHERE r.product_id IS NULL
+          AND p.is_active = TRUE
+          AND p.id !~ '^item-[0-9]+$'
+        ORDER BY p.name`
+    );
+    await q.query('RELEASE SAVEPOINT inv_unlinked');
+    return rows.map((r) => ({ productId: r.id, productName: r.name, category: r.category }));
+  } catch (err) {
+    await q.query('ROLLBACK TO SAVEPOINT inv_unlinked');
+    console.warn('[INVENTORY API] Could not list products without recipes:', err.message);
+    return [];
+  }
 }
 
 /* ------------------------------------------------------------- helpers */
@@ -337,7 +373,7 @@ router.post('/inventory/ingredients', ...guard, wrap(async (req, res) => {
     }
     return { ingredient: rows[0], transaction };
   });
-  broadcastInventoryChange();
+  broadcastInventoryChange([id]);
   res.status(201).json({
     success: true,
     data: { ingredient: mapIngredient(out.ingredient), transaction: out.transaction ? mapTransaction(out.transaction) : null },
@@ -382,7 +418,7 @@ router.put('/inventory/ingredients/:id', ...guard, wrap(async (req, res) => {
     const final = await client.query(`UPDATE inventory_ingredients SET status = $2 WHERE id = $1 RETURNING *`, [current.id, status]);
     return { ingredient: final.rows[0], transaction };
   });
-  broadcastInventoryChange();
+  broadcastInventoryChange([out.ingredient.id]);
   res.json({
     success: true,
     data: { ingredient: mapIngredient(out.ingredient), transaction: out.transaction ? mapTransaction(out.transaction) : null },
@@ -390,7 +426,7 @@ router.put('/inventory/ingredients/:id', ...guard, wrap(async (req, res) => {
 }));
 
 router.delete('/inventory/ingredients/:id', ...guard, wrap(async (req, res) => {
-  await withTransaction(async (client) => {
+  const removedId = await withTransaction(async (client) => {
     const ing = await lockIngredient(client, req.params.id);
     const used = await client.query(
       `SELECT r.product_name FROM product_recipes r
@@ -412,8 +448,9 @@ router.delete('/inventory/ingredients/:id', ...guard, wrap(async (req, res) => {
     );
     if (open.rows.length > 0) throw new HttpError(409, `"${ing.name}" is reserved by open orders.`, 'IN_USE');
     await client.query(`DELETE FROM inventory_ingredients WHERE id = $1`, [ing.id]);
+    return ing.id;
   });
-  broadcastInventoryChange();
+  broadcastInventoryChange([removedId]);
   res.json({ success: true });
 }));
 
@@ -454,7 +491,7 @@ router.post('/inventory/movements', ...guard, wrap(async (req, res) => {
     }
     return moved;
   });
-  broadcastInventoryChange();
+  broadcastInventoryChange([out.ingredient.id]);
   res.status(201).json({
     success: true,
     data: { ingredient: mapIngredient(out.ingredient), transaction: mapTransaction(out.transaction) },
@@ -566,7 +603,11 @@ router.put('/inventory/recipes/:productId', ...guard, wrap(async (req, res) => {
     const state = await loadState(client);
     return state.recipes.find((r) => r.productId === productId);
   });
-  broadcastInventoryChange();
+  // this recipe's items identify the product, so only it and its ingredient-mates are recalculated
+  broadcastInventoryChange([
+    ...merged.keys(),
+    ...(b.packagingRequirements || []).map((p) => p.packagingId).filter(Boolean),
+  ]);
   res.json({ success: true, data: result });
 }));
 
@@ -673,9 +714,10 @@ router.post('/inventory/purchase-orders/:id/receive', ...guard, wrap(async (req,
       purchaseOrder: state.purchaseOrders.find((p) => p.id === po.id),
       ingredients: state.ingredients.filter((i) => locked.has(i.id)),
       transactions: newTx.map(mapTransaction),
+      changedIngredientIds: [...locked.keys()],
     };
   });
-  broadcastInventoryChange();
+  broadcastInventoryChange(out.changedIngredientIds);
   res.json({ success: true, data: out });
 }));
 

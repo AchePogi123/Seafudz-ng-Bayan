@@ -1,8 +1,10 @@
 /**
- * Gives ingredients back when an order is placed but never paid.
+ * Clears orders that were placed but never paid for, and gives back anything they hold.
  *
- * Orders reserve stock the moment they are placed, so an abandoned pay-in-store or
- * GCash order would otherwise hold ingredients forever. This is OFF unless you set:
+ * An online order does not take ingredients until its payment is verified, so most stale orders
+ * hold nothing; they are still cancelled here so they do not sit in the assistant's queue
+ * forever, and any order that does hold stock (a POS ticket, or one reserved before the payment
+ * fell through) gets it back. This is OFF unless you set:
  *   UNPAID_ORDER_HOLD_MINUTES        minutes before an unpaid GCash order (no receipt yet) is cancelled
  *   PAY_IN_STORE_HOLD_MINUTES        minutes before a pay-in-store order is cancelled (default: same value x3)
  * Orders that already have a receipt waiting for the assistant are never touched.
@@ -22,7 +24,6 @@ async function cancelStaleOrders(gcashMinutes, storeMinutes) {
           (o.status IN ('GCASH_AUTHORIZED', 'RECEIPT_REJECTED') AND o.created_at < NOW() - ($1 || ' minutes')::interval)
           OR (o.status IN ('PAY_IN_STORE', 'PENDING_STORE_PICKUP') AND o.created_at < NOW() - ($2 || ' minutes')::interval)
         )
-        AND EXISTS (SELECT 1 FROM order_inventory_ledger l WHERE l.order_id = o.id AND l.state = 'RESERVED')
         AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID')`,
     [String(gcashMinutes), String(storeMinutes)]
   );
@@ -37,6 +38,7 @@ async function cancelStaleOrders(gcashMinutes, storeMinutes) {
         await client.query(`UPDATE kitchen_orders SET status = 'CANCELLED', updated_at = NOW() WHERE order_id = $1`, [id]);
         await client.query(`UPDATE order_items SET item_status = 'CANCELLED' WHERE order_id = $1 AND item_status <> 'CANCELLED'`, [id]);
       });
+      // No-op for an unpaid order that never took any stock.
       await releaseOrderStock(id, { reason: `Order ${id} expired unpaid`, performedBy: 'System' });
       const cached = inMemoryOrders.get(id);
       if (cached) {
@@ -45,7 +47,7 @@ async function cancelStaleOrders(gcashMinutes, storeMinutes) {
         inMemoryOrders.set(id, cached);
       }
       emitOrderUpdate({ id, status: 'CANCELLED', type: 'ORDER_UPDATE', timestamp: Date.now() });
-      console.log(`[INVENTORY] Order ${id} expired unpaid; ingredients returned to stock.`);
+      console.log(`[INVENTORY] Order ${id} expired unpaid; anything it held is back in stock.`);
     } catch (err) {
       console.error(`[INVENTORY] Could not expire order ${id}:`, err.message);
     }

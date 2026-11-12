@@ -9,6 +9,7 @@ import {
   computeServings,
   stockStatus,
   computeServingsForFulfillment,
+  computePerServingNeeds,
 } from '../utils/inventoryMath.js';
 
 const meta = new Map([
@@ -155,4 +156,55 @@ test('no packaging left makes off-premise orders 0 even with food in stock', () 
   ]);
   assert.equal(computeServingsForFulfillment(recipe(), stock, 'DELIVERY').servings, 0);
   assert.equal(computeServingsForFulfillment(recipe(), stock, 'DINE_IN').servings, 10);
+});
+
+/* ------------------------------- a recipe's lines are summed per item before stock is divided up */
+
+test('two lines for the same item are added together, not measured separately', () => {
+  // one serving needs 2 trays: as a per-item line of 1 and a second line of 1
+  const twoTrayLines = recipe({
+    packaging: [
+      { packagingId: 'tray', quantity: 1, unit: 'pcs', fulfillmentType: 'TAKEOUT', scope: 'PER_ITEM' },
+      { packagingId: 'tray', quantity: 1, unit: 'pcs', fulfillmentType: 'ALL', scope: 'PER_ITEM' },
+    ],
+  });
+  const stock = new Map([
+    ['shrimp', { baseUnit: 'g', stock: 100000, name: 'Shrimp' }],
+    ['oil', { baseUnit: 'ml', stock: 100000, name: 'Oil' }],
+    ['tray', { baseUnit: 'pcs', stock: 5, name: 'Tray' }],
+  ]);
+  const { needs } = computePerServingNeeds(twoTrayLines, stock, 'TAKE_OUT');
+  assert.equal(needs.get('tray'), 2, 'the two tray lines add up');
+  // 5 trays at 2 per serving is 2 servings — measuring each line on its own would have said 5
+  const r = computeServingsForFulfillment(twoTrayLines, stock, 'TAKE_OUT');
+  assert.equal(r.servings, 2);
+  assert.equal(r.limitedBy, 'Tray');
+});
+
+test('an item used as both food and packaging is counted once, in total', () => {
+  const sauceDish = {
+    productId: 'dish',
+    ingredients: [{ ingredientId: 'oil', portion: 30, unit: 'ml' }],
+    packaging: [{ packagingId: 'oil', quantity: 20, unit: 'ml', fulfillmentType: 'TAKEOUT', scope: 'PER_ITEM' }],
+  };
+  const stock = new Map([['oil', { baseUnit: 'ml', stock: 100, name: 'Oil' }]]);
+  const { needs } = computePerServingNeeds(sauceDish, stock, 'TAKE_OUT');
+  assert.equal(needs.get('oil'), 50);
+  assert.equal(computeServingsForFulfillment(sauceDish, stock, 'TAKE_OUT').servings, 2);
+  // dine-in skips the takeout cup, so only the 30 ml in the dish counts
+  assert.equal(computeServingsForFulfillment(sauceDish, stock, 'DINE_IN').servings, 3);
+});
+
+test('stock already promised to unpaid orders is held back from the servings on offer', () => {
+  const stock = new Map([
+    ['shrimp', { baseUnit: 'g', stock: 1500, name: 'Shrimp' }],
+    ['oil', { baseUnit: 'ml', stock: 5000, name: 'Oil' }],
+  ]);
+  const foodOnly = recipe({ packaging: [] });
+  assert.equal(computeServings(foodOnly, stock).servings, 10);
+  // 900 g of the shrimp is spoken for: only 600 g is free, so 4 servings
+  const promised = new Map([['shrimp', 600]]);
+  const held = computeServings(foodOnly, stock, promised);
+  assert.equal(held.servings, 4);
+  assert.equal(held.limitedBy, 'Shrimp');
 });

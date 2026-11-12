@@ -155,12 +155,20 @@ export function applyProductAvailabilityChange(productId: string, isAvailable: b
  * changed ingredients/packaging are included, so shared-ingredient dishes update together).
  */
 export function applyInventoryServings(products: Record<string, { servings?: ServingsByFulfillment } | undefined>) {
-  const updates: Record<string, ServingsByFulfillment | null> = {}
+  // Pass 1: each product's own figures, exactly as the server sent them.
+  const own: Record<string, ServingsByFulfillment | null> = {}
   for (const [productId, entry] of Object.entries(products || {})) {
-    const value = entry?.servings ? { ...entry.servings } : null
-    updates[productId] = value
+    own[productId] = entry?.servings ? { ...entry.servings } : null
+  }
+
+  // Pass 2: fill in from the alias, same rule as fetchAvailability — a product's own figure always
+  // wins for itself, and the alias only fills a gap. Writing both keys in one pass would let
+  // whichever of a slug/legacy pair came last overwrite the other.
+  const updates: Record<string, ServingsByFulfillment | null> = {}
+  for (const [productId, value] of Object.entries(own)) {
     const aliasId = PRODUCT_ALIASES[productId]
-    if (aliasId) updates[aliasId] = value
+    updates[productId] = value ?? (aliasId ? own[aliasId] ?? null : null)
+    if (aliasId && own[aliasId] === undefined) updates[aliasId] = value
   }
   publishServings(updates)
 }
@@ -231,16 +239,15 @@ async function fetchAvailability(): Promise<void> {
       const response = await fetch(`${API_BASE_URL}/menu`)
       if (!response.ok) return
       const payload = await response.json()
-      const next: Record<string, boolean> = {}
-      const nextServings: Record<string, ServingsByFulfillment | null> = {}
+      // Pass 1: each product's own figures, exactly as the server sent them.
+      const ownAvailability: Record<string, boolean> = {}
+      const ownServings: Record<string, ServingsByFulfillment | null> = {}
       if (Array.isArray(payload?.data)) {
         for (const product of payload.data) {
           if (product?.id != null) {
             const pid = String(product.id)
-            const aliasId = PRODUCT_ALIASES[pid]
             if (typeof product.is_available === "boolean") {
-              next[pid] = product.is_available
-              if (aliasId) next[aliasId] = product.is_available
+              ownAvailability[pid] = product.is_available
             }
 
             let servings: ServingsByFulfillment | null = null
@@ -250,11 +257,28 @@ async function fetchAvailability(): Promise<void> {
               const n = Number(product.remaining_servings)
               if (Number.isFinite(n)) servings = { DINE_IN: n, TAKE_OUT: n, PICKUP: n, DELIVERY: n }
             }
-            nextServings[pid] = servings
-            if (aliasId) nextServings[aliasId] = servings
+            ownServings[pid] = servings
           }
         }
       }
+
+      // Pass 2: fill in from the alias. The menu holds a slug row (mixed-seafoods-tub-189, which
+      // carries the recipe) and a legacy duplicate (item-002, which has none and so reports no
+      // servings). Writing both keys as each row is read let whichever row came last win, and the
+      // legacy row's `null` wiped out the real count — the dish then never went Sold Out.
+      // A product's own figure always wins for itself; the alias only fills a gap.
+      const next: Record<string, boolean> = { ...ownAvailability }
+      const nextServings: Record<string, ServingsByFulfillment | null> = {}
+      for (const [pid, servings] of Object.entries(ownServings)) {
+        const aliasId = PRODUCT_ALIASES[pid]
+        const aliasServings = aliasId ? ownServings[aliasId] ?? null : null
+        nextServings[pid] = servings ?? aliasServings
+        if (aliasId && ownServings[aliasId] === undefined) {
+          nextServings[aliasId] = servings
+          if (next[aliasId] === undefined && ownAvailability[pid] !== undefined) next[aliasId] = ownAvailability[pid]
+        }
+      }
+
       publishAvailability(next)
       publishServings(nextServings)
     } catch (error) {

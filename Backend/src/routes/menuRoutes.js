@@ -10,7 +10,7 @@ import {
 } from '../config/productImageStorage.js';
 import { requireActiveAdmin, requireAuth, requireRole, optionalAuth } from '../middleware/authMiddleware.js';
 import { validateAndNormalizeProductImage } from '../utils/validateProductImage.js';
-import { getMenuServings } from '../services/inventoryService.js';
+import { getMenuServings, checkCartStock } from '../services/inventoryService.js';
 import { realtimeEmitter } from '../utils/realtimeEvents.js';
 
 const router = Router();
@@ -121,6 +121,30 @@ router.get('/menu', async (req, res) => {
       message: 'Failed to retrieve menu items from database',
       error: error.message,
     });
+  }
+});
+
+/**
+ * Checks a whole cart against live stock, counting dishes that share an ingredient together.
+ *
+ * The servings shown on a menu card measure each dish on its own, so a cart of two shrimp dishes
+ * can add up to more shrimp than the kitchen has and only be refused at checkout. The POS and the
+ * customer app call this whenever the cart changes to cap each line honestly.
+ *
+ * Reserves nothing: it reports, the order itself still does the authoritative check.
+ */
+router.post('/menu/stock-check', async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 100) : [];
+  if (items.length === 0) {
+    return res.status(200).json({ success: true, data: { ok: true, products: {}, shortages: [] } });
+  }
+  try {
+    const data = await checkCartStock({ query }, { items, fulfillment: req.body?.fulfillment });
+    return res.status(200).json({ success: true, data });
+  } catch (error) {
+    // Never block a cart on this: the order itself re-checks before anything is taken from stock.
+    if (error.code !== '42P01') console.error('Could not check cart stock:', error.message);
+    return res.status(200).json({ success: true, data: { ok: true, products: {}, shortages: [] } });
   }
 });
 

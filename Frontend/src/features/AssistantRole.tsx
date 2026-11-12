@@ -174,6 +174,27 @@ export const AssistantRole: React.FC = () => {
     }
   }, [notification])
 
+  /**
+   * A paid order whose ingredients ran out between the customer placing it and the payment landing.
+   * It is already on its way to the kitchen with nothing deducted, so this is NOT a toast that
+   * fades: it stays until someone dismisses it, and it arrives over the live feed as well as in the
+   * reply, so whoever is on the screen sees it even if another station did the confirming.
+   */
+  const [stockAlert, setStockAlert] = useState<{ orderId: string; message: string } | null>(null)
+
+  useEffect(() => {
+    const source = new EventSource(`${API_BASE_URL}/events/orders`)
+    source.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data?.type === 'INVENTORY_SHORTFALL' && data.orderId) {
+          setStockAlert({ orderId: String(data.orderId), message: data.message || 'An ingredient ran out.' })
+        }
+      } catch { }
+    }
+    return () => source.close()
+  }, [])
+
   const [isUploadingRefundProof, setIsUploadingRefundProof] = useState(false)
   const [refundProofUploadError, setRefundProofUploadError] = useState<string | null>(null)
   const refundProofFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -732,8 +753,9 @@ export const AssistantRole: React.FC = () => {
 
   const handleVerifyReceipt = async (orderId: string, customRef?: string) => {
     const refToPass = (customRef !== undefined ? customRef : (assistantRefNumber || selectedOrder?.paymentReference || selectedOrder?.referenceNumber || '')).trim() || undefined;
+    let stockWarning: string | null = null
     try {
-      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/verify-receipt`, {
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/verify-receipt`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -741,6 +763,10 @@ export const AssistantRole: React.FC = () => {
           referenceNumber: refToPass,
         }),
       })
+      // The customer has paid and the order is going to the kitchen either way, so a shortage
+      // here cannot be swallowed: the food is not there and someone has to act on it.
+      const body = await res.json().catch(() => null)
+      if (body?.stockWarning) stockWarning = body.stockWarning.message || 'An ingredient ran out.'
     } catch { }
 
     try {
@@ -772,6 +798,7 @@ export const AssistantRole: React.FC = () => {
     } catch { }
 
     fetchAssistantOrders(true)
+    if (stockWarning) setStockAlert({ orderId, message: stockWarning })
     setNotification(`Receipt verified & confirmed for order #${orderId}! Sent to Kitchen!`)
   }
 
@@ -820,12 +847,15 @@ export const AssistantRole: React.FC = () => {
   }
 
   const handleConfirmPickUp = async (orderId: string) => {
+    let stockWarning: string | null = null
     try {
-      await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/status`, {
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'CONFIRMED' }),
       })
+      const body = await res.json().catch(() => null)
+      if (body?.stockWarning) stockWarning = body.stockWarning.message || 'An ingredient ran out.'
     } catch { }
 
     try {
@@ -846,6 +876,7 @@ export const AssistantRole: React.FC = () => {
     } catch { }
 
     fetchAssistantOrders(true)
+    if (stockWarning) setStockAlert({ orderId, message: stockWarning })
     setNotification(`Pick-up order #${orderId} confirmed! Sent to Kitchen!`)
   }
 
@@ -1117,6 +1148,28 @@ export const AssistantRole: React.FC = () => {
               <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-3 rounded-2xl flex items-center justify-between text-sm font-bold shadow-xs animate-in fade-in">
                 <span>{notification}</span>
                 <button onClick={() => setNotification(null)} className="text-orange-500 font-extrabold cursor-pointer">×</button>
+              </div>
+            )}
+
+            {stockAlert && (
+              <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 px-4 py-3 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm font-bold shadow-xs">
+                <div className="flex items-start gap-2.5">
+                  <span className="text-xl leading-none">⚠️</span>
+                  <span>
+                    <strong>Paid order #{stockAlert.orderId} cannot be stocked.</strong>{' '}
+                    {stockAlert.message}{' '}
+                    <span className="font-semibold">
+                      The order was sent to the kitchen but nothing was taken from inventory. Restock the item,
+                      or contact the customer to swap or refund the dish.
+                    </span>
+                  </span>
+                </div>
+                <button
+                  onClick={() => setStockAlert(null)}
+                  className="shrink-0 bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors"
+                >
+                  Dismiss
+                </button>
               </div>
             )}
 

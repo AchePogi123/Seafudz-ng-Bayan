@@ -18,4 +18,5 @@ firebase-debug.log
 
 # Agent skills
 gemini-cli-agent-skills/
+.impeccable/
 

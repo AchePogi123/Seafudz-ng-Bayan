@@ -1,6 +1,6 @@
 /**
  * End-to-end (HTTP) test of: order placed -> stock consumed -> cancelled -> stock returned.
- * Needs a DISPOSABLE Postgres with migrations 001-034 (it commits real rows):
+ * Needs a DISPOSABLE Postgres with every migration applied (it commits real rows):
  *   INVENTORY_TEST_DATABASE_URL=postgresql://postgres:test@localhost:55432/sfb_test node --test src/test/inventoryOrderFlow.test.js
  */
 import test from 'node:test';
@@ -157,7 +157,12 @@ async function restoreStock() {
 }
 
 test('an order the kitchen cannot cover is rejected with a clear message', { skip }, async () => {
-  const { rows } = await pool.query(`SELECT ingredient_id FROM recipe_ingredients WHERE product_id=$1 LIMIT 1`, [PRODUCT]);
+  // the largest portion in the recipe (without ORDER BY the row picked depends on table layout,
+  // and 10 units of a spice that needs 1.2 per dish would still cover the order)
+  const { rows } = await pool.query(
+    `SELECT ingredient_id FROM recipe_ingredients WHERE product_id=$1 ORDER BY portion_quantity DESC LIMIT 1`,
+    [PRODUCT]
+  );
   await pool.query(`UPDATE inventory_ingredients SET current_stock = 10 WHERE id=$1`, [rows[0].ingredient_id]);
   const before = await stockMap();
   const r = await api('POST', '/orders', posOrder('E2E-4', 1));
@@ -218,6 +223,10 @@ test('online customer order that cannot be covered returns 409 and creates nothi
 });
 
 test('unpaid orders past the hold time are cancelled and their stock returned', { skip }, async () => {
+  const { cancelStaleOrders } = await import('../services/unpaidOrderReaper.js');
+  // expire whatever is already stale in this database first, so the comparison below
+  // only sees the order this test creates
+  await cancelStaleOrders(60, 180);
   const before = await stockMap();
   const placed = await api('POST', '/user-flow/orders', {
     id: 'E2E-7',
@@ -232,7 +241,6 @@ test('unpaid orders past the hold time are cancelled and their stock returned', 
   assert.equal(placed.status, 201, JSON.stringify(placed.json));
   await pool.query(`UPDATE orders SET created_at = NOW() - INTERVAL '5 hours' WHERE id='E2E-7'`);
 
-  const { cancelStaleOrders } = await import('../services/unpaidOrderReaper.js');
   const n = await cancelStaleOrders(60, 180);
   assert.ok(n >= 1);
   const status = await pool.query(`SELECT status FROM orders WHERE id='E2E-7'`);
@@ -245,6 +253,10 @@ test('the menu and the live event both reflect a shared ingredient after another
   const { realtimeEmitter } = await import('../utils/realtimeEvents.js');
   await pool.query(`UPDATE inventory_ingredients SET current_stock = 3000 WHERE id = 'ing-shrimp-fresh'`);
   const bowlBefore = await servingsFromMenu('all-shrimp-bowl-699');
+
+  // Stock broadcasts are debounced (150 ms): let the previous test's one go out first,
+  // otherwise it can be mistaken for the event of the order placed below.
+  await new Promise((r) => setTimeout(r, 300));
 
   const event = new Promise((resolve) => {
     const onUpdate = (e) => {

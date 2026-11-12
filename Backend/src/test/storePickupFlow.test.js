@@ -44,6 +44,27 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
       server.close();
       inMemoryOrders.delete(testPickupOrderId);
       inMemoryOrders.delete(testDeliveryOrderId);
+      // These orders took real ingredients out of inventory. Put back exactly what they took and
+      // remove their stock history, otherwise every test run permanently lowers the stock of
+      // whichever database .env points at and leaves reservations with no order behind.
+      try {
+        const ids = [testPickupOrderId, testDeliveryOrderId];
+        await query(
+          `UPDATE inventory_ingredients i
+              SET current_stock = i.current_stock - m.delta,
+                  status = CASE WHEN i.current_stock - m.delta <= 0 THEN 'OUT_OF_STOCK'
+                                WHEN i.current_stock - m.delta <= i.min_stock_level THEN 'LOW_STOCK'
+                                ELSE 'IN_STOCK' END
+             FROM (SELECT ingredient_id, SUM(quantity_delta) AS delta
+                     FROM inventory_transactions WHERE order_id = ANY($1::text[]) GROUP BY ingredient_id) m
+            WHERE m.ingredient_id = i.id`,
+          [ids]
+        );
+        await query(`DELETE FROM inventory_transactions WHERE order_id = ANY($1::text[])`, [ids]);
+        await query(`DELETE FROM order_inventory_ledger WHERE order_id = ANY($1::text[])`, [ids]);
+      } catch (invErr) {
+        if (invErr.code !== '42P01') console.error('Inventory cleanup note:', invErr.message); // 42P01: no inventory tables
+      }
       await query(`DELETE FROM payments WHERE order_id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);
       await query(`DELETE FROM deliveries WHERE order_id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);
       await query(`DELETE FROM order_items WHERE order_id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);

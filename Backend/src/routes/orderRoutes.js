@@ -14,6 +14,7 @@ import {
   releaseOrderStock,
   syncInventoryForStatus,
   getOrderFulfillment,
+  lockStockForOrderChange,
 } from '../services/inventoryService.js';
 
 const router = Router();
@@ -475,20 +476,23 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
       });
     }
 
-    // Take the ingredients out of inventory (throws INSUFFICIENT_STOCK -> whole order rolls back)
-    const reservation = await reserveForOrder(
-      client,
-      createdOrder.id,
-      reservableItems,
-      normalizeFulfillment(
-        req.body.fulfillmentType,
-        req.body.fulfillment_type,
-        orderType !== 'ONLINE' ? orderType : undefined,
-        type,
-        deliveryAddress ? 'DELIVERY' : undefined
-      ),
-      { performedBy: req.user?.fullname || req.user?.name || req.user?.role || 'POS' }
-    );
+    // Take the ingredients out of inventory (throws INSUFFICIENT_STOCK -> whole order rolls back).
+    // A transaction recorded as already cancelled never used anything, so it takes nothing.
+    const reservation = posStatus === 'CANCELLED'
+      ? { reserved: false, reason: 'ORDER_CANCELLED' }
+      : await reserveForOrder(
+        client,
+        createdOrder.id,
+        reservableItems,
+        normalizeFulfillment(
+          req.body.fulfillmentType,
+          req.body.fulfillment_type,
+          orderType !== 'ONLINE' ? orderType : undefined,
+          type,
+          deliveryAddress ? 'DELIVERY' : undefined
+        ),
+        { performedBy: req.user?.fullname || req.user?.name || req.user?.role || 'POS' }
+      );
 
     // Insert payment record
     const finalPaymentMethod = paymentMethod || 'CASH';
@@ -570,6 +574,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
     client.release();
     // after commit: recalculate every product sharing the consumed ingredients/packaging
     if (reservation.reserved) broadcastInventoryChange(reservation.ingredientIds);
+    // keep inventory in step with the status the order was saved with: one recorded as already
+    // served (admin "create transaction") is consumed straight away, a cancelled one holds nothing
+    await syncInventoryForStatus(createdOrder.id, posStatus);
 
     const formattedOrder = formatOrderResponse(inMemPayload);
     emitOrderUpdate(formattedOrder);
@@ -827,9 +834,15 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
 
       // If items provided, recreate order_items in DB
       if (Array.isArray(items) && items.length > 0) {
+        // A served order already used its ingredients: correcting its record does not move stock
+        const alreadyServed = String(checkExists.rows[0]?.status || '').toUpperCase() === 'COMPLETED';
         // Inventory: give back what the old items took, then take what the edited items need
         const editFulfillment = await getOrderFulfillment(client, id);
-        await returnForOrder(client, id, { wasteFood: false, reason: `Order ${id} edited`, performedBy: 'POS' });
+        if (!alreadyServed) {
+          // lock everything this edit touches in one ordered pass (no deadlock with orders placed right now)
+          await lockStockForOrderChange(client, id, items);
+          await returnForOrder(client, id, { wasteFood: false, reason: `Order ${id} edited`, performedBy: 'POS' });
+        }
         await client.query(`DELETE FROM order_items WHERE order_id = $1`, [id]);
         const reservable = [];
         for (const item of items) {
@@ -844,7 +857,7 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
           );
           reservable.push({ orderItemId: ins.rows[0]?.id ?? null, product_id: prodId, name: itemName, quantity: qty });
         }
-        await reserveForOrder(client, id, reservable, editFulfillment, { performedBy: 'POS' });
+        if (!alreadyServed) await reserveForOrder(client, id, reservable, editFulfillment, { performedBy: 'POS' });
       } else {
         const effectiveStatus = (status ? status.toUpperCase() : existingInMemory.status || 'CONFIRMED').toUpperCase();
         if (effectiveStatus === 'CONFIRMED') {
@@ -1815,6 +1828,9 @@ router.post('/orders/:id/pickup-handover', async (req, res) => {
     } catch (poolErr) {
       console.warn('[PICKUP HANDOVER] DB connection warning:', poolErr.message);
     }
+
+    // Handed to the customer: the order's ingredients and packaging are now used for good
+    await syncInventoryForStatus(id, 'COMPLETED');
 
     if (!order) {
       order = { ...(dbOrder || {}), id };

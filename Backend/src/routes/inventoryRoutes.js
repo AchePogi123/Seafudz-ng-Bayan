@@ -425,6 +425,13 @@ router.post('/inventory/movements', ...guard, wrap(async (req, res) => {
   const type = ['STOCK_RECEIVED', 'CONSUMPTION', 'WASTE', 'ADJUSTMENT'].includes(b.type)
     ? b.type
     : delta > 0 ? 'STOCK_RECEIVED' : 'ADJUSTMENT';
+  // The history is only trustworthy if a movement goes the way its type says
+  if (type === 'STOCK_RECEIVED' && delta < 0) {
+    throw new HttpError(400, 'Stock received must add to stock. Use a count correction to reduce it.', 'VALIDATION');
+  }
+  if ((type === 'CONSUMPTION' || type === 'WASTE') && delta > 0) {
+    throw new HttpError(400, 'Usage and waste take stock out. Use "stock received" or a count correction to add stock.', 'VALIDATION');
+  }
   const out = await withTransaction(async (client) => {
     const ing = await lockIngredient(client, b.ingredientId);
     const stamp = b.purchaseDate ? new Date(`${b.purchaseDate}T12:00:00`) : null;
@@ -611,6 +618,21 @@ router.post('/inventory/purchase-orders/:id/receive', ...guard, wrap(async (req,
     if (['FULLY_RECEIVED', 'CANCELLED'].includes(po.status)) throw new HttpError(409, 'This order is already closed.', 'CLOSED');
 
     const newTx = [];
+    // Stock may only come in against a line of this purchase order, for that line's own item
+    const poLines = await client.query(
+      `SELECT id, ingredient_id FROM inventory_purchase_order_items WHERE purchase_order_id = $1`,
+      [po.id]
+    );
+    const lineItem = new Map(poLines.rows.map((l) => [l.id, l.ingredient_id]));
+    for (const r of received) {
+      if (!(num(r.receivedQty) > 0)) continue;
+      const expected = lineItem.get(r.itemId);
+      if (!expected) throw new HttpError(400, 'One of the received lines is not on this purchase order.', 'VALIDATION');
+      if (r.ingredientId && r.ingredientId !== expected) {
+        throw new HttpError(400, 'A received item does not match its purchase order line.', 'VALIDATION');
+      }
+      r.ingredientId = expected;
+    }
     const ingredientIds = [...new Set(received.filter((r) => num(r.receivedQty) > 0).map((r) => r.ingredientId))].sort();
     const locked = new Map();
     for (const id of ingredientIds) locked.set(id, await lockIngredient(client, id));

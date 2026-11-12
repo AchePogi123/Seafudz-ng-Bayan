@@ -1,6 +1,6 @@
 /**
  * Integration tests for the order <-> inventory rules.
- * Needs a disposable Postgres that already has migrations 001-034 applied:
+ * Needs a disposable Postgres with every migration applied:
  *   INVENTORY_TEST_DATABASE_URL=... node --test --test-concurrency=1 src/test/inventoryService.test.js src/test/inventoryOrderFlow.test.js   (they share one database, so run them one at a time)
  * Every test runs inside a transaction that is rolled back, so no data is left behind.
  */

@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { getDbPool } from '../src/config/db.js';
+import { returnAllReservedStock } from '../src/services/inventoryService.js';
 
 async function resetTransactions() {
   console.log('====================================================');
@@ -13,6 +14,11 @@ async function resetTransactions() {
 
   try {
     await client.query('BEGIN');
+
+    // Same as POST /api/sales/reset-transactions: orders that are wiped while still open give
+    // their ingredients back, and the order ledger is cleared with them (served orders keep theirs).
+    const released = await returnAllReservedStock(client);
+    console.log(`[*] Returned inventory held by ${released} open order(s) and cleared the order ledger.`);
 
     console.log('[*] Truncating transactional tables (orders, order_items, payments, deliveries, kitchen_orders, refunds, assistant_calls)...');
     await client.query(`

@@ -6,6 +6,7 @@
  *  - Cancelling before the kitchen starts returns everything.
  *  - Cancelling after the kitchen started: food is written off as waste,
  *    packaging goes back to stock.
+ *  - Once an order is served / delivered its stock is CONSUMED: nothing can return it.
  *  - Everything an order took is recorded in order_inventory_ledger, so a return
  *    is exact and can only happen once per row.
  *
@@ -56,6 +57,7 @@ async function optionalStatement(client, sql, params) {
   }
 }
 const refFor = (prefix, orderId) => `${prefix}-${String(orderId)}`.slice(0, 50);
+const round4 = (n) => Math.round(n * 10000) / 10000;
 
 /** True when the inventory tables exist (older databases that have not migrated yet). */
 let inventoryReady = null;
@@ -162,6 +164,40 @@ async function loadIngredientsLocked(client, ids) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
+/**
+ * What an order still holds: its dishes (with quantities) and its shared packaging.
+ * Used when dishes are added to an existing order, so packaging that is shared by the
+ * whole order (one bag per N dishes) is counted once for the order, not once per call.
+ */
+async function loadOrderHoldings(client, orderId) {
+  const dishes = await client.query(
+    `SELECT l.order_item_id, l.product_id, MAX(oi.quantity) AS quantity
+       FROM order_inventory_ledger l
+       JOIN order_items oi ON oi.id = l.order_item_id
+      WHERE l.order_id = $1 AND l.state = 'RESERVED'
+        AND l.order_item_id IS NOT NULL AND l.product_id IS NOT NULL
+      GROUP BY l.order_item_id, l.product_id`,
+    [String(orderId)]
+  );
+  // shared lines are the ones that belong to the order as a whole (no dish on them)
+  const shared = await client.query(
+    `SELECT ingredient_id, SUM(quantity) AS quantity
+       FROM order_inventory_ledger
+      WHERE order_id = $1 AND state = 'RESERVED' AND product_id IS NULL
+      GROUP BY ingredient_id`,
+    [String(orderId)]
+  );
+  return {
+    heldItems: dishes.rows.map((r) => ({
+      orderItemId: r.order_item_id,
+      productId: r.product_id,
+      name: '',
+      quantity: Number(r.quantity) || 1,
+    })),
+    heldShared: new Map(shared.rows.map((r) => [r.ingredient_id, Number(r.quantity)])),
+  };
+}
+
 async function writeStock(client, ing, newStock) {
   const status = stockStatus(newStock, Number(ing.min_stock_level) || 0);
   await client.query(
@@ -213,19 +249,30 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
 
   const items = toOrderItems(rawItems);
   const fulfillment = normalizeFulfillment(fulfillmentInput);
-  const { recipes, resolve } = await loadRecipesForItems(client, items);
+  // Adding dishes to an order: the dishes it already holds matter for shared packaging
+  const { heldItems, heldShared } = opts.append
+    ? await loadOrderHoldings(client, orderId)
+    : { heldItems: [], heldShared: new Map() };
+  const { recipes, resolve } = await loadRecipesForItems(client, [...items, ...heldItems]);
   const resolvedItems = items
     .map((it) => ({ ...it, productId: resolve(it) }))
     .filter((it) => it.productId);
   if (resolvedItems.length === 0) return { reserved: false, reason: 'NO_RECIPES' };
+  const resolvedHeld = heldItems.filter((it) => recipes.has(it.productId));
 
   if (!opts.append) {
-    await optionalStatement(client, `UPDATE orders SET inventory_fulfillment = $2 WHERE id = $1`, [String(orderId), fulfillment]);
+    // A fresh reservation: remember the order type, and clear any "kitchen started" mark left by
+    // an earlier order that used the same id (the POS re-uses its short order numbers).
+    await optionalStatement(
+      client,
+      `UPDATE orders SET inventory_fulfillment = $2, inventory_prep_started_at = NULL WHERE id = $1`,
+      [String(orderId), fulfillment]
+    );
   }
 
   // All ingredient metadata (food + packaging) used by these recipes
   const ingredientIds = new Set();
-  for (const it of resolvedItems) {
+  for (const it of [...resolvedItems, ...resolvedHeld]) {
     const r = recipes.get(it.productId);
     r.ingredients.forEach((i) => ingredientIds.add(i.ingredientId));
     r.packaging.forEach((p) => ingredientIds.add(p.packagingId));
@@ -235,7 +282,21 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
     [...locked.values()].map((r) => [r.id, { baseUnit: r.base_unit, itemType: r.item_type }])
   );
 
-  const lines = computeRequirementLines({ items: resolvedItems, recipes, ingredientMeta, fulfillment });
+  let lines = computeRequirementLines({ items: resolvedItems, recipes, ingredientMeta, fulfillment });
+  if (opts.append) {
+    // Shared packaging is worked out for the whole order; only take what it does not hold yet
+    const wholeOrder = computeRequirementLines({
+      items: [...resolvedHeld, ...resolvedItems],
+      recipes,
+      ingredientMeta,
+      fulfillment,
+    });
+    lines = lines.filter((l) => l.productId !== null);
+    for (const l of wholeOrder.filter((x) => x.productId === null)) {
+      const extra = round4(l.quantity - (heldShared.get(l.ingredientId) || 0));
+      if (extra > 0) lines.push({ ...l, quantity: extra });
+    }
+  }
   if (lines.length === 0) return { reserved: false, reason: 'NOTHING_TO_RESERVE' };
   const totals = aggregateLines(lines);
 
@@ -326,14 +387,56 @@ async function releaseRows(client, rows, orderId, { wasteFood, reason, performed
     });
   }
 
-  // Food that was already cooked stays deducted; reclassify its usage entry as waste.
-  for (const [ingredientId] of wasteTotals) {
-    await client.query(
-      `UPDATE inventory_transactions
-         SET type = 'WASTE', reason = $3
-       WHERE order_id = $1 AND ingredient_id = $2 AND type = 'CONSUMPTION'`,
-      [String(orderId), ingredientId, `${reason} — prepared food written off`]
+  // Food that was already cooked stays deducted; its usage is re-booked as waste.
+  // Only the quantity really written off is re-booked: an order that was edited or had
+  // dishes returned earlier has older usage entries that those returns already cancel out.
+  for (const [ingredientId, wasted] of wasteTotals) {
+    const wasteReason = `${reason} — prepared food written off`;
+    const used = await client.query(
+      `SELECT id, quantity_delta FROM inventory_transactions
+        WHERE order_id = $1 AND ingredient_id = $2 AND type = 'CONSUMPTION'
+        ORDER BY timestamp DESC, id DESC`,
+      [String(orderId), ingredientId]
     );
+    let left = round4(wasted);
+    const rebook = [];
+    for (const u of used.rows) {
+      const qty = Math.abs(Number(u.quantity_delta));
+      if (left <= 0) break;
+      if (qty > left + 1e-9) continue; // larger than what is left to write off: keep it as usage
+      rebook.push(u.id);
+      left = round4(left - qty);
+    }
+    if (rebook.length > 0) {
+      await client.query(
+        `UPDATE inventory_transactions SET type = 'WASTE', reason = $2 WHERE id = ANY($1::text[])`,
+        [rebook, wasteReason]
+      );
+    }
+    const ing = locked.get(ingredientId);
+    if (left > 0 && ing) {
+      // The rest is part of a bigger usage entry: reverse that part, then record it as waste.
+      // Stock on hand does not move; the history still adds up.
+      const onHand = Number(ing.current_stock);
+      await logMovement(client, ing, {
+        orderId,
+        type: 'ORDER_RETURN',
+        delta: left,
+        stockAfter: round4(onHand + left),
+        reason: `${reason} — usage re-booked as waste`,
+        performedBy,
+        refPrefix: 'RET',
+      });
+      await logMovement(client, ing, {
+        orderId,
+        type: 'WASTE',
+        delta: -left,
+        stockAfter: onHand,
+        reason: wasteReason,
+        performedBy,
+        refPrefix: 'WST',
+      });
+    }
   }
 
   const rowIds = rows.map((r) => r.id);
@@ -368,7 +471,10 @@ export async function returnForOrder(client, orderId, opts = {}) {
   if (wasteFood === undefined || opts.skipIfCompleted) {
     const { rows } = await client.query(`SELECT * FROM orders WHERE id = $1`, [String(orderId)]);
     // A finished order was served: its ingredients are genuinely used, nothing to return.
-    if (opts.skipIfCompleted && rows[0]?.status === 'COMPLETED') return { released: 0, wasted: 0 };
+    if (opts.skipIfCompleted && rows[0]?.status === 'COMPLETED') {
+      await markConsumed(client, orderId); // close it, so it is not mistaken for an open order later
+      return { released: 0, wasted: 0 };
+    }
     if (wasteFood === undefined) wasteFood = Boolean(rows[0]?.inventory_prep_started_at);
   }
   return releaseRows(client, open.rows, orderId, {
@@ -408,6 +514,50 @@ export async function markPrepStarted(client, orderId) {
   );
 }
 
+/**
+ * The order was served / delivered: what it took is used for good.
+ * Its ledger rows become CONSUMED, so a later void, delete or reset can never put the food or
+ * packaging back, and the order no longer counts as one that is holding stock.
+ * (Optional statement: databases that have not run migration 036 keep the old behaviour.)
+ */
+export async function markConsumed(client, orderId) {
+  await optionalStatement(
+    client,
+    `UPDATE order_inventory_ledger SET state = 'CONSUMED', released_at = NOW()
+      WHERE order_id = $1 AND state = 'RESERVED'`,
+    [String(orderId)]
+  );
+}
+
+/**
+ * Locks, in one ordered pass, every stock item a change to an order will touch: what the
+ * order holds now plus what the new items need. Editing an order gives stock back and then
+ * takes stock; taking those row locks in two separate passes can deadlock with another order
+ * placed at the same moment (each waits for an ingredient the other already locked).
+ * Call it before returnForOrder + reserveForOrder inside the same transaction.
+ */
+export async function lockStockForOrderChange(client, orderId, rawItems = []) {
+  if (!(await hasInventoryTables(client))) return;
+  // same order as returnForOrder: the order's own ledger rows first, then the ingredients
+  const held = await client.query(
+    `SELECT ingredient_id FROM order_inventory_ledger
+      WHERE order_id = $1 AND state = 'RESERVED' ORDER BY id FOR UPDATE`,
+    [String(orderId)]
+  );
+  const ids = new Set(held.rows.map((r) => r.ingredient_id));
+  const items = toOrderItems(rawItems);
+  if (items.length > 0) {
+    const { recipes, resolve } = await loadRecipesForItems(client, items);
+    for (const it of items) {
+      const recipe = recipes.get(resolve(it));
+      if (!recipe) continue;
+      recipe.ingredients.forEach((i) => ids.add(i.ingredientId));
+      recipe.packaging.forEach((p) => ids.add(p.packagingId));
+    }
+  }
+  await loadIngredientsLocked(client, [...ids].sort());
+}
+
 /** Runs fn(client) in its own transaction. */
 export async function withTransaction(fn) {
   const pool = await getDbPool();
@@ -431,7 +581,8 @@ export async function withTransaction(fn) {
  */
 export async function syncInventoryForStatus(orderId, status, opts = {}) {
   const s = String(status || '').toUpperCase();
-  const started = ['PREPARING', 'COOKING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(s);
+  const served = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(s);
+  const started = served || ['PREPARING', 'COOKING', 'READY', 'OUT_FOR_DELIVERY'].includes(s);
   const cancelled = ['CANCELLED', 'CANCEL_REQUESTED', 'KITCHEN_REJECTED'].includes(s);
   if (!started && !cancelled) return null;
   try {
@@ -439,6 +590,7 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
       if (!(await hasInventoryTables(client))) return null;
       if (started) {
         await markPrepStarted(client, orderId);
+        if (served) await markConsumed(client, orderId);
         return null;
       }
       return returnForOrder(client, orderId, opts);
@@ -605,10 +757,18 @@ export function broadcastInventoryChange(ingredientIds) {
   }, 150);
 }
 
-/** Used when all transactions are wiped: everything still reserved goes back to stock, then the ledger is cleared. */
+/**
+ * Used when all transactions are wiped: what open orders still hold goes back to stock, then the
+ * ledger is cleared. Orders that were already served keep what they used.
+ */
 export async function returnAllReservedStock(client) {
   if (!(await hasInventoryTables(client))) return 0;
-  const { rows } = await client.query(`SELECT DISTINCT order_id FROM order_inventory_ledger WHERE state = 'RESERVED'`);
+  const { rows } = await client.query(
+    `SELECT DISTINCT l.order_id
+       FROM order_inventory_ledger l
+       LEFT JOIN orders o ON o.id = l.order_id
+      WHERE l.state = 'RESERVED' AND COALESCE(o.status, '') <> 'COMPLETED'`
+  );
   for (const r of rows) {
     await returnForOrder(client, r.order_id, { wasteFood: false, reason: 'Transactions reset', performedBy: 'System' });
   }

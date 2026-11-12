@@ -769,6 +769,9 @@ router.patch('/kitchen/orders/:id/reject-quantities', optionalAuth, async (req, 
       console.warn('DB note (kitchen reject quantities):', dbErr.message);
     }
 
+    // A declined order will not be cooked: give back the ingredients it was holding
+    await syncInventoryForStatus(id, 'KITCHEN_REJECTED');
+
     const formatted = formatOrderResponse(order || { ...(dbOrder || {}), status: 'KITCHEN_REJECTED', kitchen_approval_status: 'REJECTED', rejectionReason });
     emitOrderUpdate({ ...formatted, type: 'KITCHEN_QUANTITY_REJECTED' });
 

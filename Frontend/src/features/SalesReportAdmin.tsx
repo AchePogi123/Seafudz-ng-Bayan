@@ -4,6 +4,7 @@ import { NavbarAdmin } from '../components/NavbarAdmin'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { subscribeOrderSync } from '../utils/orderSync'
+import { countsAsSale } from '../utils/salesRecognition'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { AdminBackupModal } from '../components/AdminBackupModal'
@@ -485,8 +486,9 @@ const SalesReportAdmin: React.FC = () => {
             let validOrdersCount = 0
 
             orders.forEach((order: any) => {
-                const statusUpper = String(order.status || '').toUpperCase()
-                if (['CANCELLED', 'KITCHEN_REJECTED'].includes(statusUpper)) return
+                // Only finished transactions are income. Orders still moving through the
+                // flow are work in progress, and cancelled / rejected ones never sold.
+                if (!countsAsSale(order)) return
 
                 const total = Number(
                     order.total ??

@@ -4,6 +4,16 @@ import NavbarCustomer from '../components/NavbarCustomer'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { normalizeStatus } from './OnlineCustomer'
+import {
+  OrderIcon,
+  Panel,
+  PanelRows,
+  InfoRow,
+  StatusPill,
+  OrderProgress,
+  describeOrderStatus,
+  type ProgressStep,
+} from './customer/orderStatusUi'
 import { subscribeOrderSync } from '../utils/orderSync'
 
 interface OrderItem {
@@ -60,7 +70,36 @@ interface CustomerOrder {
   updated_at?: string
   riderName?: string
   riderPhone?: string
+  fulfillmentType?: string
+  fulfillment_type?: string
+  type?: string
 }
+
+const isPickupOrder = (order: CustomerOrder) =>
+  String(order.fulfillmentType || order.fulfillment_type || order.type || '')
+    .toUpperCase()
+    .includes('PICKUP')
+
+const stepsFor = (order: CustomerOrder): ProgressStep[] =>
+  isPickupOrder(order)
+    ? [
+        { key: 'PENDING', label: 'Order placed', icon: 'receipt' },
+        { key: 'CONFIRMED', label: 'Confirmed', icon: 'check' },
+        { key: 'PREPARING', label: 'Preparing', icon: 'cooking' },
+        { key: 'READY', label: 'Ready for pick-up', icon: 'bag' },
+        { key: 'COMPLETED', label: 'Picked up', icon: 'check' },
+      ]
+    : [
+        { key: 'PENDING', label: 'Order placed', icon: 'receipt' },
+        { key: 'CONFIRMED', label: 'Confirmed', icon: 'check' },
+        { key: 'PREPARING', label: 'Preparing', icon: 'cooking' },
+        { key: 'READY', label: 'Ready', icon: 'bag' },
+        { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery', icon: 'scooter' },
+        { key: 'COMPLETED', label: 'Delivered', icon: 'check' },
+      ]
+
+const peso = (value: number) =>
+  `₱${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 export const CustomerPurchases: React.FC = () => {
   const navigate = useNavigate()
@@ -438,66 +477,12 @@ export const CustomerPurchases: React.FC = () => {
     }
   }
 
-  // Visual status pill configuration
-  const getStatusBadge = (rawStatus?: string) => {
-    const norm = normalizeStatus(rawStatus)
-    switch (norm) {
-      case 'PENDING':
-        return {
-          label: 'Awaiting Verification',
-          className: 'bg-amber-50 text-amber-800 border-amber-300 ring-1 ring-amber-400/20',
-          dotClass: 'bg-amber-500 animate-pulse',
-        }
-      case 'CONFIRMED':
-        return {
-          label: 'Order Confirmed',
-          className: 'bg-blue-50 text-blue-800 border-blue-300 ring-1 ring-blue-400/20',
-          dotClass: 'bg-blue-500',
-        }
-      case 'PREPARING':
-        return {
-          label: 'Kitchen Preparing',
-          className: 'bg-orange-50 text-orange-800 border-orange-300 ring-1 ring-orange-400/30',
-          dotClass: 'bg-orange-500 animate-ping',
-        }
-      case 'READY':
-        return {
-          label: 'Order Ready',
-          className: 'bg-purple-50 text-purple-800 border-purple-300 ring-1 ring-purple-400/20',
-          dotClass: 'bg-purple-500',
-        }
-      case 'OUT_FOR_DELIVERY':
-        return {
-          label: 'Out for Delivery',
-          className: 'bg-indigo-50 text-indigo-800 border-indigo-300 ring-1 ring-indigo-400/30',
-          dotClass: 'bg-indigo-500 animate-pulse',
-        }
-      case 'COMPLETED':
-        return {
-          label: 'Order Delivered',
-          className: 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-400/20',
-          dotClass: 'bg-emerald-500',
-        }
-      case 'CANCELLED':
-        return {
-          label: 'Cancelled',
-          className: 'bg-rose-50 text-rose-800 border-rose-300 ring-1 ring-rose-400/20',
-          dotClass: 'bg-rose-500',
-        }
-      case 'OUT_OF_STOCK':
-        return {
-          label: 'Decision Needed',
-          className: 'bg-amber-100 text-amber-900 border-amber-400 ring-1 ring-amber-500/20',
-          dotClass: 'bg-amber-600 animate-bounce',
-        }
-      default:
-        return {
-          label: norm || 'Processing',
-          className: 'bg-slate-50 text-slate-800 border-slate-300',
-          dotClass: 'bg-slate-400',
-        }
-    }
-  }
+  /**
+   * One status vocabulary for the whole customer app: the same words and the same tone the
+   * tracking view uses, rather than a second set of labels invented for this list.
+   */
+  const statusOf = (order: CustomerOrder) =>
+    describeOrderStatus(normalizeStatus(order.status), { isPickup: isPickupOrder(order) })
 
   // Open the order tracking view directly in the Customer menu
   const handleOpenInLiveMenu = (order: CustomerOrder) => {
@@ -509,299 +494,303 @@ export const CustomerPurchases: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#faf6f0] via-[#f7f2ea] to-[#f4ede3] text-neutral-800 flex flex-col font-sans">
-      {/* Header with Navigation */}
-      <div className="sticky top-0 z-50 p-2 sm:p-4 max-w-7xl mx-auto w-full">
+    <div className="purchases-view flex min-h-screen flex-col bg-[#f8f6f4] font-sans text-neutral-800">
+      <div className="sticky top-0 z-50 mx-auto w-full max-w-6xl p-2 sm:p-4">
         <NavbarCustomer />
       </div>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-6 lg:px-8 py-4 sm:py-6 space-y-6">
-        {/* Navigation: Back to Menu & Link to Order History */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <main className="mx-auto w-full max-w-6xl flex-1 space-y-5 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
+        {/* Where this screen sits: the menu behind it, finished orders beside it. */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
           <Link
             to="/customer"
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-extrabold text-neutral-600 hover:text-orange-600 transition-colors cursor-pointer group"
+            className="group inline-flex items-center gap-2 text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900"
           >
-            <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-            </svg>
-            <span>Back to Customer Menu</span>
+            <OrderIcon name="arrowLeft" className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+            <span>Back to menu</span>
           </Link>
 
           <Link
             to="/account?tab=orders"
-            className="inline-flex items-center gap-2 text-xs sm:text-sm font-extrabold text-neutral-700 hover:text-orange-600 bg-white/95 hover:bg-orange-50/80 px-3.5 py-2 rounded-xl border border-slate-200/90 shadow-2xs hover:border-orange-300 transition-all cursor-pointer group"
-            title="View Past Order History in Account"
+            className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition-colors hover:border-neutral-300 hover:text-neutral-900"
+            title="Completed and cancelled orders"
           >
-            <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-            </svg>
-            <span>Order History (Past Orders)</span>
-            <svg className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5 text-neutral-400 group-hover:text-orange-600" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
+            <span>Order history</span>
+            <OrderIcon name="arrowRight" className="h-3.5 w-3.5 text-neutral-400" />
           </Link>
         </div>
 
-        {/* Filter Tabs & Search Controls */}
-        <div className="bg-white/90 backdrop-blur-md rounded-2xl p-3 sm:p-4 border border-slate-200/80 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-          {/* Tabs */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-            {[
-              { id: 'ALL', label: 'All Active Orders', count: activeCounts.all },
-              { id: 'PREPARING', label: 'In Kitchen', count: activeCounts.kitchen },
-              { id: 'DELIVERY', label: 'Out for Delivery', count: activeCounts.delivery },
-              { id: 'PENDING', label: 'Awaiting Verification', count: activeCounts.pending },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setStatusFilter(tab.id as any)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-                  statusFilter === tab.id
-                    ? 'bg-orange-500 text-white shadow-xs shadow-orange-500/30'
-                    : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
-                }`}
-              >
-                <span>{tab.label}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                  statusFilter === tab.id ? 'bg-white/30 text-white' : 'bg-neutral-200 text-neutral-700'
-                }`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
+        <header className="px-1">
+          <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Orders in progress</h1>
+          <p className="mt-1 text-sm text-neutral-500">
+            Everything you have ordered that is still being prepared or delivered. Finished orders live in your
+            order history.
+          </p>
+        </header>
 
-          {/* Search Box */}
-          <div className="relative max-w-md w-full">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by Order ID, dish name, notes..."
-              className="w-full bg-neutral-50 border border-slate-200 rounded-xl px-9 py-2 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all"
-            />
-            <svg className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 text-xs font-bold"
-              >
-                ✕
-              </button>
-            )}
+        {/* Filter and search, in the same bar language as the menu */}
+        <div className="rounded-2xl border border-neutral-200 bg-white px-2.5 py-2.5">
+          <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:gap-3">
+            <div className="flex min-w-0 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {[
+                { id: 'ALL', label: 'All', count: activeCounts.all },
+                { id: 'PREPARING', label: 'In the kitchen', count: activeCounts.kitchen },
+                { id: 'DELIVERY', label: 'Out for delivery', count: activeCounts.delivery },
+                { id: 'PENDING', label: 'Awaiting verification', count: activeCounts.pending },
+              ].map((tab) => {
+                const isSelected = statusFilter === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setStatusFilter(tab.id as any)}
+                    aria-current={isSelected ? 'true' : undefined}
+                    className={`flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                      isSelected ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`text-xs tabular-nums ${isSelected ? 'text-white/70' : 'text-neutral-400'}`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="shrink-0 md:ml-auto md:w-64 lg:w-72">
+              <div className="flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 transition-colors focus-within:border-orange-400 focus-within:bg-white">
+                <svg className="h-4 w-4 shrink-0 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M20 20l-4.3-4.3" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search orders or dishes"
+                  aria-label="Search your orders"
+                  className="w-full border-none bg-transparent text-sm text-neutral-900 placeholder-neutral-500 outline-none"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="shrink-0 cursor-pointer text-neutral-400 transition-colors hover:text-neutral-700"
+                    title="Clear search"
+                    aria-label="Clear search"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Orders Listing */}
+        {/* Orders */}
         {loading && orders.length === 0 ? (
-          <div className="bg-white/90 rounded-2xl p-12 text-center border border-slate-200/80 space-y-3">
-            <div className="w-10 h-10 border-3 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
-            <p className="text-xs font-bold text-neutral-500">Loading your purchases...</p>
+          <div className="rounded-2xl border border-neutral-200 bg-white px-6 py-16 text-center">
+            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+            <p className="mt-3 text-sm text-neutral-500">Loading your orders…</p>
           </div>
         ) : filteredOrders.length === 0 ? (
-          <div className="bg-white/95 rounded-3xl p-10 sm:p-14 text-center border border-slate-200/80 space-y-4 shadow-sm max-w-xl mx-auto my-6">
-            <div className="w-18 h-18 bg-orange-100/70 border border-orange-200 text-orange-600 rounded-3xl flex items-center justify-center mx-auto text-3xl shadow-xs">
-              🛵
+          <div className="mx-auto max-w-md rounded-2xl border border-neutral-200 bg-white px-6 py-14 text-center">
+            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-neutral-100 text-neutral-400">
+              <OrderIcon name="bag" className="h-5 w-5" />
             </div>
-            <div className="space-y-1.5">
-              <h3 className="text-xl font-black text-neutral-900">No Active Ongoing Orders</h3>
-              <p className="text-xs sm:text-sm text-neutral-500 leading-relaxed max-w-md mx-auto">
-                {searchQuery
-                  ? `No active orders matching "${searchQuery}".`
-                  : "You don't have any orders currently being prepared or delivered. All your completed past orders are stored in your Order History."}
-              </p>
-            </div>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-3">
-              <Link
-                to="/customer"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs px-5 py-2.5 rounded-xl shadow-md shadow-orange-500/20 transition-all active:scale-95 cursor-pointer"
-              >
-                <span>Browse Menu Dishes</span>
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </Link>
+            <h2 className="mt-3.5 text-base font-semibold text-neutral-900">
+              {searchQuery ? 'Nothing matches that search' : 'No orders in progress'}
+            </h2>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-neutral-500">
+              {searchQuery
+                ? `No order in progress matches “${searchQuery}”. Try an order number or a dish name, or clear the search.`
+                : 'Nothing is being prepared or delivered right now. Your finished orders are kept in your order history.'}
+            </p>
+            <div className="mt-5 flex flex-col items-center justify-center gap-2.5 sm:flex-row">
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="w-full cursor-pointer rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600 sm:w-auto"
+                >
+                  Clear search
+                </button>
+              ) : (
+                <Link
+                  to="/customer"
+                  className="w-full rounded-xl bg-orange-500 px-5 py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-orange-600 sm:w-auto"
+                >
+                  Browse the menu
+                </Link>
+              )}
               <Link
                 to="/account?tab=orders"
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white hover:bg-neutral-50 text-neutral-700 font-extrabold text-xs px-5 py-2.5 rounded-xl border border-slate-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+                className="w-full rounded-xl border border-neutral-200 px-5 py-2.5 text-center text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50 sm:w-auto"
               >
-                <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
-                <span>View Order History</span>
+                Order history
               </Link>
             </div>
           </div>
         ) : (
-          <div id="orders-cards-grid" className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div id="orders-cards-grid" className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
             {paginatedOrders.map((order) => {
-              const badge = getStatusBadge(order.status)
+              const status = statusOf(order)
               const itemsList = order.items || []
               const totalItems = itemsList.reduce((acc, it) => acc + (it.quantity || 1), 0)
+              const shown = itemsList.slice(0, 3)
+              const hidden = itemsList.length - shown.length
 
               return (
-                <div
+                <article
                   key={order.id}
                   onClick={() => setSelectedOrder(order)}
-                  className="bg-white rounded-2xl border border-slate-200/90 shadow-sm hover:shadow-md transition-all duration-200 p-5 space-y-4 cursor-pointer hover:border-orange-300 flex flex-col justify-between group"
+                  className="flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-colors hover:border-neutral-300"
                 >
-                  {/* Top: Order ID & Status */}
-                  <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-neutral-900 text-base group-hover:text-orange-600 transition-colors">
-                          #{order.id}
-                        </span>
-                        <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-neutral-100 text-neutral-600">
-                          Delivery
-                        </span>
-                      </div>
-                      <p className="text-xs text-neutral-400 mt-0.5">{formatOrderDate(order)}</p>
-                    </div>
-
-                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-black whitespace-nowrap ${badge.className}`}>
-                      <span className={`w-2 h-2 rounded-full ${badge.dotClass}`} />
-                      <span>{badge.label}</span>
-                    </div>
-                  </div>
-
-                  {/* Middle: Items List Snapshot */}
-                  <div className="space-y-2">
-                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wide block">
-                      Ordered Items ({totalItems} pcs)
-                    </span>
-                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                      {itemsList.map((item, idx) => {
-                        const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood Dish'
-                        const price = item.price ?? item.unit_price ?? item.item?.price ?? 0
-                        return (
-                          <div key={idx} className="flex items-center justify-between text-xs text-neutral-700 bg-neutral-50 px-2.5 py-1.5 rounded-lg border border-neutral-100">
-                            <span className="font-semibold truncate max-w-[240px]">
-                              {item.quantity}× {name}
-                            </span>
-                            <span className="font-bold text-neutral-900 shrink-0">
-                              ₱{(price * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Bottom: Payment & Total + Action */}
-                  <div className="pt-2 border-t border-neutral-100 flex items-center justify-between gap-3">
-                    <div>
-                      <span className="text-[10px] font-bold text-neutral-400 uppercase block">
-                        {order.paymentMethod || 'Online'}
-                      </span>
-                      <span className="text-lg font-black text-orange-600">
-                        ₱{Number(order.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {/* What the customer came for: where this order is, in words. */}
+                  <div className="px-5 pb-4 pt-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <StatusPill tone={status.tone}>{status.label}</StatusPill>
+                      <span className="shrink-0 pt-1 text-xs text-neutral-500">
+                        {isPickupOrder(order) ? 'Pick-up' : 'Delivery'}
                       </span>
                     </div>
+                    <p className="mt-2.5 text-sm leading-relaxed text-neutral-700">{status.detail}</p>
+                    <p className="mt-1.5 text-xs text-neutral-500">
+                      {formatOrderDate(order)} · {order.paymentMethod || 'Online'}
+                    </p>
+                    <p className="mt-0.5 break-all font-mono text-[11px] leading-relaxed text-neutral-500">
+                      #{order.id}
+                    </p>
+                  </div>
 
-                    <div className="flex items-center gap-2">
+                  {/* Dishes on hairlines — the old filled box around every line read as noise. */}
+                  <div className="divide-y divide-neutral-100 border-t border-neutral-100 px-5">
+                    {shown.map((item, idx) => {
+                      const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood dish'
+                      const price = item.price ?? item.unit_price ?? item.item?.price ?? 0
+                      return (
+                        <div key={idx} className="flex items-baseline justify-between gap-4 py-2.5 text-sm">
+                          <span className="min-w-0 truncate text-neutral-700">
+                            <span className="tabular-nums text-neutral-500">{item.quantity}×</span> {name}
+                          </span>
+                          <span className="shrink-0 tabular-nums text-neutral-900">
+                            {peso(price * (item.quantity || 1))}
+                          </span>
+                        </div>
+                      )
+                    })}
+                    {hidden > 0 && (
+                      <p className="py-2.5 text-xs text-neutral-500">
+                        and {hidden} more {hidden === 1 ? 'dish' : 'dishes'}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-auto flex items-end justify-between gap-3 border-t border-neutral-100 px-5 py-4">
+                    <div className="min-w-0">
+                      <p className="text-xs text-neutral-500">
+                        Total · {totalItems} {totalItems === 1 ? 'item' : 'items'}
+                      </p>
+                      <p className="text-lg font-semibold tabular-nums text-neutral-900">{peso(order.total)}</p>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSelectedOrder(order)
+                        }}
+                        className="cursor-pointer rounded-xl border border-neutral-200 px-3.5 py-2 text-xs font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+                      >
+                        Details
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation()
                           handleOpenInLiveMenu(order)
                         }}
-                        className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all active:scale-95 cursor-pointer flex items-center gap-1.5"
+                        className="cursor-pointer rounded-xl bg-orange-500 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-orange-600"
                       >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
-                        </svg>
-                        <span>Track Status</span>
+                        Track status
                       </button>
                     </div>
                   </div>
-                </div>
+                </article>
               )
             })}
           </div>
         )}
 
-        {/* Pagination Bar (6 orders per page) */}
+        {/* Pagination */}
         {!loading && filteredOrders.length > 0 && (
-          <div className="bg-white/90 backdrop-blur-md rounded-2xl p-3.5 sm:p-4 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 select-none">
-            <div className="text-xs text-neutral-500 font-medium">
-              Showing <strong className="font-extrabold text-neutral-800">{startItem}–{endItem}</strong> of{' '}
-              <strong className="font-extrabold text-neutral-800">{filteredOrders.length}</strong> orders
-            </div>
+          <div className="flex select-none flex-col items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 sm:flex-row">
+            <p className="text-xs text-neutral-500">
+              Showing <span className="font-semibold tabular-nums text-neutral-900">{startItem}–{endItem}</span> of{' '}
+              <span className="font-semibold tabular-nums text-neutral-900">{filteredOrders.length}</span> orders
+            </p>
 
             {totalPages > 1 && (
-              <div className="flex items-center gap-1.5">
-                {/* Previous Page Button */}
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => {
-                    const prev = Math.max(1, safePage - 1)
-                    setCurrentPage(prev)
+                    setCurrentPage(Math.max(1, safePage - 1))
                     window.scrollTo({ top: 0, behavior: 'smooth' })
                   }}
                   disabled={safePage === 1}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-35 disabled:cursor-not-allowed bg-white border border-slate-200 text-neutral-700 hover:bg-neutral-50 active:scale-95 cursor-pointer shadow-2xs"
-                  aria-label="Previous Page"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-neutral-200 text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-default disabled:opacity-35 disabled:hover:border-neutral-200"
+                  aria-label="Previous page"
                 >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M15 5l-7 7 7 7" />
                   </svg>
-                  <span>Prev</span>
                 </button>
 
-                {/* Page Number Buttons */}
-                <div className="flex items-center gap-1">
-                  {getPageNumbers(safePage, totalPages).map((p, idx) => {
-                    if (p === '...') {
-                      return (
-                        <span key={`ellipsis-${idx}`} className="px-1.5 py-1 text-xs text-neutral-400 font-bold">
-                          ...
-                        </span>
-                      )
-                    }
-                    const pageNum = Number(p)
-                    const isActive = pageNum === safePage
+                {getPageNumbers(safePage, totalPages).map((p, idx) => {
+                  if (p === '...') {
                     return (
-                      <button
-                        key={pageNum}
-                        type="button"
-                        onClick={() => {
-                          setCurrentPage(pageNum)
-                          window.scrollTo({ top: 0, behavior: 'smooth' })
-                        }}
-                        className={`min-w-[32px] h-8 px-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center cursor-pointer ${
-                          isActive
-                            ? 'bg-orange-500 text-white shadow-xs shadow-orange-500/30 ring-2 ring-orange-400/40'
-                            : 'bg-white border border-slate-200 text-neutral-700 hover:bg-orange-50 hover:text-orange-600'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
+                      <span key={`ellipsis-${idx}`} className="px-1 text-xs text-neutral-400">
+                        …
+                      </span>
                     )
-                  })}
-                </div>
+                  }
+                  const pageNum = Number(p)
+                  const isActive = pageNum === safePage
+                  return (
+                    <button
+                      key={pageNum}
+                      type="button"
+                      onClick={() => {
+                        setCurrentPage(pageNum)
+                        window.scrollTo({ top: 0, behavior: 'smooth' })
+                      }}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={`flex h-8 min-w-8 cursor-pointer items-center justify-center rounded-full px-2 text-xs font-medium tabular-nums transition-colors ${
+                        isActive ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  )
+                })}
 
-                {/* Next Page Button */}
                 <button
                   type="button"
                   onClick={() => {
-                    const next = Math.min(totalPages, safePage + 1)
-                    setCurrentPage(next)
+                    setCurrentPage(Math.min(totalPages, safePage + 1))
                     window.scrollTo({ top: 0, behavior: 'smooth' })
                   }}
                   disabled={safePage === totalPages}
-                  className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 disabled:opacity-35 disabled:cursor-not-allowed bg-white border border-slate-200 text-neutral-700 hover:bg-neutral-50 active:scale-95 cursor-pointer shadow-2xs"
-                  aria-label="Next Page"
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-neutral-200 text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-default disabled:opacity-35 disabled:hover:border-neutral-200"
+                  aria-label="Next page"
                 >
-                  <span>Next</span>
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               </div>
@@ -810,345 +799,245 @@ export const CustomerPurchases: React.FC = () => {
         )}
       </main>
 
-      {/* ======================================================== */}
-      {/* ORDER TRACK STATUS MODAL (Shown when user clicks an order) */}
-      {/* ======================================================== */}
-      {selectedOrder && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-3 sm:p-6 animate-in fade-in duration-200">
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-neutral-950/65 backdrop-blur-xs transition-opacity"
-            onClick={() => setSelectedOrder(null)}
-            aria-hidden="true"
-          />
+      {/* Order detail: the same panels, wording and tracker as the live tracking view, so the
+          customer is not asked to learn this screen twice. */}
+      {selectedOrder && (() => {
+        const status = statusOf(selectedOrder)
+        const pickup = isPickupOrder(selectedOrder)
+        const steps = stepsFor(selectedOrder)
+        const norm = normalizeStatus(selectedOrder.status)
+        const currentIndex = steps.findIndex((step) => step.key === norm)
+        const items = selectedOrder.items || []
+        const itemCount = items.reduce((acc, it) => acc + (it.quantity || 1), 0)
+        const deliveryFee = pickup ? 0 : Number(selectedOrder.deliveryFee ?? selectedOrder.delivery_fee ?? 50)
+        const subtotal =
+          selectedOrder.subtotal !== undefined
+            ? Number(selectedOrder.subtotal)
+            : Math.round(Number(selectedOrder.total || 0) / 1.12 - deliveryFee)
+        const vat =
+          selectedOrder.vat !== undefined
+            ? Number(selectedOrder.vat)
+            : Math.round(((Number(selectedOrder.total || 0) - deliveryFee) * 0.12) / 1.12)
+        const isFinished = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(norm)
+        const receipt = selectedOrder.paymentReceipt
+        const proof = selectedOrder.deliveryProof || selectedOrder.delivery_proof
 
-          {/* Modal Container */}
-          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden transform-gpu animate-in zoom-in-95 duration-200 border border-neutral-100 z-10">
-            {/* Header */}
-            <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/80 shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center font-black">
-                  📦
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-neutral-900 text-base sm:text-lg leading-tight">
-                    Order Tracking #{selectedOrder.id}
-                  </h3>
-                  <p className="text-[11px] text-neutral-400">Placed on {formatOrderDate(selectedOrder)}</p>
-                </div>
-              </div>
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-3 duration-200 animate-in fade-in sm:p-6">
+            <div
+              className="fixed inset-0 bg-neutral-950/55"
+              onClick={() => setSelectedOrder(null)}
+              aria-hidden="true"
+            />
 
-              <div className="flex items-center gap-2">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Order ${selectedOrder.id}`}
+              className="relative z-10 flex max-h-[92vh] w-full max-w-2xl transform-gpu flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-xl shadow-neutral-900/10 duration-200 animate-in zoom-in-95"
+            >
+              <div className="flex shrink-0 items-start justify-between gap-4 border-b border-neutral-100 px-5 py-4">
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-neutral-900">Order details</h2>
+                  <p className="mt-0.5 break-all font-mono text-[11px] text-neutral-500">#{selectedOrder.id}</p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setSelectedOrder(null)}
-                  className="w-8 h-8 rounded-full bg-neutral-200/80 hover:bg-neutral-300 text-neutral-700 flex items-center justify-center font-bold text-sm transition-colors cursor-pointer"
-                  title="Close Tracking"
+                  className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+                  aria-label="Close order details"
+                  title="Close"
                 >
-                  ✕
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
                 </button>
               </div>
-            </div>
 
-            {/* Modal Scrollable Body */}
-            <div className="overflow-y-auto p-4 sm:p-6 space-y-6">
-              {/* Order Status Badge & Alert */}
-              {(() => {
-                const norm = normalizeStatus(selectedOrder.status)
-                const isCancelled = norm === 'CANCELLED'
+              <div className="space-y-5 overflow-y-auto px-5 py-5">
+                {/* Status, in a sentence, before any table of facts */}
+                <div>
+                  <StatusPill tone={status.tone}>{status.label}</StatusPill>
+                  <p className="mt-2.5 text-sm leading-relaxed text-neutral-700">{status.detail}</p>
+                  <p className="mt-1 text-xs text-neutral-500">Placed {formatOrderDate(selectedOrder)}</p>
+                </div>
 
-                return (
-                  <div className={`p-4 rounded-2xl border ${
-                    isCancelled
-                      ? 'bg-rose-50 border-rose-200 text-rose-900'
-                      : norm === 'COMPLETED'
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
-                      : 'bg-orange-50 border-orange-200 text-orange-950'
-                  }`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <span className="text-[10px] font-black uppercase tracking-wider block opacity-75">
-                          Current Status
-                        </span>
-                        <h4 className="font-extrabold text-base sm:text-lg mt-0.5">
-                          {isCancelled
-                            ? 'Order Cancelled'
-                            : norm === 'COMPLETED'
-                            ? 'Order Delivered & Completed'
-                            : norm === 'OUT_FOR_DELIVERY'
-                            ? 'Rider is Delivering Your Food!'
-                            : norm === 'READY'
-                            ? 'Order Packed & Ready for Pickup'
-                            : norm === 'PREPARING'
-                            ? 'Chef is Cooking Your Dishes'
-                            : norm === 'CONFIRMED'
-                            ? 'Order Confirmed in Kitchen Queue'
-                            : 'Awaiting Assistant Verification'}
-                        </h4>
-                      </div>
-                      <span className={`text-xs font-black px-3 py-1 rounded-full border ${getStatusBadge(selectedOrder.status).className}`}>
-                        {getStatusBadge(selectedOrder.status).label}
-                      </span>
-                    </div>
-
-                    {/* Progress Bar (Stepper) */}
-                    {!isCancelled && (
-                      <div className="pt-6 pb-2">
-                        <div className="relative flex items-center justify-between w-full">
-                          <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1 bg-neutral-200 z-0 rounded-full" />
-                          <div
-                            className="absolute left-0 top-1/2 -translate-y-1/2 h-1 bg-orange-500 transition-all duration-500 z-0 rounded-full"
-                            style={{
-                              width:
-                                norm === 'PENDING'
-                                  ? '0%'
-                                  : norm === 'CONFIRMED'
-                                  ? '20%'
-                                  : norm === 'OUT_OF_STOCK'
-                                  ? '30%'
-                                  : norm === 'PREPARING'
-                                  ? '45%'
-                                  : norm === 'READY'
-                                  ? '65%'
-                                  : norm === 'OUT_FOR_DELIVERY'
-                                  ? '85%'
-                                  : '100%',
-                            }}
-                          />
-
-                          {[
-                            { key: 'PENDING', label: 'Placed', icon: '📝' },
-                            { key: 'CONFIRMED', label: 'Confirmed', icon: '✓' },
-                            { key: 'PREPARING', label: 'Cooking', icon: '🍳' },
-                            { key: 'READY', label: 'Ready', icon: '📦' },
-                            { key: 'OUT_FOR_DELIVERY', label: 'On Way', icon: '🛵' },
-                            { key: 'COMPLETED', label: 'Delivered', icon: '🎉' },
-                          ].map((step) => {
-                            const statusOrder = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
-                            const isCurrent = norm === step.key
-                            const isDone = statusOrder.indexOf(norm) >= statusOrder.indexOf(step.key)
-
-                            return (
-                              <div key={step.key} className="flex flex-col items-center z-10 relative">
-                                <div
-                                  className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs font-black border-2 shadow-xs transition-all duration-300 ${
-                                    isCurrent
-                                      ? 'bg-orange-500 border-orange-500 text-white scale-110 ring-4 ring-orange-200'
-                                      : isDone
-                                      ? 'bg-orange-500 border-orange-500 text-white'
-                                      : 'bg-white border-neutral-300 text-neutral-400'
-                                  }`}
-                                >
-                                  {step.icon}
-                                </div>
-                                <span className={`text-[10px] sm:text-xs font-bold mt-1.5 text-center ${
-                                  isCurrent ? 'text-orange-600 font-extrabold' : isDone ? 'text-neutral-800' : 'text-neutral-400'
-                                }`}>
-                                  {step.label}
-                                </span>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
+                {norm !== 'CANCELLED' && (
+                  <div className="rounded-2xl border border-neutral-200 px-5 py-5">
+                    <OrderProgress steps={steps} currentIndex={currentIndex} compact />
                   </div>
-                )
-              })()}
+                )}
 
-              {/* Rider Information (if available) */}
-              {selectedOrder.riderName && (
-                <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 text-indigo-950 flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-200 text-indigo-800 flex items-center justify-center text-lg">
-                      🛵
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">Assigned Delivery Rider</span>
-                      <h5 className="font-extrabold text-sm">{selectedOrder.riderName}</h5>
-                      {selectedOrder.riderPhone && (
-                        <p className="text-xs text-indigo-700">{selectedOrder.riderPhone}</p>
+                <Panel title={pickup ? 'Pick-up & order details' : 'Delivery & order details'} meta={`${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}>
+                  <dl>
+                    <PanelRows>
+                      <InfoRow label="Recipient">
+                        {selectedOrder.customerName || selectedOrder.customer || customerDisplayName}
+                      </InfoRow>
+                      <InfoRow label="Phone" mono>
+                        {selectedOrder.phone || selectedOrder.customer_phone || 'Not provided'}
+                      </InfoRow>
+                      {!pickup && (
+                        <InfoRow label="Address" stacked>
+                          {selectedOrder.address ||
+                            selectedOrder.deliveryAddress ||
+                            selectedOrder.delivery_address ||
+                            'Address on file'}
+                        </InfoRow>
                       )}
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-extrabold bg-indigo-600 text-white px-3 py-1 rounded-full">
-                    Active Rider
-                  </span>
-                </div>
-              )}
+                      {selectedOrder.notes && (
+                        <InfoRow label="Your instructions" stacked>
+                          {selectedOrder.notes}
+                        </InfoRow>
+                      )}
+                    </PanelRows>
+                  </dl>
+                </Panel>
 
-              {/* Delivery Details */}
-              <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200/80 space-y-2 text-xs">
-                <h5 className="font-extrabold text-neutral-800 text-sm">Delivery Destination</h5>
-                <p className="text-neutral-600">
-                  <span className="font-bold text-neutral-400 uppercase text-[10px] mr-1">Recipient:</span>{' '}
-                  {selectedOrder.customerName || selectedOrder.customer || customerDisplayName}
-                </p>
-                <p className="text-neutral-600">
-                  <span className="font-bold text-neutral-400 uppercase text-[10px] mr-1">Phone:</span>{' '}
-                  {selectedOrder.phone || selectedOrder.customer_phone || 'Not provided'}
-                </p>
-                <p className="text-neutral-600 leading-relaxed">
-                  <span className="font-bold text-neutral-400 uppercase text-[10px] mr-1">Address:</span>{' '}
-                  {selectedOrder.address || selectedOrder.deliveryAddress || selectedOrder.delivery_address || 'Delivery Address on file'}
-                </p>
-                {selectedOrder.notes && (
-                  <p className="text-orange-700 bg-orange-50 p-2 rounded-lg border border-orange-200">
-                    <span className="font-bold uppercase text-[10px] block">Instructions:</span>
-                    {selectedOrder.notes}
-                  </p>
+                {selectedOrder.riderName && (
+                  <Panel title="Your rider">
+                    <dl>
+                      <PanelRows>
+                        <InfoRow label="Name">{selectedOrder.riderName}</InfoRow>
+                        {selectedOrder.riderPhone && (
+                          <InfoRow label="Phone" mono>
+                            {selectedOrder.riderPhone}
+                          </InfoRow>
+                        )}
+                      </PanelRows>
+                    </dl>
+                  </Panel>
                 )}
-              </div>
 
-              {/* Payment Info & Screenshot Preview */}
-              <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200/80 space-y-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <h5 className="font-extrabold text-neutral-800 text-sm">Payment Details</h5>
-                  <span className="font-extrabold px-2.5 py-0.5 rounded-full bg-neutral-200 text-neutral-700 text-[11px]">
-                    {selectedOrder.paymentMethod || 'Online'}
-                  </span>
-                </div>
-                {(selectedOrder.paymentReference || selectedOrder.referenceNumber) && (
-                  <p className="text-neutral-600">
-                    <span className="font-bold text-neutral-400 uppercase text-[10px] mr-1">Reference Number:</span>{' '}
-                    <span className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-neutral-200 text-neutral-800">
-                      {selectedOrder.paymentReference || selectedOrder.referenceNumber}
-                    </span>
-                  </p>
-                )}
-                {selectedOrder.paymentReceipt && (
-                  <div className="pt-1">
-                    <span className="font-bold text-neutral-400 uppercase text-[10px] block mb-1.5">Submitted GCash Receipt:</span>
-                    <img
-                      src={selectedOrder.paymentReceipt}
-                      alt="GCash Receipt Screenshot"
-                      onClick={() => setPreviewImage(selectedOrder.paymentReceipt || null)}
-                      className="w-20 h-20 object-cover rounded-xl border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity"
-                    />
-                  </div>
-                )}
-                {(selectedOrder.deliveryProof || selectedOrder.delivery_proof) && (
-                  <div className="pt-1">
-                    <span className="font-bold text-neutral-400 uppercase text-[10px] block mb-1.5">Rider Proof of Delivery Photo:</span>
-                    <div className="flex items-center gap-3 bg-white p-2 rounded-xl border border-neutral-200">
-                      <img
-                        src={selectedOrder.deliveryProof || selectedOrder.delivery_proof}
-                        alt="Rider Proof of Delivery Photo"
-                        onClick={() => setPreviewImage(selectedOrder.deliveryProof || selectedOrder.delivery_proof || null)}
-                        className="w-16 h-16 object-cover rounded-lg border border-neutral-200 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
-                      />
-                      <div>
-                        <p className="text-xs font-bold text-neutral-800">Delivered & Verified</p>
-                        <p className="text-[11px] text-emerald-600 font-semibold">Handover confirmed with photo</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+                <Panel title="Payment" meta={selectedOrder.paymentMethod || 'Online'}>
+                  <dl>
+                    <PanelRows>
+                      {(selectedOrder.paymentReference || selectedOrder.referenceNumber) && (
+                        <InfoRow label="Reference number" mono>
+                          {selectedOrder.paymentReference || selectedOrder.referenceNumber}
+                        </InfoRow>
+                      )}
+                      {receipt && (
+                        <InfoRow label="Receipt you sent" stacked>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewImage(receipt)}
+                            className="block cursor-pointer overflow-hidden rounded-xl border border-neutral-200 transition-opacity hover:opacity-85"
+                            title="View full size"
+                          >
+                            <img src={receipt} alt="The payment receipt you submitted" className="h-20 w-20 object-cover" />
+                          </button>
+                        </InfoRow>
+                      )}
+                      {proof && (
+                        <InfoRow label="Handover photo" stacked>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewImage(proof)}
+                            className="block cursor-pointer overflow-hidden rounded-xl border border-neutral-200 transition-opacity hover:opacity-85"
+                            title="View full size"
+                          >
+                            <img src={proof} alt="Photo taken by the rider at handover" className="h-20 w-20 object-cover" />
+                          </button>
+                        </InfoRow>
+                      )}
+                    </PanelRows>
+                  </dl>
+                </Panel>
 
-              {/* Itemized Order Breakdown */}
-              <div className="space-y-3">
-                <h5 className="font-extrabold text-neutral-800 text-sm">Itemized Bill</h5>
-                <div className="divide-y divide-neutral-100 border border-neutral-200 rounded-2xl overflow-hidden bg-white text-xs">
-                  {(selectedOrder.items || []).map((item, idx) => {
-                    const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood Dish'
-                    const unitPrice = item.price ?? item.unit_price ?? item.item?.price ?? 0
-                    const lineTotal = unitPrice * (item.quantity || 1)
-                    return (
-                      <div key={idx} className="p-3 flex items-center justify-between gap-3">
-                        <div>
-                          <span className="font-bold text-neutral-800">{item.quantity}× {name}</span>
-                          <span className="text-[11px] text-neutral-400 block">₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each</span>
+                <Panel title="What you ordered" meta={`${itemCount} ${itemCount === 1 ? 'item' : 'items'}`}>
+                  <div className="divide-y divide-neutral-100 px-5">
+                    {items.map((item, idx) => {
+                      const name = item.name || item.product_name_snapshot || item.item?.name || 'Seafood dish'
+                      const unitPrice = item.price ?? item.unit_price ?? item.item?.price ?? 0
+                      return (
+                        <div key={idx} className="flex items-baseline justify-between gap-5 py-3">
+                          <div className="min-w-0">
+                            <p className="text-sm text-neutral-900">
+                              <span className="tabular-nums text-neutral-500">{item.quantity}×</span> {name}
+                            </p>
+                            <p className="mt-0.5 text-xs tabular-nums text-neutral-500">{peso(unitPrice)} each</p>
+                          </div>
+                          <p className="shrink-0 text-sm font-medium tabular-nums text-neutral-900">
+                            {peso(unitPrice * (item.quantity || 1))}
+                          </p>
                         </div>
-                        <span className="font-extrabold text-neutral-900">
-                          ₱{lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    })}
+                  </div>
 
-                {/* Subtotal, VAT, Delivery Fee, Total */}
-                <div className="bg-neutral-50 rounded-2xl p-4 border border-neutral-200/80 space-y-1.5 text-xs text-neutral-600">
-                  <div className="flex justify-between">
-                    <span>Subtotal:</span>
-                    <span className="font-bold text-neutral-800">
-                      ₱{(selectedOrder.subtotal !== undefined ? Number(selectedOrder.subtotal) : Math.round(Number(selectedOrder.total || 0) / 1.12 - (selectedOrder.deliveryFee || 50))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-orange-600 font-medium">
-                    <span>VAT (12%):</span>
-                    <span className="font-bold">
-                      ₱{(selectedOrder.vat !== undefined ? Number(selectedOrder.vat) : Math.round((Number(selectedOrder.total || 0) - (selectedOrder.deliveryFee || 50)) * 0.12 / 1.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Delivery Fee:</span>
-                    <span className="font-bold text-neutral-800">
-                      ₱{Number(selectedOrder.deliveryFee ?? selectedOrder.delivery_fee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm font-black text-neutral-900 pt-2 border-t border-dashed border-neutral-200">
-                    <span>Total Paid:</span>
-                    <span className="text-orange-600">
-                      ₱{Number(selectedOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
+                  <dl className="border-t border-neutral-100">
+                    <PanelRows>
+                      <InfoRow label="Subtotal" mono>
+                        {peso(subtotal)}
+                      </InfoRow>
+                      <InfoRow label="VAT (12%)" mono>
+                        {peso(vat)}
+                      </InfoRow>
+                      <InfoRow label={pickup ? 'Pick-up' : 'Delivery fee'} mono>
+                        {pickup ? 'No fee' : peso(deliveryFee)}
+                      </InfoRow>
+                      <InfoRow label="Total paid" className="font-semibold" mono>
+                        {peso(selectedOrder.total)}
+                      </InfoRow>
+                    </PanelRows>
+                  </dl>
+                </Panel>
               </div>
-            </div>
 
-            {/* Modal Bottom Actions */}
-            <div className="p-4 sm:p-5 border-t border-neutral-100 bg-neutral-50/80 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-              <button
-                type="button"
-                onClick={() => setSelectedOrder(null)}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-neutral-300 text-neutral-700 font-extrabold text-xs hover:bg-neutral-100 transition-colors cursor-pointer"
-              >
-                Back to Orders List
-              </button>
-
-              {['COMPLETED', 'DELIVERED', 'SERVED'].includes(normalizeStatus(selectedOrder.status)) ? (
+              <div className="flex shrink-0 flex-col-reverse items-stretch gap-2.5 border-t border-neutral-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <button
                   type="button"
-                  onClick={() => handleOrderAgain(selectedOrder)}
-                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs shadow-md shadow-orange-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
+                  onClick={() => setSelectedOrder(null)}
+                  className="cursor-pointer rounded-xl border border-neutral-200 px-5 py-2.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                  </svg>
-                  <span>Order Again</span>
+                  Close
                 </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleOpenInLiveMenu(selectedOrder)}
-                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-extrabold text-xs shadow-md shadow-orange-500/20 transition-all active:scale-95 cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <span>Open in Live Menu Tracking</span>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                  </svg>
-                </button>
-              )}
+
+                {isFinished ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOrderAgain(selectedOrder)}
+                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                  >
+                    Order again
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenInLiveMenu(selectedOrder)}
+                    className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                  >
+                    Track status
+                    <OrderIcon name="arrowRight" className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
-      {/* Image Zoom Preview Modal */}
+      {/* Full-size image */}
       {previewImage && (
         <div
-          className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4 cursor-pointer"
+          className="fixed inset-0 z-60 flex cursor-pointer items-center justify-center bg-neutral-950/80 p-4"
           onClick={() => setPreviewImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full size image"
         >
-          <div className="relative max-w-xl max-h-[85vh] bg-white p-2 rounded-2xl shadow-2xl">
-            <img src={previewImage} alt="Payment Receipt Screenshot" className="max-h-[80vh] w-auto object-contain rounded-xl" />
+          <div className="relative max-h-[85vh] max-w-xl rounded-2xl bg-white p-2 shadow-xl">
+            <img src={previewImage} alt="Full size" className="max-h-[80vh] w-auto rounded-xl object-contain" />
             <button
+              type="button"
               onClick={() => setPreviewImage(null)}
-              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center shadow-lg"
+              className="absolute -right-3 -top-3 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg"
+              aria-label="Close image"
             >
-              ✕
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
             </button>
           </div>
         </div>

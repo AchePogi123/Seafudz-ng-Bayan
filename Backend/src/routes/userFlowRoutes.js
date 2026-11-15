@@ -381,12 +381,12 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
           }
           authoritativeProductId = prodRes.rows[0].id;
           prodName = prodRes.rows[0].name;
-          const dbBasePrice = parseFloat(prodRes.rows[0].price || 0);
-          // Menu display prices already include 12% VAT.
-          // If client submitted newPrice (e.g. 39.00), use that authoritative retail price.
-          // Otherwise calculate VAT-inclusive price from dbBasePrice.
+          const dbRetailPrice = parseFloat(prodRes.rows[0].price || 0);
+          // Catalog prices are already VAT-inclusive retail prices.
+          // If client submitted newPrice, use that authoritative retail price,
+          // otherwise fall back to the catalog price as-is.
           if (!prodPrice || prodPrice <= 0) {
-            prodPrice = Math.round(dbBasePrice * 1.12);
+            prodPrice = dbRetailPrice;
           }
         } catch (err) {
           console.warn('DB note (validate replacement product):', err.message);
@@ -427,38 +427,24 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
           .reduce((sum, i) => sum + (Number(i.price || i.unit_price || 0) * (Number(i.quantity) || 1)), 0);
       }
 
-      projectedSubtotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
-      projectedVat = Math.round(projectedSubtotal * 0.12 * 100) / 100;
+      // Line-item prices are VAT-inclusive, so split the VAT back out of the gross amount.
+      const projectedItemsTotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
+      projectedSubtotal = Math.round((projectedItemsTotal / 1.12) * 100) / 100;
+      projectedVat = Math.round((projectedItemsTotal - projectedSubtotal) * 100) / 100;
 
       // Calculate authoritative projectedTotal based on original total and replacement difference (VAT-inclusive scale)
       const originalOrderTotal = Number(dbOrder?.total || order?.total || 0);
       let originalFlaggedTotal = 0;
-      const knownNetToRetail = {
-        35: 39,
-        40: 45,
-        99: 111,
-        189: 212,
-        199: 223,
-        699: 783,
-        1099: 1231,
-        1199: 1343,
-      };
       for (const item of flaggedItems) {
         const qty = Number(item.quantity) || 1;
-        let unitPrice = Number(item.price ?? item.unit_price ?? 0);
-        if (unitPrice > 0) {
-          const rounded = Math.round(unitPrice);
-          if (knownNetToRetail[rounded]) {
-            unitPrice = knownNetToRetail[rounded];
-          }
-        }
+        const unitPrice = Number(item.price ?? item.unit_price ?? 0);
         originalFlaggedTotal += unitPrice * qty;
       }
       const replacementDiff = Math.round((replacementSubtotal - originalFlaggedTotal) * 100) / 100;
 
       projectedTotal = originalOrderTotal > 0
         ? Math.max(0, Math.round((originalOrderTotal + replacementDiff) * 100) / 100)
-        : Math.round((projectedSubtotal + projectedVat + deliveryFee) * 100) / 100;
+        : Math.round((projectedItemsTotal + deliveryFee) * 100) / 100;
     }
 
     let databaseWriteError = null;

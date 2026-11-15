@@ -5,6 +5,7 @@ import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
+import { countsAsSale } from '../utils/salesRecognition'
 
 export interface LiveOrderRecord {
     id: string
@@ -412,6 +413,15 @@ const AdminDashboard: React.FC = () => {
         return t.includes('delivery') || t.includes('online')
     }
 
+    /**
+     * Orders that actually became sales. Every analytics figure below (revenue, order
+     * counts, top dishes, category split, trend, payment mix) is built from this list,
+     * never from `dateFilteredOrders` -- an order still working its way through the
+     * kitchen has not earned anything yet, and a cancelled one never will.
+     * The Order History table deliberately keeps using the unfiltered list.
+     */
+    const settledOrders = useMemo(() => dateFilteredOrders.filter((o) => countsAsSale(o)), [dateFilteredOrders])
+
     // Filtered Order History Table (combining Time Range + Table Channel & Search Filters)
     // Strictly sorted newest first (top), oldest last
     const filteredOrders = useMemo(() => {
@@ -444,17 +454,17 @@ const AdminDashboard: React.FC = () => {
     // --- SYNCHRONIZED METRICS WITH DATABASE SUMMARY ---
     const posOrdersCount = useMemo(() => {
         if (dateFilteredOrders.length > 0) {
-            return dateFilteredOrders.filter((o) => !isOnlineOrder(o.type)).length
+            return settledOrders.filter((o) => !isOnlineOrder(o.type)).length
         }
         return summaryData.posOrders || 0
-    }, [summaryData.posOrders, dateFilteredOrders])
+    }, [summaryData.posOrders, dateFilteredOrders, settledOrders])
 
     const deliveryOrdersCount = useMemo(() => {
         if (dateFilteredOrders.length > 0) {
-            return dateFilteredOrders.filter((o) => isOnlineOrder(o.type)).length
+            return settledOrders.filter((o) => isOnlineOrder(o.type)).length
         }
         return summaryData.deliveryOrders || 0
-    }, [summaryData.deliveryOrders, dateFilteredOrders])
+    }, [summaryData.deliveryOrders, dateFilteredOrders, settledOrders])
 
     // Total Orders is ALWAYS the sum of On-site (POS) and Online (Delivery) orders created
     const totalOrdersCount = useMemo(() => {
@@ -463,21 +473,21 @@ const AdminDashboard: React.FC = () => {
 
     const posRevenue = useMemo(() => {
         if (dateFilteredOrders.length > 0) {
-            return dateFilteredOrders
+            return settledOrders
                 .filter((o) => !isOnlineOrder(o.type))
                 .reduce((sum, o) => sum + Number(o.total || 0), 0)
         }
         return summaryData.posRevenue || 0
-    }, [summaryData.posRevenue, dateFilteredOrders])
+    }, [summaryData.posRevenue, dateFilteredOrders, settledOrders])
 
     const deliveryRevenue = useMemo(() => {
         if (dateFilteredOrders.length > 0) {
-            return dateFilteredOrders
+            return settledOrders
                 .filter((o) => isOnlineOrder(o.type))
                 .reduce((sum, o) => sum + Number(o.total || 0), 0)
         }
         return summaryData.deliveryRevenue || 0
-    }, [summaryData.deliveryRevenue, dateFilteredOrders])
+    }, [summaryData.deliveryRevenue, dateFilteredOrders, settledOrders])
 
     const totalLiveRevenue = useMemo(() => {
         return posRevenue + deliveryRevenue
@@ -508,7 +518,7 @@ const AdminDashboard: React.FC = () => {
     // Dynamic item sales breakdown
     const itemSalesStats = useMemo(() => {
         const counts: Record<string, number> = {}
-        dateFilteredOrders.forEach((ord) => {
+        settledOrders.forEach((ord) => {
             if (ord.cartItems && Array.isArray(ord.cartItems)) {
                 ord.cartItems.forEach((ci: any) => {
                     const name = ci.name || ci.item?.name || 'Seafood'
@@ -529,7 +539,7 @@ const AdminDashboard: React.FC = () => {
             }
         })
         return counts
-    }, [dateFilteredOrders])
+    }, [settledOrders])
 
     // Top 5 items with ordered volume
     const topItemPerformers = useMemo(() => {
@@ -595,7 +605,7 @@ const AdminDashboard: React.FC = () => {
             return 'Seafoods'
         }
 
-        dateFilteredOrders.forEach((ord) => {
+        settledOrders.forEach((ord) => {
             const ordTotal = Number(ord.total || 0)
             if (ordTotal <= 0) return
 
@@ -685,11 +695,11 @@ const AdminDashboard: React.FC = () => {
             percentage: effectiveTotal > 0 ? Math.round((rev / effectiveTotal) * 100) : 0,
             barRatio: Math.max(Math.round((rev / maxCat) * 100), rev > 0 ? 6 : 0),
         })).sort((a, b) => b.revenue - a.revenue)
-    }, [dateFilteredOrders, totalLiveRevenue, summaryData.categoryBreakdown])
+    }, [settledOrders, totalLiveRevenue, summaryData.categoryBreakdown])
 
     // Dynamic Time-Aware Sales Trend Bar Chart Buckets
     const salesTrendBuckets = useMemo(() => {
-        const filtered = dateFilteredOrders.filter((o) => {
+        const filtered = settledOrders.filter((o) => {
             if (trendViewMode === 'All') return true
             const isDel = isOnlineOrder(o.type)
             return trendViewMode === 'POS' ? !isDel : isDel
@@ -774,7 +784,7 @@ const AdminDashboard: React.FC = () => {
             ...s,
             heightPct: Math.max(Math.round((s.revenue / maxRev) * 100), s.revenue > 0 ? 12 : 4),
         }))
-    }, [dateFilteredOrders, trendViewMode, timeRange])
+    }, [settledOrders, trendViewMode, timeRange])
 
     // Payment Methods Distribution
     const paymentStats = useMemo(() => {
@@ -783,7 +793,7 @@ const AdminDashboard: React.FC = () => {
         let onlineCod = 0
         let other = 0
 
-        dateFilteredOrders.forEach((o) => {
+        settledOrders.forEach((o) => {
             const pm = (o.paymentMethod || '').toLowerCase()
             const isOnline = isOnlineOrder(o.type)
             const amt = Number(o.total || 0)
@@ -834,7 +844,7 @@ const AdminDashboard: React.FC = () => {
         }
 
         return list
-    }, [dateFilteredOrders])
+    }, [settledOrders])
 
     const timeRangeOptions: { value: TimeRangeOption; label: string }[] = [
         { value: 'ALL', label: 'All time' },

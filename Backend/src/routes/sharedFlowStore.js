@@ -26,6 +26,27 @@ export function normalizeFlowStatus(rawStatus) {
 }
 
 /**
+ * Single source of truth for "which orders count as sales".
+ *
+ * A transaction is only recognised as revenue once it is actually finished and the
+ * money is settled. Everything still moving through the flow (PENDING, CONFIRMED,
+ * PREPARING, READY, OUT_FOR_DELIVERY, ...) is work in progress, not income, and
+ * everything that ended without a sale (CANCELLED, KITCHEN_REJECTED, ...) never
+ * becomes income at all.
+ *
+ * Mirrors `REVENUE_RECOGNIZED_STATUSES` in `Frontend/src/utils/salesRecognition.ts`.
+ */
+export const REVENUE_RECOGNIZED_STATUSES = ['COMPLETED', 'DELIVERED', 'SERVED'];
+
+/** True when this order's total belongs in sales figures. */
+export function isRevenueRecognized(status) {
+  return REVENUE_RECOGNIZED_STATUSES.includes(String(status || '').toUpperCase().trim());
+}
+
+/** SQL predicate form of the same rule, for the reporting queries. Expects `orders` aliased as `o`. */
+export const REVENUE_STATUS_SQL = `UPPER(o.status) IN ('COMPLETED', 'DELIVERED', 'SERVED')`;
+
+/**
  * Single Authoritative Financial Ledger Calculation Engine
  */
 export function calculateFinancialLedger(payments = [], refunds = [], orderTotal = 0, paymentMethod = 'GCash') {
@@ -184,10 +205,10 @@ export function formatOrderResponse(row) {
       .reduce((sum, i) => sum + (Number(i.price || 0) * Number(i.quantity || 1)), 0);
     const replacementSubtotal = customerReplacements
       .reduce((sum, r) => sum + (Number(r.newPrice || 0) * Number(r.quantity || 1)), 0);
-    const projSubtotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
-    const projVat = Math.round(projSubtotal * 0.12 * 100) / 100;
+    // Line-item prices are VAT-inclusive, so the gross items total needs no VAT added on top.
+    const projItemsTotal = Math.round((activeSubtotal + replacementSubtotal) * 100) / 100;
     const deliveryFee = parseFloat(row.delivery_fee || row.deliveryFee || 0);
-    effectiveTotal = Math.round((projSubtotal + projVat + deliveryFee) * 100) / 100;
+    effectiveTotal = Math.round((projItemsTotal + deliveryFee) * 100) / 100;
   }
 
   const ledger = calculateFinancialLedger(payments, refunds, effectiveTotal, paymentMethod);

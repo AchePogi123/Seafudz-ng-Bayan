@@ -27,15 +27,14 @@ export const MenuGrid: React.FC<MenuGridProps> = ({
   // Use passed items if available; otherwise fallback to the client menu
   const rawItems = items && items.length > 0 ? items : CLIENT_MENU_ITEMS
 
-  // Apply effective custom prices with 12% VAT tax included (same as customer side)
+  // Menu prices are already VAT-inclusive, so the retail price is shown as-is.
+  // basePrice carries the VAT-exclusive (net) amount used for the VAT breakdown.
   const displayItems = rawItems.map((item) => {
-    const basePrice = item.basePrice ?? getEffectivePrice(item.id, item.price)
+    const retailPrice = getEffectivePrice(item.id, item.price)
     return {
       ...item,
-      basePrice,
-      price: typeof item.basePrice === 'number' && item.price !== basePrice
-        ? item.price
-        : Math.round(basePrice * 1.12),
+      basePrice: Math.round((retailPrice / 1.12) * 100) / 100,
+      price: retailPrice,
     }
   })
 

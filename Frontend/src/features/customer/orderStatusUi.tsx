@@ -261,8 +261,15 @@ export type ProgressStep = { key: string; label: string; icon: OrderIconName }
  * what is still ahead is an outline. Weight alone says which is which, so the colours are doing
  * confirmation rather than the whole job. Horizontal from `sm` up, a vertical list below it, where
  * six labels across a phone would either truncate or fall over.
+ *
+ * `compact` keeps the narrow step columns at every width, for a container that is not the full
+ * page — a dialog, where the wide columns would run the last step past the edge.
  */
-export const OrderProgress: React.FC<{ steps: ProgressStep[]; currentIndex: number }> = ({ steps, currentIndex }) => {
+export const OrderProgress: React.FC<{ steps: ProgressStep[]; currentIndex: number; compact?: boolean }> = ({
+  steps,
+  currentIndex,
+  compact,
+}) => {
   const stateOf = (idx: number) => (idx === currentIndex ? 'current' : idx < currentIndex ? 'done' : 'upcoming')
 
   const marker = (state: string) =>
@@ -296,8 +303,8 @@ export const OrderProgress: React.FC<{ steps: ProgressStep[]; currentIndex: numb
           const isLast = idx === steps.length - 1
           return (
             <li key={step.key} className={cx('flex items-start', !isLast && 'flex-1')}>
-              <div className="flex w-20 shrink-0 flex-col items-center gap-2 lg:w-28">
-                <span className={cx(marker(state), 'h-9 w-9 lg:h-10 lg:w-10')}>
+              <div className={cx('flex shrink-0 flex-col items-center gap-2', compact ? 'w-[4.5rem]' : 'w-20 lg:w-28')}>
+                <span className={cx(marker(state), compact ? 'h-9 w-9' : 'h-9 w-9 lg:h-10 lg:w-10')}>
                   <OrderIcon
                     name={state === 'done' ? 'check' : step.icon}
                     className="h-5 w-5"
@@ -309,7 +316,7 @@ export const OrderProgress: React.FC<{ steps: ProgressStep[]; currentIndex: numb
                 </span>
               </div>
               {!isLast && (
-                <span aria-hidden="true" className="mt-[18px] h-0.5 flex-1 rounded-full bg-neutral-200 lg:mt-5">
+                <span aria-hidden="true" className={cx('mt-[18px] h-0.5 flex-1 rounded-full bg-neutral-200', !compact && 'lg:mt-5')}>
                   <span
                     className={cx(
                       'block h-full rounded-full bg-orange-200 transition-[width] duration-500 ease-out',

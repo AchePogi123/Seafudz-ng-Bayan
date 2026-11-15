@@ -228,7 +228,7 @@ export const POS: React.FC = () => {
       ? {
           ...prev,
           cartItems: availableItems,
-          total: Math.round(availableItems.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0) * 1.12),
+          total: Math.round(availableItems.reduce((sum, ci) => sum + ci.item.price * ci.quantity, 0)),
         }
       : prev)
   }
@@ -982,23 +982,21 @@ export const POS: React.FC = () => {
     return cartItems.reduce((acc, item) => acc + item.quantity, 0)
   }, [cartItems])
 
+  // Prices are VAT-inclusive, so the cart total is the straight line-item sum.
   const totalCartPrice = useMemo(() => {
-    const rawSubtotal = cartItems.reduce((acc, item) => {
-      const basePrice = item.item.basePrice || Math.round((item.item.price / 1.12) * 100) / 100
-      return acc + basePrice * item.quantity
-    }, 0)
-    return Math.round(rawSubtotal * 1.12)
+    return Math.round(cartItems.reduce((acc, item) => acc + item.item.price * item.quantity, 0))
   }, [cartItems])
 
-  // Filters: Menu Display Price = Base Price + 12% VAT (same as customer side, e.g. 199 + 12% VAT = ₱223)
+  // Filters: Menu Display Price = the catalog price as-is (VAT already included,
+  // same as customer side, e.g. ₱199). basePrice is the VAT-exclusive (net) amount.
   const filteredItems = useMemo(() => {
     return menuItems
       .map((item) => {
-        const basePrice = getEffectivePrice(item.id, item.price)
+        const retailPrice = getEffectivePrice(item.id, item.price)
         return {
           ...item,
-          basePrice,
-          price: Math.round(basePrice * 1.12),
+          basePrice: Math.round((retailPrice / 1.12) * 100) / 100,
+          price: retailPrice,
         }
       })
       .filter((item) => {
@@ -1016,8 +1014,9 @@ export const POS: React.FC = () => {
   }, [menuItems, searchQuery, selectedCategory, getEffectivePrice])
 
   const handlePriceUpdate = (item: MenuItem, newPrice: number) => {
+    // newPrice is the VAT-inclusive retail price the cashier typed in.
     const basePrice = Math.round((newPrice / 1.12) * 100) / 100
-    updatePrice(item.id, basePrice)
+    updatePrice(item.id, newPrice)
     setCartItems((prev) =>
       prev.map((ci) =>
         ci.item.id === item.id ? { ...ci, item: { ...ci.item, basePrice, price: newPrice } } : ci
@@ -1041,13 +1040,11 @@ export const POS: React.FC = () => {
     const inCart = cartItems.find((ci) => ci.item.id === item.id)?.quantity ?? 0
     if (limitToStock(item.id, item.name, inCart + 1) <= inCart) return
 
-    const basePrice = item.basePrice || getEffectivePrice(item.id, item.price)
+    const retailPrice = getEffectivePrice(item.id, item.price)
     const effectiveItem: MenuItem = {
       ...item,
-      basePrice,
-      price: typeof item.basePrice === 'number' && item.price !== basePrice
-        ? item.price
-        : Math.round(basePrice * 1.12),
+      basePrice: Math.round((retailPrice / 1.12) * 100) / 100,
+      price: retailPrice,
     }
     setCartItems((prevItems) => {
       const existing = prevItems.find((ci) => ci.item.id === item.id)

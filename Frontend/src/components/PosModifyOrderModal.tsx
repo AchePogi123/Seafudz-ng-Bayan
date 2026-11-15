@@ -220,18 +220,20 @@ export const PosModifyOrderModal: React.FC<PosModifyOrderModalProps> = ({
     return KITCHEN_PROCESSING_STATUSES.includes((liveStatus || '').toUpperCase())
   }, [liveStatus])
 
-  // Dynamic Totals calculation with 2-decimal precision (prevents rounding discrepancy)
-  const subtotal = useMemo(() => {
+  // Dynamic Totals calculation with 2-decimal precision (prevents rounding discrepancy).
+  // Item prices are VAT-inclusive, so the total is the straight line-item sum and the
+  // subtotal/VAT split is derived back out of it.
+  const total = useMemo(() => {
     return Math.round(items.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100) / 100
   }, [items])
 
-  const vat = useMemo(() => {
-    return Math.round(subtotal * 0.12 * 100) / 100
-  }, [subtotal])
+  const subtotal = useMemo(() => {
+    return Math.round((total / 1.12) * 100) / 100
+  }, [total])
 
-  const total = useMemo(() => {
-    return Math.round((subtotal + vat) * 100) / 100
-  }, [subtotal, vat])
+  const vat = useMemo(() => {
+    return Math.round((total - subtotal) * 100) / 100
+  }, [total, subtotal])
 
   // Original total / amount customer already paid
   const originalTotal = useMemo(() => {

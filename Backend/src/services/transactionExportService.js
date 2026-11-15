@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import { query } from '../config/db.js';
 import { MANILA_TIMEZONE, formatManilaDateTime, getManilaTimestampString } from './backupService.js';
+import { isRevenueRecognized } from '../routes/sharedFlowStore.js';
 
 /**
  * Formats a Date object into Manila YYYY-MM-DD HH:mm:ss string
@@ -414,10 +415,14 @@ export async function generateTransactionsExcel({
       replacement_details: replacementDetails,
     });
 
-    runningSubtotal += ord.subtotal;
-    runningTax += ord.tax;
-    runningDelivery += ord.delivery_fee;
-    runningGross += ord.total;
+    // Every order stays listed above as an audit trail, but only a finished
+    // transaction is money earned: in-progress and cancelled orders are not revenue.
+    if (isRevenueRecognized(ord.order_status)) {
+      runningSubtotal += ord.subtotal;
+      runningTax += ord.tax;
+      runningDelivery += ord.delivery_fee;
+      runningGross += ord.total;
+    }
     runningRefunds += refundTotal;
 
     row.height = 20;
@@ -589,8 +594,12 @@ export async function generateTransactionsExcel({
   sumHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
   summaryWs.getRow(2).height = 20;
 
-  const completedOrders = orders.filter((o) => o.order_status === 'COMPLETED');
-  const cancelledOrders = orders.filter((o) => o.order_status === 'CANCELLED');
+  const completedOrders = orders.filter((o) => isRevenueRecognized(o.order_status));
+  const cancelledOrders = orders.filter((o) => ['CANCELLED', 'KITCHEN_REJECTED'].includes(String(o.order_status || '').toUpperCase()));
+  const inProgressOrders = orders.filter(
+    (o) => !isRevenueRecognized(o.order_status)
+      && !['CANCELLED', 'KITCHEN_REJECTED'].includes(String(o.order_status || '').toUpperCase())
+  );
   const posOrders = orders.filter((o) => (o.order_type || '').toUpperCase().includes('POS') || (o.order_type || '').toUpperCase().includes('ON_SITE'));
   const deliveryOrders = orders.filter((o) => (o.order_type || '').toUpperCase().includes('ONLINE') || (o.order_type || '').toUpperCase().includes('DELIVERY'));
 
@@ -599,14 +608,15 @@ export async function generateTransactionsExcel({
   const summaryDataRows = [
     { m: 'Report Scope', v: dateRangeLabel, n: 'Filtered date period' },
     { m: 'Total Historical Orders Queried', v: orders.length, n: 'All matching records in scope' },
-    { m: 'Completed Orders', v: completedOrders.length, n: 'Orders successfully settled and delivered/served' },
-    { m: 'Cancelled Orders', v: cancelledOrders.length, n: 'Orders cancelled with recorded resolution reasons' },
+    { m: 'Completed Orders', v: completedOrders.length, n: 'Orders successfully settled and delivered/served - the only ones counted as sales below' },
+    { m: 'Cancelled Orders', v: cancelledOrders.length, n: 'Cancelled or kitchen-rejected - excluded from all revenue figures' },
+    { m: 'Orders Still In Progress', v: inProgressOrders.length, n: 'Not yet finished - excluded from revenue until the transaction completes' },
     { m: 'POS In-Store Orders', v: posOrders.length, n: 'Walk-in dine-in and takeout counter orders' },
     { m: 'Online Delivery Orders', v: deliveryOrders.length, n: 'Online ordering platform delivery transactions' },
-    { m: 'Gross Orders Revenue (₱)', v: runningGross, n: 'Sum of all order totals (including VAT and delivery fee)', num: true },
-    { m: 'Subtotal Revenue (₱)', v: runningSubtotal, n: 'Net food & beverage dishes price', num: true },
-    { m: '12% VAT Tax Collected (₱)', v: runningTax, n: 'Value Added Tax collected on sales', num: true },
-    { m: 'Delivery Fees Collected (₱)', v: runningDelivery, n: 'Delivery dispatch charges', num: true },
+    { m: 'Gross Orders Revenue (₱)', v: runningGross, n: 'Completed orders only - sum of their totals (including VAT and delivery fee)', num: true },
+    { m: 'Subtotal Revenue (₱)', v: runningSubtotal, n: 'Completed orders only - net food & beverage dishes price', num: true },
+    { m: '12% VAT Tax Collected (₱)', v: runningTax, n: 'Completed orders only - Value Added Tax collected on sales', num: true },
+    { m: 'Delivery Fees Collected (₱)', v: runningDelivery, n: 'Completed orders only - delivery dispatch charges', num: true },
     { m: 'Total Refunded / Voided (₱)', v: runningRefunds, n: 'Customer settlements and voided amounts', num: true },
     { m: 'Net Recognized Revenue (₱)', v: netRevenue, n: 'Gross Revenue minus Total Refunds', num: true, highlight: true },
   ];
@@ -733,15 +743,22 @@ export async function generateTransactionsPDF({
   let runningRefunds = 0;
   let totalUnits = 0;
 
+  // Only a finished transaction is money earned. In-progress orders have not been
+  // settled yet and cancelled ones never will be, so neither belongs in the figures.
+  const settledOrderIds = new Set(
+    orders.filter((o) => isRevenueRecognized(o.order_status)).map((o) => String(o.order_id))
+  );
+
   orders.forEach((ord) => {
+    const rfs = refundsByOrder.get(ord.order_id) || [];
+    runningRefunds += rfs.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+    if (!settledOrderIds.has(String(ord.order_id))) return;
+
     runningSubtotal += Number(ord.subtotal) || 0;
     runningTax += Number(ord.tax) || 0;
     runningDelivery += Number(ord.delivery_fee) || 0;
     runningGross += Number(ord.total) || 0;
-
-    const rfs = refundsByOrder.get(ord.order_id) || [];
-    const rfTotal = rfs.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-    runningRefunds += rfTotal;
 
     const itms = itemsByOrder.get(ord.order_id) || [];
     totalUnits += itms.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
@@ -929,6 +946,8 @@ export async function generateTransactionsPDF({
   // --- Section 2: Itemized Product Sales Audit ---
   const productAggMap = new Map();
   itemsRes.rows.forEach((it) => {
+    // Dish volume mirrors the revenue figures: completed transactions only.
+    if (!settledOrderIds.has(String(it.order_id))) return;
     const name = it.product_name_snapshot || 'Product Item';
     if (!productAggMap.has(name)) {
       productAggMap.set(name, {

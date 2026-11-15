@@ -304,14 +304,17 @@ const CardQuantityControl: React.FC<{
     }
 
     return (
-        <div className="flex items-center bg-neutral-100 rounded-xl p-1 border border-neutral-200/60 shrink-0">
+        <div className="flex shrink-0 items-center gap-0.5 rounded-full border border-neutral-200 bg-white p-0.5">
             <button
                 type="button"
                 onClick={onDecrement}
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
+                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
                 title="Decrease quantity"
+                aria-label="Decrease quantity"
             >
-                -
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M5 12h14" />
+                </svg>
             </button>
             <input
                 type="text"
@@ -322,15 +325,18 @@ const CardQuantityControl: React.FC<{
                 onBlur={handleInputBlur}
                 onKeyDown={handleKeyDown}
                 aria-label="Quantity"
-                className="w-8 sm:w-10 text-center text-xs sm:text-sm font-black text-neutral-900 bg-transparent focus:bg-white focus:outline-none focus:ring-1 focus:ring-orange-500 rounded py-0.5 border-none select-all"
+                className="w-7 select-all border-none bg-transparent text-center text-sm font-semibold tabular-nums text-neutral-900 outline-none"
             />
             <button
                 type="button"
                 onClick={onIncrement}
-                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-neutral-700 hover:bg-white hover:text-neutral-900 active:scale-90 transition-all cursor-pointer font-bold text-sm sm:text-base"
+                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
                 title="Increase quantity"
+                aria-label="Increase quantity"
             >
-                +
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                </svg>
             </button>
         </div>
     )
@@ -428,72 +434,71 @@ const CategorySwipeRow: React.FC<CategorySwipeRowProps> = ({
     }
 
     return (
-        <section id={id} className="scroll-mt-24 select-none">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-2.5 px-1">
-                <h3 className="font-extrabold text-neutral-900 text-lg sm:text-xl tracking-tight">
+        <section id={id} className="scroll-mt-28 select-none">
+            {/*
+              The row heading, the dish count and the row's own controls sit on one hairline, so the
+              arrows never cover a photograph and stay in reading order for the keyboard.
+            */}
+            <div className="mb-3 flex items-center gap-3 px-1">
+                <h3 className="shrink-0 text-base font-bold tracking-tight text-neutral-900 sm:text-lg">
                     {category}
                 </h3>
-            </div>
-
-            {/* Carousel Container with Side-by-Side Floating Arrows on Desktop */}
-            <div className="relative group/carousel">
-                {/* Left Side Arrow (Desktop Only, nestled near the picture) */}
-                {canScrollLeft && (
+                <span className="h-px flex-1 bg-neutral-200" />
+                <span className="shrink-0 text-xs tabular-nums text-neutral-500">
+                    {items.length} {items.length === 1 ? 'dish' : 'dishes'}
+                </span>
+                <div className="hidden shrink-0 items-center gap-1 md:flex">
                     <button
                         type="button"
                         onClick={() => handleScroll('left')}
-                        className="hidden md:flex absolute left-2 lg:left-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 lg:w-12 lg:h-12 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        disabled={!canScrollLeft}
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-default disabled:opacity-35 disabled:hover:border-neutral-200 disabled:hover:text-neutral-600"
+                        aria-label={`Scroll ${category} left`}
                         title="Scroll left"
-                        aria-label="Scroll left"
                     >
-                        <svg className="w-4.5 h-4.5 text-neutral-800" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M15 5l-7 7 7 7" />
                         </svg>
                     </button>
-                )}
-
-                {/* Right Side Arrow (Desktop Only, nestled near the picture) */}
-                {canScrollRight && (
                     <button
                         type="button"
                         onClick={() => handleScroll('right')}
-                        className="hidden md:flex absolute right-2 lg:right-3 top-1/2 -translate-y-1/2 z-20 w-11 h-11 lg:w-12 lg:h-12 rounded-full bg-white/95 hover:bg-white text-neutral-800 border border-neutral-200/90 shadow-md shadow-neutral-900/15 items-center justify-center cursor-pointer transition-all duration-150 hover:scale-110 active:scale-95 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                        disabled={!canScrollRight}
+                        className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full border border-neutral-200 bg-white text-neutral-600 transition-colors hover:border-neutral-300 hover:text-neutral-900 disabled:cursor-default disabled:opacity-35 disabled:hover:border-neutral-200 disabled:hover:text-neutral-600"
+                        aria-label={`Scroll ${category} right`}
                         title="Scroll right"
-                        aria-label="Scroll right"
                     >
-                        <svg className="w-4.5 h-4.5 text-neutral-800" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M9 5l7 7-7 7" />
                         </svg>
                     </button>
-                )}
-
-                {/* Swipeable & Mouse-Draggable Container */}
-                <div
-                    ref={scrollRef}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUpOrLeave}
-                    onMouseLeave={handleMouseUpOrLeave}
-                    className={`flex gap-4 sm:gap-5 overflow-x-auto pb-4 pt-1 px-1 scroll-smooth snap-x snap-mandatory [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${
-                        isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
-                    }`}
-                    style={{ WebkitOverflowScrolling: 'touch' }}
-                >
-                    {items.map((item) => (
-                        <div
-                            key={item.id}
-                            onClickCapture={(e) => {
-                                if (hasDragged) {
-                                    e.stopPropagation()
-                                    e.preventDefault()
-                                }
-                            }}
-                        >
-                            {renderProductCard(item)}
-                        </div>
-                    ))}
                 </div>
+            </div>
+
+            <div
+                ref={scrollRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUpOrLeave}
+                onMouseLeave={handleMouseUpOrLeave}
+                className={`flex snap-x snap-mandatory gap-4 overflow-x-auto scroll-smooth px-1 pb-2 pt-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+                    isDragging ? 'cursor-grabbing select-none' : 'cursor-grab'
+                }`}
+                style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+                {items.map((item) => (
+                    <div
+                        key={item.id}
+                        onClickCapture={(e) => {
+                            if (hasDragged) {
+                                e.stopPropagation()
+                                e.preventDefault()
+                            }
+                        }}
+                    >
+                        {renderProductCard(item)}
+                    </div>
+                ))}
             </div>
         </section>
     )
@@ -1659,14 +1664,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }, [activeOrder?.id, customerOrders.length])
 
-    // Calculations: Base Subtotal + 12% VAT + Detailed Delivery/Shipping Fee
+    // Calculations: menu prices are VAT-inclusive, so the subtotal is the
+    // VAT-exclusive (net) portion and the VAT is the part already baked into the price.
     const subtotal = useMemo(() => {
         return cartItems.reduce((acc, ci) => {
-            const basePrice = (ci.item as any).basePrice || getEffectivePrice(ci.item.id, ci.item.price)
+            const basePrice = (ci.item as any).basePrice || Math.round((ci.item.price / 1.12) * 100) / 100
             return acc + basePrice * ci.quantity
         }, 0)
-    }, [cartItems, getEffectivePrice])
-    // 12% VAT added on top of base subtotal
+    }, [cartItems])
+    // 12% VAT already included in the displayed price
     const vat = useMemo(() => subtotal * 0.12, [subtotal])
     // Sum of items in cart (VAT-inclusive display price sum, without delivery fee)
     const cartOrderSum = useMemo(() => {
@@ -1825,14 +1831,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }
 
-    // Filters: Menu Display Price = Base Price + 12% VAT (e.g. 199 + 12% VAT = ₱223)
+    // Menu Display Price = the catalog price as-is (VAT already included, e.g. ₱199).
+    // basePrice is the VAT-exclusive (net) amount behind it.
     const allEffectiveItems = useMemo(() => {
         return menuItems.map((item) => {
-            const basePrice = getEffectivePrice(item.id, item.price)
+            const retailPrice = getEffectivePrice(item.id, item.price)
             return {
                 ...item,
-                basePrice,
-                price: Math.round(basePrice * 1.12),
+                basePrice: Math.round((retailPrice / 1.12) * 100) / 100,
+                price: retailPrice,
             }
         })
     }, [menuItems, getEffectivePrice])
@@ -2357,69 +2364,91 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }
 
+    /**
+     * Minimal stock pill shown beside the price, fed by the same estimated-servings
+     * figure the Admin inventory screen reports. Hidden when the dish has no recipe
+     * set up (nothing to estimate) or is already flagged Sold Out on the image.
+     */
+    const renderAvailabilityPill = (itemId: string, available: boolean) => {
+        if (!available) return null
+        const left = getRemainingServings(itemId)
+        if (left === null || left <= 0) return null
+        const isLow = left <= LOW_SERVINGS_THRESHOLD
+        const title = `About ${left} serving${left === 1 ? '' : 's'} can still be made`
+
+        if (!isLow) {
+            return (
+                <span title={title} className="block text-[11px] leading-none text-neutral-500">
+                    {left > 99 ? '99+' : left} servings left
+                </span>
+            )
+        }
+
+        return (
+            <span
+                title={title}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-2 py-[3px] text-[11px] font-medium leading-none text-amber-800"
+            >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                Only {left} left
+            </span>
+        )
+    }
+
     const renderProductCard = (item: MenuItem & { basePrice?: number }) => {
         const available = isAvailable(item.id)
         const cartItem = cartItems.find((ci) => ci.item.id === item.id)
+        const stockPill = renderAvailabilityPill(item.id, available)
+
         return (
-            <div
+            <article
                 key={item.id}
-                className={`w-[290px] sm:w-[360px] md:w-[400px] lg:w-[420px] shrink-0 snap-start bg-white rounded-3xl border overflow-hidden flex flex-col justify-between transition-all duration-200 group ${
-                    !available
-                        ? 'border-rose-200 bg-neutral-50/70 opacity-80'
-                        : 'border-neutral-200/80 shadow-xs hover:shadow-xl'
+                className={`group flex w-[254px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border bg-white transition-colors duration-200 sm:w-[282px] lg:w-[300px] ${
+                    available ? 'border-neutral-200 hover:border-neutral-300' : 'border-neutral-200'
                 }`}
             >
-                <div className="relative aspect-[16/10] w-full overflow-hidden bg-neutral-50">
+                {/* The dish is the only loud thing on this surface, so the photograph gets the room. */}
+                <div className="relative aspect-[4/3] w-full overflow-hidden bg-neutral-100">
                     <ProductImage
                         src={item.image}
                         fallbackSrc={item.bundledImage}
                         alt={item.name}
-                        className={`w-full h-full object-cover transition-transform duration-300 ${
-                            !available ? 'grayscale-75 opacity-60 contrast-125' : 'group-hover:scale-105'
+                        className={`h-full w-full object-cover transition-transform duration-500 ease-out ${
+                            available ? 'group-hover:scale-[1.04]' : 'opacity-55 grayscale'
                         }`}
                     />
-                    {available && (() => {
-                        const left = getRemainingServings(item.id)
-                        return left !== null && left > 0 && left <= LOW_SERVINGS_THRESHOLD ? (
-                            <span className="absolute top-3 right-3 bg-amber-100 text-amber-900 font-bold text-xs px-3 py-1 rounded-lg border border-amber-300 shadow-xs">
-                                Only {left} left
-                            </span>
-                        ) : null
-                    })()}
                     {!available && (
-                        <div className="absolute inset-0 bg-neutral-900/40 flex items-center justify-center p-3 pointer-events-none">
-                            <span className="bg-rose-600 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl shadow-lg border border-rose-400/30 flex items-center gap-1.5 animate-pulse">
-                                Sold Out
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-neutral-900/30">
+                            <span className="rounded-full bg-neutral-900/85 px-3 py-1 text-xs font-semibold text-white">
+                                Sold out
                             </span>
                         </div>
                     )}
                 </div>
 
-                <div className="p-3.5 sm:p-5 flex-grow flex flex-col justify-between gap-2.5 sm:gap-3">
-                    <div>
-                        <h3
-                            className={`font-black text-base sm:text-xl leading-snug transition-colors line-clamp-1 ${
-                                !available ? 'text-neutral-500 line-through' : 'text-neutral-900'
-                            }`}
-                            title={item.name}
-                        >
-                            {item.name}
-                        </h3>
-                        <p className="text-xs sm:text-sm text-neutral-500 mt-1 sm:mt-1.5 line-clamp-2 min-h-[32px] sm:min-h-[40px] leading-relaxed">
-                            {item.description}
-                        </p>
-                    </div>
+                <div className="flex flex-1 flex-col p-4">
+                    <h3
+                        className={`truncate text-[15px] font-semibold leading-snug ${
+                            available ? 'text-neutral-900' : 'text-neutral-400'
+                        }`}
+                        title={item.name}
+                    >
+                        {item.name}
+                    </h3>
+                    <p className="mt-1 line-clamp-2 min-h-[2.5rem] text-[13px] leading-relaxed text-neutral-500">
+                        {item.description}
+                    </p>
 
-                    <div className="flex items-center justify-between mt-auto pt-3 border-t border-neutral-100 gap-2">
-                        <div>
-                            <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-neutral-400 block leading-tight">Price</span>
-                            <span
-                                className={`font-black text-base sm:text-2xl leading-tight ${
-                                    !available ? 'text-neutral-400' : 'text-orange-600'
+                    <div className="mt-4 flex items-end justify-between gap-3 border-t border-neutral-100 pt-3">
+                        <div className="min-w-0">
+                            {stockPill}
+                            <p
+                                className={`text-base font-semibold tabular-nums ${stockPill ? 'mt-1.5' : ''} ${
+                                    available ? 'text-neutral-900' : 'text-neutral-400'
                                 }`}
                             >
                                 ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+                            </p>
                         </div>
 
                         {available ? (
@@ -2450,9 +2479,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             setActiveTab('tracking')
                                         }
                                     }}
-                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs sm:text-sm font-black flex items-center gap-1.5 transition-all duration-200 cursor-pointer shadow-md active:scale-95"
+                                    className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
                                 >
-                                    <span>✓</span> Select as Replacement
+                                    <OrderIcon name="check" className="h-3.5 w-3.5" strokeWidth={2.4} />
+                                    Use as replacement
                                 </button>
                             ) : cartItem ? (
                                 <CardQuantityControl
@@ -2465,31 +2495,23 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <button
                                     type="button"
                                     onClick={(e) => handleAddToCart(item, e)}
-                                    className="p-2 sm:p-2.5 rounded-xl bg-orange-50 hover:bg-orange-500 text-orange-600 hover:text-white border border-orange-200/80 active:scale-90 transition-all cursor-pointer flex items-center justify-center shrink-0 select-none shadow-2xs hover:shadow-md"
+                                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-orange-200 bg-orange-50 text-orange-600 transition-colors hover:border-orange-500 hover:bg-orange-500 hover:text-white"
                                     title={`Add ${item.name} to cart`}
                                     aria-label={`Add ${item.name} to cart`}
                                 >
-                                    <svg
-                                        className="w-5 h-5 sm:w-6 sm:h-6 stroke-current"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        strokeWidth="2.2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                    >
-                                        <line x1="12" y1="5" x2="12" y2="19" />
-                                        <line x1="5" y1="12" x2="19" y2="12" />
+                                    <svg className="h-4.5 w-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                        <path d="M12 5v14M5 12h14" />
                                     </svg>
                                 </button>
                             )
                         ) : (
-                            <span className="bg-neutral-100 text-neutral-400 text-xs sm:text-sm font-bold px-3 py-1.5 rounded-xl cursor-not-allowed select-none border border-neutral-200">
-                                Sold Out
+                            <span className="shrink-0 rounded-xl bg-neutral-100 px-3 py-1.5 text-xs font-medium text-neutral-400">
+                                Sold out
                             </span>
                         )}
                     </div>
                 </div>
-            </div>
+            </article>
         )
     }
 
@@ -2507,198 +2529,171 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                 {/* VIEW 1: MENU / BROWSE */}
                 {activeTab === 'menu' && (
-                    <div className="w-full flex flex-col gap-6 items-start">
-                        {/* Main Menu Area (Full Width, Right Aside Removed) */}
-                        <main className="w-full flex flex-col gap-6">
-                            {/* Sticky Replacement Banner */}
-                            {replacementTargetItem && (
-                                <div className="sticky top-4 z-40 bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-amber-300/40 animate-in slide-in-from-top-4">
-                                    <div className="space-y-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="bg-white/20 text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full backdrop-blur-xs">
-                                                Replacement Mode
-                                            </span>
-                                            <span className="text-xs text-amber-100 font-medium">Click "Select as Replacement" on any available dish</span>
-                                        </div>
-                                        <h4 className="text-base sm:text-lg font-black tracking-tight">
-                                            Replacing: <span className="underline decoration-amber-300 font-extrabold">{replacementTargetItem.name || replacementTargetItem.product_name_snapshot}</span>
-                                            <span className="text-amber-200 font-bold text-sm ml-2">
-                                                (₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                            </span>
-                                        </h4>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            setReplacementTargetItem(null)
-                                            setActiveTab('tracking')
-                                        }}
-                                        className="bg-white/20 hover:bg-white/30 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all cursor-pointer whitespace-nowrap self-stretch sm:self-auto text-center active:scale-95"
-                                    >
-                                        ✕ Cancel & Return to Order
-                                    </button>
+                    <div className="menu-view flex w-full flex-col gap-5">
+                        {/*
+                          Replacement mode is the one thing on this screen that is waiting on the
+                          customer, so it leads and it follows them down the menu.
+                        */}
+                        {replacementTargetItem && (
+                            <div className="sticky top-2 z-40 rounded-2xl shadow-lg shadow-neutral-900/5">
+                                <Notice
+                                    tone="warning"
+                                    title={`Choose a replacement for ${replacementTargetItem.name || replacementTargetItem.product_name_snapshot}`}
+                                    action={
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setReplacementTargetItem(null)
+                                                setActiveTab('tracking')
+                                            }}
+                                            className="w-full cursor-pointer rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-50 sm:w-auto"
+                                        >
+                                            Cancel and return to order
+                                        </button>
+                                    }
+                                >
+                                    Pick any available dish below and we will swap it in. You paid
+                                    {' '}
+                                    <span className="font-semibold tabular-nums">
+                                        ₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    {' '}for it — we settle any difference with you.
+                                </Notice>
+                            </div>
+                        )}
+
+                        {/* Welcome Banner Card with Animated Boat */}
+                        <div className="relative flex items-center justify-between overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 p-5 text-white shadow-lg shadow-orange-500/20 sm:p-7 lg:p-8">
+                            <div className="relative z-10 max-w-[62%] space-y-2 sm:max-w-[70%] lg:max-w-[72%] lg:space-y-3">
+                                <h2 className="text-xl font-black leading-tight tracking-tight text-white drop-shadow-xs sm:text-2xl md:text-3xl lg:text-4xl">
+                                    Welcome, {userProfileName}!
+                                </h2>
+                                <p className="max-w-xl text-xs font-medium italic leading-relaxed text-amber-50/95 sm:text-sm lg:text-base">
+                                    “Fresh catch crafted with authentic coastal passion —<br />
+                                    bringing the true taste of the ocean to Seafudz ng Bayan.”
+                                </p>
+                            </div>
+
+                            {/* Animated Boat Scene on the right */}
+                            <div className="relative z-10 -mr-1 flex h-24 w-32 shrink-0 items-center justify-center sm:mr-2 sm:h-32 sm:w-44 md:h-38 md:w-52 lg:h-48 lg:w-64">
+                                <HeroBoat className="h-full w-full" />
+                            </div>
+
+                            {/* Decorative Background Elements */}
+                            <div className="pointer-events-none absolute -bottom-8 -right-8 h-44 w-44 rounded-full bg-white/10 blur-sm lg:h-60 lg:w-60" />
+                            <div className="pointer-events-none absolute -top-10 right-1/4 h-36 w-36 rounded-full bg-white/10 blur-xl lg:h-48 lg:w-48" />
+
+                            {/* Stylized Hand-Drawn Animated Ocean Waves */}
+                            <DrawnWaves className="absolute inset-x-0 bottom-0 z-0 h-14 text-amber-50 sm:h-18 md:h-20 lg:h-24" />
+                        </div>
+
+                        {/* Filter and search stay with the customer as the menu scrolls past. */}
+                        <div className="sticky top-2 z-30 rounded-2xl border border-neutral-200 bg-white/95 px-2.5 py-2.5 shadow-sm shadow-neutral-900/5 backdrop-blur-sm">
+                            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
+                                <div className="flex min-w-0 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                    {categories.map((cat) => {
+                                        const { label } = getCategoryPillData(cat)
+                                        const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
+                                        return (
+                                            <button
+                                                key={cat}
+                                                type="button"
+                                                onClick={() => handleCategoryClick(cat)}
+                                                aria-current={isSelected ? 'true' : undefined}
+                                                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                                                    isSelected
+                                                        ? 'bg-neutral-900 text-white'
+                                                        : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                                                }`}
+                                            >
+                                                {label}
+                                            </button>
+                                        )
+                                    })}
                                 </div>
-                            )}
-                            {/* Welcome Banner Card with Animated Boat (Now applied to both Desktop and Mobile) */}
-                            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 text-white p-5 sm:p-7 lg:p-8 shadow-lg shadow-orange-500/20 flex items-center justify-between">
-                                <div className="relative z-10 max-w-[62%] sm:max-w-[70%] lg:max-w-[72%] space-y-2 lg:space-y-3">
-                                    <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black tracking-tight leading-tight text-white drop-shadow-xs">
-                                        Welcome, {userProfileName}!
-                                    </h2>
-                                    <p className="text-xs sm:text-sm lg:text-base text-amber-50/95 font-medium leading-relaxed max-w-xl italic">
-                                        “Fresh catch crafted with authentic coastal passion —<br />
-                                        bringing the true taste of the ocean to Seafudz ng Bayan.”
-                                    </p>
-                                    {activeOrder && !['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && (
-                                        <div className="pt-1 sm:pt-2 flex items-center gap-3">
+
+                                <div className="shrink-0 sm:ml-auto sm:w-56 lg:w-64">
+                                    <div className="flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 transition-colors focus-within:border-orange-400 focus-within:bg-white">
+                                        <svg className="h-4 w-4 shrink-0 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <circle cx="11" cy="11" r="7" />
+                                            <path d="M20 20l-4.3-4.3" />
+                                        </svg>
+                                        <input
+                                            type="text"
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Search dishes"
+                                            aria-label="Search dishes"
+                                            className="w-full border-none bg-transparent text-sm text-neutral-900 placeholder-neutral-500 outline-none"
+                                        />
+                                        {searchQuery && (
                                             <button
                                                 type="button"
-                                                onClick={() => setActiveTab('tracking')}
-                                                className="bg-black/20 hover:bg-black/30 text-white font-bold text-xs sm:text-sm px-4 py-2 rounded-full backdrop-blur-xs transition-colors cursor-pointer"
+                                                onClick={() => setSearchQuery('')}
+                                                className="shrink-0 cursor-pointer text-neutral-400 transition-colors hover:text-neutral-700"
+                                                title="Clear search"
+                                                aria-label="Clear search"
                                             >
-                                                Track Order ({activeOrder.id})
+                                                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                                    <path d="M6 6l12 12M18 6L6 18" />
+                                                </svg>
                                             </button>
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Animated Boat Scene on the right */}
-                                <div className="relative z-10 shrink-0 w-32 h-24 sm:w-44 sm:h-32 md:w-52 md:h-38 lg:w-64 lg:h-48 flex items-center justify-center -mr-1 sm:mr-2">
-                                    <HeroBoat className="w-full h-full" />
-                                </div>
-
-
-                                {/* Decorative Background Elements */}
-                                <div className="absolute -right-8 -bottom-8 w-44 h-44 lg:w-60 lg:h-60 rounded-full bg-white/10 pointer-events-none blur-sm" />
-                                <div className="absolute -top-10 right-1/4 w-36 h-36 lg:w-48 lg:h-48 rounded-full bg-white/10 pointer-events-none blur-xl" />
-
-                                {/* Stylized Hand-Drawn Animated Ocean Waves (Vector Drawing Style) */}
-                                <DrawnWaves className="absolute inset-x-0 bottom-0 h-14 sm:h-18 md:h-20 lg:h-24 z-0 text-amber-50" />
-                            </div>
-
-                            {/* Categories Section based directly on reference mockup */}
-                            <div className="flex flex-col gap-3">
-                                {/* Top Row: Categories Heading & (on narrower viewports) Search Bar going up */}
-                                <div className="flex items-center justify-between gap-3 px-1">
-                                    <h2 className="font-extrabold text-neutral-900 text-lg sm:text-xl shrink-0">Categories</h2>
-                                    {/* Search input when screen is narrower (going up beside Categories, as shown in 2nd pic) */}
-                                    <div className="xl:hidden relative flex-1 max-w-[210px] sm:max-w-xs">
-                                        <div className="flex items-center px-3 py-1.5 sm:py-2 bg-white rounded-full border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
-                                            <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                            </svg>
-                                            <input
-                                                type="text"
-                                                value={searchQuery}
-                                                onChange={(e) => setSearchQuery(e.target.value)}
-                                                placeholder="Search dishes..."
-                                                className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
-                                            />
-                                            {searchQuery && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSearchQuery('')}
-                                                    className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1 shrink-0"
-                                                    title="Clear search"
-                                                >
-                                                    ✕
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Bottom Row: Category Pills & (on wide screens like 1st pic) Search Bar aligned with pills */}
-                                <div className="flex items-center justify-between gap-4">
-                                    {/* Horizontal Scrollable Category Pills */}
-                                    <div className="flex items-center gap-2.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] min-w-0">
-                                        {categories.map((cat) => {
-                                            const { label } = getCategoryPillData(cat)
-                                            const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
-                                            return (
-                                                <button
-                                                    key={cat}
-                                                    type="button"
-                                                    onClick={() => handleCategoryClick(cat)}
-                                                    className={`px-4 py-2 sm:px-5 sm:py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center whitespace-nowrap transition-all duration-150 cursor-pointer border ${
-                                                        isSelected
-                                                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm shadow-amber-500/30'
-                                                            : 'bg-white text-neutral-800 border-neutral-200/90 hover:border-amber-400 hover:bg-amber-50/20'
-                                                    }`}
-                                                >
-                                                    <span>{label}</span>
-                                                </button>
-                                            )
-                                        })}
-                                    </div>
-
-                                    {/* Search input aligned with category pills (wide screen view, as shown in 1st pic) */}
-                                    <div className="hidden xl:block shrink-0 w-64 2xl:w-72">
-                                        <div className="flex items-center px-3.5 py-2 sm:py-2.5 bg-white rounded-full border border-neutral-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition-all shadow-2xs">
-                                            <svg className="w-4 h-4 text-neutral-400 mr-2 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                            </svg>
-                                            <input
-                                                type="text"
-                                                value={searchQuery}
-                                                onChange={(e) => setSearchQuery(e.target.value)}
-                                                placeholder="Search dishes..."
-                                                className="bg-transparent border-none outline-none text-neutral-800 placeholder-neutral-400 text-xs sm:text-sm w-full focus:outline-none"
-                                            />
-                                            {searchQuery && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setSearchQuery('')}
-                                                    className="text-neutral-400 hover:text-neutral-600 p-0.5 text-xs cursor-pointer font-bold ml-1 shrink-0"
-                                                    title="Clear search"
-                                                >
-                                                    ✕
-                                                </button>
-                                            )}
-                                        </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
+                        </div>
 
-                            {/* Per-Category Horizontal Swipeable Rows & Search */}
-                            <div id="menu-display-area" className="flex flex-col gap-8">
-                                {searchQuery.trim().length > 0 ? (
-                                    /* When search query is active, show Search Results */
-                                    filteredItems.length === 0 ? (
-                                        <div className="bg-white rounded-2xl p-10 border border-neutral-100 text-center text-neutral-400">
-                                            <div className="mx-auto w-10 h-10 mb-2 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400"><svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" /></svg></div>
-                                            <p className="font-bold text-neutral-700">No dishes found matching your search</p>
-                                            <p className="text-xs text-neutral-400 mt-1">Try searching for other seafood favorites</p>
+                        {/* Per-category rows, or the search result set when the customer is looking for one dish */}
+                        <div id="menu-display-area" className="flex flex-col gap-9 pt-1">
+                            {searchQuery.trim().length > 0 ? (
+                                filteredItems.length === 0 ? (
+                                    <div className="rounded-2xl border border-neutral-200 bg-white px-6 py-14 text-center">
+                                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-neutral-100 text-neutral-400">
+                                            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                                <circle cx="11" cy="11" r="7" />
+                                                <path d="M20 20l-4.3-4.3" />
+                                            </svg>
                                         </div>
-                                    ) : (
+                                        <p className="mt-3 text-sm font-semibold text-neutral-900">
+                                            No dishes match “{searchQuery}”
+                                        </p>
+                                        <p className="mt-1 text-xs leading-relaxed text-neutral-500">
+                                            Try another dish name, or clear the search to see the whole menu.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSearchQuery('')}
+                                            className="mt-4 cursor-pointer rounded-xl border border-neutral-200 px-4 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-50"
+                                        >
+                                            Clear search
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <CategorySwipeRow
+                                        id="search-results-section"
+                                        category={`Results for “${searchQuery}”`}
+                                        items={filteredItems}
+                                        renderProductCard={renderProductCard}
+                                    />
+                                )
+                            ) : (
+                                availableCategories.map((cat) => {
+                                    const catItems = allEffectiveItems.filter((i) => i.category.toLowerCase() === cat.toLowerCase())
+                                    if (catItems.length === 0) return null
+
+                                    return (
                                         <CategorySwipeRow
-                                            id="search-results-section"
-                                            category={`Search Results for "${searchQuery}"`}
-                                            items={filteredItems}
+                                            key={cat}
+                                            id={`category-section-${cat.replace(/\s+/g, '-').toLowerCase()}`}
+                                            category={cat}
+                                            items={catItems}
                                             renderProductCard={renderProductCard}
                                         />
                                     )
-                                ) : (
-                                    /* All categories displayed row-by-row; category tabs automatically scroll into view */
-                                    availableCategories.map((cat) => {
-                                        const catItems = allEffectiveItems.filter((i) => i.category.toLowerCase() === cat.toLowerCase())
-                                        if (catItems.length === 0) return null
-
-                                        return (
-                                            <CategorySwipeRow
-                                                key={cat}
-                                                id={`category-section-${cat.replace(/\s+/g, '-').toLowerCase()}`}
-                                                category={cat}
-                                                items={catItems}
-                                                renderProductCard={renderProductCard}
-                                            />
-                                        )
-                                    })
-                                )}
-                            </div>
-                        </main>
-
-                        
+                                })
+                            )}
+                        </div>
                     </div>
                 )}
 
@@ -3397,11 +3392,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 const clean = String(idOrName || '').toLowerCase().trim()
                                                 const m = allEffectiveItems.find(it => String(it.id).toLowerCase() === clean || it.name.toLowerCase() === clean)
                                                 if (m && m.price) return m.price
-                                                if (fallbackPrice > 0 && fallbackPrice < 100) {
-                                                    const withVat = Math.round(fallbackPrice * 1.12)
-                                                    const matchWithVat = allEffectiveItems.find(it => Math.abs(it.price - withVat) <= 1)
-                                                    if (matchWithVat) return matchWithVat.price
-                                                }
                                                 return fallbackPrice
                                             }
 
@@ -3466,11 +3456,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         )
                                         if (matched && matched.price) {
                                             return matched.price
-                                        }
-                                        if (rawUnitPrice > 0 && (item.basePrice !== undefined || rawUnitPrice < 100)) {
-                                            const withVat = Math.round(rawUnitPrice * 1.12)
-                                            const matchWithVat = allEffectiveItems.find(m => Math.abs(m.price - withVat) <= 1)
-                                            if (matchWithVat) return matchWithVat.price
                                         }
                                         return rawUnitPrice
                                     }
@@ -4219,24 +4204,28 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 })()}
 
                 {/* Mobile Floating Cart Bar */}
-                {activeTab === 'menu' && cartItems.length > 0 && (
-                    <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 bg-white text-neutral-900 rounded-2xl shadow-2xl p-4 flex items-center justify-between border border-neutral-200/90">
-                        <div className="flex flex-col">
-                            <span className="text-xs text-neutral-500 font-bold uppercase tracking-wide">
-                                {cartItems.reduce((acc, ci) => acc + ci.quantity, 0)} Items Added
-                            </span>
-                            <span className="text-lg font-extrabold text-orange-600">
-                                ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
+                {activeTab === 'menu' && cartItems.length > 0 && (() => {
+                    const cartCount = cartItems.reduce((acc, ci) => acc + ci.quantity, 0)
+                    return (
+                        <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40 flex items-center justify-between gap-4 rounded-2xl border border-neutral-200 bg-white px-4 py-3 shadow-lg shadow-neutral-900/10">
+                            <div className="min-w-0">
+                                <p className="text-xs text-neutral-500">
+                                    {cartCount} {cartCount === 1 ? 'item' : 'items'} in your cart
+                                </p>
+                                <p className="text-lg font-semibold tabular-nums text-neutral-900">
+                                    ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setIsCartDrawerOpen(true)}
+                                className="shrink-0 cursor-pointer rounded-xl bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
+                            >
+                                View cart
+                            </button>
                         </div>
-                        <button
-                            onClick={() => setIsCartDrawerOpen(true)}
-                            className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md shadow-orange-500/20 cursor-pointer active:scale-95 transition-all"
-                        >
-                            View Cart
-                        </button>
-                    </div>
-                )}
+                    )
+                })()}
 
                 {/* Centered Cart Modal Dialog (Middle View) */}
                 {isCartDrawerOpen && (
@@ -4429,8 +4418,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             <span>Delivery Fee</span>
                                             <span className="text-neutral-500 italic">Calculated in billing</span>
                                         </div>
-                                        <div className="flex justify-between text-base font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
-                                            <span>Total Amount</span>
+                                        <div className="flex justify-between items-end text-base font-extrabold text-neutral-800 pt-2 border-t border-dashed border-neutral-200">
+                                            <span className="flex flex-col leading-tight">
+                                                <span>Total Amount</span>
+                                                <span className="text-[10px] font-semibold text-neutral-400">Tax included (12% VAT)</span>
+                                            </span>
                                             <span className="text-orange-600 font-black">₱{cartOrderSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                         </div>
                                     </div>

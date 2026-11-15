@@ -287,14 +287,13 @@ button, input, select, textarea {
 /* Shopping Cart Deliver and Bump Animations */
 @keyframes cart-bump {
   0% { transform: scale(1); }
-  30% { transform: scale(1.22); }
-  50% { transform: scale(0.92); }
-  75% { transform: scale(1.08); }
+  35% { transform: scale(1.14); }
   100% { transform: scale(1); }
 }
 
+/* One settle, not a wobble: the cart acknowledges the dish and comes back to rest. */
 .animate-cart-bump {
-  animation: cart-bump 450ms cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+  animation: cart-bump 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 @keyframes fly-deliver {
@@ -473,6 +472,73 @@ button, input, select, textarea {
   .order-status-view *,
   .order-status-view *::before,
   .order-status-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ------------------------------------------------------------------ menu view
+   The customer menu belongs to the same world as order status: the food
+   photography is the only loud thing, so the surfaces the browser draws for us
+   are themed to match instead of being left on their defaults. */
+.menu-view ::selection {
+  background-color: #ffedd5; /* orange-100 */
+  color: #7c2d12;            /* orange-900 */
+}
+
+.menu-view {
+  caret-color: #f97316; /* orange-500 */
+}
+
+.menu-view :focus-visible {
+  outline: 2px solid #f97316;
+  outline-offset: 2px;
+  border-radius: 9999px;
+}
+
+/* The one authored moment on the menu: the view settles in once, on arrival.
+   The dish rows inside it are still, so a photograph is never what moves. */
+.menu-view {
+  animation: order-status-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-view {
+    animation: none;
+  }
+
+  .menu-view *,
+  .menu-view *::before,
+  .menu-view *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ----------------------------------------------------------- purchases view
+   The orders-in-progress list shares the order-status world, but not its
+   entrance: this view re-renders on a poll, so it stays still. */
+.purchases-view ::selection {
+  background-color: #ffedd5; /* orange-100 */
+  color: #7c2d12;            /* orange-900 */
+}
+
+.purchases-view {
+  caret-color: #f97316; /* orange-500 */
+}
+
+.purchases-view :focus-visible {
+  outline: 2px solid #f97316;
+  outline-offset: 2px;
+  border-radius: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .purchases-view *,
+  .purchases-view *::before,
+  .purchases-view *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

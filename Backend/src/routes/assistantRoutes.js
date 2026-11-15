@@ -830,7 +830,7 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             const verifiedName = prodRes.rows[0]?.name || replacement.newName;
             const verifiedPrice = Number(replacement.newPrice) > 0
               ? Number(replacement.newPrice)
-              : (prodRes.rows[0]?.price ? Math.round(parseFloat(prodRes.rows[0].price) * 1.12) : 0);
+              : (prodRes.rows[0]?.price ? parseFloat(prodRes.rows[0].price) : 0);
             const qty = Number(replacement.quantity) || 1;
             const subtotal = Math.round(verifiedPrice * qty * 100) / 100;
 
@@ -858,22 +858,10 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
             `SELECT unit_price, quantity FROM order_items WHERE order_id = $1 AND item_status = 'REPLACED'`,
             [id]
           );
-          const knownNetToRetail = {
-            35: 39,
-            40: 45,
-            99: 111,
-            189: 212,
-            199: 223,
-            699: 783,
-            1099: 1231,
-            1199: 1343,
-          };
+          // Stored unit prices are already VAT-inclusive retail prices.
           let originalReplacedTotal = 0;
           for (const row of replacedRes.rows) {
-            let uPrice = parseFloat(row.unit_price || 0);
-            if (knownNetToRetail[Math.round(uPrice)]) {
-              uPrice = knownNetToRetail[Math.round(uPrice)];
-            }
+            const uPrice = parseFloat(row.unit_price || 0);
             originalReplacedTotal += uPrice * (Number(row.quantity) || 1);
           }
           const priceDiff = Math.round((replacementTotal - originalReplacedTotal) * 100) / 100;

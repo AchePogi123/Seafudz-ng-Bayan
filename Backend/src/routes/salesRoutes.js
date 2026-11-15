@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query, getDbPool } from '../config/db.js';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { returnAllReservedStock } from '../services/inventoryService.js';
-import { inMemoryOrders } from './sharedFlowStore.js';
+import { inMemoryOrders, isRevenueRecognized, REVENUE_STATUS_SQL } from './sharedFlowStore.js';
 import { emitOrderUpdate } from '../utils/realtimeEvents.js';
 
 const router = Router();
@@ -50,7 +50,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         COALESCE(COUNT(DISTINCT COALESCE(o.customer_id::text, c.fullname)), 0)::int AS "uniqueCustomers"
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
-      WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}
+      WHERE ${REVENUE_STATUS_SQL} ${dateFilter}
     `;
     const summaryRes = await query(summarySql, dateParams);
     const summary = summaryRes.rows[0] || {};
@@ -62,7 +62,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
     let memDeliveryRevenue = 0;
 
     try {
-      const dbOrderIdsRes = await query(`SELECT o.id FROM orders o WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}`, dateParams);
+      const dbOrderIdsRes = await query(`SELECT o.id FROM orders o WHERE ${REVENUE_STATUS_SQL} ${dateFilter}`, dateParams);
       const dbOrderIds = new Set(dbOrderIdsRes.rows.map(r => String(r.id)));
 
       // Calculate Manila time boundary helpers for inMemoryOrders
@@ -72,8 +72,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       const todayEnd = new Date(nowManila.getFullYear(), nowManila.getMonth(), nowManila.getDate(), 23, 59, 59, 999).getTime();
 
       inMemoryOrders.forEach((ord, id) => {
-        const ordSt = String(ord.status || '').toUpperCase();
-        if (!dbOrderIds.has(String(id)) && ordSt !== 'CANCELLED' && ordSt !== 'KITCHEN_REJECTED') {
+        if (!dbOrderIds.has(String(id)) && isRevenueRecognized(ord.status)) {
           // Date matching check
           const ordTime = ord.created_at ? new Date(ord.created_at).getTime() : (ord.dateTime ? new Date(ord.dateTime).getTime() : 0);
           if (ordTime > 0) {
@@ -129,7 +128,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p ON o.id = p.order_id
-      WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}
+      WHERE ${REVENUE_STATUS_SQL} ${dateFilter}
       GROUP BY LOWER(COALESCE(NULLIF(p.payment_method, ''), NULLIF(o.payment_method, ''), 'cash'))
     `;
     const paymentRes = await query(paymentSql, dateParams);
@@ -168,7 +167,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
              SUM(oi.subtotal)::float AS "revenue"
       FROM order_items oi
       JOIN orders o ON oi.order_id = o.id
-      WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}
+      WHERE ${REVENUE_STATUS_SQL} ${dateFilter}
       GROUP BY oi.product_name_snapshot
       ORDER BY "quantitySold" DESC
       LIMIT 5
@@ -195,7 +194,7 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         SELECT DISTINCT ON (LOWER(TRIM(name))) id, name, category_id FROM products ORDER BY LOWER(TRIM(name)), category_id
       ) p ON (oi.product_id = p.id OR LOWER(TRIM(oi.product_name_snapshot)) = LOWER(TRIM(p.name)))
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE UPPER(o.status) NOT IN ('CANCELLED', 'KITCHEN_REJECTED') ${dateFilter}
+      WHERE ${REVENUE_STATUS_SQL} ${dateFilter}
       GROUP BY 1
       ORDER BY revenue DESC
     `;

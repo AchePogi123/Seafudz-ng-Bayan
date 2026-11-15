@@ -49,10 +49,13 @@ export const AdminCreateTransactionModal: React.FC<AdminCreateTransactionModalPr
     setItemsList(itemsList.filter((_, i) => i !== index))
   }
 
-  const subtotal = itemsList.reduce((sum, item) => sum + item.price * item.quantity, 0)
-  const vat = Math.round(subtotal * 0.12 * 100) / 100
+  // Menu prices are VAT-inclusive: the line-item sum is the gross amount, and the
+  // subtotal/VAT split is derived back out of it.
+  const itemsTotal = Math.round(itemsList.reduce((sum, item) => sum + item.price * item.quantity, 0) * 100) / 100
+  const subtotal = Math.round((itemsTotal / 1.12) * 100) / 100
+  const vat = Math.round((itemsTotal - subtotal) * 100) / 100
   const deliveryFee = orderType === 'Delivery' ? 50 : 0
-  const total = subtotal + vat + deliveryFee
+  const total = Math.round((itemsTotal + deliveryFee) * 100) / 100
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

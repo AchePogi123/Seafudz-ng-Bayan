@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
+import { countsAsSale } from '../utils/salesRecognition'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal, type TransactionData } from '../components/AdminEditTransactionModal'
 
@@ -443,7 +444,9 @@ const SalesReportCashier: React.FC = () => {
 
       let grossRevenue = 0
 
-      orders.forEach((order) => {
+      const settledOrders = orders.filter((order) => countsAsSale(order))
+
+      settledOrders.forEach((order) => {
         const total = readNumber(
           order.total ?? order.totalAmount ?? order.grandTotal ?? order.amount
         )
@@ -471,11 +474,11 @@ const SalesReportCashier: React.FC = () => {
       })
 
       return {
-        totalOrders: orders.length,
+        totalOrders: settledOrders.length,
         grossRevenue,
         subtotalRevenue: 0,
         vatCollected: 0,
-        averageOrderValue: orders.length > 0 ? grossRevenue / orders.length : 0,
+        averageOrderValue: settledOrders.length > 0 ? grossRevenue / settledOrders.length : 0,
         breakdown,
       }
     } catch (err) {

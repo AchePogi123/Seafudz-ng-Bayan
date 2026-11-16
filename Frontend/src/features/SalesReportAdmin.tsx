@@ -9,6 +9,81 @@ import { AdminCreateTransactionModal } from '../components/AdminCreateTransactio
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { AdminBackupModal } from '../components/AdminBackupModal'
 import { AdminExportTransactionsModal } from '../components/AdminExportTransactionsModal'
+import type { PeriodOption, ChannelOption } from '../components/AdminExportTransactionsModal'
+import {
+    Badge,
+    Button,
+    Modal,
+    Card,
+    CardHeader,
+    EmptyState,
+    Icon,
+    IconButton,
+    Pagination,
+    SearchInput,
+    Segmented,
+    Toolbar,
+    type BadgeTone,
+} from './inventory/ui'
+import './inventory/admin-inventory.css'
+
+/**
+ * Payment method is a category, not a health signal, so it borrows the kit's
+ * category tones and leaves success / warning / danger free to mean status.
+ */
+const paymentTone = (method?: string): BadgeTone => {
+    const m = (method || '').toLowerCase()
+    if (m.includes('hybrid') || m.includes('split')) return 'pkg'
+    if (m.includes('gcash') || m.includes('maya') || m.includes('wallet')) return 'info'
+    return 'neutral'
+}
+
+/**
+ * The register is an audit ledger: it carries cancelled, pending and in-flight
+ * orders alongside finished ones, so the status pill has to tell them apart.
+ */
+const statusTone = (status?: string): BadgeTone => {
+    const s = (status || '').toUpperCase()
+    if (/(COMPLETED|DELIVERED|SERVED|PAID)/.test(s)) return 'success'
+    if (/(CANCEL|REJECT|REFUND|FAIL|VOID)/.test(s)) return 'danger'
+    if (/(PENDING|AWAIT|OUT_OF_STOCK|HOLD|UNPAID)/.test(s)) return 'warning'
+    return 'info'
+}
+
+const statusLabel = (status?: string) => {
+    const raw = (status || 'Completed').replace(/_/g, ' ').toLowerCase().trim()
+    return raw.charAt(0).toUpperCase() + raw.slice(1)
+}
+
+const humanizeChannel = (type?: string) => {
+    const t = (type || '').toLowerCase()
+    if (t.includes('online') || t.includes('delivery')) return 'Delivery'
+    if (t.includes('pos') || t.includes('walk') || t.includes('on_site') || t.includes('on-site')) return 'Walk-in'
+    return type || '—'
+}
+
+const peso = (n: number) =>
+    `\u20B1${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+const PERIOD_OPTIONS = [
+    { value: 'Today', label: 'Today' },
+    { value: 'This Week', label: 'This week' },
+    { value: 'This Month', label: 'This month' },
+    { value: 'This Year', label: 'This year' },
+] as const
+
+const CHANNEL_OPTIONS = [
+    { value: 'All', label: 'All channels' },
+    { value: 'POS', label: 'Walk-in' },
+    { value: 'Online', label: 'Delivery' },
+] as const
+
+const PAYMENT_OPTIONS = [
+    { value: 'All', label: 'All' },
+    { value: 'Cash', label: 'Cash' },
+    { value: 'GCash', label: 'GCash' },
+    { value: 'Hybrid', label: 'Split' },
+] as const
 
 export interface OrderItemDetail {
   id?: string
@@ -59,6 +134,24 @@ interface SummaryData {
 }
 
 type TabType = 'Today' | 'This Week' | 'This Month' | 'This Year'
+
+/**
+ * The export dialog speaks the backend's period vocabulary; the page speaks the
+ * tab labels. These two maps are the single translation between them, so an
+ * export always covers exactly the range the report is showing.
+ */
+const EXPORT_PERIOD_BY_TAB: Record<TabType, PeriodOption> = {
+    'Today': 'today',
+    'This Week': 'week',
+    'This Month': 'month',
+    'This Year': 'year',
+}
+
+const EXPORT_CHANNEL_BY_FILTER: Record<string, ChannelOption> = {
+    All: 'all',
+    POS: 'pos',
+    Online: 'online',
+}
 
 const PAGE_SIZE = 10
 
@@ -744,228 +837,122 @@ const SalesReportAdmin: React.FC = () => {
             .filter((item) => item.length > 0)
     }
 
-    const totalPages = Math.max(1, Math.ceil(totalMatchingCount / PAGE_SIZE))
-    const startItem = totalMatchingCount > 0 ? (currentPage - 1) * PAGE_SIZE + 1 : 0
-    const endItem = Math.min(currentPage * PAGE_SIZE, totalMatchingCount)
+    const statCards = [
+        {
+            key: 'All',
+            label: 'Total revenue',
+            value: summaryData.grossRevenue,
+            count: summaryData.totalOrders,
+            note: 'Gross sales across all channels',
+        },
+        {
+            key: 'Cash',
+            label: 'Cash',
+            value: summaryData.breakdown.cash.total,
+            count: summaryData.breakdown.cash.count,
+            note: 'Register and COD',
+        },
+        {
+            key: 'GCash',
+            label: 'GCash',
+            value: summaryData.breakdown.gcash.total,
+            count: summaryData.breakdown.gcash.count,
+            note: 'Wallet and online orders',
+        },
+        {
+            key: 'Hybrid',
+            label: 'Split',
+            value: summaryData.breakdown.hybrid.total,
+            count: summaryData.breakdown.hybrid.count,
+            note: 'Mixed payment methods',
+        },
+    ]
 
-    const getPaginationRange = () => {
-        const delta = 1
-        const range: (number | string)[] = []
-        for (let i = 1; i <= totalPages; i++) {
-            if (i === 1 || i === totalPages || (i >= currentPage - delta && i <= currentPage + delta)) {
-                range.push(i)
-            } else if (range[range.length - 1] !== '...') {
-                range.push('...')
-            }
-        }
-        return range
-    }
+    const activePeriodLabel = PERIOD_OPTIONS.find((o) => o.value === activeTab)?.label ?? activeTab
 
     return (
-        <div className="min-h-screen bg-slate-50/50 text-slate-900 font-sans pb-16 antialiased">
-            {/* Navigation Header */}
-            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
+        <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
+            <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-6 print:hidden">
                 <NavbarAdmin />
             </div>
 
-            <main className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
-                {/* Top Section: Breadcrumb, Title & Primary Actions */}
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs print:hidden">
-                    <div className="flex items-center gap-4">
-                        <button
-                            type="button"
-                            onClick={() => navigate('/admin-dashboard')}
-                            className="p-2.5 rounded-xl bg-slate-100 hover:bg-orange-50 text-slate-600 hover:text-orange-600 border border-slate-200/80 transition-all cursor-pointer group shrink-0"
-                            title="Back to Admin Dashboard"
-                            aria-label="Back to Dashboard"
-                        >
-                            <svg className="w-5 h-5 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                            </svg>
-                        </button>
+            <main className="mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-10 pt-6 space-y-6">
+                <button type="button" onClick={() => navigate('/admin-dashboard')} className="inv-back cursor-pointer print:hidden">
+                    <Icon name="arrowLeft" className="h-4 w-4" />
+                    Admin dashboard
+                </button>
 
-                        <div>
-                            <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 tracking-wide uppercase">
-                                <span>Admin Portal</span>
-                                <span>/</span>
-                                <span className="text-orange-600">Sales Management</span>
-                            </div>
-                            <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight mt-1">
-                                Sales Management & Ledger
-                            </h1>
-                            <p className="text-xs sm:text-sm text-slate-500 font-normal mt-0.5">
-                                Real-time database audit ledger, revenue analytics, and transaction records.
-                            </p>
+                <div className="inv-page-header print:hidden">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-3">
+                            <h1 className="inv-page-title">Sales &amp; ledger</h1>
+                            <span className="inv-location">
+                                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                Caloocan Flagship Hub
+                            </span>
                         </div>
+                        <p className="inv-page-sub">
+                            {totalMatchingCount.toLocaleString()} {totalMatchingCount === 1 ? 'order' : 'orders'} · {activePeriodLabel.toLowerCase()}
+                        </p>
                     </div>
 
-                    <div className="flex items-center gap-2.5 flex-wrap">
-                        {isAdmin && (
-                            <>
-
-                                <button
-                                    type="button"
-                                    onClick={() => setIsExportModalOpen(true)}
-                                    className="inline-flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-semibold px-3.5 py-2 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
-                                    title="Export Historical Transactions to PDF Document (.pdf)"
-                                >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-6 4h4" />
-                                    </svg>
-                                    <span>Export to PDF</span>
-                                </button>
-
-                                <button
-                                    type="button"
-                                    onClick={() => setIsBackupModalOpen(true)}
-                                    className="inline-flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 hover:text-orange-600 font-semibold px-3.5 py-2 rounded-xl text-xs border border-slate-200 hover:border-orange-200 transition-colors cursor-pointer shadow-2xs"
-                                    title="Database Backups & 30-Day Rolling Archives"
-                                >
-                                    <svg className="w-3.5 h-3.5 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
-                                    </svg>
-                                    <span>Database Backups</span>
-                                </button>
-                            </>
-                        )}
-
-                        <button
-                            type="button"
+                    <div className="inv-section-actions">
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            icon="refresh"
                             onClick={() => {
                                 void fetchSummary()
                                 void fetchOrdersPage()
                             }}
-                            className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
-                            title="Refresh data"
+                            loading={isLoading}
                         >
-                            <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                            </svg>
-                            <span>Refresh Orders</span>
-                        </button>
+                            Refresh
+                        </Button>
+                        <Button variant="secondary" size="sm" icon="print" onClick={handlePrintAll}>
+                            Print
+                        </Button>
+                        {isAdmin && (
+                            <>
+                                <Button variant="secondary" size="sm" icon="layers" onClick={() => setIsBackupModalOpen(true)}>
+                                    Backups
+                                </Button>
+                                <Button variant="primary" size="sm" icon="download" onClick={() => setIsExportModalOpen(true)}>
+                                    Export PDF
+                                </Button>
+                            </>
+                        )}
+                    </div>
+                </div>
 
+                <div className="print:hidden">
+                    <Segmented
+                        options={PERIOD_OPTIONS}
+                        value={activeTab}
+                        onChange={(v) => handleTabChange(v as TabType)}
+                        label="Reporting period"
+                    />
+                </div>
+
+                <div className="inv-stats print:hidden">
+                    {statCards.map((card) => (
                         <button
+                            key={card.key}
                             type="button"
-                            onClick={handlePrintAll}
-                            className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3.5 py-2 rounded-xl text-xs border border-slate-200 transition-colors cursor-pointer"
+                            onClick={() => handlePaymentChange(card.key)}
+                            aria-pressed={paymentFilter === card.key}
+                            className={`inv-stat${paymentFilter === card.key ? ' is-selected' : ''}`}
                         >
-                            <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4H7v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                            </svg>
-                            <span>Print Report</span>
+                            <div className="inv-stat-top">
+                                <span className="inv-stat-label">{card.label}</span>
+                                <span className="inv-stat-count">{card.count.toLocaleString()}</span>
+                            </div>
+                            <span className="inv-stat-value">{peso(card.value)}</span>
+                            <span className="inv-stat-note">{card.note}</span>
                         </button>
-                    </div>
+                    ))}
                 </div>
 
-                {/* Period Selector Tabs */}
-                <div className="flex items-center justify-between gap-4 border-b border-slate-200/80 pb-3 print:hidden">
-                    <div className="inline-flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
-                        {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
-                            <button
-                                key={tab}
-                                type="button"
-                                onClick={() => handleTabChange(tab)}
-                                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${activeTab === tab
-                                    ? 'bg-orange-500 text-white shadow-2xs'
-                                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                                    }`}
-                            >
-                                {tab}
-                            </button>
-                        ))}
-                    </div>
-
-                    <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 font-medium">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        <span>Database Aggregated</span>
-                    </div>
-                </div>
-
-                {/* KPI Metrics Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:hidden">
-                    {/* Total Revenue */}
-                    <div
-                        onClick={() => handlePaymentChange('All')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'All'
-                            ? 'border-orange-500 ring-2 ring-orange-500/15'
-                            : 'border-slate-200/80 hover:border-slate-300'
-                            }`}
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
-                            <span className="text-base sm:text-lg font-extrabold text-orange-600">
-                                {summaryData.totalOrders.toLocaleString()}
-                            </span>
-                        </div>
-                        <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-                            ₱{summaryData.grossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1 font-normal">Gross sales across all channels</p>
-                    </div>
-
-                    {/* Cash */}
-                    <div
-                        onClick={() => handlePaymentChange('Cash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Cash'
-                            ? 'border-amber-500 ring-2 ring-amber-500/15'
-                            : 'border-slate-200/80 hover:border-slate-300'
-                            }`}
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
-                            <span className="text-base sm:text-lg font-extrabold text-amber-600">
-                                {summaryData.breakdown.cash.count.toLocaleString()}
-                            </span>
-                        </div>
-                        <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-                            ₱{summaryData.breakdown.cash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1 font-normal">Physical register & COD cash</p>
-                    </div>
-
-                    {/* GCash */}
-                    <div
-                        onClick={() => handlePaymentChange('GCash')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'GCash'
-                            ? 'border-blue-500 ring-2 ring-blue-500/15'
-                            : 'border-slate-200/80 hover:border-slate-300'
-                            }`}
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
-                            <span className="text-base sm:text-lg font-extrabold text-blue-600">
-                                {summaryData.breakdown.gcash.count.toLocaleString()}
-                            </span>
-                        </div>
-                        <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-                            ₱{summaryData.breakdown.gcash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1 font-normal">Digital wallet & online orders</p>
-                    </div>
-
-                    {/* Hybrid / Split */}
-                    <div
-                        onClick={() => handlePaymentChange('Hybrid')}
-                        className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Hybrid'
-                            ? 'border-purple-500 ring-2 ring-purple-500/15'
-                            : 'border-slate-200/80 hover:border-slate-300'
-                            }`}
-                    >
-                        <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
-                            <span className="text-base sm:text-lg font-extrabold text-purple-600">
-                                {summaryData.breakdown.hybrid.count.toLocaleString()}
-                            </span>
-                        </div>
-                        <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-                            ₱{summaryData.breakdown.hybrid.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </h3>
-                        <p className="text-xs text-slate-500 mt-1 font-normal">Mixed payment methods</p>
-                    </div>
-                </div>
-
-                {/* Main Content Area & Table */}
                 <div id="print-area">
                     {/* Print Only Header */}
                     <div className="hidden print:block text-center mb-6">
@@ -979,301 +966,174 @@ const SalesReportAdmin: React.FC = () => {
                         <div className="border-t border-dashed border-slate-300 my-4"></div>
                     </div>
 
-                    {/* Table Container Card */}
-                    <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden print:shadow-none print:border print:rounded-none">
-                        {/* Filter Toolbar */}
-                        <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4 print:hidden">
-                            <div>
-                                <h2 className="text-base font-bold text-slate-900">Transaction Register</h2>
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                    Audited ledger records with 10 rows per page
-                                </p>
-                            </div>
+                    <Card>
+                        <CardHeader
+                            title="Transaction register"
+                            description={`Audited ledger records for ${activePeriodLabel.toLowerCase()}`}
+                        />
 
-                            <div className="flex items-center gap-3 flex-wrap">
-                                {/* Channel Filter */}
-                                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
-                                    {[
-                                        { label: 'All Channels', val: 'All' },
-                                        { label: 'POS Walk-In', val: 'POS' },
-                                        { label: 'Online Delivery', val: 'Online' },
-                                    ].map((item) => (
-                                        <button
-                                            key={item.val}
-                                            type="button"
-                                            onClick={() => handleChannelChange(item.val)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${channelFilter === item.val
-                                                ? 'bg-slate-900 text-white shadow-2xs'
-                                                : 'text-slate-600 hover:bg-slate-200'
-                                                }`}
-                                        >
-                                            {item.label}
-                                        </button>
-                                    ))}
-                                </div>
+                        <Toolbar className="print:hidden">
+                            <Segmented
+                                options={CHANNEL_OPTIONS}
+                                value={channelFilter}
+                                onChange={handleChannelChange}
+                                label="Channel"
+                                size="sm"
+                            />
+                            <Segmented
+                                options={PAYMENT_OPTIONS}
+                                value={paymentFilter}
+                                onChange={handlePaymentChange}
+                                label="Payment method"
+                                size="sm"
+                            />
+                            <SearchInput
+                                value={searchQuery}
+                                onChange={setSearchQuery}
+                                placeholder="Search order or customer"
+                                label="Search transactions"
+                                className="sm:ml-auto sm:w-64"
+                            />
+                        </Toolbar>
 
-                                {/* Payment Filter */}
-                                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
-                                    {['All', 'Cash', 'GCash', 'Hybrid'].map((pm) => (
-                                        <button
-                                            key={pm}
-                                            type="button"
-                                            onClick={() => handlePaymentChange(pm)}
-                                            className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${paymentFilter === pm
-                                                ? 'bg-orange-500 text-white shadow-2xs'
-                                                : 'text-slate-600 hover:bg-slate-200'
-                                                }`}
-                                        >
-                                            {pm}
-                                        </button>
-                                    ))}
-                                </div>
-
-                                {/* Search Bar */}
-                                <div className="relative">
-                                    <input
-                                        type="text"
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder="Search order ID or customer..."
-                                        className="w-48 sm:w-60 bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:border-orange-500"
-                                    />
-                                    <svg
-                                        className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                    </svg>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Data Table */}
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left border-collapse">
+                        <div className="inv-table-wrap">
+                            <table className="inv-table">
                                 <thead>
-                                    <tr className="bg-slate-50/75 text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                                        <th className="py-3 px-4">Order ID</th>
-                                        <th className="py-3 px-4">Customer & Channel</th>
-                                        <th className="py-3 px-4">Ordered Items</th>
-                                        <th className="py-3 px-4">Date & Time</th>
-                                        <th className="py-3 px-4">Payment</th>
-                                        <th className="py-3 px-4 text-right">Total Amount</th>
-                                        <th className="py-3 px-4 text-center">Status</th>
-                                        <th className="py-3 px-4 text-center print:hidden">Action</th>
+                                    <tr>
+                                        <th scope="col">Order</th>
+                                        <th scope="col">Customer</th>
+                                        <th scope="col">Items</th>
+                                        <th scope="col">Date</th>
+                                        <th scope="col">Payment</th>
+                                        <th scope="col" className="is-num">Total</th>
+                                        <th scope="col">Status</th>
+                                        <th scope="col" className="is-actions print:hidden">
+                                            <span className="sr-only">Actions</span>
+                                        </th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-slate-100 text-xs font-normal text-slate-700">
+                                <tbody>
                                     {isLoading && transactions.length === 0 ? (
                                         <tr>
-                                            <td colSpan={8} className="text-center py-12 text-slate-400">
-                                                <div className="inline-flex items-center gap-2 text-orange-600 font-medium">
-                                                    <svg className="animate-spin h-4 w-4 text-orange-600" fill="none" viewBox="0 0 24 24">
-                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                                                    </svg>
-                                                    <span>Loading page {currentPage}...</span>
-                                                </div>
+                                            <td colSpan={8}>
+                                                <EmptyState
+                                                    compact
+                                                    icon="history"
+                                                    title={`Loading page ${currentPage}…`}
+                                                    description="Fetching audited ledger records."
+                                                />
                                             </td>
                                         </tr>
                                     ) : transactions.length === 0 ? (
                                         <tr>
-                                            <td colSpan={8} className="text-center py-12 text-slate-400">
-                                                <p className="font-semibold text-slate-600">No transactions found</p>
-                                                <p className="text-xs text-slate-400 mt-0.5">
-                                                    Transactions matching the selected period and filters will be displayed here.
-                                                </p>
+                                            <td colSpan={8}>
+                                                <EmptyState
+                                                    icon="doc"
+                                                    title="No transactions in this view"
+                                                    description={`Nothing matches ${activePeriodLabel.toLowerCase()} with the current channel, payment and search filters.`}
+                                                    action={
+                                                        (channelFilter !== 'All' || paymentFilter !== 'All' || searchQuery) && (
+                                                            <Button
+                                                                variant="secondary"
+                                                                size="sm"
+                                                                onClick={() => {
+                                                                    handleChannelChange('All')
+                                                                    handlePaymentChange('All')
+                                                                    setSearchQuery('')
+                                                                }}
+                                                            >
+                                                                Clear filters
+                                                            </Button>
+                                                        )
+                                                    }
+                                                />
                                             </td>
                                         </tr>
                                     ) : (
-                                        transactions.map((tx) => (
-                                            <tr key={tx.id || tx.ref} className="hover:bg-slate-50/80 transition-colors">
-                                                <td className="py-3 px-4 font-mono font-semibold text-slate-900">
-                                                    {tx.ref || tx.id}
-                                                </td>
-                                                <td className="py-3 px-4">
-                                                    <div className="font-semibold text-slate-800">{tx.customer || '—'}</div>
-                                                    <div className="text-[11px] text-slate-400">{tx.type}</div>
-                                                </td>
-                                                <td className="py-3 px-4 max-w-sm">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setSelectedTransaction(tx)}
-                                                        className="text-left font-medium hover:underline cursor-pointer block max-w-sm text-xs text-slate-800"
-                                                        title="Click to view details"
-                                                    >
-                                                        {getOrderedItems(tx.items).map((item, idx) => {
-                                                            const match = item.match(/^(.*?)\s*x(\d+)$/i)
-                                                            if (match) {
-                                                                return (
-                                                                    <span key={idx} className="inline-flex items-center gap-1.5 mr-2 mb-1 bg-orange-50 border border-orange-200/80 px-2 py-0.5 rounded-lg">
-                                                                        <span className="text-slate-800 font-semibold">{match[1].trim()}</span>
-                                                                        <span className="text-sm font-black text-orange-600">x{match[2]}</span>
-                                                                    </span>
-                                                                )
-                                                            }
-                                                            return (
-                                                                <span key={idx} className="mr-2 text-xs font-semibold text-slate-800">
-                                                                    {item}
-                                                                </span>
-                                                            )
-                                                        })}
-                                                    </button>
-                                                </td>
-                                                <td className="py-3 px-4 text-slate-500 text-[11px]">
-                                                    {tx.dateTime}
-                                                </td>
-                                                <td className="py-3 px-4">
-                                                    <span
-                                                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                                                            (tx.paymentMethod || '').toLowerCase().includes('split')
-                                                            ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
-                                                            : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                                                                    : 'bg-amber-50 text-amber-800 border border-amber-200/60'
-                                                            }`}
-                                                    >
-                                                        <span
-                                                            className={`w-1.5 h-1.5 rounded-full ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                                                                (tx.paymentMethod || '').toLowerCase().includes('split')
-                                                                ? 'bg-purple-500'
-                                                                : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                                                    ? 'bg-blue-500'
-                                                                    : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                                                        ? 'bg-emerald-500'
-                                                                        : 'bg-amber-500'
-                                                                }`}
-                                                        ></span>
-                                                        {tx.paymentMethod || 'Cash'}
-                                                    </span>
-                                                    {((tx.paymentMethod || '').toLowerCase().includes('gcash') ||
-                                                        (tx.paymentMethod || '').toLowerCase().includes('hybrid')) && (tx.paymentReference || tx.referenceNumber) && (
-                                                        <span
-                                                            className="block font-mono text-[10px] text-blue-700 font-bold mt-0.5 truncate max-w-[130px]"
-                                                            title={`Ref: ${tx.paymentReference || tx.referenceNumber}`}
+                                        transactions.map((tx) => {
+                                            const items = getOrderedItems(tx.items)
+                                            const reference = tx.paymentReference || tx.referenceNumber
+                                            return (
+                                                <tr key={tx.id || tx.ref}>
+                                                    <td>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedTransaction(tx)}
+                                                            className="inv-row-link"
+                                                            title="View transaction details"
                                                         >
-                                                            Ref: {tx.paymentReference || tx.referenceNumber}
-                                                        </span>
-                                                    )}
-                                                </td>
-                                                <td className="py-3 px-4 text-right font-semibold text-slate-900">
-                                                    ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                </td>
-                                                <td className="py-3 px-4 text-center">
-                                                    <div className="flex flex-col items-center gap-1">
-                                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
-                                                            {tx.status || 'Completed'}
-                                                        </span>
-                                                        {tx.deliveryProof && (
-                                                            <span
-                                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100"
-                                                                title="Proof of delivery attached (click to view)"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation()
-                                                                    setPreviewReceiptUrl(tx.deliveryProof || null)
-                                                                }}
-                                                            >
-                                                                <span>📷</span> Proof
-                                                            </span>
+                                                            {tx.ref || tx.id}
+                                                        </button>
+                                                    </td>
+                                                    <td>
+                                                        <div className="inv-cell-primary">{tx.customer || '—'}</div>
+                                                        <div className="inv-cell-secondary">{humanizeChannel(tx.type)}</div>
+                                                    </td>
+                                                    <td className="max-w-[22rem]">
+                                                        {items.length === 0 ? (
+                                                            <span className="inv-cell-secondary">—</span>
+                                                        ) : (
+                                                            <>
+                                                                <div className="inv-cell-primary truncate" title={items.join(', ')}>
+                                                                    {items.slice(0, 2).join(', ')}
+                                                                </div>
+                                                                {items.length > 2 && (
+                                                                    <div className="inv-cell-secondary">+{items.length - 2} more</div>
+                                                                )}
+                                                            </>
                                                         )}
-                                                    </div>
-                                                </td>
-                                                <td className="py-3 px-4 text-center print:hidden">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setSelectedTransaction(tx)}
-                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                                        title={
-                                                            tx.paymentReference || tx.referenceNumber
-                                                                ? `View details (Ref: ${tx.paymentReference || tx.referenceNumber})`
-                                                                : "View details"
-                                                        }
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                        </svg>
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        ))
+                                                    </td>
+                                                    <td className="inv-cell-secondary whitespace-nowrap">{tx.dateTime}</td>
+                                                    <td>
+                                                        <Badge tone={paymentTone(tx.paymentMethod)} dot>
+                                                            {tx.paymentMethod || 'Cash'}
+                                                        </Badge>
+                                                        {reference && (
+                                                            <div className="inv-cell-secondary mt-1 truncate max-w-[9rem]" title={`Ref: ${reference}`}>
+                                                                Ref {reference}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td className="is-num inv-cell-primary">{peso(tx.total)}</td>
+                                                    <td>
+                                                        <Badge tone={statusTone(tx.status)} dot>
+                                                            {statusLabel(tx.status)}
+                                                        </Badge>
+                                                    </td>
+                                                    <td className="is-actions print:hidden">
+                                                        <div className="flex items-center justify-end gap-1">
+                                                            {tx.deliveryProof && (
+                                                                <IconButton
+                                                                    icon="doc"
+                                                                    label={`View delivery proof for ${tx.ref || tx.id}`}
+                                                                    onClick={() => setPreviewReceiptUrl(tx.deliveryProof || null)}
+                                                                />
+                                                            )}
+                                                            <IconButton
+                                                                icon="eye"
+                                                                label={`View details for ${tx.ref || tx.id}`}
+                                                                onClick={() => setSelectedTransaction(tx)}
+                                                            />
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })
                                     )}
                                 </tbody>
                             </table>
                         </div>
 
-                        {/* Pagination Footer */}
-                        <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
-                            <div className="text-xs text-slate-500 font-medium">
-                                Showing <span className="font-semibold text-slate-800">{startItem}–{endItem}</span> of{' '}
-                                <span className="font-semibold text-slate-800">{totalMatchingCount.toLocaleString()}</span> orders
-                            </div>
-
-                            {totalPages > 1 && (
-                                <div className="flex items-center gap-1">
-                                    {/* Previous Button */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                                        disabled={currentPage === 1 || isLoading}
-                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                                    >
-                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                                        </svg>
-                                        <span>Prev</span>
-                                    </button>
-
-                                    {/* Page Number Pills */}
-                                    {getPaginationRange().map((pageItem, idx) => {
-                                        if (pageItem === '...') {
-                                            return (
-                                                <span key={`ellipsis-${idx}`} className="px-2 text-xs font-medium text-slate-400">
-                                                    …
-                                                </span>
-                                            )
-                                        }
-
-                                        const pageNum = Number(pageItem)
-                                        const isActive = currentPage === pageNum
-
-                                        return (
-                                            <button
-                                                key={`page-${pageNum}`}
-                                                type="button"
-                                                onClick={() => setCurrentPage(pageNum)}
-                                                disabled={isLoading}
-                                                className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
-                                                    ? 'bg-orange-500 text-white shadow-2xs'
-                                                    : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
-                                                    }`}
-                                            >
-                                                {pageNum}
-                                            </button>
-                                        )
-                                    })}
-
-                                    {/* Next Button */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                                        disabled={currentPage >= totalPages || isLoading}
-                                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
-                                    >
-                                        <span>Next</span>
-                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                                        </svg>
-                                    </button>
-                                </div>
-                            )}
+                        <div className="print:hidden">
+                            <Pagination
+                                page={currentPage}
+                                pageSize={PAGE_SIZE}
+                                total={totalMatchingCount}
+                                onChange={setCurrentPage}
+                                noun="orders"
+                            />
                         </div>
-                    </div>
+                    </Card>
 
                     {/* Print Report Footer */}
                     <div className="hidden print:block text-center mt-8 text-sm text-slate-500">
@@ -1286,55 +1146,28 @@ const SalesReportAdmin: React.FC = () => {
 
             {/* Transaction Details Modal */}
             {selectedTransaction && (
-                <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 antialiased animate-in fade-in duration-100"
-                    onClick={() => setSelectedTransaction(null)}
+                <Modal
+                    open
+                    onClose={() => setSelectedTransaction(null)}
+                    size="lg"
+                    title="Transaction details"
+                    description={
+                        <span className="flex flex-wrap items-center gap-2">
+                            <span>Order {selectedTransaction.ref || selectedTransaction.id}</span>
+                            <Badge tone={statusTone(selectedTransaction.status)} dot>
+                                {statusLabel(selectedTransaction.status)}
+                            </Badge>
+                        </span>
+                    }
+                    footer={
+                        <Button variant="secondary" onClick={() => setSelectedTransaction(null)}>
+                            Close
+                        </Button>
+                    }
                 >
-                    <div
-                        className="w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200/90 transform-gpu flex flex-col max-h-[90vh]"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        {/* Header */}
-                        <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 bg-slate-50/60">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-600 shrink-0">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className="text-base font-bold text-slate-900">Transaction Details</h3>
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                            selectedTransaction.status?.toUpperCase() === 'CANCELLED'
-                                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                                : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                        }`}>
-                                            {selectedTransaction.status || 'Completed'}
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-slate-400 font-mono mt-0.5">
-                                        ID: {selectedTransaction.ref || selectedTransaction.id}
-                                    </p>
-                                </div>
-                            </div>
-
-                            <button
-                                type="button"
-                                onClick={() => setSelectedTransaction(null)}
-                                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                aria-label="Close"
-                            >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-
-                        {/* Modal Body with smooth scrolling */}
-                        <div className="p-6 overflow-y-auto overscroll-contain will-change-scroll space-y-4">
+                    <div className="space-y-4">
                             {/* Customer & Delivery Information */}
-                            <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 text-xs space-y-3">
+                            <div className="inv-subpanel p-4 text-xs space-y-3">
                                 <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
                                     <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
@@ -1700,19 +1533,7 @@ const SalesReportAdmin: React.FC = () => {
                                 )}
                             </div>
                         </div>
-
-                        {/* Footer (Read-Only) */}
-                        <div className="p-4 border-t border-slate-100 bg-slate-50/50">
-                            <button
-                                type="button"
-                                onClick={() => setSelectedTransaction(null)}
-                                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors cursor-pointer text-center"
-                            >
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                </Modal>
             )}
 
             {/* Proof Screenshot Full View Modal */}
@@ -1786,6 +1607,8 @@ const SalesReportAdmin: React.FC = () => {
                 isOpen={isExportModalOpen}
                 onClose={() => setIsExportModalOpen(false)}
                 isAdmin={isAdmin}
+                defaultPeriod={EXPORT_PERIOD_BY_TAB[activeTab]}
+                defaultChannel={EXPORT_CHANNEL_BY_FILTER[channelFilter] ?? 'all'}
             />
 
             {/* Print Specific CSS Overrides */}

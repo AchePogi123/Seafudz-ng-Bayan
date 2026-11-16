@@ -1,22 +1,39 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
+import { Button, Field, Modal, Notice, Segmented } from '../features/inventory/ui'
+import '../features/inventory/admin-inventory.css'
+
+export type PeriodOption = 'all' | 'today' | 'week' | 'month' | 'year' | 'custom'
+export type ChannelOption = 'all' | 'pos' | 'online'
 
 interface AdminExportTransactionsModalProps {
   isOpen: boolean
   onClose: () => void
   isAdmin: boolean
+  /** Timeframe the Sales Management page is currently filtered to. */
+  defaultPeriod?: PeriodOption
+  /** Channel the Sales Management page is currently filtered to. */
+  defaultChannel?: ChannelOption
 }
 
-type PeriodOption = 'all' | 'today' | 'week' | 'month' | 'year' | 'custom'
-type ChannelOption = 'all' | 'pos' | 'online'
+const PERIOD_LABELS: Record<PeriodOption, string> = {
+  all: 'All Historical Records',
+  today: 'Today',
+  week: 'This Week',
+  month: 'This Month',
+  year: 'This Year',
+  custom: 'Custom Range',
+}
 
 export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModalProps> = ({
   isOpen,
   onClose,
   isAdmin,
+  defaultPeriod = 'all',
+  defaultChannel = 'all',
 }) => {
-  const [period, setPeriod] = useState<PeriodOption>('all')
-  const [channel, setChannel] = useState<ChannelOption>('all')
+  const [period, setPeriod] = useState<PeriodOption>(defaultPeriod)
+  const [channel, setChannel] = useState<ChannelOption>(defaultChannel)
   const [startDate, setStartDate] = useState<string>('')
   const [endDate, setEndDate] = useState<string>('')
 
@@ -27,12 +44,16 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
     latestDate: string | null
   } | null>(null)
 
+  const [showScopeOverride, setShowScopeOverride] = useState(false)
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
+  const previewRequestRef = useRef(0)
+
   const fetchPreview = useCallback(async () => {
     if (!isAdmin) return
+    const requestId = ++previewRequestRef.current
     setIsLoadingPreview(true)
     setNotification(null)
 
@@ -52,17 +73,31 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
       })
 
       const data = await res.json()
+      // A slower earlier request must not overwrite a newer one's result.
+      if (requestId !== previewRequestRef.current) return
       if (res.ok && data.success) {
         setPreview(data.data)
       } else {
         setPreview(null)
       }
     } catch {
-      setPreview(null)
+      if (requestId === previewRequestRef.current) setPreview(null)
     } finally {
-      setIsLoadingPreview(false)
+      if (requestId === previewRequestRef.current) setIsLoadingPreview(false)
     }
   }, [isAdmin, period, channel, startDate, endDate])
+
+  // Each time the dialog opens it adopts the page's current filter, so the
+  // admin never has to re-pick a timeframe they already chose on the report.
+  useEffect(() => {
+    if (!isOpen) return
+    setPeriod(defaultPeriod)
+    setChannel(defaultChannel)
+    setStartDate('')
+    setEndDate('')
+    setShowScopeOverride(false)
+    setNotification(null)
+  }, [isOpen, defaultPeriod, defaultChannel])
 
   useEffect(() => {
     if (isOpen) {
@@ -149,234 +184,172 @@ export const AdminExportTransactionsModal: React.FC<AdminExportTransactionsModal
     }
   }
 
+  const isOverridden = period !== defaultPeriod || channel !== defaultChannel
+
+  const resetToReportScope = () => {
+    setPeriod(defaultPeriod)
+    setChannel(defaultChannel)
+    setStartDate('')
+    setEndDate('')
+    setShowScopeOverride(false)
+  }
+
   if (!isOpen || !isAdmin) return null
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 antialiased">
-      <div
-        className="bg-white rounded-3xl border border-slate-200/90 shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden transform-gpu animate-in fade-in zoom-in-95 duration-150"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="export-modal-title"
-      >
-        {/* Header */}
-        <div className="p-6 border-b border-slate-100 flex items-start justify-between gap-4 bg-rose-50/40">
-          <div className="flex items-center gap-3.5">
-            <div className="w-11 h-11 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 shrink-0">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-6 4h4" />
-              </svg>
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 id="export-modal-title" className="text-xl font-bold text-slate-900 tracking-tight">
-                  Export Historical Transactions
-                </h2>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
-                  PDF (.pdf)
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Download official financial audit report, itemized dish breakdowns, and customer transaction records.
-              </p>
-            </div>
-          </div>
+  const channelLabel =
+    channel === 'pos' ? 'Walk-in' : channel === 'online' ? 'Delivery' : 'All channels'
+  const periodLabel =
+    period === 'custom'
+      ? `${startDate || 'Earliest'} → ${endDate || 'Latest'}`
+      : PERIOD_LABELS[period]
 
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isExporting}
-            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer disabled:opacity-50"
-            aria-label="Close modal"
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      size="md"
+      title="Export transactions"
+      description="Financial audit report with an executive summary, the transactions ledger and an itemised dish breakdown."
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isExporting}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            icon="download"
+            loading={isExporting}
+            disabled={isExporting || preview?.totalRecords === 0}
+            onClick={() => void handleDownloadPdf()}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+            {isExporting ? 'Generating PDF…' : 'Download PDF'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {/* What this export covers — taken from the report, not chosen again here. */}
+        <div className="inv-scope-panel">
+          <div className="inv-scope-row">
+            <span className="inv-scope-term">Period</span>
+            <span className="inv-scope-value">{periodLabel}</span>
+          </div>
+          <div className="inv-scope-row">
+            <span className="inv-scope-term">Channel</span>
+            <span className="inv-scope-value">{channelLabel}</span>
+          </div>
+          <div className="inv-scope-row">
+            <span className="inv-scope-term">Records</span>
+            <span className="inv-scope-value">
+              {isLoadingPreview ? (
+                'Counting…'
+              ) : (
+                <>
+                  {(preview?.totalRecords ?? 0).toLocaleString()} orders
+                  <span className="inv-scope-muted">
+                    {' · ₱'}
+                    {(preview?.grossTotal ?? 0).toLocaleString('en-PH', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </>
+              )}
+            </span>
+          </div>
+          <div className="inv-scope-row">
+            <span className="inv-scope-term">Timezone</span>
+            <span className="inv-scope-value inv-scope-muted">Asia/Manila (UTC+8)</span>
+          </div>
         </div>
 
-        {/* Content Body */}
-        <div className="p-6 overflow-y-auto overscroll-contain space-y-5 will-change-scroll">
-          {/* Informational Callout */}
-          <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/80 flex items-start gap-3 text-xs text-amber-900">
-            <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <div className="space-y-1">
-              <p className="font-semibold text-amber-950">Reporting vs. Disaster Recovery Notice</p>
-              <p className="text-amber-800 leading-relaxed font-normal">
-                This export is designed for management auditing, tax reporting, and executive review in PDF format. It includes <strong>Executive Financial Summary</strong>, <strong>Transactions Ledger</strong>, and <strong>Itemized Dish Sales Breakdown</strong>.
-              </p>
-              <p className="text-amber-800 leading-relaxed font-normal">
-                For complete database disaster recovery, use the <strong>Database Backups (.sql.gz)</strong> snapshots.
-              </p>
-            </div>
-          </div>
+        {isOverridden ? (
+          <button type="button" className="inv-link text-xs" onClick={resetToReportScope}>
+            Use my sales report filter again
+          </button>
+        ) : (
+          <button type="button" className="inv-link text-xs" onClick={() => setShowScopeOverride((v) => !v)}>
+            {showScopeOverride ? 'Hide range options' : 'Export a different range'}
+          </button>
+        )}
 
-          {/* Timeframe Scope Selector */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
-              1. Select Timeframe Scope
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {[
-                { label: 'All Historical Records', val: 'all' },
-                { label: 'Today', val: 'today' },
-                { label: 'This Week (7 Days)', val: 'week' },
-                { label: 'This Month', val: 'month' },
-                { label: 'This Year', val: 'year' },
-                { label: 'Custom Range...', val: 'custom' },
-              ].map((opt) => (
-                <button
-                  key={opt.val}
-                  type="button"
-                  onClick={() => setPeriod(opt.val as PeriodOption)}
-                  className={`p-2.5 rounded-xl text-xs font-semibold border transition-all text-left cursor-pointer ${
-                    period === opt.val
-                      ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-                      : 'bg-white hover:bg-slate-50 text-slate-700 border-slate-200'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        {(showScopeOverride || isOverridden) && (
+          <div className="inv-form-section space-y-3">
+            <Field label="Period">
+              <div className="inv-choice-group" role="radiogroup" aria-label="Export period">
+                {(
+                  [
+                    { label: 'All records', val: 'all' },
+                    { label: 'Today', val: 'today' },
+                    { label: 'This week', val: 'week' },
+                    { label: 'This month', val: 'month' },
+                    { label: 'This year', val: 'year' },
+                    { label: 'Custom range', val: 'custom' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.val}
+                    type="button"
+                    role="radio"
+                    aria-checked={period === opt.val}
+                    onClick={() => setPeriod(opt.val as PeriodOption)}
+                    className="inv-choice"
+                  >
+                    <span className="inv-choice-title">{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+            </Field>
 
-          {/* Custom Date Range Inputs */}
-          {period === 'custom' && (
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-3">
-              <div className="text-xs font-bold text-slate-800">Custom Date Range (Asia/Manila)</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">Start Date</label>
+            {period === 'custom' && (
+              <div className="inv-grid-2">
+                <Field label="Start date" htmlFor="export-start">
                   <input
+                    id="export-start"
                     type="date"
+                    className="inv-input"
                     value={startDate}
                     onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
                   />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">End Date</label>
+                </Field>
+                <Field label="End date" htmlFor="export-end">
                   <input
+                    id="export-end"
                     type="date"
+                    className="inv-input"
                     value={endDate}
                     onChange={(e) => setEndDate(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
                   />
-                </div>
+                </Field>
               </div>
-            </div>
-          )}
-
-          {/* Channel Selector */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold uppercase tracking-wider text-slate-600">
-              2. Channel Filter
-            </label>
-            <div className="inline-flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto">
-              {[
-                { label: 'All Channels', val: 'all' },
-                { label: 'POS In-Store (Walk-In)', val: 'pos' },
-                { label: 'Online Delivery', val: 'online' },
-              ].map((c) => (
-                <button
-                  key={c.val}
-                  type="button"
-                  onClick={() => setChannel(c.val as ChannelOption)}
-                  className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                    channel === c.val
-                      ? 'bg-white text-slate-900 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Record Preview Box */}
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div>
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Matching Database Records</span>
-              <div className="text-xl font-bold text-slate-900 mt-0.5">
-                {isLoadingPreview ? (
-                  <span className="text-slate-400 text-sm font-normal">Calculating...</span>
-                ) : (
-                  <>
-                    <span>{preview?.totalRecords ?? 0}</span>
-                    <span className="text-xs font-normal text-slate-500 ml-1.5">
-                      orders (₱{(preview?.grossTotal ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-
-            <div className="text-right text-[11px] text-slate-500">
-              <span>Timezone: </span>
-              <strong className="text-slate-700">Asia/Manila (UTC+8)</strong>
-            </div>
-          </div>
-
-          {/* Notifications */}
-          {notification && (
-            <div
-              className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 ${
-                notification.type === 'success'
-                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                  : 'bg-red-50 border-red-200 text-red-800'
-              }`}
-            >
-              <div className="flex-1 font-medium">{notification.message}</div>
-              <button type="button" onClick={() => setNotification(null)} className="text-slate-400 hover:text-slate-600">
-                &times;
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isExporting}
-            className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold rounded-xl text-xs transition-colors cursor-pointer disabled:opacity-50"
-          >
-            Cancel
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void handleDownloadPdf()}
-            disabled={isExporting || preview?.totalRecords === 0}
-            className="inline-flex items-center gap-2 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-bold px-5 py-2.5 rounded-xl text-xs shadow-xs transition-all cursor-pointer disabled:opacity-50"
-          >
-            {isExporting ? (
-              <>
-                <svg className="animate-spin w-4 h-4 text-white" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                </svg>
-                <span>Generating PDF Document...</span>
-              </>
-            ) : (
-              <>
-                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 13h6m-6 4h4" />
-                </svg>
-                <span>Download PDF Report (.pdf)</span>
-              </>
             )}
-          </button>
-        </div>
+
+            <Field label="Channel">
+              <Segmented
+                options={[
+                  { value: 'all', label: 'All channels' },
+                  { value: 'pos', label: 'Walk-in' },
+                  { value: 'online', label: 'Delivery' },
+                ]}
+                value={channel}
+                onChange={(v) => setChannel(v as ChannelOption)}
+                label="Channel"
+                size="sm"
+              />
+            </Field>
+          </div>
+        )}
+
+        <Notice tone="info">
+          For full database disaster recovery use the <strong>Database backups</strong> snapshots — this PDF is a
+          reporting document, not a restore point.
+        </Notice>
+
+        {notification && (
+          <Notice tone={notification.type === 'success' ? 'success' : 'danger'}>{notification.message}</Notice>
+        )}
       </div>
-    </div>
+    </Modal>
   )
 }
 

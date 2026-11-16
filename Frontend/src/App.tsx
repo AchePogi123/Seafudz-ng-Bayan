@@ -10,7 +10,6 @@ import { AccMan } from './features/AccMan'
 import AdminCustomerView from './features/AdminCustomerViewTemp'
 import LandingPage from './features/LandingPage'
 import AdminDashboard from './features/AdminDashboard'
-import AdminMenuManagement from './features/AdminMenuManagement'
 import AdminInventoryManagement from './features/AdminInventoryManagement'
 import SalesReportAdmin from './features/SalesReportAdmin'
 import Login from './features/Login'
@@ -82,7 +81,7 @@ function App() {
         <Route
           path="/pos"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+            <ProtectedRoute allowedRoles={['cashier']}>
               <POS />
             </ProtectedRoute>
           }
@@ -91,7 +90,7 @@ function App() {
         <Route
           path="/sales-report"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'cashier']}>
+            <ProtectedRoute allowedRoles={['cashier']}>
               <SalesReportCashier />
             </ProtectedRoute>
           }
@@ -102,7 +101,7 @@ function App() {
         <Route
           path="/kitchen"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'kitchen']}>
+            <ProtectedRoute allowedRoles={['kitchen']}>
               <KitchenMode />
             </ProtectedRoute>
           }
@@ -113,7 +112,7 @@ function App() {
         <Route
           path="/assistant"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'assistant']}>
+            <ProtectedRoute allowedRoles={['assistant']}>
               <AssistantRole />
             </ProtectedRoute>
           }
@@ -124,7 +123,7 @@ function App() {
         <Route
           path="/rider"
           element={
-            <ProtectedRoute allowedRoles={['admin', 'rider']}>
+            <ProtectedRoute allowedRoles={['rider']}>
               <RideRoleDemo />
             </ProtectedRoute>
           }
@@ -141,14 +140,8 @@ function App() {
           }
         />
 
-        <Route
-          path="/admin-menu"
-          element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminMenuManagement />
-            </ProtectedRoute>
-          }
-        />
+        {/* Menu management now lives as a tab inside Inventory; old links keep working. */}
+        <Route path="/admin-menu" element={<Navigate to="/admin-inventory?tab=menu" replace />} />
 
         <Route
           path="/admin-inventory"

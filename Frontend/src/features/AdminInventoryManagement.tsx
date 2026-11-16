@@ -29,6 +29,7 @@ import './inventory/admin-inventory.css'
 
 // Each section loads on demand; the skeleton covers the first fetch of its chunk.
 const InventoryDashboardTab = lazy(() => import('./inventory/InventoryDashboardTab'))
+const MenuCatalogTab = lazy(() => import('./inventory/MenuCatalogTab'))
 const IngredientsTab = lazy(() => import('./inventory/IngredientsTab'))
 const RecipesBOMTab = lazy(() => import('./inventory/RecipesBOMTab'))
 const SuppliersTab = lazy(() => import('./inventory/SuppliersTab'))
@@ -38,6 +39,7 @@ const InventoryReportsTab = lazy(() => import('./inventory/InventoryReportsTab')
 
 const INVENTORY_TABS = [
   { id: 'dashboard', label: 'Overview' },
+  { id: 'menu', label: 'Menu Management' },
   { id: 'ingredients', label: 'Items' },
   { id: 'recipes', label: 'Recipes' },
   { id: 'suppliers', label: 'Suppliers' },
@@ -236,8 +238,11 @@ export const AdminInventoryManagement: React.FC = () => {
         title: item.itemType === 'PACKAGING' ? 'Packaging Material Registered' : 'Ingredient Registered',
         description: `"${item.name}" has been added to the catalog.`,
       })
+      // returned so a caller mid-form (the Add Dish recipe builder) can use it straight away
+      return ingredient
     } catch (err) {
       fail('Could not add the item', err)
+      return null
     }
   }
 
@@ -307,13 +312,16 @@ export const AdminInventoryManagement: React.FC = () => {
     try {
       const saved = await inventoryApi.saveRecipe(recipe)
       setRecipes((prev) => [saved, ...prev.filter((r) => r.productId !== saved.productId)])
+      setUnlinkedProducts((prev) => prev.filter((p) => p.productId !== saved.productId))
       addToast({
         type: 'success',
         title: 'Recipe (BOM) Saved',
         description: `Food portions and packaging requirements configured for "${recipe.productName}".`,
       })
+      return true
     } catch (err) {
       fail('Could not save the recipe', err)
+      return false
     }
   }
 
@@ -469,10 +477,12 @@ export const AdminInventoryManagement: React.FC = () => {
   const pendingPOs = purchaseOrders.filter((po) => po.status === 'PENDING').length
 
   const tabCounts: Partial<Record<InventoryTabId, number>> = {
+    menu: unlinkedProducts.length,
     ingredients: lowCount + outCount,
     purchases: pendingPOs,
   }
   const tabCountLabel: Partial<Record<InventoryTabId, string>> = {
+    menu: 'without a recipe',
     ingredients: 'need attention',
     purchases: 'pending',
   }
@@ -619,6 +629,18 @@ export const AdminInventoryManagement: React.FC = () => {
                 onNavigateTab={handleTabChange}
                 onOpenAddIngredient={() => handleTabChange('ingredients')}
                 onOpenCreatePO={() => handleTabChange('purchases')}
+              />
+            )}
+
+            {loadState === 'ready' && currentTab === 'menu' && (
+              <MenuCatalogTab
+                ingredients={ingredients}
+                recipes={recipes}
+                onSaveRecipe={handleSaveRecipe}
+                onCreateIngredient={handleAddIngredient}
+                onNavigateTab={handleTabChange}
+                onNotify={addToast}
+                onCatalogChanged={() => void loadInventory(true)}
               />
             )}
 

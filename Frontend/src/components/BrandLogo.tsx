@@ -114,7 +114,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       {showSubtitle && (
         <span
           className={`uppercase font-semibold block mt-1 ${subtitleSizes[size]} ${
-            isDarkBg ? 'text-slate-400 group-hover:text-slate-300' : 'text-slate-400 group-hover:text-slate-600'
+            isDarkBg ? 'text-slate-400 group-hover:text-slate-300' : 'text-slate-500 group-hover:text-slate-700'
           } transition-colors`}
         >
           {subtitle || 'Fresh Seafood & Bilao Feasts'}

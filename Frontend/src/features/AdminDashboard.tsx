@@ -1221,7 +1221,7 @@ const AdminDashboard: React.FC = () => {
 
                             {/* Quick links */}
                             <button
-                                onClick={() => navigate('/admin-menu')}
+                                onClick={() => navigate('/admin-inventory?tab=menu')}
                                 className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
                             >
                                 Menu

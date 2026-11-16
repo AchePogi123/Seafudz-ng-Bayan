@@ -18,10 +18,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ allowedRoles, ch
   }
 
   const userRole = (activeUser?.role || 'customer').toLowerCase();
-  const isAdmin = userRole === 'admin';
 
-  // Admin has universal access to all routes
-  if (isAdmin || allowedRoles.map(r => r.toLowerCase()).includes(userRole)) {
+  // Every role (admin included) may only enter routes explicitly granted to it.
+  if (allowedRoles.map(r => r.toLowerCase()).includes(userRole)) {
     return children;
   }
 

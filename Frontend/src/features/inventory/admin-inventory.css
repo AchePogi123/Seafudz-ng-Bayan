@@ -914,6 +914,83 @@ button.inv-stat:focus-visible { outline: none; box-shadow: var(--inv-focus); bor
 }
 .inv-line-meta { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; font-size: 13px; color: var(--inv-text-3); }
 
+/* --------------------------------------------------------- Menu catalog */
+
+/* Selection checkbox — the browser default belongs to no design system */
+.inv-checkbox {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--inv-border-strong);
+  border-radius: 4px;
+  background: var(--inv-surface);
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+.inv-checkbox:hover { border-color: #98a2b3; }
+.inv-checkbox:checked {
+  border-color: var(--inv-brand);
+  background: var(--inv-brand)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E")
+    center / 12px no-repeat;
+}
+.inv-checkbox:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+
+/* Availability toggle — a status pill that flips the dish on or off the menu */
+.inv-status-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+.inv-status-btn--on { background: var(--inv-success-bg); color: var(--inv-success); }
+.inv-status-btn--on:hover { border-color: #75e0a7; }
+.inv-status-btn--off { background: var(--inv-danger-bg); color: var(--inv-danger); }
+.inv-status-btn--off:hover { border-color: #fda29b; }
+.inv-status-btn:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+
+/* Dish thumbnails */
+.inv-thumb {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: var(--inv-radius);
+  border: 1px solid var(--inv-border);
+  object-fit: cover;
+  background: var(--inv-surface-2);
+}
+.inv-thumb--lg { width: 64px; height: 64px; }
+.inv-thumb--empty { display: grid; place-items: center; border-style: dashed; color: var(--inv-text-3); }
+.inv-thumb.is-muted { filter: grayscale(1); opacity: 0.6; }
+
+/* Dish card (grid view) */
+.inv-dish {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius-lg);
+  background: var(--inv-surface);
+}
+.inv-dish-img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  background: var(--inv-surface-2);
+  border-bottom: 1px solid var(--inv-border);
+}
+.inv-dish-img.is-muted { filter: grayscale(1); opacity: 0.65; }
+.inv-dish-body { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.inv-dish-price { font-size: 16px; font-weight: 600; color: var(--inv-text); }
+
 /* ------------------------------------------------------------ Keyframes */
 
 @keyframes inv-fade { from { opacity: 0; } to { opacity: 1; } }
@@ -944,3 +1021,389 @@ button.inv-stat:focus-visible { outline: none; box-shadow: var(--inv-focus); bor
   }
   .inv-toast-progress { display: none; }
 }
+
+/* Stat cards doubling as a filter: the selected one is marked by the brand
+   edge, never by a per-card accent colour. */
+.inv-stat-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--inv-text-3);
+  font-variant-numeric: tabular-nums;
+}
+.inv-stat.is-selected {
+  border-color: var(--inv-brand);
+  background: var(--inv-primary-soft);
+}
+.inv-stat.is-selected .inv-stat-label,
+.inv-stat.is-selected .inv-stat-count { color: var(--inv-primary); }
+
+/* Read-only scope summary: states what an action will cover, without
+   offering the choice a second time. */
+.inv-scope-panel {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius-lg);
+  background: var(--inv-surface-2);
+  padding: 4px 14px;
+}
+.inv-scope-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--inv-border);
+}
+.inv-scope-row:last-child { border-bottom: 0; }
+.inv-scope-term { font-size: 13px; color: var(--inv-text-3); }
+.inv-scope-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--inv-text);
+  text-align: right;
+}
+.inv-scope-muted { font-weight: 500; color: var(--inv-text-3); }
+
+/* Quiet panel for grouping read-only detail inside a dialog. */
+.inv-subpanel {
+  background: var(--inv-surface-2);
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius-lg);
+}
+
+/* Interactive input suffix (password reveal, unit pickers). */
+button.inv-input-suffix {
+  cursor: pointer;
+  color: var(--inv-text-3);
+  transition: color 0.15s, background-color 0.15s;
+}
+button.inv-input-suffix:hover { color: var(--inv-text); background: #f2f4f7; }
+button.inv-input-suffix:focus-visible {
+  outline: none;
+  box-shadow: var(--inv-focus);
+  color: var(--inv-text);
+}
+
+/* =====================================================================
+   Assistant workspace — queue list and the verification bench.
+   ===================================================================== */
+
+.sfb-queue { border-top: 1px solid var(--inv-border); }
+
+.sfb-queue-row {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--inv-border);
+  border-left: 2px solid transparent;
+  background: var(--inv-surface);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+.sfb-queue-row:hover { background: var(--inv-surface-2); }
+.sfb-queue-row:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+.sfb-queue-row.is-selected {
+  background: var(--inv-primary-soft);
+  border-left-color: var(--inv-brand);
+}
+/* The one attention signal on the screen: an order waiting on a decision. */
+.sfb-queue-row.is-urgent { border-left-color: var(--inv-danger-fill); }
+.sfb-queue-row.is-urgent.is-selected { border-left-color: var(--inv-brand); }
+
+.sfb-queue-ref {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--inv-text);
+  font-variant-numeric: tabular-nums;
+}
+.sfb-queue-time { font-size: 12px; color: var(--inv-text-3); white-space: nowrap; }
+.sfb-queue-name { font-size: 14px; font-weight: 500; color: var(--inv-text); }
+.sfb-queue-items {
+  font-size: 12px;
+  color: var(--inv-text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sfb-queue-total { font-size: 13px; font-weight: 600; color: var(--inv-text); }
+
+/* The payment screenshot, at a size you can actually read a reference off. */
+.sfb-proof {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  background: var(--inv-surface-2);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.sfb-proof:hover { border-color: var(--inv-border-strong); }
+.sfb-proof:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+.sfb-proof img {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+  background: #fff;
+}
+
+/* =====================================================================
+   Account — avatar, section nav, one-time code.
+   ===================================================================== */
+
+.sfb-avatar {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 9999px;
+  border: 1px solid var(--inv-border);
+  background: var(--inv-primary-soft);
+  color: var(--inv-primary);
+  font-size: 20px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sfb-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.sfb-avatar:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+.sfb-avatar-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 24, 40, 0.55);
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.sfb-avatar:hover .sfb-avatar-hint,
+.sfb-avatar:focus-visible .sfb-avatar-hint { opacity: 1; }
+
+.inv-sidenav { display: flex; flex-direction: column; padding: 6px; }
+.inv-sidenav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: var(--inv-radius);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--inv-text-2);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+.inv-sidenav button:hover { background: var(--inv-surface-2); color: var(--inv-text); }
+.inv-sidenav button:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+.inv-sidenav button svg { color: var(--inv-text-3); }
+.inv-sidenav button.is-active {
+  background: var(--inv-primary-soft);
+  color: var(--inv-primary);
+  font-weight: 600;
+}
+.inv-sidenav button.is-active svg { color: var(--inv-primary); }
+
+.sfb-otp {
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  letter-spacing: 0.4em;
+  text-indent: 0.4em;
+}
+
+/* =====================================================================
+   Kitchen display — the same tokens at a larger tier.
+   Read from across a hot kitchen, tapped with busy hands: type steps up,
+   every target clears 48px, and only ticket age is allowed to shout.
+   ===================================================================== */
+
+.kds { --kds-gap: 12px; }
+
+.kds-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--inv-surface);
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius-lg);
+  box-shadow: var(--inv-shadow-sm);
+}
+.kds-bar-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; color: var(--inv-text); }
+
+.kds-board { display: grid; gap: var(--kds-gap); grid-template-columns: 1fr; }
+@media (min-width: 900px) { .kds-board { grid-template-columns: 1fr 1fr; } }
+
+.kds-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 420px;
+  height: calc(100vh - 210px);
+  background: var(--inv-surface);
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius-lg);
+  box-shadow: var(--inv-shadow-sm);
+  overflow: hidden;
+}
+.kds-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--inv-border);
+}
+.kds-col-head h2 { font-size: 17px; font-weight: 600; color: var(--inv-text); }
+.kds-count {
+  min-width: 32px;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: #f2f4f7;
+  color: var(--inv-text-2);
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.kds-count--live { background: var(--inv-primary-soft); color: var(--inv-primary); }
+
+.kds-col-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--inv-border-strong) transparent;
+}
+.kds-empty {
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+  font-size: 15px;
+  color: var(--inv-text-3);
+}
+
+/* ------------------------------------------------------------- Ticket */
+
+.kds-ticket {
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  background: var(--inv-surface);
+  overflow: hidden;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.kds-ticket-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.kds-ticket-body:hover { background: var(--inv-surface-2); }
+.kds-ticket-body:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+
+.kds-ticket-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kds-ticket-no {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--inv-text);
+  font-variant-numeric: tabular-nums;
+}
+.kds-ticket-customer { font-size: 15px; font-weight: 500; color: var(--inv-text-2); }
+
+/* Ticket age: the board's one self-changing signal. */
+.kds-timer {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--inv-text-3);
+}
+/* An ageing ticket warms the whole card, which carries further across a
+   kitchen than an edge and avoids the side-tab tell. */
+.kds-age-warn .kds-timer { color: var(--inv-warning); }
+.kds-age-late .kds-timer { color: var(--inv-danger); }
+.kds-ticket--cooking.kds-age-warn {
+  border-color: var(--inv-warning-fill);
+  background: var(--inv-warning-bg);
+}
+.kds-ticket--cooking.kds-late-pulse,
+.kds-ticket--cooking.kds-age-late {
+  border-color: var(--inv-danger-fill);
+  background: var(--inv-danger-bg);
+}
+.kds-ticket--cooking.kds-age-warn .kds-ticket-body:hover,
+.kds-ticket--cooking.kds-age-late .kds-ticket-body:hover { background: rgba(255, 255, 255, 0.45); }
+
+.kds-items { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.kds-items li { display: flex; align-items: baseline; gap: 10px; font-size: 17px; line-height: 1.35; }
+.kds-item-qty {
+  min-width: 2.2em;
+  font-weight: 700;
+  color: var(--inv-text);
+  font-variant-numeric: tabular-nums;
+}
+.kds-item-name { color: var(--inv-text); }
+
+.kds-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: var(--inv-radius);
+  background: var(--inv-warning-bg);
+  color: var(--inv-warning);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------ Actions */
+
+.kds-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+.kds-btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--inv-radius);
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.kds-btn:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+.kds-btn--start { background: var(--inv-primary); color: #fff; }
+.kds-btn--start:hover { background: var(--inv-primary-hover); }
+.kds-btn--done { background: var(--inv-success); color: #fff; }
+.kds-btn--done:hover { background: #055c37; }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .kds-btn:active { transform: none; }
+}
+

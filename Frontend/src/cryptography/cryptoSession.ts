@@ -26,15 +26,12 @@ export interface UserProfile {
 export const ROLE_ROUTE_PERMISSIONS: Record<string, string[]> = {
   admin: [
     '/admin-dashboard',
+    '/admin-inventory',
+    '/admin-menu',
     '/admin-sales-report',
     '/admin-customers',
     '/users',
     '/dashboard',
-    '/pos',
-    '/sales-report',
-    '/kitchen',
-    '/assistant',
-    '/rider',
     '/account',
     '/about',
   ],

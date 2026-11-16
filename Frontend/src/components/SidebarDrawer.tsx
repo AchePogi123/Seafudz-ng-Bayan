@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { getActiveUser, clearSession, isUuidString } from '../cryptography/cryptoSession'
 import BrandLogo from './BrandLogo'
@@ -17,10 +17,21 @@ interface NavItem {
   icon: React.ReactNode
 }
 
+/** Short role label shown beside the branch, so the panel always says who you are signed in as. */
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  cashier: 'Cashier',
+  kitchen: 'Kitchen',
+  rider: 'Rider',
+  assistant: 'Assistant',
+  customer: 'Customer',
+}
+
 export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, role }) => {
   const location = useLocation()
   const navigate = useNavigate()
   const currentUser = getActiveUser()
+  const panelRef = useRef<HTMLElement>(null)
 
   const getDisplayName = () => {
     const name = currentUser?.fullname || currentUser?.username || ""
@@ -44,13 +55,42 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
     }
   }, [isOpen])
 
-  // Close on Escape key press
+  // Move focus into the panel when it opens, so keyboard and screen-reader users land inside it
   useEffect(() => {
+    if (!isOpen) return
+    const firstLink = panelRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')
+    firstLink?.focus()
+  }, [isOpen])
+
+  // Escape closes; Tab is trapped inside the panel while it is open
+  useEffect(() => {
+    if (!isOpen) return
+
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (e.key === 'Escape') {
         onClose()
+        return
+      }
+      if (e.key !== 'Tab') return
+
+      const focusable = panelRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (!focusable || focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const active = document.activeElement as HTMLElement | null
+
+      if (e.shiftKey && (active === first || !panelRef.current?.contains(active))) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
       }
     }
+
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
@@ -75,15 +115,6 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
                 icon: (
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-                  </svg>
-                )
-              },
-              {
-                path: '/admin-menu',
-                label: 'Menu Management',
-                icon: (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                   </svg>
                 )
               },
@@ -288,11 +319,13 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
     }
   }
 
+  const roleLabel = ROLE_LABELS[activeRole] || 'Staff'
+
   return (
     <>
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 z-50 bg-slate-900/50 transition-opacity duration-200 ease-out ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        className={`fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-300 ease-out ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
         onClick={onClose}
         aria-hidden="true"
@@ -300,12 +333,16 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
 
       {/* Slide-over Drawer Panel */}
       <aside
-        className={`fixed top-0 left-0 bottom-0 z-50 w-80 max-w-[85vw] bg-white shadow-2xl transition-transform duration-200 ease-out transform-gpu will-change-transform flex flex-col ${isOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
         aria-label="Sidebar Navigation"
+        inert={!isOpen}
+        className={`fixed top-0 left-0 bottom-0 z-50 flex w-[21rem] max-w-[86vw] flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 shadow-[8px_0_48px_-16px_rgba(15,23,42,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] transform-gpu will-change-transform motion-reduce:transition-none ${isOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
       >
         {/* Drawer Header */}
-        <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-white">
+        <div className="flex items-center justify-between gap-3 px-4 py-4">
           <BrandLogo
             to="/"
             onClick={onClose}
@@ -313,30 +350,37 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
             subtitle="System Navigator"
           />
           <button
+            type="button"
             onClick={onClose}
-            className="p-1 text-slate-400 hover:text-slate-800 transition-colors cursor-pointer flex items-center justify-center focus:outline-none"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-[color,background-color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-[0.94] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2"
             aria-label="Close Sidebar"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
 
         {/* Branch / Shift Status Banner */}
-        <div className="px-5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-          <span className="flex items-center gap-1.5 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse" />
-            Caloocan Flagship Branch
+        <div className="flex items-center justify-between gap-2 border-y border-slate-100 bg-slate-50/70 px-4 py-2.5">
+          <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-600">
+            <span className="relative flex h-1.5 w-1.5 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75 motion-reduce:animate-none" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            </span>
+            <span className="truncate">Caloocan Flagship Branch</span>
+          </span>
+          <span className="shrink-0 rounded-md bg-white px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500 ring-1 ring-inset ring-slate-200">
+            {roleLabel}
           </span>
         </div>
 
         {/* Drawer Body - Navigation Links */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-6 scrollbar-thin">
+        <nav className="sfb-drawer-scroll flex-1 overflow-y-auto px-2.5 py-3" aria-label="Primary">
           {getNavSections().map((section, idx) => (
-            <div key={idx} className="space-y-1.5">
+            <div key={idx} className={idx === 0 ? 'space-y-1' : 'mt-7 space-y-1'}>
               {section.sectionTitle && (
-                <p className="px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                   {section.sectionTitle}
                 </p>
               )}
@@ -347,20 +391,26 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
                     key={item.path}
                     to={item.path}
                     onClick={onClose}
-                    className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-150 ${isActive
-                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80'
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`group flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold outline-none transition-[color,background-color,box-shadow] duration-150 ease-out focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2 ${isActive
+                        ? 'bg-orange-500 text-white shadow-[0_1px_2px_rgba(194,65,12,0.24),0_8px_18px_-8px_rgba(249,115,22,0.65)]'
+                        : 'text-slate-600 hover:bg-slate-100/70 hover:text-slate-900'
                       }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <span className={isActive ? 'text-white' : 'text-slate-400'}>{item.icon}</span>
-                      <span>{item.label}</span>
-                    </div>
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span
+                        aria-hidden="true"
+                        className={`shrink-0 transition-colors ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-600'}`}
+                      >
+                        {item.icon}
+                      </span>
+                      <span className="truncate">{item.label}</span>
+                    </span>
                     {item.badge && (
                       <span
-                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${isActive
+                        className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] ${isActive
                             ? 'bg-white/20 text-white'
-                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                            : 'bg-slate-100 text-slate-500 ring-1 ring-inset ring-slate-200'
                           }`}
                       >
                         {item.badge}
@@ -371,50 +421,54 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
               })}
             </div>
           ))}
-        </div>
+        </nav>
 
         {/* Drawer Footer - User Profile & Logout */}
-        <div className="p-4 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="w-9 h-9 rounded-full bg-orange-100 border border-orange-300 text-orange-600 flex items-center justify-center font-bold text-sm shrink-0 overflow-hidden shadow-2xs">
-              {currentUser?.avatar ? (
-                <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" />
-              ) : currentUser?.fullname ? (
-                currentUser.fullname.charAt(0).toUpperCase()
-              ) : (
-                'G'
-              )}
+        <div className="border-t border-slate-200/80 bg-slate-50/80 p-3">
+          <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-white p-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-orange-50 text-sm font-bold text-orange-600 ring-1 ring-inset ring-orange-200">
+                {currentUser?.avatar ? (
+                  <img src={currentUser.avatar} alt="" className="h-full w-full object-cover" />
+                ) : currentUser?.fullname ? (
+                  currentUser.fullname.charAt(0).toUpperCase()
+                ) : (
+                  'G'
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-xs font-bold text-slate-900">
+                  {getDisplayName()}
+                </p>
+                <p className="truncate text-[11px] text-slate-500">
+                  {currentUser?.email || currentUser?.username || 'Not logged in'}
+                </p>
+              </div>
             </div>
-            <div className="truncate">
-              <p className="font-bold text-xs text-slate-900 truncate">
-                {getDisplayName()}
-              </p>
-              <p className="text-[11px] text-slate-500 truncate">
-                {currentUser?.email || currentUser?.username || 'Not logged in'}
-              </p>
-            </div>
-          </div>
 
-          {currentUser ? (
-            <button
-              onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer shrink-0"
-              title="Logout"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
-          ) : (
-            <Link
-              to="/login"
-              state={{ from: location.pathname }}
-              onClick={onClose}
-              className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer shrink-0 shadow-xs"
-            >
-              Login
-            </Link>
-          )}
+            {currentUser ? (
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-[color,background-color,transform] duration-150 ease-out hover:bg-rose-50 hover:text-rose-600 active:scale-[0.94] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50 focus-visible:ring-offset-2"
+                aria-label="Log out"
+                title="Log out"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                state={{ from: location.pathname }}
+                onClick={onClose}
+                className="shrink-0 rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white shadow-[0_1px_2px_rgba(194,65,12,0.24)] transition-colors hover:bg-orange-600 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2"
+              >
+                Login
+              </Link>
+            )}
+          </div>
         </div>
       </aside>
     </>

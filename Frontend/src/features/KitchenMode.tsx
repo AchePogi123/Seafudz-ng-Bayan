@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import NavbarKitchen from '../components/NavbarKitchen'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
@@ -6,8 +6,143 @@ import { AdminCreateTransactionModal } from '../components/AdminCreateTransactio
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
-import { useMenuAvailability } from '../utils/menuAvailability'
 import KitchenStockPanel from '../components/KitchenStockPanel'
+import { executeReceiptPrint } from './ReceiptModal'
+import { Badge, Button, Icon } from './inventory/ui'
+import './inventory/admin-inventory.css'
+
+/**
+ * How long a ticket has been cooking, in whole minutes.
+ * Returns null for tickets that have not started.
+ */
+const elapsedMinutes = (order: { status?: string; startTime?: number | null }, now: number): number | null => {
+  if (order.status !== 'Preparing' || !order.startTime) return null
+  return Math.floor((now - order.startTime) / 60000)
+}
+
+/**
+ * The age of a cooking ticket is the one thing a cook needs from across the
+ * room, so it is the only element on the board that changes colour on its own.
+ */
+/**
+ * Tickets arrive carrying a full order ref (`SFB-dc0999fb-69cb-…`), which is
+ * unreadable as a headline. The board shows a short tail code a cook can call
+ * across the kitchen; the full ref stays on the element and in the detail view.
+ */
+const ticketLabel = (ref: string): string => {
+  const raw = String(ref || '').trim()
+  if (!raw) return '—'
+  if (/^\d{1,4}$/.test(raw)) return raw
+  const tail = raw.replace(/[^A-Za-z0-9]/g, '').slice(-4).toUpperCase()
+  return tail || raw.slice(0, 6).toUpperCase()
+}
+
+const escapeHtml = (value: unknown) =>
+  String(value ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+  )
+
+/**
+ * The slip that goes out with the food.
+ *
+ * It answers the one question the cashier has when a tray lands on the pass:
+ * whose order is this? So the name and the ticket code are the biggest things
+ * on it, and the item list is there to check the tray against.
+ */
+const generateKitchenSlipHtml = (order: KitchenOrder): string => {
+  const items = (order.items || []).filter(
+    (item) =>
+      !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
+        String(item.itemStatus || (item as any).item_status || '').toUpperCase()
+      )
+  )
+  const pickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
+
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Order ready - ${escapeHtml(ticketLabel(order.queue))}</title>
+    <style>
+      @page { size: 80mm auto; margin: 0; }
+      @media print { html, body { width: 80mm; margin: 0 !important; padding: 8px !important; } }
+      body {
+        font-family: 'Courier New', Courier, monospace;
+        width: 280px; margin: 0 auto; padding: 10px;
+        color: #000; font-size: 12px; line-height: 1.4;
+      }
+      .center { text-align: center; }
+      .divider { border-top: 1px dashed #000; margin: 8px 0; }
+      .eyebrow { font-size: 10px; letter-spacing: 2px; }
+      .ticket { font-size: 40px; font-weight: bold; line-height: 1.1; letter-spacing: 2px; }
+      .name { font-size: 20px; font-weight: bold; line-height: 1.2; word-break: break-word; }
+      .label { font-size: 10px; letter-spacing: 1px; }
+      .row { display: flex; justify-content: space-between; gap: 8px; }
+      .row span:first-child { white-space: nowrap; }
+      .ref { font-size: 11px; word-break: break-all; line-height: 1.3; }
+      .row span:last-child { text-align: right; word-break: break-all; }
+      .items { width: 100%; border-collapse: collapse; margin-top: 4px; }
+      .items td { font-size: 13px; padding: 3px 0; vertical-align: top; }
+      .items td.qty { width: 34px; font-weight: bold; }
+      .note { font-size: 12px; font-weight: bold; border: 1px solid #000; padding: 6px; margin-top: 6px; }
+      .foot { font-size: 10px; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="center">
+      <div style="font-size:14px;font-weight:bold;">SEAFUDZ NG BAYAN</div>
+      <div class="eyebrow">ORDER READY</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="center">
+      <div class="label">TICKET</div>
+      <div class="ticket">${escapeHtml(ticketLabel(order.queue))}</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <div class="label">CUSTOMER</div>
+      <div class="name">${escapeHtml(order.customer || 'Walk-in')}</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div>
+      <div class="label">ORDER ID</div>
+      <div class="ref">${escapeHtml(order.queue)}</div>
+      <div class="row" style="margin-top:6px;"><span>Type</span><span>${pickup ? 'STORE PICK-UP' : 'DELIVERY'}</span></div>
+      <div class="row"><span>Ready at</span><span>${escapeHtml(new Date().toLocaleString())}</span></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="label">ITEMS</div>
+    <table class="items">
+      ${items
+        .map(
+          (item) =>
+            `<tr><td class="qty">${escapeHtml(item.quantity)}x</td><td>${escapeHtml(item.name)}</td></tr>`
+        )
+        .join('')}
+    </table>
+
+    ${order.notes ? `<div class="note">NOTE: ${escapeHtml(order.notes)}</div>` : ''}
+
+    <div class="divider"></div>
+    <div class="center foot">Attach this slip to the order.</div>
+  </body>
+</html>`
+}
+
+const ageTone = (mins: number | null): 'calm' | 'warn' | 'late' => {
+  if (mins === null) return 'calm'
+  if (mins >= 20) return 'late'
+  if (mins >= 12) return 'warn'
+  return 'calm'
+}
 
 interface OrderItem {
   id?: number
@@ -38,7 +173,6 @@ export const KitchenMode: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
   const { menuItems } = useProductImages()
-  const { setAvailability } = useMenuAvailability()
 
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null)
@@ -47,16 +181,13 @@ export const KitchenMode: React.FC = () => {
   const [now, setNow] = useState<number>(() => Date.now())
 
   // Out-of-Stock flagging states
-  const [outOfStockModalOrderId, setOutOfStockModalOrderId] = useState<string | null>(null)
-  const [selectedOosItemIds, setSelectedOosItemIds] = useState<number[]>([])
-  const [isSubmittingOos, setIsSubmittingOos] = useState(false)
 
   // Admin CRUD Modal states
   const [isAdminCreateOpen, setIsAdminCreateOpen] = useState(false)
   const [editingKitchenOrder, setEditingKitchenOrder] = useState<any | null>(null)
 
   const handleDeleteKitchenOrder = async (orderId: string) => {
-    const confirmDelete = window.confirm(`⚠️ Admin Action: Are you sure you want to permanently delete Kitchen Order #${orderId}? This will remove it from the database.`)
+    const confirmDelete = window.confirm(`Admin Action: Are you sure you want to permanently delete Kitchen Order #${orderId}? This will remove it from the database.`)
     if (!confirmDelete) return
 
     try {
@@ -420,7 +551,8 @@ export const KitchenMode: React.FC = () => {
       const elapsedSec = Math.floor((now - order.startTime) / 1000)
       const mins = Math.floor(elapsedSec / 60)
       const secs = elapsedSec % 60
-      return `${mins}:${secs < 10 ? '0' : ''}${secs}s`
+      // mm:ss — the stray "s" suffix made this read as "6 minutes 0 seconds seconds".
+      return `${mins}:${secs < 10 ? '0' : ''}${secs}`
     }
     if (order.completedTimeElapsed) {
       return order.completedTimeElapsed
@@ -529,78 +661,6 @@ export const KitchenMode: React.FC = () => {
     }
   }
 
-  const outOfStockOrder = orders.find((o) => o.id === outOfStockModalOrderId)
-
-  const canOrderBeFlaggedOos = useCallback((order: KitchenOrder): boolean => {
-    const activeItems = (order.items || []).filter(
-      (item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase())
-    )
-    return activeItems.length > 0
-  }, [])
-
-  // Out-of-stock flagging handler
-  const handleFlagOutOfStock = async () => {
-    if (!outOfStockModalOrderId || selectedOosItemIds.length === 0) return
-
-    setIsSubmittingOos(true)
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/kitchen/orders/${outOfStockModalOrderId}/flag-out-of-stock`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemIds: selectedOosItemIds }),
-      })
-
-      if (res.ok) {
-        // Automatically mark flagged dishes as Out of Stock for all users
-        const selectedProducts = outOfStockOrder?.items
-          .filter((item, index) => selectedOosItemIds.includes(item.id || index + 1))
-          .map((item) => item.productId || menuItems.find(
-            (product) => product.name.toLowerCase() === item.name.toLowerCase()
-          )?.id)
-          .filter((productId): productId is string => Boolean(productId));
-
-        if (selectedProducts && selectedProducts.length > 0) {
-          void Promise.all(
-            selectedProducts.map((productId) => setAvailability(productId, false))
-          );
-        }
-        // Update local state immediately
-        setOrders((prev) =>
-          prev.map((o) =>
-            o.id === outOfStockModalOrderId
-              ? { ...o, status: 'Out of Stock' }
-              : o
-          )
-        )
-
-        // Update localStorage
-        try {
-          const flaggedOosItems = (outOfStockOrder?.items || []).filter((item, index) =>
-            selectedOosItemIds.includes(item.id || index + 1)
-          )
-          const existing = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-          const updated = existing.map((o: any) =>
-            (o.id === outOfStockModalOrderId || o.ref === outOfStockModalOrderId)
-              ? { ...o, status: 'OUT_OF_STOCK', outOfStockItems: flaggedOosItems.length > 0 ? flaggedOosItems : (outOfStockOrder?.items || []) }
-              : o
-          )
-          localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-          notifyOrderSync()
-        } catch {}
-      } else {
-        const err = await res.json().catch(() => ({}))
-        alert(err.message || 'Failed to flag items as out of stock.')
-      }
-    } catch (err) {
-      console.error('Error flagging out of stock:', err)
-      alert('Network error. Please try again.')
-    } finally {
-      setIsSubmittingOos(false)
-      setOutOfStockModalOrderId(null)
-      setSelectedOosItemIds([])
-    }
-  }
 
   const queueOrders = useMemo(
     () =>
@@ -673,231 +733,147 @@ export const KitchenMode: React.FC = () => {
       })
   }, [orders, now])
 
-  return (
-    <div className="min-h-screen bg-[#faf9f6] p-3 sm:p-4 lg:p-6 transition-all duration-300 pb-16">
-      <div className="w-full flex flex-col gap-4 sm:gap-6">
-        <NavbarKitchen />
+  /**
+   * Marking a ticket done prints the slip that travels with the food, so the
+   * cashier never has to ask whose order is on the pass.
+   */
+  const handleTicketAction = (order: KitchenOrder, mode: 'queued' | 'cooking') => {
+    if (mode === 'queued') {
+      void updateOrderStatus(order.id, 'Preparing')
+      return
+    }
+    void updateOrderStatus(order.id, 'Ready')
+    executeReceiptPrint(generateKitchenSlipHtml(order))
+  }
 
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-5 py-3.5 rounded-2xl border border-neutral-200/80 shadow-2xs">
-          <div className="flex items-center gap-3">
-            <h1 className="text-base sm:text-lg font-extrabold text-neutral-900">Kitchen Display Board</h1>
-          </div>
+  /**
+   * Queue and cooking tickets differ only in their headline metric and their
+   * action, so they are one card with two modes rather than two near-identical
+   * eighty-line blocks.
+   */
+  const TicketCard: React.FC<{ order: KitchenOrder; mode: 'queued' | 'cooking' }> = ({ order, mode }) => {
+    const mins = elapsedMinutes(order, now)
+    const tone = ageTone(mins)
+    const isPickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
+    const liveItems = order.items.filter(
+      (item) =>
+        !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
+          String(item.itemStatus || (item as any).item_status || '').toUpperCase()
+        )
+    )
 
-          <div className="flex items-center gap-2">
-            {isAdmin && (
-              <button
-                onClick={() => setIsAdminCreateOpen(true)}
-                className="bg-[#ff7a00] hover:bg-[#e66e00] text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95 flex items-center gap-1.5"
-              >
-                <span>➕</span> Create Ticket (Admin)
-              </button>
+    return (
+      <article className={`kds-ticket kds-ticket--${mode} kds-age-${tone}`}>
+        <button type="button" className="kds-ticket-body" onClick={() => setSelectedOrderId(order.id)}>
+          <span className="kds-ticket-top">
+            <span className="kds-ticket-no" title={`Order ${order.queue}`}>
+              {ticketLabel(order.queue)}
+            </span>
+            {mode === 'cooking' ? (
+              <span className="kds-timer" aria-label={`Cooking for ${getPrepTimeDisplay(order)}`}>
+                {getPrepTimeDisplay(order)}
+              </span>
+            ) : (
+              isPickup && <Badge tone="success">Pick-up</Badge>
             )}
+          </span>
 
-            <button
-              onClick={() => setIsStockPanelOpen(true)}
-              className="flex items-center gap-2 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-300 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
-              title="See what the kitchen can still make"
-            >
+          <span className="kds-ticket-customer">
+            {order.customer || 'Customer'}
+            {mode === 'cooking' && isPickup && (
+              <span className="ml-2 align-middle">
+                <Badge tone="success">Pick-up</Badge>
+              </span>
+            )}
+          </span>
+
+          <ul className="kds-items">
+            {liveItems.map((item, idx) => (
+              <li key={idx}>
+                <span className="kds-item-qty">{item.quantity}×</span>
+                <span className="kds-item-name">{item.name}</span>
+              </li>
+            ))}
+          </ul>
+
+          {order.notes && (
+            <span className="kds-note">
+              <Icon name="alertCircle" className="h-5 w-5 shrink-0" />
+              <span>{order.notes}</span>
+            </span>
+          )}
+        </button>
+
+        <div className="kds-actions">
+          <button
+            type="button"
+            className={`kds-btn ${mode === 'queued' ? 'kds-btn--start' : 'kds-btn--done'}`}
+            onClick={() => handleTicketAction(order, mode)}
+          >
+            {mode === 'queued' ? 'Start cooking' : 'Mark done'}
+          </button>
+        </div>
+      </article>
+    )
+  }
+
+  return (
+    <div className="inv-scope kds min-h-screen pb-6" style={{ background: 'var(--inv-bg)' }}>
+      <div className="px-3 sm:px-4 lg:px-6 pt-3 sm:pt-4">
+        <NavbarKitchen />
+      </div>
+
+      <main className="w-full px-3 sm:px-4 lg:px-6 pt-4 space-y-4">
+        <div className="kds-bar">
+          <h1 className="kds-bar-title">Kitchen display</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdmin && (
+              <Button variant="secondary" icon="plus" onClick={() => setIsAdminCreateOpen(true)}>
+                New ticket
+              </Button>
+            )}
+            <Button variant="secondary" icon="box" onClick={() => setIsStockPanelOpen(true)}>
               Menu stock
-            </button>
-
-            <button
-              onClick={() => setIsHistoryModalOpen(true)}
-              className="flex items-center gap-2 bg-neutral-900 hover:bg-black text-white px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-95"
-              title="View Processed Orders"
-            >
-              <span>Processed order</span>
-              {processedOrders.length > 0 && (
-                <span className="bg-orange-500 text-white font-black text-[10px] px-1.5 py-0.5 rounded-full">
-                  {processedOrders.length}
-                </span>
-              )}
-            </button>
+            </Button>
+            <Button variant="secondary" icon="history" onClick={() => setIsHistoryModalOpen(true)}>
+              Done today
+              {processedOrders.length > 0 && <span className="inv-seg-count">{processedOrders.length}</span>}
+            </Button>
           </div>
         </div>
 
-        {/* 2 Sections Live Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 items-start">
-          {/* Section 1: Queue Column */}
-          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4 shrink-0">
-              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-neutral-400"></span>
-                Kitchen Queue
-              </h2>
-              <span className="bg-neutral-100 text-neutral-700 font-semibold text-xs px-2.5 py-1 rounded-full">
-                {queueOrders.length} Waiting
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
+        <div className="kds-board">
+          {/* ------------------------------------------------- Queue */}
+          <section className="kds-col" aria-labelledby="kds-queue-heading">
+            <header className="kds-col-head">
+              <h2 id="kds-queue-heading">Waiting</h2>
+              <span className="kds-count">{queueOrders.length}</span>
+            </header>
+            <div className="kds-col-scroll">
               {queueOrders.length === 0 ? (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
-                  <p className="text-xs font-medium">No queued orders</p>
-                </div>
+                <p className="kds-empty">Nothing waiting. New tickets land here.</p>
               ) : (
-                queueOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-neutral-200/80 transition-all flex flex-col justify-between"
-                  >
-                    <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {String(order.category || order.type || '').toUpperCase().includes('PICKUP') && (
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                🛍️ STORE PICK-UP
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
-                            {order.customer || 'Customer'}
-                          </div>
-                          <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items
-                          .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
-                          .map((item, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="truncate">{item.name}</span>
-                            </div>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
-                              x{item.quantity}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {order.notes ? (
-                        <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-3 flex items-center gap-1.5">
-                          <span>Note: {order.notes}</span>
-                        </div>
-                      ) : (
-                        <div className="text-[11px] text-neutral-400 italic mb-2">No special instructions</div>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => updateOrderStatus(order.id, 'Preparing')}
-                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                      >
-                        Start Cooking
-                      </button>
-                      {canOrderBeFlaggedOos(order) && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
-                          className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
-                          title="Flag items as out of stock"
-                        >
-                          ⚠️ OOS
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
+                queueOrders.map((order) => <TicketCard key={order.id} order={order} mode="queued" />)
               )}
             </div>
           </section>
 
-          {/* Processing Column */}
-          <section className="bg-white rounded-2xl p-4 sm:p-5 border border-neutral-200/80 shadow-2xs flex flex-col max-h-[600px] lg:max-h-[calc(100vh-190px)] lg:h-[calc(100vh-190px)] min-h-[440px]">
-            <div className="flex items-center justify-between pb-3.5 border-b border-neutral-100 mb-4 shrink-0">
-              <h2 className="text-base font-bold text-neutral-900 flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-600"></span>
-                On Processing
-              </h2>
-              <span className="bg-orange-50 text-orange-700 font-semibold text-xs px-2.5 py-1 rounded-full">
-                {processingOrders.length} Cooking
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1.5 overscroll-contain custom-scrollbar">
+          {/* ---------------------------------------------- Cooking */}
+          <section className="kds-col" aria-labelledby="kds-cooking-heading">
+            <header className="kds-col-head">
+              <h2 id="kds-cooking-heading">Cooking</h2>
+              <span className="kds-count kds-count--live">{processingOrders.length}</span>
+            </header>
+            <div className="kds-col-scroll">
               {processingOrders.length === 0 ? (
-                <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-neutral-400 select-none">
-                  <p className="text-xs font-medium">No orders in preparation</p>
-                </div>
+                <p className="kds-empty">Nothing on the pass right now.</p>
               ) : (
-                processingOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="bg-[#faf9f6] hover:bg-neutral-100/80 rounded-xl p-4 border border-orange-200/80 transition-all flex flex-col justify-between"
-                  >
-                    <div onClick={() => setSelectedOrderId(order.id)} className="cursor-pointer">
-                      <div className="flex justify-between items-start mb-2">
-                        <div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-bold text-neutral-900 text-sm">Order #{order.queue}</span>
-                            {String(order.category || order.type || '').toUpperCase().includes('PICKUP') && (
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                🛍️ STORE PICK-UP
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm font-extrabold text-neutral-900 mt-0.5">
-                            {order.customer || 'Customer'}
-                          </div>
-                          <div className="text-xs text-neutral-500 font-medium mt-0.5">{order.category}</div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-1 py-2 border-t border-b border-neutral-200/60 mb-2.5">
-                        {order.items
-                          .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
-                          .map((item, idx) => (
-                          <div key={idx} className="flex justify-between items-center text-xs font-semibold text-neutral-700">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="truncate">{item.name}</span>
-                            </div>
-                            <span className="bg-neutral-200 text-neutral-800 px-1.5 py-0.5 rounded text-[11px] font-bold shrink-0">
-                              x{item.quantity}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {order.notes && (
-                        <div className="bg-red-50 border border-red-200 text-red-800 font-bold text-xs p-2.5 rounded-xl mb-2 flex items-center gap-1.5">
-                          <span>Note: {order.notes}</span>
-                        </div>
-                      )}
-
-                      <div className="flex justify-between items-center text-xs mb-3">
-                        <span className="text-neutral-400 font-medium">Prep Timer:</span>
-                        <span className="font-bold text-xs text-orange-600">{getPrepTimeDisplay(order)}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => updateOrderStatus(order.id, 'Ready')}
-                        className="flex-1 bg-neutral-900 hover:bg-black text-white font-bold py-2.5 rounded-lg text-xs cursor-pointer"
-                      >
-                        Mark as Done
-                      </button>
-                      {canOrderBeFlaggedOos(order) && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setOutOfStockModalOrderId(order.id); setSelectedOosItemIds([]); }}
-                          className="bg-red-100 hover:bg-red-200 text-red-700 font-bold py-2.5 px-3 rounded-lg text-xs cursor-pointer border border-red-200 transition-colors"
-                          title="Flag items as out of stock"
-                        >
-                          ⚠️ OOS
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
+                processingOrders.map((order) => <TicketCard key={order.id} order={order} mode="cooking" />)
               )}
             </div>
           </section>
         </div>
-      </div>
+      </main>
 
       {/* Processed Orders Modal */}
       <KitchenStockPanel open={isStockPanelOpen} onClose={() => setIsStockPanelOpen(false)} menuItems={menuItems} />
@@ -916,7 +892,7 @@ export const KitchenMode: React.FC = () => {
                 onClick={() => setIsHistoryModalOpen(false)}
                 className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold transition-colors cursor-pointer"
               >
-                ✕
+                <Icon name="close" className="h-5 w-5" />
               </button>
             </div>
 
@@ -967,7 +943,7 @@ export const KitchenMode: React.FC = () => {
             <div className="p-5 bg-neutral-900 text-white flex justify-between items-center">
               <h3 className="text-lg font-bold">Order #{selectedOrder.queue}</h3>
               <button onClick={() => setSelectedOrderId(null)} className="text-white font-bold">
-                ✕
+                <Icon name="close" className="h-5 w-5" />
               </button>
             </div>
 
@@ -981,7 +957,7 @@ export const KitchenMode: React.FC = () => {
 
               <div>
                 <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-2">Order Items</h4>
-                <div className="bg-[#faf9f6] rounded-xl border border-neutral-200/80 p-3.5">
+                <div className="bg-[var(--inv-surface-2)] rounded-xl border border-neutral-200/80 p-3.5">
                   {selectedOrder.items
                     .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
                     .map((item, idx) => (
@@ -1029,7 +1005,7 @@ export const KitchenMode: React.FC = () => {
                       }}
                       className="bg-amber-500 hover:bg-amber-600 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
                     >
-                      ✏️ Edit
+                      Edit
                     </button>
                     <button
                       type="button"
@@ -1039,102 +1015,11 @@ export const KitchenMode: React.FC = () => {
                       }}
                       className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-2xs"
                     >
-                      🗑️ Delete
+                      Delete
                     </button>
                   </div>
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* OUT OF STOCK MODAL */}
-      {outOfStockModalOrderId && outOfStockOrder && (
-        <div className="fixed inset-0 bg-neutral-900/60 flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-red-200">
-            <div className="p-5 bg-red-600 text-white flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-bold">⚠️ Flag Out of Stock</h3>
-                <p className="text-xs text-red-100 mt-0.5">Order #{outOfStockOrder.queue}</p>
-              </div>
-              <button
-                onClick={() => { setOutOfStockModalOrderId(null); setSelectedOosItemIds([]); }}
-                className="text-white font-bold w-8 h-8 rounded-full hover:bg-red-700 transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <p className="text-xs text-neutral-600 font-medium">
-                Select which items are currently unavailable. The order will be paused and the assistant will be notified to coordinate with the customer.
-              </p>
-
-              <div className="space-y-2">
-                {outOfStockOrder.items
-                  .filter((item) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.itemStatus || (item as any).item_status || '').toUpperCase()))
-                  .map((item, idx) => {
-                  const itemId = item.id || idx + 1
-                  const isSelected = selectedOosItemIds.includes(itemId)
-                  return (
-                    <label
-                      key={idx}
-                      className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
-                        isSelected
-                          ? 'bg-red-50 border-red-300 ring-1 ring-red-200 cursor-pointer'
-                          : 'bg-[#faf9f6] border-neutral-200 hover:border-neutral-300 cursor-pointer'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => {
-                          setSelectedOosItemIds((prev) =>
-                            isSelected
-                              ? prev.filter((id) => id !== itemId)
-                              : [...prev, itemId]
-                          )
-                        }}
-                        className="w-4 h-4 rounded accent-red-600 cursor-pointer"
-                      />
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-bold text-neutral-900">{item.name}</span>
-                        </div>
-                        {item.price ? (
-                          <div className="text-[11px] text-neutral-500">₱{item.price?.toFixed(2)} × {item.quantity}</div>
-                        ) : null}
-                      </div>
-                      <span className="bg-neutral-200 text-neutral-800 px-2 py-0.5 rounded text-[11px] font-bold">
-                        x{item.quantity}
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-
-
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => { setOutOfStockModalOrderId(null); setSelectedOosItemIds([]); }}
-                  className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleFlagOutOfStock}
-                  disabled={selectedOosItemIds.length === 0 || isSubmittingOos}
-                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
-                    selectedOosItemIds.length === 0 || isSubmittingOos
-                      ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                      : 'bg-red-600 hover:bg-red-700 text-white'
-                  }`}
-                >
-                  {isSubmittingOos ? 'Flagging...' : `Flag ${selectedOosItemIds.length} Item${selectedOosItemIds.length !== 1 ? 's' : ''} as Out of Stock`}
-                </button>
-              </div>
             </div>
           </div>
         </div>

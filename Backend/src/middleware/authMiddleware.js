@@ -255,7 +255,9 @@ export function requireRole(allowedRoles = []) {
     const userRole = (req.user.role || 'customer').toLowerCase();
     const normalizedAllowed = allowedRoles.map(r => r.toLowerCase());
 
-    if (userRole === 'admin' || normalizedAllowed.includes(userRole)) {
+    // No implicit admin override: every endpoint must list 'admin' explicitly
+    // in allowedRoles if admins are meant to reach it.
+    if (normalizedAllowed.includes(userRole)) {
       return next();
     }
 

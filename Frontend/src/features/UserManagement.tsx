@@ -1,6 +1,34 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
+import {
+    Badge,
+    Button,
+    Card,
+    CardHeader,
+    EmptyState,
+    Field,
+    Icon,
+    Modal,
+    Notice,
+    Pagination,
+    RowMenu,
+    SearchInput,
+    Segmented,
+    Toolbar,
+    type BadgeTone,
+    type RowMenuItem,
+} from './inventory/ui'
+import './inventory/admin-inventory.css'
+
+type StatusFilter = 'all' | 'active' | 'pending' | 'inactive'
+
+const STATUS_META: Record<User['status'], { label: string; tone: BadgeTone }> = {
+    active: { label: 'Active', tone: 'success' },
+    pending: { label: 'Pending activation', tone: 'warning' },
+    inactive: { label: 'Inactive', tone: 'neutral' },
+}
 
 interface User {
     id: string
@@ -14,6 +42,8 @@ interface User {
 }
 
 const UserManagement = () => {
+    const navigate = useNavigate()
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
     const [users, setUsers] = useState<User[]>([])
     const [idCounter, setIdCounter] = useState(101)
     const [searchTerm, setSearchTerm] = useState('')
@@ -381,524 +411,469 @@ const UserManagement = () => {
             })
         }
     }
-    const filteredUsers = users.filter(
-        (u) =>
-            u.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            u.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            u.username.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            u.id.toLowerCase().includes(searchTerm.toLowerCase())
-    )
+    const q = searchTerm.trim().toLowerCase()
+    const matchesSearch = (u: User) =>
+        !q ||
+        u.name.toLowerCase().includes(q) ||
+        u.role.toLowerCase().includes(q) ||
+        u.username.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        u.id.toLowerCase().includes(q)
+
+    const searchedUsers = users.filter(matchesSearch)
+    const filteredUsers = searchedUsers.filter((u) => statusFilter === 'all' || u.status === statusFilter)
+
+    const counts = {
+        all: searchedUsers.length,
+        active: searchedUsers.filter((u) => u.status === 'active').length,
+        pending: searchedUsers.filter((u) => u.status === 'pending').length,
+        inactive: searchedUsers.filter((u) => u.status === 'inactive').length,
+    }
+
+    const rowActions = (user: User): RowMenuItem[] =>
+        user.status === 'pending'
+            ? [
+                  {
+                      label: resendingUserId === user.id ? 'Sending activation…' : 'Resend activation email',
+                      icon: 'refresh',
+                      disabled: resendingUserId === user.id,
+                      onSelect: () => void handleResendActivation(user),
+                  },
+                  {
+                      label: 'Delete pending account',
+                      icon: 'trash',
+                      danger: true,
+                      separatorBefore: true,
+                      onSelect: () => void handleDeletePendingUser(user),
+                  },
+              ]
+            : [
+                  { label: 'Edit details', icon: 'edit', onSelect: () => handleOpenEditModal(user) },
+                  user.status === 'active'
+                      ? {
+                            label: 'Deactivate account',
+                            icon: 'close',
+                            danger: true,
+                            separatorBefore: true,
+                            onSelect: () => handleDeactivateClick(user),
+                        }
+                      : {
+                            label: 'Activate account',
+                            icon: 'check',
+                            separatorBefore: true,
+                            onSelect: () => handleDeactivateClick(user),
+                        },
+              ]
 
     return (
-        <div className="font-sans bg-slate-50/50 min-h-screen text-[#2d3748] pb-16">
-            {/* Admin Navbar */}
-            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
+        <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
+            <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-6">
                 <NavbarAdmin />
             </div>
 
-            {/* Main Content */}
-            <div className="w-full px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 space-y-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-3xl border border-slate-200/80 shadow-xs gap-4">
-                    <div>
-                        <div className="flex items-center gap-2 mb-1">
-                            <span className="w-2.5 h-2.5 rounded-full bg-orange-500"></span>
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">User & Staff Management</span>
-                        </div>
-                        <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                            User Management
-                        </h1>
-                        <p className="mt-0.5 text-xs sm:text-sm text-slate-500 font-medium">
-                            Manage system access for staff and operational team
+            <main className="mx-auto w-full max-w-[1440px] px-4 sm:px-6 lg:px-10 pt-6 space-y-6">
+                <button type="button" onClick={() => navigate('/admin-dashboard')} className="inv-back cursor-pointer">
+                    <Icon name="arrowLeft" className="h-4 w-4" />
+                    Admin dashboard
+                </button>
+
+                <div className="inv-page-header">
+                    <div className="min-w-0">
+                        <h1 className="inv-page-title">User management</h1>
+                        <p className="inv-page-sub">
+                            {users.length} staff {users.length === 1 ? 'account' : 'accounts'}
+                            {counts.pending > 0 && ` · ${counts.pending} awaiting activation`}
                         </p>
                     </div>
-                    <button
-                        className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs cursor-pointer shadow-xs transition-all duration-200 hover:-translate-y-0.5"
-                        onClick={handleOpenModal}
-                    >
-                        + Create New User
-                    </button>
-                </div>
-
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="relative w-full sm:w-96">
-                        <input
-                            type="text"
-                            className="w-full py-2.5 px-4 pr-10 rounded-xl border border-slate-200 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:border-orange-500 shadow-2xs transition-all"
-                            placeholder="Search by name, role, username, or email..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                        <svg className="w-4 h-4 absolute right-3.5 top-3 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                    </div>
+                    <Button variant="primary" size="sm" icon="plus" onClick={handleOpenModal}>
+                        New staff user
+                    </Button>
                 </div>
 
                 {actionMessage && (
-                    <div
-                        role="status"
-                        className={`mb-5 rounded-xl border px-4 py-3 text-sm font-semibold ${
-                            actionMessage.type === 'success'
-                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                : 'border-rose-200 bg-rose-50 text-rose-700'
-                        }`}
-                    >
-                        {actionMessage.text}
-                    </div>
+                    <Notice tone={actionMessage.type === 'success' ? 'success' : 'danger'}>{actionMessage.text}</Notice>
                 )}
 
-                {/* Table */}
-                <div className="bg-white rounded-3xl shadow-xs border border-slate-200/80 overflow-hidden">
-                    <table className="w-full border-collapse text-left text-[0.95rem]">
-                        <thead>
-                            <tr>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">User ID</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Full Name</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Username</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Role</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Contact</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Email</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Status</th>
-                                <th className="bg-[#f7fafc] text-[#718096] font-bold py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] text-[0.85rem] uppercase">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredUsers.length === 0 ? (
+                <Card>
+                    <CardHeader
+                        title="Staff accounts"
+                        description="Who can sign in, what role they hold, and whether their account is live."
+                    />
+
+                    <Toolbar>
+                        <Segmented
+                            options={[
+                                { value: 'all', label: 'All', count: counts.all },
+                                { value: 'active', label: 'Active', count: counts.active },
+                                { value: 'pending', label: 'Pending', count: counts.pending },
+                                { value: 'inactive', label: 'Inactive', count: counts.inactive },
+                            ]}
+                            value={statusFilter}
+                            onChange={setStatusFilter}
+                            label="Filter by account status"
+                            size="sm"
+                        />
+                        <SearchInput
+                            value={searchTerm}
+                            onChange={setSearchTerm}
+                            placeholder="Search name, username or email"
+                            label="Search staff accounts"
+                            className="sm:ml-auto sm:w-72"
+                        />
+                    </Toolbar>
+
+                    <div className="inv-table-wrap">
+                        <table className="inv-table">
+                            <thead>
                                 <tr>
-                                    <td colSpan={8} className="text-center py-[5rem] px-[2rem] text-[#a0aec0]">
-                                        <h3 className="text-[1.3rem] text-[#4a5568] mb-[0.5rem] mt-0 font-bold">No Users Found</h3>
-                                        <p className="m-0 text-[0.95rem]">Click "+ Create New User" above to add new staff members.</p>
-                                    </td>
+                                    <th scope="col">Staff member</th>
+                                    <th scope="col">Username</th>
+                                    <th scope="col">Role</th>
+                                    <th scope="col">Contact</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col" className="is-actions">
+                                        <span className="sr-only">Actions</span>
+                                    </th>
                                 </tr>
-                            ) : (
-                                filteredUsers.map((user) => (
-                                    <tr key={user.id} className="hover:bg-[#fcfdfe]/50">
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]"><strong>{user.id}</strong></td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">{user.name}</td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7] font-semibold text-[#4a5568]">{user.username}</td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">
-                                            <span className="bg-[#ebf8ff] text-[#2b6cb0] py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.8rem] font-bold">
-                                                {user.role}
-                                            </span>
-                                        </td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">{user.contact}</td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">{user.email}</td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">
-                                            <span
-                                                className={`py-[0.35rem] px-[0.8rem] rounded-[50px] text-[0.78rem] font-bold ${
-                                                    user.status === 'active'
-                                                        ? 'bg-[#e6fffa] text-[#319795]'
-                                                        : user.status === 'pending'
-                                                            ? 'bg-amber-50 text-amber-700'
-                                                            : 'bg-[#fff5f5] text-[#e53e3e]'
-                                                }`}
-                                            >
-                                                {user.status === 'pending' ? 'PENDING ACTIVATION' : user.status.toUpperCase()}
-                                            </span>
-                                        </td>
-                                        <td className="py-[1.2rem] px-[1.5rem] border-b border-[#edf2f7]">
-                                            <div className="flex items-center gap-2">
-                                                {user.status === 'pending' ? (
-                                                    <>
-                                                        <button
-                                                            type="button"
-                                                            disabled={resendingUserId === user.id}
-                                                            className="border border-solid border-orange-200 bg-orange-50 py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.8rem] font-bold text-orange-700 cursor-pointer transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60"
-                                                            onClick={() => void handleResendActivation(user)}
+                            </thead>
+                            <tbody>
+                                {filteredUsers.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={6}>
+                                            {users.length === 0 ? (
+                                                <EmptyState
+                                                    icon="box"
+                                                    title="No staff accounts yet"
+                                                    description="Create an account and the staff member gets an activation email to set their own password."
+                                                    action={
+                                                        <Button variant="primary" size="sm" icon="plus" onClick={handleOpenModal}>
+                                                            New staff user
+                                                        </Button>
+                                                    }
+                                                />
+                                            ) : (
+                                                <EmptyState
+                                                    icon="search"
+                                                    title="No accounts match this view"
+                                                    description="Try a different status or clear the search."
+                                                    action={
+                                                        <Button
+                                                            variant="secondary"
+                                                            size="sm"
+                                                            onClick={() => {
+                                                                setStatusFilter('all')
+                                                                setSearchTerm('')
+                                                            }}
                                                         >
-                                                            {resendingUserId === user.id ? 'Sending…' : 'Resend activation'}
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className="border border-solid border-rose-200 py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.8rem] font-bold text-rose-600 cursor-pointer transition-colors hover:bg-rose-50"
-                                                            onClick={() => void handleDeletePendingUser(user)}
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <button
-                                                            type="button"
-                                                            className="border border-solid border-[#e2e8f0] bg-[#edf2f7] hover:bg-[#e2e8f0] text-[#4a5568] py-[0.5rem] px-[0.9rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer transition-colors"
-                                                            onClick={() => handleOpenEditModal(user)}
-                                                        >
-                                                            Edit
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            className={`border border-solid py-[0.5rem] px-[1rem] rounded-[8px] text-[0.85rem] font-bold cursor-pointer ${user.status === 'active'
-                                                                ? 'border-[#feb2b2] text-[#e53e3e] hover:bg-[#fff5f5]'
-                                                                : 'border-[#b2f5ea] text-[#319795] hover:bg-[#e6fffa]'
-                                                                }`}
-                                                            onClick={() => handleDeactivateClick(user)}
-                                                        >
-                                                            {user.status === 'active' ? 'Deactivate' : 'Activate'}
-                                                        </button>
-                                                    </>
-                                                )}
-                                            </div>
+                                                            Clear filters
+                                                        </Button>
+                                                    }
+                                                />
+                                            )}
                                         </td>
                                     </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                                ) : (
+                                    filteredUsers.map((user) => {
+                                        const status = STATUS_META[user.status]
+                                        return (
+                                            <tr key={user.id}>
+                                                <td>
+                                                    <div className="inv-cell-primary">{user.name}</div>
+                                                    <div className="inv-cell-secondary">{user.id}</div>
+                                                </td>
+                                                <td className="inv-cell-primary">{user.username || '—'}</td>
+                                                <td>
+                                                    <Badge tone="neutral">{user.role}</Badge>
+                                                </td>
+                                                <td>
+                                                    <div className="inv-cell-primary truncate max-w-[16rem]" title={user.email}>
+                                                        {user.email || '—'}
+                                                    </div>
+                                                    <div className="inv-cell-secondary">{user.contact || 'No phone on file'}</div>
+                                                </td>
+                                                <td>
+                                                    <Badge tone={status.tone} dot>
+                                                        {status.label}
+                                                    </Badge>
+                                                </td>
+                                                <td className="is-actions">
+                                                    <RowMenu items={rowActions(user)} label={`Actions for ${user.name}`} />
+                                                </td>
+                                            </tr>
+                                        )
+                                    })
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <Pagination
+                        page={1}
+                        pageSize={Math.max(filteredUsers.length, 1)}
+                        total={filteredUsers.length}
+                        onChange={() => {}}
+                        noun={filteredUsers.length === 1 ? 'account' : 'accounts'}
+                    />
+                </Card>
+            </main>
 
             {/* Create User Modal */}
-            {isModalOpen && (
-                <div
-                    className="fixed inset-0 bg-[#1a202c]/40 backdrop-blur-[4px] flex justify-center items-center z-[1000]"
-                    onClick={handleCloseModal}
-                >
-                    <div
-                        className="bg-white w-full max-w-[650px] rounded-[24px] shadow-[0_20px_60px_rgba(0,0,0,0.15)] overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="py-[1.8rem] px-[2.2rem] border-b border-[#edf2f7] flex justify-between items-center">
-                            <h2 className="text-[1.45rem] font-extrabold text-[#2d3748] m-0">Create New Staff User</h2>
-                            <button
-                                className="bg-none border-none text-[1.8rem] text-[#a0aec0] cursor-pointer hover:text-[#4a5568]"
-                                onClick={handleCloseModal}
-                            >
-                                &times;
-                            </button>
-                        </div>
+            <Modal
+                open={isModalOpen}
+                onClose={handleCloseModal}
+                size="md"
+                title="New staff user"
+                description="They receive an activation email and set their own password, so the account stays pending until they finish."
+                onSubmit={handleCreateUser}
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={handleCloseModal} disabled={isCreating}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" variant="primary" loading={isCreating}>
+                            {isCreating ? 'Creating…' : 'Create account'}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    <Field label="Assigned user ID" htmlFor="create-id" hint="Generated automatically.">
+                        <input id="create-id" type="text" className="inv-input" value={nextUserId} readOnly disabled />
+                    </Field>
 
-                        <form onSubmit={handleCreateUser} className="p-[2.2rem]">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.5rem] mb-[2.5rem]">
-                                <div className="md:col-span-2 flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Assigned User ID</label>
-                                    <input
-                                        type="text"
-                                        value={nextUserId}
-                                        readOnly
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] text-[#718096] bg-[#edf2f7] font-bold cursor-not-allowed"
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                        First Name <span className="text-[#e74c3c]">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        name="firstName"
-                                        placeholder="e.g. Maria"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.firstName}
-                                        onChange={handleFirstNameChange}
-                                        required
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                        Last Name <span className="text-[#e74c3c]">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        name="lastName"
-                                        placeholder="e.g. Santos"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.lastName}
-                                        onChange={handleLastNameChange}
-                                        required
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                        Role <span className="text-[#e74c3c]">*</span>
-                                    </label>
-                                    <select
-                                        name="role"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.role}
-                                        onChange={handleInputChange}
-                                        required
-                                    >
-                                        <option value="">Select Role</option>
-                                        <option value="Rider">Rider</option>
-                                        <option value="Cashier">Cashier</option>
-                                        <option value="Assistant">Assistant</option>
-                                        <option value="Kitchen Staff">Kitchen Staff</option>
-                                    </select>
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-[0.9rem] font-bold text-[#4a5568]">Username</label>
-                                        {isUsernameCustom && (
-                                            <button
-                                                type="button"
-                                                className="text-[0.75rem] text-[#e74c3c] hover:underline bg-transparent border-none p-0 cursor-pointer"
-                                                onClick={() => {
-                                                    setIsUsernameCustom(false)
-                                                    setFormData((prev) => ({
-                                                        ...prev,
-                                                        username: generateDefaultUsername(prev.firstName, prev.lastName),
-                                                    }))
-                                                }}
-                                            >
-                                                Reset auto-format
-                                            </button>
-                                        )}
-                                    </div>
-                                    <input
-                                        type="text"
-                                        name="username"
-                                        placeholder="e.g. M.Santos"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={formData.username}
-                                        onChange={handleUsernameChange}
-                                        maxLength={32}
-                                        pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}"
-                                        title="Use 3–32 letters, numbers, dots, underscores, or hyphens."
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem] md:col-span-2">
-                                        <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                            Email Address <span className="text-[#e74c3c]">*</span>
-                                        </label>
-                                        <input
-                                            type="email"
-                                            name="email"
-                                        placeholder="staff@gmail.com"
-                                            className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                            value={formData.email}
-                                            onChange={handleInputChange}
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                            <p className="mb-5 rounded-xl border border-orange-100 bg-orange-50 px-4 py-3 text-xs leading-relaxed text-orange-800">
-                                An activation link will be emailed to the staff member. Their account remains pending until they set a password and username.
-                            </p>
-                            {createError && (
-                                <p role="alert" className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
-                                    {createError}
-                                </p>
-                            )}
-
-                            <div className="flex justify-end gap-[1rem] border-t border-[#edf2f7] pt-[1.5rem]">
-                                <button
-                                    type="button"
-                                    className="bg-[#edf2f7] text-[#4a5568] border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer hover:bg-[#e2e8f0]"
-                                    onClick={handleCloseModal}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    disabled={isCreating}
-                                    className="bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer disabled:cursor-wait disabled:opacity-60"
-                                >
-                                    {isCreating ? 'Creating…' : 'Create Pending Account'}
-                                </button>
-                            </div>
-                        </form>
+                    <div className="inv-grid-2">
+                        <Field label="First name" htmlFor="create-first" required>
+                            <input
+                                id="create-first"
+                                name="firstName"
+                                type="text"
+                                className="inv-input"
+                                placeholder="Maria"
+                                value={formData.firstName}
+                                onChange={handleFirstNameChange}
+                                required
+                            />
+                        </Field>
+                        <Field label="Last name" htmlFor="create-last" required>
+                            <input
+                                id="create-last"
+                                name="lastName"
+                                type="text"
+                                className="inv-input"
+                                placeholder="Santos"
+                                value={formData.lastName}
+                                onChange={handleLastNameChange}
+                                required
+                            />
+                        </Field>
                     </div>
+
+                    <div className="inv-grid-2">
+                        <Field label="Role" htmlFor="create-role" required>
+                            <select
+                                id="create-role"
+                                name="role"
+                                className="inv-select"
+                                value={formData.role}
+                                onChange={handleInputChange}
+                                required
+                            >
+                                <option value="">Select a role</option>
+                                <option value="Rider">Rider</option>
+                                <option value="Cashier">Cashier</option>
+                                <option value="Assistant">Assistant</option>
+                                <option value="Kitchen Staff">Kitchen Staff</option>
+                            </select>
+                        </Field>
+                        <Field
+                            label="Username"
+                            htmlFor="create-username"
+                            optional
+                            hint={
+                                isUsernameCustom ? (
+                                    <button
+                                        type="button"
+                                        className="inv-link"
+                                        onClick={() => {
+                                            setIsUsernameCustom(false)
+                                            setFormData((prev) => ({
+                                                ...prev,
+                                                username: generateDefaultUsername(prev.firstName, prev.lastName),
+                                            }))
+                                        }}
+                                    >
+                                        Reset to auto-format
+                                    </button>
+                                ) : (
+                                    'Filled in from the name until you edit it.'
+                                )
+                            }
+                        >
+                            <input
+                                id="create-username"
+                                name="username"
+                                type="text"
+                                className="inv-input"
+                                placeholder="M.Santos"
+                                value={formData.username}
+                                onChange={handleUsernameChange}
+                                maxLength={32}
+                                pattern="[A-Za-z0-9][A-Za-z0-9._-]{2,31}"
+                                title="Use 3–32 letters, numbers, dots, underscores, or hyphens."
+                            />
+                        </Field>
+                    </div>
+
+                    <Field label="Email address" htmlFor="create-email" required hint="The activation link is sent here.">
+                        <input
+                            id="create-email"
+                            name="email"
+                            type="email"
+                            className="inv-input"
+                            placeholder="staff@gmail.com"
+                            value={formData.email}
+                            onChange={handleInputChange}
+                            required
+                        />
+                    </Field>
+
+                    {createError && <Notice tone="danger">{createError}</Notice>}
                 </div>
-            )}
+            </Modal>
 
             {/* Edit User Modal */}
-            {isEditModalOpen && editingUser && (
-                <div
-                    className="fixed inset-0 bg-[#1a202c]/40 backdrop-blur-[4px] flex justify-center items-center z-[1000]"
-                    onClick={handleCloseEditModal}
-                >
-                    <div
-                        className="bg-white w-full max-w-[600px] rounded-[24px] shadow-[0_20px_60px_rgba(0,0,0,0.15)] overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="py-[1.8rem] px-[2.2rem] border-b border-[#edf2f7] flex justify-between items-center">
-                            <div>
-                                <h2 className="text-[1.35rem] font-extrabold text-[#2d3748] m-0">Edit Staff User</h2>
-                                <p className="text-xs text-slate-500 m-0 mt-0.5">Assigned ID: {editingUser.id}</p>
-                            </div>
-                            <button
-                                className="bg-none border-none text-[1.8rem] text-[#a0aec0] cursor-pointer hover:text-[#4a5568]"
-                                onClick={handleCloseEditModal}
-                            >
-                                &times;
-                            </button>
-                        </div>
+            <Modal
+                open={isEditModalOpen && !!editingUser}
+                onClose={handleCloseEditModal}
+                size="md"
+                title="Edit staff user"
+                description={editingUser ? `Account ${editingUser.id}` : undefined}
+                onSubmit={handleUpdateUser}
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={handleCloseEditModal}>
+                            Cancel
+                        </Button>
+                        <Button type="submit" variant="primary">
+                            Save changes
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    {editError && <Notice tone="danger">{editError}</Notice>}
 
-                        <form onSubmit={handleUpdateUser} className="p-[2.2rem]">
-                            {editError && (
-                                <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm mb-4">
-                                    {editError}
-                                </div>
-                            )}
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-[1.5rem] mb-[2rem]">
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                        First Name <span className="text-[#e74c3c]">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Maria"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.firstName}
-                                        onChange={(e) => setEditFormData({ ...editFormData, firstName: e.target.value })}
-                                        required
-                                    />
-                                </div>
+                    <div className="inv-grid-2">
+                        <Field label="First name" htmlFor="edit-first" required>
+                            <input
+                                id="edit-first"
+                                type="text"
+                                className="inv-input"
+                                placeholder="Maria"
+                                value={editFormData.firstName}
+                                onChange={(e) => setEditFormData({ ...editFormData, firstName: e.target.value })}
+                                required
+                            />
+                        </Field>
+                        <Field label="Last name" htmlFor="edit-last" required>
+                            <input
+                                id="edit-last"
+                                type="text"
+                                className="inv-input"
+                                placeholder="Santos"
+                                value={editFormData.lastName}
+                                onChange={(e) => setEditFormData({ ...editFormData, lastName: e.target.value })}
+                                required
+                            />
+                        </Field>
+                    </div>
 
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">
-                                        Last Name <span className="text-[#e74c3c]">*</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. Santos"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.lastName}
-                                        onChange={(e) => setEditFormData({ ...editFormData, lastName: e.target.value })}
-                                        required
-                                    />
-                                </div>
+                    <Field label="Username" htmlFor="edit-username" optional>
+                        <input
+                            id="edit-username"
+                            type="text"
+                            className="inv-input"
+                            placeholder="M.Santos"
+                            value={editFormData.username}
+                            onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
+                        />
+                    </Field>
 
-                                <div className="flex flex-col gap-[0.5rem] md:col-span-2">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Username</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. M.Santos"
-                                        className="py-[0.85rem] px-[1rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                        value={editFormData.username}
-                                        onChange={(e) => setEditFormData({ ...editFormData, username: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">New Password (Optional)</label>
-                                    <div className="relative">
-                                        <input
-                                            type={editFormData.showPassword ? 'text' : 'password'}
-                                            placeholder="Leave blank to keep current"
-                                            className="w-full py-[0.85rem] pl-[1rem] pr-[2.75rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                            value={editFormData.password}
-                                            onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setEditFormData((prev) => ({ ...prev, showPassword: !prev.showPassword }))}
-                                            className="absolute right-[0.75rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
-                                            aria-label="Toggle password visibility"
-                                        >
-                                            {editFormData.showPassword ? (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                </svg>
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col gap-[0.5rem]">
-                                    <label className="text-[0.9rem] font-bold text-[#4a5568]">Confirm New Password</label>
-                                    <div className="relative">
-                                        <input
-                                            type={editFormData.showConfirmPassword ? 'text' : 'password'}
-                                            placeholder="Re-enter new password"
-                                            className="w-full py-[0.85rem] pl-[1rem] pr-[2.75rem] rounded-[10px] border border-[#e2e8f0] bg-[#f7fafc] focus:outline-none focus:border-[#e74c3c]"
-                                            value={editFormData.confirmPassword}
-                                            onChange={(e) => setEditFormData({ ...editFormData, confirmPassword: e.target.value })}
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setEditFormData((prev) => ({ ...prev, showConfirmPassword: !prev.showConfirmPassword }))}
-                                            className="absolute right-[0.75rem] top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
-                                            aria-label="Toggle confirm password visibility"
-                                        >
-                                            {editFormData.showConfirmPassword ? (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                </svg>
-                                            )}
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-[1rem] border-t border-[#edf2f7] pt-[1.5rem]">
+                    <div className="inv-grid-2">
+                        <Field label="New password" htmlFor="edit-password" optional hint="Leave blank to keep the current one.">
+                            <div className="inv-input-group">
+                                <input
+                                    id="edit-password"
+                                    type={editFormData.showPassword ? 'text' : 'password'}
+                                    className="inv-input"
+                                    placeholder="••••••••"
+                                    value={editFormData.password}
+                                    onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
+                                />
                                 <button
                                     type="button"
-                                    className="bg-[#edf2f7] text-[#4a5568] border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer hover:bg-[#e2e8f0]"
-                                    onClick={handleCloseEditModal}
+                                    className="inv-input-suffix"
+                                    onClick={() => setEditFormData((prev) => ({ ...prev, showPassword: !prev.showPassword }))}
+                                    aria-label={editFormData.showPassword ? 'Hide password' : 'Show password'}
                                 >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="submit"
-                                    className="bg-gradient-to-r from-[#e74c3c] to-[#d35400] text-white border-none py-[0.85rem] px-[1.8rem] rounded-[10px] font-bold cursor-pointer"
-                                >
-                                    Save Changes
+                                    <Icon name={editFormData.showPassword ? 'eyeOff' : 'eye'} className="h-4 w-4" />
                                 </button>
                             </div>
-                        </form>
+                        </Field>
+                        <Field label="Confirm new password" htmlFor="edit-confirm" optional>
+                            <div className="inv-input-group">
+                                <input
+                                    id="edit-confirm"
+                                    type={editFormData.showConfirmPassword ? 'text' : 'password'}
+                                    className="inv-input"
+                                    placeholder="••••••••"
+                                    value={editFormData.confirmPassword}
+                                    onChange={(e) => setEditFormData({ ...editFormData, confirmPassword: e.target.value })}
+                                />
+                                <button
+                                    type="button"
+                                    className="inv-input-suffix"
+                                    onClick={() =>
+                                        setEditFormData((prev) => ({ ...prev, showConfirmPassword: !prev.showConfirmPassword }))
+                                    }
+                                    aria-label={editFormData.showConfirmPassword ? 'Hide password' : 'Show password'}
+                                >
+                                    <Icon name={editFormData.showConfirmPassword ? 'eyeOff' : 'eye'} className="h-4 w-4" />
+                                </button>
+                            </div>
+                        </Field>
                     </div>
                 </div>
-            )}
+            </Modal>
 
-            {/* Deactivation Confirmation Modal Popup */}
-            {deactivatingUser && (
-                <div
-                    className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex justify-center items-center z-[1000] p-4"
-                    onClick={() => setDeactivatingUser(null)}
-                >
-                    <div
-                        className="bg-white w-full max-w-md rounded-2xl shadow-xl border border-slate-200 overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
-                    >
-                        <div className="p-6 text-center">
-                            <div className="w-12 h-12 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-100">
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                                </svg>
-                            </div>
+            {/* Deactivation Confirmation */}
+            <Modal
+                open={!!deactivatingUser}
+                onClose={() => setDeactivatingUser(null)}
+                size="sm"
+                role="alertdialog"
+                title="Deactivate this account?"
+                description={
+                    deactivatingUser
+                        ? `${deactivatingUser.name} (${deactivatingUser.username}) loses access to the staff portals until the account is reactivated.`
+                        : undefined
+                }
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={() => setDeactivatingUser(null)}>
+                            Cancel
+                        </Button>
+                        <Button variant="danger" onClick={() => void handleConfirmDeactivate()}>
+                            Deactivate account
+                        </Button>
+                    </>
+                }
+            >
+                <Notice tone="warning">
+                    Orders and records already created by this account are kept. Only sign-in is revoked.
+                </Notice>
+            </Modal>
 
-                            <h3 className="text-lg font-extrabold text-slate-800 mb-1">Confirm User Deactivation</h3>
-                            <p className="text-sm text-slate-500 mb-6">
-                                Are you sure you want to deactivate <strong className="text-slate-700">{deactivatingUser.name}</strong> (<span className="font-mono text-xs">{deactivatingUser.username}</span>)? They will temporarily lose access to staff portals until reactivated.
-                            </p>
-
-                            <div className="flex justify-end gap-3">
-                                <button
-                                    type="button"
-                                    className="w-full py-2.5 px-4 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors cursor-pointer"
-                                    onClick={() => setDeactivatingUser(null)}
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    type="button"
-                                    className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-xs transition-colors cursor-pointer"
-                                    onClick={handleConfirmDeactivate}
-                                >
-                                    Deactivate User
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     )
 }

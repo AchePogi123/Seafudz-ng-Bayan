@@ -12,6 +12,54 @@ import { supabase } from '../utils/supabase'
 import { normalizeStatus } from './OnlineCustomer'
 import { subscribeOrderSync } from '../utils/orderSync'
 import { reverseGeocodeCoordinates } from '../utils/locationServices'
+import { Badge, Button, Card, Field, Icon, Modal, Notice, SearchInput, Segmented } from './inventory/ui'
+import './inventory/admin-inventory.css'
+
+/**
+ * One password field instead of three copies of the same sixty lines, each
+ * carrying its own pair of inline eye SVGs.
+ */
+const PasswordField: React.FC<{
+  id: string
+  label: string
+  value: string
+  onChange: (value: string) => void
+  autoComplete?: string
+  required?: boolean
+}> = ({ id, label, value, onChange, autoComplete, required }) => {
+  const [visible, setVisible] = useState(false)
+  return (
+    <Field label={label} htmlFor={id} required={required}>
+      <div className="inv-input-group">
+        <input
+          id={id}
+          type={visible ? 'text' : 'password'}
+          className="inv-input"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete={autoComplete}
+          required={required}
+          placeholder="••••••••"
+        />
+        <button
+          type="button"
+          className="inv-input-suffix"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+        >
+          <Icon name={visible ? 'eyeOff' : 'eye'} className="h-4 w-4" />
+        </button>
+      </div>
+    </Field>
+  )
+}
+
+const ACCOUNT_SECTIONS = [
+  { id: 'profile', label: 'Profile', icon: 'user' },
+  { id: 'security', label: 'Password', icon: 'lock' },
+  { id: 'notifications', label: 'Notifications', icon: 'bell' },
+  { id: 'orders', label: 'Order history', icon: 'doc' },
+] as const
 
 interface OrderItem {
     id?: string | number
@@ -344,11 +392,9 @@ export const AccMan: React.FC = () => {
     const [currentPassword, setCurrentPassword] = useState('')
     const [newPassword, setNewPassword] = useState('')
     const [confirmPassword, setConfirmPassword] = useState('')
-    const [showCurrentPassword, setShowCurrentPassword] = useState(false)
-    const [showNewPassword, setShowNewPassword] = useState(false)
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+    // Password visibility is owned by each <PasswordField />.
 
-    // Shopee-style Email Change Modal states
+    // Email change: send a one-time code to the new address, then confirm it
     const [isEmailModalOpen, setIsEmailModalOpen] = useState(false)
     const [newEmailInput, setNewEmailInput] = useState('')
     const [emailOtpInput, setEmailOtpInput] = useState('')
@@ -359,7 +405,7 @@ export const AccMan: React.FC = () => {
     const [emailModalError, setEmailModalError] = useState<string | null>(null)
     const [emailModalSuccess, setEmailModalSuccess] = useState<string | null>(null)
 
-    // Cooldown countdown for 60-second Shopee resend timer
+    // 60-second cooldown before the code can be resent
     useEffect(() => {
         if (otpCooldown <= 0) return
         const timer = setInterval(() => {
@@ -564,7 +610,7 @@ export const AccMan: React.FC = () => {
         }
     }
 
-    // Shopee-Style Email Change Handlers
+    // Email change handlers
     const handleOpenEmailModal = () => {
         setNewEmailInput('')
         setEmailOtpInput('')
@@ -996,516 +1042,328 @@ export const AccMan: React.FC = () => {
     }
 
     return (
-        <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
-            <div className="w-full flex flex-col gap-6">
-
-                {/* Custom-styled Navbar */}
+        <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
+            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
                 {renderNavbar()}
+            </div>
 
-                {/* Main Dashboard Layout */}
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
+            <main className="mx-auto w-full max-w-[1200px] px-4 sm:px-6 lg:px-8 pt-6 space-y-6">
+                <div className="inv-page-header">
+                    <div className="min-w-0">
+                        <h1 className="inv-page-title">Account</h1>
+                        <p className="inv-page-sub">Your details, password and notification settings.</p>
+                    </div>
+                </div>
 
-                    {/* LEFT PANEL: User Card & Sub-nav */}
-                    <aside className="lg:col-span-1 flex flex-col gap-6">
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_minmax(0,1fr)] items-start">
 
-                        {/* Profile Summary Card */}
-                        <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 text-center flex flex-col items-center">
-                            {/* Hidden file input for changing profile picture */}
-                            <input
-                                type="file"
-                                ref={avatarInputRef}
-                                onChange={handleAvatarChange}
-                                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                                className="hidden"
-                            />
-
-                            <div
-                                className="relative group cursor-pointer"
-                                onClick={handleAvatarClick}
-                                title="Click to upload or change profile picture"
-                            >
-                                <div className="w-24 h-24 rounded-full bg-orange-100 flex items-center justify-center text-3xl font-black text-orange-600 border-2 border-orange-500 shadow-md transition-transform group-hover:scale-105 duration-200 overflow-hidden relative">
-                                    {profile.avatar && (profile.avatar.startsWith('data:image') || profile.avatar.startsWith('http') || profile.avatar.startsWith('blob:')) ? (
-                                        <img
-                                            src={profile.avatar}
-                                            alt={profile.fullName || 'User Avatar'}
-                                            className="w-full h-full object-cover"
-                                        />
+                    {/* ------------------------------------------- Sidebar */}
+                    <aside className="flex flex-col gap-4 lg:sticky lg:top-6">
+                        <Card>
+                            <div className="inv-card-body flex items-center gap-3.5">
+                                <input
+                                    type="file"
+                                    ref={avatarInputRef}
+                                    onChange={handleAvatarChange}
+                                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                                    className="hidden"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAvatarClick}
+                                    className="sfb-avatar"
+                                    title="Change your profile picture"
+                                    aria-label="Change your profile picture"
+                                >
+                                    {profile.avatar &&
+                                    (profile.avatar.startsWith('data:image') ||
+                                        profile.avatar.startsWith('http') ||
+                                        profile.avatar.startsWith('blob:')) ? (
+                                        <img src={profile.avatar} alt="" />
                                     ) : (
                                         <span>{(profile.fullName || profile.username || 'U').charAt(0).toUpperCase()}</span>
                                     )}
-
-                                    {/* Hover overlay hint */}
-                                    <div className="absolute inset-0 bg-black/45 text-white text-[10px] font-black uppercase tracking-wider flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-2xs">
-                                        Change
-                                    </div>
-
-                                    {isUploadingAvatar && (
-                                        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                                            <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        </div>
-                                    )}
-                                </div>
-
-                                <button
-                                    type="button"
-                                    onClick={(e) => {
-                                        e.stopPropagation()
-                                        handleAvatarClick()
-                                    }}
-                                    className="absolute bottom-0 right-0 bg-neutral-900 text-white rounded-full p-2 border-2 border-white cursor-pointer hover:bg-orange-600 transition-all shadow-md active:scale-90"
-                                    title="Upload new profile picture"
-                                    aria-label="Change profile picture"
-                                >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                                    </svg>
+                                    <span className="sfb-avatar-hint">
+                                        {isUploadingAvatar ? <span className="inv-spinner" aria-hidden="true" /> : <Icon name="edit" className="h-4 w-4" />}
+                                    </span>
                                 </button>
-                            </div>
 
-                            <h2 className="font-extrabold text-neutral-800 text-xl mt-4 leading-tight">
-                                {profile.fullName || profile.username || 'User Profile'}
-                            </h2>
-                            <p className="text-xs text-neutral-400 font-semibold mt-1">
-                                {profile.email || profile.phone || 'No contact details provided'}
-                            </p>
-
-                            {isEmployee && (
-                                <div className="flex items-center gap-2 mt-3 px-3.5 py-1 bg-slate-800 text-white rounded-full text-xs font-black uppercase tracking-wider shadow-xs">
-                                    {userRole}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Navigation Menu */}
-                        <div className="bg-white rounded-2xl border border-neutral-100 shadow-sm p-2 flex flex-col gap-1">
-                            <button
-                                onClick={() => handleSelectSection('profile')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 cursor-pointer ${activeSection === 'profile'
-                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                    }`}
-                            >
-                                Personal Profile
-                            </button>
-                            <button
-                                onClick={() => handleSelectSection('security')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 cursor-pointer ${activeSection === 'security'
-                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                    }`}
-                            >
-                                Password & Security
-                            </button>
-                            <button
-                                onClick={() => handleSelectSection('notifications')}
-                                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 cursor-pointer ${activeSection === 'notifications'
-                                    ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                    }`}
-                            >
-                                Notifications
-                            </button>
-                            {!isEmployee && (
-                                <button
-                                    onClick={() => handleSelectSection('orders')}
-                                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-bold text-left transition-all duration-200 cursor-pointer ${activeSection === 'orders'
-                                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                                        : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-800'
-                                        }`}
-                                >
-                                    <span>Order History</span>
-                                    {pastOrders.length > 0 && (
-                                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${activeSection === 'orders' ? 'bg-white/30 text-white' : 'bg-neutral-100 text-neutral-600'}`}>
-                                            {pastOrders.length}
+                                <div className="min-w-0">
+                                    <p className="inv-cell-primary truncate">
+                                        {profile.fullName || profile.username || 'Your account'}
+                                    </p>
+                                    <p className="inv-cell-secondary truncate">
+                                        {profile.email || profile.phone || 'No contact details yet'}
+                                    </p>
+                                    {isEmployee && (
+                                        <span className="mt-1.5 inline-block">
+                                            <Badge tone="neutral">{userRole}</Badge>
                                         </span>
                                     )}
-                                </button>
-                            )}
-                        </div>
+                                </div>
+                            </div>
+                        </Card>
+
+                        <Card>
+                            <nav className="inv-sidenav" aria-label="Account sections">
+                                {ACCOUNT_SECTIONS.filter((sec) => sec.id !== 'orders' || !isEmployee).map((sec) => (
+                                    <button
+                                        key={sec.id}
+                                        type="button"
+                                        onClick={() => handleSelectSection(sec.id)}
+                                        aria-current={activeSection === sec.id ? 'page' : undefined}
+                                        className={activeSection === sec.id ? 'is-active' : undefined}
+                                    >
+                                        <Icon name={sec.icon} className="h-4 w-4 shrink-0" />
+                                        <span className="flex-1 text-left">{sec.label}</span>
+                                        {sec.id === 'orders' && pastOrders.length > 0 && (
+                                            <span className="inv-seg-count">{pastOrders.length}</span>
+                                        )}
+                                    </button>
+                                ))}
+                            </nav>
+                        </Card>
                     </aside>
 
-                    {/* RIGHT PANEL: Form views based on Active Section */}
-                    <main className="lg:col-span-3 bg-white rounded-2xl border border-neutral-100 shadow-sm p-6 lg:p-8 min-h-[500px]">
-
-                        {/* Interactive Status Messages */}
+                    {/* ---------------------------------------- Form panel */}
+                    <div className="space-y-4">
                         {message && (
-                            <div className={`mb-6 p-4 rounded-xl text-sm font-semibold flex items-center gap-2.5 animate-in fade-in slide-in-from-top-2 duration-200 border ${message.type === 'success'
-                                ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
-                                : 'bg-red-50 border-red-100 text-red-800'
-                                }`}>
-                                {message.text}
-                            </div>
+                            <Notice tone={message.type === 'success' ? 'success' : 'danger'}>{message.text}</Notice>
                         )}
 
                         {/* SECTION 1: PERSONAL PROFILE */}
                         {activeSection === 'profile' && (
-                            <form onSubmit={handleSaveProfile} className="space-y-6">
-                                <div>
-                                    <h3 className="font-extrabold text-neutral-800 text-xl">Personal Profile Details</h3>
-                                    <p className="text-xs text-neutral-400 mt-1">Manage your account information and preferences</p>
-                                </div>
-                                <hr className="border-neutral-100" />
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Full Name</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            value={editForm.fullName}
-                                            onChange={(e) => handleProfileChange('fullName', e.target.value)}
-                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Username</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            value={editForm.username}
-                                            onChange={(e) => handleProfileChange('username', e.target.value)}
-                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Phone Number</label>
-                                        <input
-                                            type="tel"
-                                            required
-                                            value={editForm.phone}
-                                            onChange={(e) => handleProfileChange('phone', e.target.value)}
-                                            className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                        />
-                                    </div>
-                                    <div className="flex flex-col gap-1.5 md:col-span-2">
-                                        <div className="flex items-center justify-between">
-                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Email Address</label>
-                                            <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                                                Verified
-                                            </span>
+                            <Card>
+                                <form onSubmit={handleSaveProfile}>
+                                    <div className="inv-card-header">
+                                        <div className="min-w-0">
+                                            <h2 className="inv-card-title">Profile</h2>
+                                            <p className="inv-card-desc">The details we use to reach you about your orders.</p>
                                         </div>
-                                        <div className="flex items-center gap-3">
-                                            <div className="relative flex-1">
+                                    </div>
+
+                                    <div className="inv-card-body space-y-4">
+                                        <div className="inv-grid-2">
+                                            <Field label="Full name" htmlFor="acc-name" required>
                                                 <input
+                                                    id="acc-name"
+                                                    type="text"
+                                                    className="inv-input"
+                                                    required
+                                                    value={editForm.fullName}
+                                                    onChange={(e) => handleProfileChange('fullName', e.target.value)}
+                                                />
+                                            </Field>
+                                            <Field label="Username" htmlFor="acc-username" required>
+                                                <input
+                                                    id="acc-username"
+                                                    type="text"
+                                                    className="inv-input"
+                                                    required
+                                                    value={editForm.username}
+                                                    onChange={(e) => handleProfileChange('username', e.target.value)}
+                                                />
+                                            </Field>
+                                        </div>
+
+                                        <Field label="Phone number" htmlFor="acc-phone" required>
+                                            <input
+                                                id="acc-phone"
+                                                type="tel"
+                                                className="inv-input"
+                                                required
+                                                value={editForm.phone}
+                                                onChange={(e) => handleProfileChange('phone', e.target.value)}
+                                            />
+                                        </Field>
+
+                                        <Field
+                                            label="Email address"
+                                            htmlFor="acc-email"
+                                            hint="Changing this sends a 6-digit code to the new address to confirm it is yours."
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    id="acc-email"
                                                     type="email"
                                                     readOnly
+                                                    disabled
+                                                    className="inv-input"
                                                     value={editForm.email || 'No email registered'}
-                                                    className="w-full bg-neutral-50/80 text-neutral-700 font-medium border border-neutral-200 rounded-xl px-4 py-2.5 text-sm cursor-not-allowed select-none"
                                                 />
-                                                <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-neutral-400">
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                                                    </svg>
-                                                </div>
+                                                <Button variant="secondary" icon="edit" onClick={handleOpenEmailModal}>
+                                                    Change
+                                                </Button>
                                             </div>
-                                            <button
-                                                type="button"
-                                                onClick={handleOpenEmailModal}
-                                                className="shrink-0 bg-orange-50 hover:bg-orange-100 text-orange-600 hover:text-orange-700 border border-orange-200 font-bold px-4 py-2.5 rounded-xl text-sm transition-all duration-200 flex items-center gap-2 active:scale-95 shadow-xs cursor-pointer"
-                                            >
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                                                </svg>
-                                                Change
-                                            </button>
-                                        </div>
-                                        <p className="text-[11px] text-neutral-400 mt-0.5">
-                                            To update your email like in Shopee, click <strong className="text-neutral-600">Change</strong> to receive a 6-digit confirmation code at your new Gmail.
-                                        </p>
-                                    </div>
-                                    {!isEmployee && (
-                                        <div className="flex flex-col gap-1.5 md:col-span-2">
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                                    Delivery Address
-                                                </label>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleRelocate}
-                                                    disabled={isRelocating}
-                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
-                                                    title="Detect current location"
-                                                >
-                                                    <svg className={`w-3.5 h-3.5 text-neutral-500 ${isRelocating ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                    </svg>
-                                                    {isRelocating ? 'Relocating…' : 'Relocate'}
-                                                </button>
-                                            </div>
-                                            <textarea
-                                                rows={3}
-                                                value={editForm.address}
-                                                placeholder={isRelocating ? 'Detecting your location...' : 'Enter your delivery address or click Relocate'}
-                                                onChange={(e) => handleProfileChange('address', e.target.value)}
-                                                className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors resize-none"
-                                            />
-                                            {/* Store Delivery Policy Notice (Max 8 km) */}
-                                            <div className="mt-1 flex items-start gap-2 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
-                                                <span className="text-orange-600 text-xs mt-0.5 shrink-0">📍</span>
-                                                <div>
-                                                    <p className="font-bold text-orange-900 text-[11px]">Store Delivery Radius Policy (Max 8 km)</p>
-                                                    <p className="text-[11px] text-orange-800 leading-snug">
-                                                        Deliveries are only acknowledged within an <strong>8 km road range</strong> from our Caloocan flagship store. Beyond 8 km, orders cannot be delivered.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            {relocateMessage && (
-                                                <p className="text-xs text-neutral-500 mt-0.5">
-                                                    {relocateMessage}
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
+                                        </Field>
 
-                                <div className="flex items-center gap-3 pt-6 border-t border-neutral-100">
-                                    <button
-                                        type="submit"
-                                        disabled={isSaving}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 active:scale-98 transition-all duration-200 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                        {isSaving ? 'Saving...' : 'Save Profile Changes'}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={handleResetProfile}
-                                        className="bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold px-6 py-3 rounded-xl text-sm transition-all duration-200"
-                                    >
-                                        Reset
-                                    </button>
-                                </div>
-                            </form>
+                                        {!isEmployee && (
+                                            <Field
+                                                label="Delivery address"
+                                                htmlFor="acc-address"
+                                                hint={relocateMessage || undefined}
+                                            >
+                                                <textarea
+                                                    id="acc-address"
+                                                    rows={3}
+                                                    className="inv-textarea"
+                                                    value={editForm.address}
+                                                    placeholder={
+                                                        isRelocating ? 'Finding your location…' : 'Where should we deliver?'
+                                                    }
+                                                    onChange={(e) => handleProfileChange('address', e.target.value)}
+                                                />
+                                                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        icon="refresh"
+                                                        onClick={handleRelocate}
+                                                        loading={isRelocating}
+                                                    >
+                                                        {isRelocating ? 'Finding you…' : 'Use my location'}
+                                                    </Button>
+                                                    <span className="inv-cell-secondary">
+                                                        We deliver within 8 km by road of the Caloocan store.
+                                                    </span>
+                                                </div>
+                                            </Field>
+                                        )}
+                                    </div>
+
+                                    <div className="inv-card-footer">
+                                        <Button variant="ghost" onClick={handleResetProfile}>
+                                            Reset
+                                        </Button>
+                                        <Button type="submit" variant="primary" loading={isSaving}>
+                                            {isSaving ? 'Saving…' : 'Save changes'}
+                                        </Button>
+                                    </div>
+                                </form>
+                            </Card>
                         )}
 
                         {/* SECTION 2: SECURITY / PASSWORD */}
                         {activeSection === 'security' && (
-                            <form onSubmit={handleSaveSecurity} className="space-y-6">
-                                <div>
-                                    <h3 className="font-extrabold text-neutral-800 text-xl">Password & Security</h3>
-                                    <p className="text-xs text-neutral-400 mt-1">Keep your account secure by updating your credentials</p>
-                                </div>
-                                <hr className="border-neutral-100" />
+                            <Card>
+                                <form onSubmit={handleSaveSecurity}>
+                                    <div className="inv-card-header">
+                                        <div className="min-w-0">
+                                            <h2 className="inv-card-title">Password</h2>
+                                            <p className="inv-card-desc">Confirm the password you use now, then set the new one.</p>
+                                        </div>
+                                    </div>
 
-                                <div className="space-y-4 max-w-md">
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Current Password</label>
-                                        <div className="relative">
-                                            <input
-                                                type={showCurrentPassword ? 'text' : 'password'}
-                                                required
-                                                value={currentPassword}
-                                                onChange={(e) => setCurrentPassword(e.target.value)}
-                                                placeholder="••••••••"
-                                                className="w-full border border-neutral-200 rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowCurrentPassword((prev) => !prev)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
-                                                aria-label="Toggle current password visibility"
-                                            >
-                                                {showCurrentPassword ? (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                </svg>
-                                            )}
-                                            </button>
-                                        </div>
+                                    <div className="inv-card-body max-w-md space-y-4">
+                                        <PasswordField
+                                            id="acc-current-password"
+                                            label="Current password"
+                                            value={currentPassword}
+                                            onChange={setCurrentPassword}
+                                            autoComplete="current-password"
+                                            required
+                                        />
+                                        <PasswordField
+                                            id="acc-new-password"
+                                            label="New password"
+                                            value={newPassword}
+                                            onChange={setNewPassword}
+                                            autoComplete="new-password"
+                                            required
+                                        />
+                                        <PasswordField
+                                            id="acc-confirm-password"
+                                            label="Confirm new password"
+                                            value={confirmPassword}
+                                            onChange={setConfirmPassword}
+                                            autoComplete="new-password"
+                                            required
+                                        />
                                     </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">New Password</label>
-                                        <div className="relative">
-                                            <input
-                                                type={showNewPassword ? 'text' : 'password'}
-                                                required
-                                                value={newPassword}
-                                                onChange={(e) => setNewPassword(e.target.value)}
-                                                placeholder="••••••••"
-                                                className="w-full border border-neutral-200 rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowNewPassword((prev) => !prev)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
-                                                aria-label="Toggle new password visibility"
-                                            >
-                                                {showNewPassword ? (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                </svg>
-                                            )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-col gap-1.5">
-                                        <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">Confirm New Password</label>
-                                        <div className="relative">
-                                            <input
-                                                type={showConfirmPassword ? 'text' : 'password'}
-                                                required
-                                                value={confirmPassword}
-                                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                                placeholder="••••••••"
-                                                className="w-full border border-neutral-200 rounded-xl pl-4 pr-10 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors"
-                                            />
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowConfirmPassword((prev) => !prev)}
-                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 p-1 bg-transparent border-none cursor-pointer focus:outline-none transition-colors"
-                                                aria-label="Toggle confirm new password visibility"
-                                            >
-                                                {showConfirmPassword ? (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                                                </svg>
-                                            ) : (
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                                </svg>
-                                            )}
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
 
-                                <div className="flex items-center gap-3 pt-6 border-t border-neutral-100">
-                                    <button
-                                        type="submit"
-                                        disabled={isSaving}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 active:scale-98 transition-all duration-200 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                        {isSaving ? 'Updating...' : 'Update Password'}
-                                    </button>
-                                </div>
-                            </form>
+                                    <div className="inv-card-footer">
+                                        <Button type="submit" variant="primary" className="ml-auto" loading={isSaving}>
+                                            {isSaving ? 'Updating…' : 'Update password'}
+                                        </Button>
+                                    </div>
+                                </form>
+                            </Card>
                         )}
 
                         {/* SECTION 3: NOTIFICATIONS */}
                         {activeSection === 'notifications' && (
-                            <form onSubmit={handleSaveNotifications} className="space-y-6">
-                                <div>
-                                    <h3 className="font-extrabold text-neutral-800 text-xl">Notification Preferences</h3>
-                                    <p className="text-xs text-neutral-400 mt-1">Manage email notifications for account verification and password changes</p>
-                                </div>
-                                <hr className="border-neutral-100" />
-
-                                <div className="space-y-4">
-                                    <label className="flex items-start gap-3 p-4 border border-neutral-100 rounded-2xl hover:bg-neutral-50/50 cursor-pointer transition-colors">
-                                        <input
-                                            type="checkbox"
-                                            checked={emailAlerts}
-                                            onChange={(e) => setEmailAlerts(e.target.checked)}
-                                            className="mt-1 text-orange-500 focus:ring-orange-500 w-4 h-4 rounded"
-                                        />
-                                        <div>
-                                            <p className="font-bold text-sm text-neutral-800">Email Notifications</p>
-                                            <p className="text-xs text-neutral-400">Used for account verification or changing password only (order receipts are viewed directly in-app).</p>
+                            <Card>
+                                <form onSubmit={handleSaveNotifications}>
+                                    <div className="inv-card-header">
+                                        <div className="min-w-0">
+                                            <h2 className="inv-card-title">Notifications</h2>
+                                            <p className="inv-card-desc">What we are allowed to email you about.</p>
                                         </div>
-                                    </label>
-                                </div>
+                                    </div>
 
-                                <div className="flex items-center gap-3 pt-6 border-t border-neutral-100">
-                                    <button
-                                        type="submit"
-                                        disabled={isSaving}
-                                        className="bg-orange-500 hover:bg-orange-600 text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 hover:shadow-orange-500/20 active:scale-98 transition-all duration-200 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                                    >
-                                        {isSaving ? 'Saving...' : 'Save Notification Preferences'}
-                                    </button>
-                                </div>
-                            </form>
+                                    <div className="inv-card-body">
+                                        <label className="flex cursor-pointer items-start gap-3 rounded-[var(--inv-radius)] border border-[var(--inv-border)] p-3.5 transition-colors hover:bg-[var(--inv-surface-2)]">
+                                            <input
+                                                type="checkbox"
+                                                className="inv-checkbox mt-0.5 shrink-0"
+                                                checked={emailAlerts}
+                                                onChange={(e) => setEmailAlerts(e.target.checked)}
+                                            />
+                                            <span className="min-w-0">
+                                                <span className="inv-cell-primary block">Account emails</span>
+                                                <span className="inv-cell-secondary block">
+                                                    Verification codes and password changes only. Order updates stay in the app.
+                                                </span>
+                                            </span>
+                                        </label>
+                                    </div>
+
+                                    <div className="inv-card-footer">
+                                        <Button type="submit" variant="primary" className="ml-auto" loading={isSaving}>
+                                            {isSaving ? 'Saving…' : 'Save preferences'}
+                                        </Button>
+                                    </div>
+                                </form>
+                            </Card>
                         )}
 
                         {/* SECTION 4: ORDER HISTORY (Contains full purchase history) */}
                         {activeSection === 'orders' && !isEmployee && (
-                            <div className="space-y-6">
-                                {/* Header with Active Orders Link */}
-                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-neutral-100">
-                                    <div>
-                                        <div className="flex items-center gap-2.5">
-                                            <h3 className="font-extrabold text-neutral-800 text-xl">Your Order History</h3>
-                                            <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-orange-100 text-orange-700">
-                                                {pastOrders.length} {pastOrders.length === 1 ? 'order' : 'orders'}
-                                            </span>
-                                        </div>
-                                        <p className="text-xs text-neutral-400 mt-1">Review your past completed orders, receipts, and reorder favorites</p>
-                                    </div>
-                                    <Link
-                                        to="/customer/purchases"
-                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-600 bg-orange-50 hover:bg-orange-100 border border-orange-200/80 px-3.5 py-2 rounded-xl transition-all self-start sm:self-auto cursor-pointer shadow-2xs group"
-                                        title="View currently active ongoing orders"
-                                    >
-                                        <span>Track Active Orders</span>
-                                        <svg className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                                        </svg>
-                                    </Link>
+                            <Card>
+                              <div className="inv-card-header">
+                                <div className="min-w-0">
+                                  <h2 className="inv-card-title">Order history</h2>
+                                  <p className="inv-card-desc">Past orders, their receipts, and anything worth ordering again.</p>
                                 </div>
+                                <Link to="/customer/purchases" className="shrink-0">
+                                  <Button variant="secondary" size="sm" icon="arrowRight">
+                                    Track active orders
+                                  </Button>
+                                </Link>
+                              </div>
 
-                                {/* Filter Tabs & Search Controls */}
-                                <div className="bg-neutral-50/80 rounded-2xl p-3 border border-neutral-200/80 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-                                    {/* Tabs */}
-                                    <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-                                        {[
-                                            { id: 'ALL', label: 'All Past Orders', count: pastCounts.all },
-                                            { id: 'COMPLETED', label: 'Completed', count: pastCounts.completed },
-                                            { id: 'CANCELLED', label: 'Cancelled', count: pastCounts.cancelled },
-                                        ].map((tab) => (
-                                            <button
-                                                key={tab.id}
-                                                type="button"
-                                                onClick={() => setHistoryFilter(tab.id as any)}
-                                                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
-                                                    historyFilter === tab.id
-                                                        ? 'bg-orange-500 text-white shadow-xs shadow-orange-500/30'
-                                                        : 'bg-white text-neutral-600 hover:bg-neutral-200/70 border border-neutral-200/60'
-                                                }`}
-                                            >
-                                                <span>{tab.label}</span>
-                                                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-black ${
-                                                    historyFilter === tab.id ? 'bg-white/30 text-white' : 'bg-neutral-100 text-neutral-600'
-                                                }`}>
-                                                    {tab.count}
-                                                </span>
-                                            </button>
-                                        ))}
-                                    </div>
+                              <div className="inv-toolbar">
+                                <Segmented
+                                  options={[
+                                    { value: 'ALL', label: 'All', count: pastCounts.all },
+                                    { value: 'COMPLETED', label: 'Completed', count: pastCounts.completed },
+                                    { value: 'CANCELLED', label: 'Cancelled', count: pastCounts.cancelled },
+                                  ]}
+                                  value={historyFilter}
+                                  onChange={(v) => setHistoryFilter(v as typeof historyFilter)}
+                                  label="Filter order history"
+                                  size="sm"
+                                />
+                                <SearchInput
+                                  value={historySearch}
+                                  onChange={setHistorySearch}
+                                  placeholder="Search order, dish or note"
+                                  label="Search order history"
+                                  className="sm:ml-auto sm:w-64"
+                                />
+                              </div>
 
-                                    {/* Search Box */}
-                                    <div className="relative max-w-sm w-full">
-                                        <input
-                                            type="text"
-                                            value={historySearch}
-                                            onChange={(e) => setHistorySearch(e.target.value)}
-                                            placeholder="Search by Order ID, dish name, notes..."
-                                            className="w-full bg-white border border-neutral-200 rounded-xl px-8 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all"
-                                        />
-                                        <svg className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-                                        </svg>
-                                        {historySearch && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setHistorySearch('')}
-                                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 text-xs font-bold"
-                                            >
-                                                ✕
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
+                              <div className="inv-card-body space-y-5">
 
                                 {/* Orders Grid */}
                                 {loadingOrders && pastOrders.length === 0 ? (
@@ -1516,7 +1374,6 @@ export const AccMan: React.FC = () => {
                                 ) : filteredPastOrders.length === 0 ? (
                                     <div className="rounded-2xl p-10 text-center border border-neutral-100 space-y-4 bg-neutral-50/50">
                                         <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center mx-auto text-2xl">
-                                            📜
                                         </div>
                                         <div className="space-y-1">
                                             <h4 className="text-base font-extrabold text-neutral-800">No past orders found</h4>
@@ -1692,14 +1549,15 @@ export const AccMan: React.FC = () => {
                                         )}
                                     </div>
                                 )}
-                            </div>
+                              </div>
+                            </Card>
                         )}
 
-                    </main>
+                    </div>
 
                 </div>
 
-            </div>
+            </main>
 
             {/* ORDER HISTORY DETAILS MODAL */}
             {selectedHistoryOrder && (
@@ -1715,7 +1573,6 @@ export const AccMan: React.FC = () => {
                         <div className="p-4 sm:p-5 border-b border-neutral-100 flex items-center justify-between bg-neutral-50/80 shrink-0">
                             <div className="flex items-center gap-2.5">
                                 <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center font-black">
-                                    📦
                                 </div>
                                 <div>
                                     <h3 className="font-extrabold text-neutral-900 text-base sm:text-lg leading-tight">
@@ -1731,7 +1588,7 @@ export const AccMan: React.FC = () => {
                                 className="w-8 h-8 rounded-full bg-neutral-200/80 hover:bg-neutral-300 text-neutral-700 flex items-center justify-center font-bold text-sm transition-colors cursor-pointer"
                                 title="Close"
                             >
-                                ✕
+                                                <Icon name="close" className="h-4 w-4" />
                             </button>
                         </div>
 
@@ -1907,168 +1764,93 @@ export const AccMan: React.FC = () => {
                             onClick={() => setHistoryPreviewImage(null)}
                             className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-neutral-900 text-white font-bold flex items-center justify-center shadow-lg"
                         >
-                            ✕
+                                                <Icon name="close" className="h-4 w-4" />
                         </button>
                     </div>
                 </div>
             )}
 
             {/* SHOPEE-STYLE CHANGE EMAIL MODAL */}
-            {isEmailModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
-                    <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-neutral-100 p-6 md:p-8 flex flex-col gap-6 relative">
-                        
-                        {/* Header */}
-                        <div className="flex items-start justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-11 h-11 rounded-2xl bg-orange-50 border border-orange-200 flex items-center justify-center text-orange-600 shadow-xs">
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <h3 className="font-extrabold text-neutral-900 text-lg leading-tight">Change Email Address</h3>
-                                    <p className="text-xs text-neutral-400 font-medium mt-0.5">Shopee-Style Secure Email Verification</p>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={handleCloseEmailModal}
-                                className="text-neutral-400 hover:text-neutral-600 p-1.5 rounded-xl hover:bg-neutral-100 transition-colors cursor-pointer"
+            <Modal
+                open={isEmailModalOpen}
+                onClose={handleCloseEmailModal}
+                size="sm"
+                title="Change email address"
+                description={`We will send a 6-digit code to the new address to confirm it is yours. Current: ${profile.email || 'none on file'}`}
+                footer={
+                    <>
+                        <Button variant="secondary" onClick={handleCloseEmailModal} disabled={isVerifyingOtp}>
+                            Cancel
+                        </Button>
+                        <Button
+                            variant="primary"
+                            loading={isVerifyingOtp}
+                            disabled={isVerifyingOtp || emailOtpInput.length !== 6 || !newEmailInput.trim()}
+                            onClick={handleConfirmEmailChange}
+                        >
+                            {isVerifyingOtp ? 'Checking…' : 'Confirm change'}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="space-y-4">
+                    {emailModalError && <Notice tone="danger">{emailModalError}</Notice>}
+                    {emailModalSuccess && <Notice tone="success">{emailModalSuccess}</Notice>}
+
+                    <Field
+                        label="New email address"
+                        htmlFor="acc-new-email"
+                        required
+                        hint={
+                            otpSent
+                                ? `Code sent to ${newEmailInput}. Check your inbox, and the spam folder.`
+                                : undefined
+                        }
+                    >
+                        <div className="flex items-center gap-2">
+                            <input
+                                id="acc-new-email"
+                                type="email"
+                                required
+                                className="inv-input"
+                                placeholder="yourname@gmail.com"
+                                value={newEmailInput}
+                                onChange={(e) => setNewEmailInput(e.target.value)}
+                                disabled={isSendingOtp || otpCooldown > 0}
+                            />
+                            <Button
+                                variant="secondary"
+                                loading={isSendingOtp}
+                                disabled={!newEmailInput.trim() || isSendingOtp || otpCooldown > 0}
+                                onClick={handleSendEmailCode}
                             >
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
+                                {isSendingOtp
+                                    ? 'Sending…'
+                                    : otpCooldown > 0
+                                    ? `Resend in ${otpCooldown}s`
+                                    : otpSent
+                                    ? 'Resend'
+                                    : 'Send code'}
+                            </Button>
                         </div>
+                    </Field>
 
-                        {/* Modal Alerts */}
-                        {emailModalError && (
-                            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-xs font-semibold flex items-center gap-2">
-                                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                <span>{emailModalError}</span>
-                            </div>
-                        )}
-                        {emailModalSuccess && (
-                            <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl text-xs font-semibold flex items-center gap-2">
-                                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                                <span>{emailModalSuccess}</span>
-                            </div>
-                        )}
-
-                        {/* Form Steps */}
-                        <div className="flex flex-col gap-4">
-                            
-                            {/* Current Email Display */}
-                            <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-100 flex items-center justify-between text-xs">
-                                <span className="text-neutral-400 font-medium">Current Email:</span>
-                                <span className="font-bold text-neutral-700">{profile.email || 'None'}</span>
-                            </div>
-
-                            {/* Step 1: New Email Address */}
-                            <div className="flex flex-col gap-1.5">
-                                <label className="text-xs font-bold text-neutral-600 uppercase tracking-wider">
-                                    New Gmail Address
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    <input
-                                        type="email"
-                                        required
-                                        placeholder="e.g. yourname@gmail.com"
-                                        value={newEmailInput}
-                                        onChange={(e) => setNewEmailInput(e.target.value)}
-                                        disabled={isSendingOtp || otpCooldown > 0}
-                                        className="flex-1 border border-neutral-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-orange-500 transition-colors disabled:bg-neutral-50"
-                                    />
-                                    <button
-                                        type="button"
-                                        disabled={!newEmailInput.trim() || isSendingOtp || otpCooldown > 0}
-                                        onClick={handleSendEmailCode}
-                                        className="shrink-0 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-bold px-4 py-2.5 rounded-xl text-xs shadow-md shadow-orange-500/20 disabled:opacity-50 transition-all flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
-                                    >
-                                        {isSendingOtp ? (
-                                            <>
-                                                <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                                Sending...
-                                            </>
-                                        ) : otpCooldown > 0 ? (
-                                            `Resend (${otpCooldown}s)`
-                                        ) : otpSent ? (
-                                            'Resend Code'
-                                        ) : (
-                                            'Send Code'
-                                        )}
-                                    </button>
-                                </div>
-                                <p className="text-[11px] text-neutral-400">
-                                    {otpSent
-                                        ? `A 6-digit code was sent to ${newEmailInput}. Check your inbox or spam.`
-                                        : 'Click "Send Code" to receive the 6-digit verification code.'}
-                                </p>
-                            </div>
-
-                            {/* Step 2: 6-Digit Verification Code */}
-                            <div className="flex flex-col gap-1.5 pt-2">
-                                <div className="flex items-center justify-between">
-                                    <label className="text-xs font-bold text-neutral-600 uppercase tracking-wider">
-                                        6-Digit Verification Code
-                                    </label>
-                                    {otpSent && (
-                                        <span className="text-[11px] text-orange-600 font-bold flex items-center gap-1">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
-                                            Code sent to Gmail
-                                        </span>
-                                    )}
-                                </div>
-                                <input
-                                    type="text"
-                                    maxLength={6}
-                                    placeholder="••••••"
-                                    value={emailOtpInput}
-                                    onChange={(e) => {
-                                        const val = e.target.value.replace(/\D/g, '')
-                                        setEmailOtpInput(val)
-                                    }}
-                                    className="w-full text-center font-mono text-2xl font-black tracking-[0.5em] text-neutral-800 border-2 border-neutral-200 focus:border-orange-500 focus:bg-orange-50/20 rounded-2xl py-3 transition-all outline-none"
-                                />
-                                <p className="text-[11px] text-neutral-400 text-center">
-                                    Enter the 6-digit number received in your Gmail to finish.
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Modal Actions */}
-                        <div className="flex items-center gap-3 pt-2">
-                            <button
-                                type="button"
-                                onClick={handleCloseEmailModal}
-                                className="flex-1 bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 px-4 rounded-xl text-sm transition-colors cursor-pointer"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                disabled={isVerifyingOtp || emailOtpInput.length !== 6 || !newEmailInput.trim()}
-                                onClick={handleConfirmEmailChange}
-                                className="flex-1 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-md shadow-orange-500/20 hover:shadow-orange-500/30 disabled:opacity-40 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
-                            >
-                                {isVerifyingOtp ? (
-                                    <>
-                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        Verifying...
-                                    </>
-                                ) : (
-                                    'Confirm & Update'
-                                )}
-                            </button>
-                        </div>
-                    </div>
+                    <Field label="6-digit code" htmlFor="acc-otp" required>
+                        <input
+                            id="acc-otp"
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            maxLength={6}
+                            placeholder="000000"
+                            className="inv-input sfb-otp"
+                            value={emailOtpInput}
+                            onChange={(e) => setEmailOtpInput(e.target.value.replace(/\D/g, ''))}
+                        />
+                    </Field>
                 </div>
-            )}
+            </Modal>
+
         </div>
     )
 }

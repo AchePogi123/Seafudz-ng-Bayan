@@ -10,7 +10,8 @@ import type {
   PackagingCategory,
 } from './inventoryTypes'
 import { MEASUREMENT_UNITS } from './inventoryTypes'
-import { CLIENT_MENU_ITEMS, type MenuItem } from '../../components/MenuCard'
+import { type MenuItem } from '../../components/MenuCard'
+import { useProductImages } from '../../utils/useProductImages'
 import InventoryConfirmModal from './InventoryConfirmModal'
 import {
   Badge,
@@ -134,10 +135,16 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
   onSaveRecipe,
   onDeleteRecipe,
 }) => {
+  // The live catalog, so dishes added on the Menu tab can be given a recipe here too
+  const { menuItems } = useProductImages()
+
   // Menu selection & filters
   const [productSearch, setProductSearch] = useState('')
   const [selectedProductCategory, setSelectedProductCategory] = useState('ALL')
-  const [selectedProductId, setSelectedProductId] = useState<string>(CLIENT_MENU_ITEMS[0]?.id || '')
+  // Nothing is picked at first; the catalog is fetched, so the first dish stands in until one is.
+  const [pickedProductId, setPickedProductId] = useState<string>('')
+  const selectedProductId =
+    pickedProductId && menuItems.some((p) => p.id === pickedProductId) ? pickedProductId : menuItems[0]?.id || ''
 
   // Recipe Editor Draft State
   const [isEditing, setIsEditing] = useState(false)
@@ -161,8 +168,8 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
 
   // Current active product
   const activeProduct = useMemo<MenuItem | undefined>(() => {
-    return CLIENT_MENU_ITEMS.find((p) => p.id === selectedProductId)
-  }, [selectedProductId])
+    return menuItems.find((p) => p.id === selectedProductId)
+  }, [menuItems, selectedProductId])
 
   // Current active recipe
   const activeRecipe = useMemo<ProductRecipe | undefined>(() => {
@@ -195,7 +202,7 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
 
   // Filter products for left sidebar
   const filteredProducts = useMemo(() => {
-    return CLIENT_MENU_ITEMS.filter((item) => {
+    return menuItems.filter((item) => {
       const matchesSearch =
         item.name.toLowerCase().includes(productSearch.toLowerCase()) ||
         item.category.toLowerCase().includes(productSearch.toLowerCase())
@@ -205,11 +212,11 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         setupFilter === 'ALL' || (setupFilter === 'CONFIGURED' ? configured : !configured)
       return matchesSearch && matchesCat && matchesSetup
     })
-  }, [productSearch, selectedProductCategory, setupFilter, recipes])
+  }, [menuItems, productSearch, selectedProductCategory, setupFilter, recipes])
 
   const configuredCount = useMemo(
-    () => CLIENT_MENU_ITEMS.filter((p) => recipes.some((r) => r.productId === p.id && r.isConfigured)).length,
-    [recipes]
+    () => menuItems.filter((p) => recipes.some((r) => r.productId === p.id && r.isConfigured)).length,
+    [menuItems, recipes]
   )
 
   const selectProduct = (id: string) => {
@@ -218,13 +225,13 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
       setPendingProductId(id)
       return
     }
-    setSelectedProductId(id)
+    setPickedProductId(id)
   }
 
   // Categories list
   const productCategories = useMemo(() => {
-    return Array.from(new Set(CLIENT_MENU_ITEMS.map((i) => i.category)))
-  }, [])
+    return Array.from(new Set(menuItems.map((i) => i.category)))
+  }, [menuItems])
 
   // Start configuring / editing
   const handleStartConfiguring = () => {
@@ -452,7 +459,7 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         description="Ingredient portions and takeout packaging for each menu item. Used to estimate how many servings you can make."
         actions={
           <span className="text-sm text-[var(--inv-text-3)]">
-            <b className="font-semibold text-[var(--inv-text)]">{configuredCount}</b> of {CLIENT_MENU_ITEMS.length} set up
+            <b className="font-semibold text-[var(--inv-text)]">{configuredCount}</b> of {menuItems.length} set up
           </span>
         }
       />
@@ -1013,7 +1020,7 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
           if (pendingProductId) {
             setIsEditing(false)
             setFormError('')
-            setSelectedProductId(pendingProductId)
+            setPickedProductId(pendingProductId)
           }
           setPendingProductId(null)
         }}

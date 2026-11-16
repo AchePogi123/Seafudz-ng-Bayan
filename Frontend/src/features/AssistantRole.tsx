@@ -6,6 +6,18 @@ import { AdminCreateTransactionModal } from '../components/AdminCreateTransactio
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { extractReceiptReferenceFromImage } from '../utils/ocr'
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Icon,
+  Notice,
+  SearchInput,
+  Segmented,
+  type BadgeTone,
+} from './inventory/ui'
+import './inventory/admin-inventory.css'
 
 export interface OrderItem {
   id?: number | string
@@ -91,6 +103,81 @@ const normalizeStatusStr = (st?: string): string => {
   return st.toLowerCase().trim().replace(/[\s-]+/g, '_')
 }
 
+/**
+ * One table instead of an eighty-line nested ternary.
+ *
+ * `urgent` marks the states that need a person to decide something now; it is
+ * the only attention signal on the screen, so it stays rare. Everything else
+ * is just a colour-coded state.
+ */
+type StatusKey = string
+const STATUS_META: Record<StatusKey, { label: string; tone: BadgeTone; urgent?: boolean }> = {
+  cancel_requested: { label: 'Cancel & refund requested', tone: 'danger', urgent: true },
+  out_of_stock: { label: 'Out of stock', tone: 'danger', urgent: true },
+  kitchen_rejected: { label: 'Declined by kitchen', tone: 'danger' },
+  cancelled: { label: 'Cancelled', tone: 'danger' },
+  receipt_rejected: { label: 'Receipt rejected', tone: 'danger' },
+  awaiting_kitchen_approval: { label: 'Kitchen review needed', tone: 'warning', urgent: true },
+  gcash_pending_approval: { label: 'Requesting payment', tone: 'warning' },
+  pending: { label: 'Pending', tone: 'warning' },
+  unconfirmed: { label: 'Unconfirmed', tone: 'warning' },
+  receipt_submitted: { label: 'Receipt to verify', tone: 'warning', urgent: true },
+  gcash_authorized: { label: 'Payment authorised', tone: 'info' },
+  confirmed: { label: 'Confirmed', tone: 'info' },
+  preparing: { label: 'Preparing', tone: 'info' },
+  cooking: { label: 'Cooking', tone: 'info' },
+  out_for_delivery: { label: 'Out for delivery', tone: 'info' },
+  ready: { label: 'Ready for dispatch', tone: 'success' },
+  completed: { label: 'Completed', tone: 'success' },
+  delivered: { label: 'Delivered', tone: 'success' },
+  served: { label: 'Served', tone: 'success' },
+}
+
+const statusMeta = (order: any) => {
+  const s = normalizeStatusStr(order?.status)
+  const base = STATUS_META[s] || { label: s.replace(/_/g, ' '), tone: 'neutral' as BadgeTone }
+
+  // A few states only mean what they mean in combination with other fields.
+  if (s === 'cancelled') {
+    const isGcash = (order?.paymentMethod || '').toLowerCase().includes('gcash')
+    if (isGcash && !order?.refundReceipt && !order?.refundReference) {
+      return { label: 'Refund needed', tone: 'danger' as BadgeTone, urgent: true }
+    }
+    if (order?.refundReceipt || order?.refundReference) {
+      return { label: 'Cancelled & refunded', tone: 'neutral' as BadgeTone }
+    }
+  }
+  if (s === 'out_of_stock') {
+    const awaiting = (order?.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
+    return awaiting
+      ? {
+          label: order?.customerResolution === 'REFUND' ? 'Customer wants a refund' : 'Customer picked a replacement',
+          tone: 'danger' as BadgeTone,
+          urgent: true,
+        }
+      : { label: 'Awaiting customer choice', tone: 'warning' as BadgeTone }
+  }
+  if (s === 'ready') {
+    const printed = Boolean(
+      order?.isReceiptPrinted === true ||
+        order?.is_receipt_printed === true ||
+        String(order?.receiptStatus || '').toUpperCase() === 'PRINTED'
+    )
+    return printed
+      ? { label: 'Ready for dispatch', tone: 'success' as BadgeTone }
+      : { label: 'Awaiting POS receipt', tone: 'warning' as BadgeTone }
+  }
+  return base
+}
+
+const isPickup = (order: any) =>
+  String(order?.fulfillmentType || order?.fulfillment_type || order?.type || '')
+    .toUpperCase()
+    .includes('PICKUP')
+
+const peso = (n: number) =>
+  `\u20B1${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
 export const AssistantRole: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
@@ -103,14 +190,15 @@ export const AssistantRole: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 6
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null)
-  const [viewedReceipts, setViewedReceipts] = useState<Record<string, string>>({})
 
-  const handleViewReceipt = (receiptUrl: string, orderId: string) => {
+  /**
+   * The payment proof is now rendered inline at a readable size, so opening an
+   * order *is* inspecting it. The old `viewedReceipts` bookkeeping existed only
+   * to force a click on a 40px thumbnail before approval, and that thumbnail is
+   * gone — so the gate, and the state behind it, went with it.
+   */
+  const handleViewReceipt = (receiptUrl: string, _orderId: string) => {
     setPreviewReceiptUrl(receiptUrl)
-    setViewedReceipts((prev) => ({
-      ...prev,
-      [orderId]: receiptUrl,
-    }))
   }
 
   // Admin CRUD Modal states
@@ -138,7 +226,7 @@ export const AssistantRole: React.FC = () => {
   const scannedReceiptsRef = useRef<Set<string>>(new Set())
 
   const handleDeleteAssistantOrder = async (orderId: string) => {
-    const confirmDelete = window.confirm(`⚠️ Are you sure you want to permanently delete order #${orderId}? This will remove it from the database.`)
+    const confirmDelete = window.confirm(`Are you sure you want to permanently delete order #${orderId}? This will remove it from the database.`)
     if (!confirmDelete) return
 
     const token = localStorage.getItem('token') || localStorage.getItem('seafudz_token') || localStorage.getItem('auth_token')
@@ -236,7 +324,7 @@ export const AssistantRole: React.FC = () => {
       if (result.referenceNumber) {
         setAssistantRefNumber(result.referenceNumber)
         setOcrDetectedRef(result.referenceNumber)
-        setNotification(`✨ GCash Ref #${result.referenceNumber} auto-detected from receipt!`)
+        setNotification(`GCash Ref #${result.referenceNumber} auto-detected from receipt!`)
 
         // Update local order and save to backend
         try {
@@ -830,11 +918,6 @@ export const AssistantRole: React.FC = () => {
       notifyOrderSync()
     } catch { }
 
-    setViewedReceipts((prev) => {
-      const next = { ...prev }
-      delete next[orderId]
-      return next
-    })
     setOrders((prev) =>
       prev.map((o) =>
         o.id === orderId || o.ref === orderId
@@ -1050,7 +1133,11 @@ export const AssistantRole: React.FC = () => {
     }
   }
 
-  const filteredOrders = useMemo(() => {
+  /**
+   * The stage predicate is shared by the list and by the tab counts, so a
+   * badge can never disagree with what the tab actually shows.
+   */
+  const stageOf = useMemo(() => {
     let printedReceiptsSet = new Set<string>()
     try {
       const savedPrinted = localStorage.getItem('seafudz_printed_receipts')
@@ -1062,7 +1149,7 @@ export const AssistantRole: React.FC = () => {
       }
     } catch {}
 
-    const filtered = orders.filter((order) => {
+    return (order: OnlineOrder, tab: 'pending' | 'kitchen' | 'dispatch' | 'all') => {
       const s = normalizeStatusStr(order.status)
 
       const isConfirmedOrLater = ['confirmed', 'pending_preparation', 'preparing', 'ready', 'out_for_delivery', 'assigned', 'completed', 'cancelled', 'out_of_stock'].includes(s)
@@ -1082,26 +1169,31 @@ export const AssistantRole: React.FC = () => {
       const isPickup = String(order.fulfillmentType || (order as any).fulfillment_type || order.type || '').toUpperCase().includes('PICKUP')
 
       const matchesTab =
-        activeTab === 'pending'
+        tab === 'pending'
           ? (!isConfirmedOrLater || isCancellationRefundNeeded)
-          : activeTab === 'kitchen'
+          : tab === 'kitchen'
             ? (s === 'confirmed' || s === 'pending_preparation' || s === 'preparing' || s === 'out_of_stock' || (s === 'ready' && !isPrinted))
-            : activeTab === 'dispatch'
+            : tab === 'dispatch'
               ? (!isPickup && ((s === 'ready' && isPrinted) || s === 'out_for_delivery' || s === 'assigned' || s === 'completed'))
               : true
 
-      if (!matchesTab) return false
+      return matchesTab
+    }
+  }, [orders])
 
-      if (!searchQuery.trim()) return true
-      const q = searchQuery.toLowerCase()
-      return (
-        order.ref.toLowerCase().includes(q) ||
-        order.customer.toLowerCase().includes(q) ||
-        order.phone.toLowerCase().includes(q) ||
-        order.address.toLowerCase().includes(q) ||
-        order.items.some((i) => i.name.toLowerCase().includes(q))
-      )
-    })
+  const matchesSearch = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return (order: OnlineOrder) =>
+      !q ||
+      order.ref.toLowerCase().includes(q) ||
+      order.customer.toLowerCase().includes(q) ||
+      order.phone.toLowerCase().includes(q) ||
+      order.address.toLowerCase().includes(q) ||
+      order.items.some((i) => i.name.toLowerCase().includes(q))
+  }, [searchQuery])
+
+  const filteredOrders = useMemo(() => {
+    const filtered = orders.filter((o) => stageOf(o, activeTab) && matchesSearch(o))
 
     // First In, First Out (FIFO): Earliest created orders appear first at the top
     return [...filtered].sort((a, b) => {
@@ -1118,7 +1210,18 @@ export const AssistantRole: React.FC = () => {
       if (!tA && tB) return 1
       return 0
     })
-  }, [orders, activeTab, searchQuery])
+  }, [orders, activeTab, stageOf, matchesSearch])
+
+  const searchedOrders = useMemo(() => orders.filter(matchesSearch), [orders, matchesSearch])
+  const tabCounts = useMemo(
+    () => ({
+      pending: searchedOrders.filter((o) => stageOf(o, 'pending')).length,
+      kitchen: searchedOrders.filter((o) => stageOf(o, 'kitchen')).length,
+      dispatch: searchedOrders.filter((o) => stageOf(o, 'dispatch')).length,
+      all: searchedOrders.length,
+    }),
+    [searchedOrders, stageOf]
+  )
 
   // Retain selected order across filter/tab switches to avoid disappearing modal/sections
 
@@ -1133,531 +1236,404 @@ export const AssistantRole: React.FC = () => {
     return filteredOrders.slice(startIndex, startIndex + ITEMS_PER_PAGE)
   }, [filteredOrders, currentPage, ITEMS_PER_PAGE])
 
+  const urgentCount = filteredOrders.filter((o) => statusMeta(o).urgent).length
+
   return (
-    <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 transition-all duration-300 pb-24 lg:pb-6 text-neutral-900 font-sans">
-      <div className="w-full flex flex-col gap-4 sm:gap-6">
-        {/* Top Navbar */}
+    <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
+      <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
         <NavbarAssistant />
+      </div>
 
-        {/* 4-Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-start">
+      <main className="mx-auto w-full max-w-[1600px] px-4 sm:px-6 lg:px-8 pt-6 space-y-4">
+        {notification && <Notice tone="info">{notification}</Notice>}
 
-          {/* Left Column (3 Cols) */}
-          <div className="lg:col-span-3 flex flex-col gap-4">
-            {notification && (
-              <div className="bg-orange-50 border border-orange-200 text-orange-800 px-4 py-3 rounded-2xl flex items-center justify-between text-sm font-bold shadow-xs animate-in fade-in">
-                <span>{notification}</span>
-                <button onClick={() => setNotification(null)} className="text-orange-500 font-extrabold cursor-pointer">×</button>
+        {stockAlert && (
+          <Notice tone="danger">
+            <strong>Order {stockAlert.orderId} could not be stocked.</strong> {stockAlert.message} It was sent to the
+            kitchen but nothing left inventory — restock the item, or swap or refund the dish with the customer.
+            <button type="button" className="inv-link ml-2" onClick={() => setStockAlert(null)}>
+              Dismiss
+            </button>
+          </Notice>
+        )}
+
+        {/* Workspace: queue on the left, the order you are working on fills the rest. */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[400px_minmax(0,1fr)] items-start">
+
+          {/* ------------------------------------------------ Queue */}
+          <Card className="flex flex-col lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)]">
+            <div className="inv-card-header">
+              <div className="min-w-0">
+                <h2 className="inv-card-title">Order queue</h2>
+                <p className="inv-card-desc">
+                  {filteredOrders.length} in this stage
+                  {urgentCount > 0 && ` · ${urgentCount} need you`}
+                </p>
               </div>
-            )}
-
-            {stockAlert && (
-              <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 px-4 py-3 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-sm font-bold shadow-xs">
-                <div className="flex items-start gap-2.5">
-                  <span className="text-xl leading-none">⚠️</span>
-                  <span>
-                    <strong>Paid order #{stockAlert.orderId} cannot be stocked.</strong>{' '}
-                    {stockAlert.message}{' '}
-                    <span className="font-semibold">
-                      The order was sent to the kitchen but nothing was taken from inventory. Restock the item,
-                      or contact the customer to swap or refund the dish.
-                    </span>
-                  </span>
-                </div>
-                <button
-                  onClick={() => setStockAlert(null)}
-                  className="shrink-0 bg-rose-600 hover:bg-rose-700 text-white px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer transition-colors"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            {orders.some((o) => normalizeStatusStr(o.status) === 'out_of_stock') && (
-              <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 px-4 py-3 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs font-bold shadow-xs animate-pulse">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xl">🚨</span>
-                  <span>
-                    <strong>Out-of-Stock Alert:</strong> {orders.filter((o) => normalizeStatusStr(o.status) === 'out_of_stock').length} order(s) flagged. {orders.filter((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT').length} customer choice(s) ready for review.
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const oosOrder = orders.find((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT')
-                      || orders.find((o) => normalizeStatusStr(o.status) === 'out_of_stock')
-                    if (oosOrder) {
-                      setActiveTab('kitchen')
-                      setSelectedOrderId(oosOrder.id)
-                    }
-                  }}
-                  className="bg-rose-600 hover:bg-rose-700 text-white font-extrabold px-3 py-1.5 rounded-xl text-xs cursor-pointer shadow-xs whitespace-nowrap active:scale-95"
-                >
-                  {orders.some((o) => normalizeStatusStr(o.status) === 'out_of_stock' && (o.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT') ? 'Review customer choice' : 'Inspect order'}
-                </button>
-              </div>
-            )}
-
-            {/* Search and Tabs Row */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              {/* Pipeline Tabs */}
-              <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-neutral-200 shadow-2xs overflow-x-auto">
-                {[
-                  { id: 'pending', label: '1. Pending Orders' },
-                  { id: 'kitchen', label: '2. Sent to Kitchen' },
-                  { id: 'dispatch', label: '3. Rider Dispatch' },
-                  { id: 'all', label: 'All Orders' },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id as any)}
-                    className={`px-4 py-2.5 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id
-                      ? 'bg-[#ff7b00] text-white shadow-xs'
-                      : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
-                      }`}
-                  >
-                    <span>{tab.label}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Search Bar & Actions */}
-              <div className="flex items-center gap-2 min-w-[240px]">
-                {isAdmin && (
-                  <button
-                    onClick={() => setIsAdminCreateOpen(true)}
-                    className="px-4 py-2.5 rounded-2xl bg-[#ff7b00] hover:bg-[#e06c00] text-white font-extrabold text-xs transition-all cursor-pointer whitespace-nowrap shadow-md shadow-orange-500/20 active:scale-95"
-                  >
-                    ➕ Create Transaction
-                  </button>
-                )}
-
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search customer, ref, address..."
-                    className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
+              {isAdmin && (
+                <Button variant="secondary" size="sm" icon="plus" onClick={() => setIsAdminCreateOpen(true)}>
+                  New
+                </Button>
+              )}
             </div>
 
-            {/* Orders Cards List (Row by Row) */}
-            <div className="flex flex-col gap-4">
+            <div className="inv-toolbar">
+              <Segmented
+                options={[
+                  { value: 'pending', label: 'Intake', count: tabCounts.pending },
+                  { value: 'kitchen', label: 'Kitchen', count: tabCounts.kitchen },
+                  { value: 'dispatch', label: 'Dispatch', count: tabCounts.dispatch },
+                  { value: 'all', label: 'All', count: tabCounts.all },
+                ]}
+                value={activeTab}
+                onChange={(v) => setActiveTab(v as typeof activeTab)}
+                label="Order stage"
+                size="sm"
+              />
+              <SearchInput
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search customer, ref or address"
+                label="Search orders"
+              />
+            </div>
+
+            <div className="sfb-queue min-h-0 flex-1 overflow-y-auto">
               {paginatedOrders.length === 0 ? (
-                <div className="w-full bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                  <h3 className="font-bold text-neutral-700">No orders in this stage right now.</h3>
-                  <p className="text-xs mt-1">
-                    {searchQuery ? `No results matching "${searchQuery}"` : 'Online orders placed by customers will appear here immediately.'}
-                  </p>
-                </div>
+                <EmptyState
+                  compact
+                  icon="doc"
+                  title={searchQuery ? 'Nothing matches that search' : 'Nothing in this stage'}
+                  description={
+                    searchQuery
+                      ? `No order matches “${searchQuery}”.`
+                      : 'Online orders arrive here the moment a customer sends their payment.'
+                  }
+                />
               ) : (
                 paginatedOrders.map((ord) => {
+                  const meta = statusMeta(ord)
                   const isSelected = selectedOrderId === ord.id
-                  const s = normalizeStatusStr(ord.status)
-                  const isCardPrinted = Boolean(
-                    ord.isReceiptPrinted === true ||
-                    (ord as any).is_receipt_printed === true ||
-                    String(ord.receiptStatus || '').toUpperCase() === 'PRINTED'
-                  )
-                  const isPickupOrder = String(ord.fulfillmentType || (ord as any).fulfillment_type || ord.type || '').toUpperCase().includes('PICKUP')
-                  const deliveryFee = isPickupOrder ? 0 : Number(ord.deliveryFee ?? 0)
-                  const priceBeforeDelivery = isPickupOrder ? Number(ord.total || 0) : Math.max(0, Number(ord.total || 0) - deliveryFee)
-
                   return (
-                    <div
+                    <button
                       key={ord.id}
+                      type="button"
                       onClick={() => setSelectedOrderId(ord.id)}
-                      className={`bg-white rounded-3xl p-5 border transition-all cursor-pointer shadow-xs hover:shadow-md ${isSelected
-                        ? 'border-[#ff7b00] ring-2 ring-orange-500/20'
-                        : 'border-neutral-200 hover:border-neutral-300'
-                        }`}
+                      aria-current={isSelected ? 'true' : undefined}
+                      className={`sfb-queue-row${isSelected ? ' is-selected' : ''}${meta.urgent ? ' is-urgent' : ''}`}
                     >
-                      <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
-                        <div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-black uppercase tracking-wider text-orange-600">REF: {ord.ref}</span>
-                            {String(ord.fulfillmentType || (ord as any).fulfillment_type || ord.type || '').toUpperCase().includes('PICKUP') ? (
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                🛍️ PICK-UP
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-orange-50 text-orange-700 border border-orange-200">
-                                🛵 DELIVERY
-                              </span>
-                            )}
-                          </div>
-                          <h4 className="text-base font-normal text-neutral-800 leading-tight mt-0.5">{ord.customer}</h4>
-                          <p className="text-xs text-neutral-500 mt-0.5">{ord.phone}</p>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${s === 'cancel_requested' || (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
-                              ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
-                              : s === 'out_of_stock'
-                              ? 'bg-rose-100 text-rose-900 border border-rose-400 animate-pulse font-black'
-                              : s === 'awaiting_kitchen_approval'
-                                ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse font-black'
-                                : s === 'kitchen_rejected'
-                                  ? 'bg-rose-100 text-rose-900 border border-rose-300 font-black'
-                                  : s === 'gcash_pending_approval'
-                                    ? 'bg-amber-100 text-amber-900 border border-amber-300 animate-pulse'
-                                    : s === 'gcash_authorized'
-                                      ? 'bg-blue-100 text-blue-900 border border-blue-300'
-                                      : s === 'receipt_submitted'
-                                        ? 'bg-purple-100 text-purple-900 border border-purple-300'
-                                        : s === 'pending' || s === 'unconfirmed'
-                                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                          : s === 'confirmed' || s === 'preparing'
-                                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                            : s === 'ready'
-                                              ? !isCardPrinted
-                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 font-extrabold'
-                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                              : s === 'cancelled'
-                                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
-                                                : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
-                              }`}
-                          >
-                            ● {s === 'cancel_requested'
-                              ? '🚨 Cancel & Refund Requested'
-                              : (s === 'cancelled' && (ord.paymentMethod || '').toLowerCase().includes('gcash') && !ord.refundReceipt && !ord.refundReference)
-                                ? '🚨 Refund Needed'
-                                : s === 'out_of_stock'
-                              ? (ord.customerResolutionStatus || '').toUpperCase() === 'PENDING_ASSISTANT'
-                                ? ord.customerResolution === 'REFUND' ? 'Customer Refund Request' : 'Customer Replacement Choice'
-                                : 'Awaiting Customer Choice'
-                              : s === 'awaiting_kitchen_approval'
-                                ? 'Kitchen Review Needed'
-                                : s === 'kitchen_rejected'
-                                  ? 'Declined by Kitchen'
-                                  : s === 'ready'
-                                    ? !isCardPrinted
-                                      ? 'Kitchen Done • Awaiting POS Receipt'
-                                      : 'Ready for Rider Dispatch'
-                                  : s === 'gcash_pending_approval' ? 'Requesting Payment' : s === 'gcash_authorized' ? 'Payment Authorized' : s === 'receipt_submitted' ? 'Receipt Submitted' : s === 'cancelled' ? (ord.refundReceipt || ord.refundReference ? 'Cancelled & Refunded' : 'Cancelled') : ord.status}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="py-3 text-xs text-neutral-600 space-y-1">
-                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.address}</span></p>
-                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i: any) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
-                      </div>
-
-                      <div className="space-y-1 border-t border-neutral-100 pt-2 text-[11px] text-neutral-500">
-                        <div className="flex justify-between">
-                          <span>Food price + VAT</span>
-                          <span>₱{priceBeforeDelivery.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                        {!isPickupOrder && (
-                          <div className="flex justify-between">
-                            <span>Delivery fee</span>
-                            <span>₱{deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${ord.paymentMethod?.toLowerCase().includes('gcash')
-                            ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            }`}>
-                            {ord.paymentMethod || 'GCash'}
-                          </span>
-                          {ord.paymentReceipt && (
-                            <span className="text-[10px] bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-200" title="Receipt photo attached">Receipt</span>
-                          )}
-                        </div>
-                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
-                      </div>
-                    </div>
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="sfb-queue-ref">{ord.ref}</span>
+                        <span className="sfb-queue-time">{ord.createdAt}</span>
+                      </span>
+                      <span className="sfb-queue-name">{ord.customer}</span>
+                      <span className="sfb-queue-items">
+                        {ord.items.map((i: any) => `${i.name} ×${i.quantity}`).join(', ')}
+                      </span>
+                      <span className="flex items-center justify-between gap-2 pt-0.5">
+                        <Badge tone={meta.tone} dot>
+                          {meta.label}
+                        </Badge>
+                        <span className="sfb-queue-total">{peso(ord.total)}</span>
+                      </span>
+                    </button>
                   )
                 })
               )}
             </div>
 
-            {/* Pagination Controls */}
             {filteredOrders.length > ITEMS_PER_PAGE && (
-              <div className="bg-white px-5 py-3.5 rounded-2xl border border-neutral-200 shadow-2xs flex items-center justify-between">
-                <span className="text-xs font-bold text-neutral-500">
-                  Page <span className="text-neutral-900 font-black">{currentPage}</span> of{' '}
-                  <span className="text-neutral-900 font-black">{totalPages}</span> ({filteredOrders.length} total orders)
+              <nav className="inv-pagination" aria-label="Queue pages">
+                <span>
+                  Page <b>{currentPage}</b> of <b>{totalPages}</b>
                 </span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon="chevronLeft"
                     disabled={currentPage === 1}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                   >
-                    <span>⬅️</span> Prev
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    Prev
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={currentPage >= totalPages}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#ff7b00] hover:bg-[#e66f00] text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                   >
-                    Next <span>➡️</span>
-                  </button>
+                    Next
+                  </Button>
                 </div>
-              </div>
+              </nav>
             )}
-          </div>
+          </Card>
 
-          {/* Right Column: Selected Order Management Details */}
-          <div className="lg:col-span-1 bg-white p-6 rounded-3xl border border-neutral-200/80 shadow-xs space-y-6">
-            <h3 className="font-bold text-xs uppercase tracking-wider text-slate-400 border-b border-neutral-100 pb-3">
-              Order Verification & Dispatch
-            </h3>
-
-            {!selectedOrder ? (
-              <div className="text-center py-16 text-neutral-400 text-xs">
-                Select an order from the list to review and forward to Cashier & Kitchen.
-              </div>
-            ) : (
-              <div className="space-y-5 text-xs text-slate-700">
-                {/* Clean Order Header */}
-                <div className="pb-4 border-b border-slate-100 space-y-1">
-                  <div className="flex justify-between items-center">
-                    <span className="font-extrabold text-slate-900 text-lg tracking-tight">{selectedOrder.ref}</span>
-                    <div className="flex items-center gap-2">
-                      <span className="px-2.5 py-0.5 rounded-full font-bold text-[10px] tracking-wide uppercase bg-slate-100 text-slate-600">
-                        {selectedOrder.paymentMethod || 'GCash'}
-                      </span>
+          {/* ------------------------------------------- Work panel */}
+          {!selectedOrder ? (
+            <Card>
+              <EmptyState
+                icon="eye"
+                title="Pick an order to review"
+                description="Choose an order from the queue to check its payment proof and move it along."
+              />
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {/* Order header */}
+              <Card>
+                <div className="inv-card-header">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="inv-card-title">{selectedOrder.ref}</h2>
+                      <Badge tone={statusMeta(selectedOrder).tone} dot>
+                        {statusMeta(selectedOrder).label}
+                      </Badge>
+                      <Badge tone={isPickup(selectedOrder) ? 'success' : 'info'}>
+                        {isPickup(selectedOrder) ? 'Pick-up' : 'Delivery'}
+                      </Badge>
                     </div>
+                    <p className="inv-card-desc">
+                      {selectedOrder.customer} · {selectedOrder.phone} · placed {selectedOrder.createdAt}
+                    </p>
                   </div>
-                  <p className="font-normal text-slate-800 text-sm pt-0.5">{selectedOrder.customer}</p>
-                  <p className="text-slate-500 text-xs">{selectedOrder.phone}</p>
-                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">{selectedOrder.address}</p>
-                </div>
-
-                {/* Minimal Payment Details */}
-                <div className="pb-4 border-b border-slate-100 space-y-2.5">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-semibold uppercase text-[10px] tracking-wider">Payment Details</span>
-                    <span className="font-extrabold text-slate-900 text-sm">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-
-                  {(() => {
-                    const isSelectedPickup = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
-                    const selectedDeliveryFee = isSelectedPickup ? 0 : Number(selectedOrder.deliveryFee ?? 0)
-                    const foodPlusVat = isSelectedPickup ? selectedOrder.total : Math.max(0, selectedOrder.total - selectedDeliveryFee)
-                    return (
-                      <div className="space-y-1 text-[11px]">
-                        <div className="flex justify-between">
-                          <span className="text-slate-500 font-medium">Food price + VAT:</span>
-                          <span className="font-semibold text-slate-800">
-                            ₱{foodPlusVat.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        {!isSelectedPickup && (
-                          <div className="flex justify-between">
-                            <span className="text-slate-500 font-medium">Delivery fee:</span>
-                            <span className="font-semibold text-slate-800">₱{selectedDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })()}
-
-                  <div className="space-y-2 text-[11px]">
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500 font-medium">Payment Mode:</span>
-                      <span className="font-semibold text-slate-800">{selectedOrder.paymentMethod || 'GCash'} Transfer</span>
-                    </div>
-
-                    {/* GCash Reference Number Input with Tesseract OCR Auto-fill & Controls */}
-                    {((selectedOrder.paymentMethod || '').toLowerCase().includes('gcash') || Boolean(selectedOrder.paymentReceipt)) && (
-                      <div className="pt-2 border-t border-slate-100 space-y-1.5">
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-600 font-bold flex items-center gap-1.5">
-                            <span>Reference No:</span>
-                            {isOcrScanning && (
-                              <span className="text-[10px] text-blue-600 font-bold flex items-center gap-1 animate-pulse">
-                                <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
-                                {ocrStatusText || 'Scanning receipt with OCR...'}
-                              </span>
-                            )}
-                            {!isOcrScanning && ocrDetectedRef && (
-                              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded border border-emerald-300">
-                                ✨ OCR Extracted
-                              </span>
-                            )}
-                          </span>
-                          {selectedOrder.paymentReceipt && !isOcrScanning && (
-                            <button
-                              type="button"
-                              onClick={() => runReceiptOcr(selectedOrder.paymentReceipt!, selectedOrder.id, true)}
-                              className="text-[10px] text-blue-600 hover:text-blue-800 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
-                              title="Re-run Tesseract OCR on attached receipt image"
-                            >
-                              <span>🔍</span> Scan with OCR
-                            </button>
-                          )}
-                        </div>
-                        <div className="flex gap-1.5">
-                          <input
-                            type="text"
-                            value={assistantRefNumber}
-                            onChange={(e) => handleRefNumberChange(e.target.value)}
-                            onBlur={handleSaveRefNumber}
-                            placeholder="Type or auto-detect GCash Ref #"
-                            className="flex-1 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-slate-300 placeholder:font-sans placeholder:font-normal shadow-2xs"
-                          />
-                          {assistantRefNumber.trim() && assistantRefNumber.trim() !== (selectedOrder.paymentReference || '').trim() && (
-                            <button
-                              type="button"
-                              onClick={handleSaveRefNumber}
-                              className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[10px] font-bold cursor-pointer transition-colors shrink-0"
-                            >
-                              Save
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Payment Receipt / Screenshot */}
-                  {selectedOrder.paymentReceipt && (() => {
-                    const st = normalizeStatusStr(selectedOrder.status).toUpperCase()
-                    const isRejected = st === 'RECEIPT_REJECTED'
-                    const isReceiptViewed = Boolean(
-                      selectedOrder.paymentReceipt &&
-                      viewedReceipts[selectedOrder.id] === selectedOrder.paymentReceipt &&
-                      !isRejected
-                    )
-
-                    return (
-                      <div className="pt-2 flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <img
-                            src={selectedOrder.paymentReceipt}
-                            alt="Receipt Preview"
-                            onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
-                            className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0 shadow-2xs"
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[11px] font-bold text-neutral-800">Receipt Attached</span>
-                              {isRejected ? (
-                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 border border-rose-200">
-                                  Rejected
-                                </span>
-                              ) : isReceiptViewed ? (
-                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
-                                  ✓ Inspected
-                                </span>
-                              ) : (
-                                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                                  Inspection required
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                              {isRejected
-                                ? 'Waiting for customer to resubmit'
-                                : isReceiptViewed
-                                ? 'Receipt viewed and ready to approve'
-                                : 'Click to view reference image'}
-                            </p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
-                          className={`px-3 py-1.5 text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-xs active:scale-95 shrink-0 ${
-                            isReceiptViewed
-                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
-                              : 'bg-blue-600 hover:bg-blue-700 text-white'
-                          }`}
-                        >
-                          View
-                        </button>
-                      </div>
-                    )
-                  })()}
-
-                  {/* Cashback / Refund Reference Photo or Manual Ref # (Viewable whenever reopening the order) */}
-                  {(selectedOrder.refundReceipt || selectedOrder.refundReference) && (
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {selectedOrder.refundReceipt ? (
-                          <img
-                            src={selectedOrder.refundReceipt}
-                            alt="Cashback / Refund Proof Preview"
-                            onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
-                            className="w-10 h-10 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-80 transition-opacity shrink-0"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 bg-slate-100 rounded-lg border border-slate-200 flex items-center justify-center text-base shrink-0">
-                            🧾
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-bold text-neutral-800 truncate">
-                            {selectedOrder.customerResolution === 'REPLACE' ? 'Cashback Reference' : 'Refund Reference'}
-                          </p>
-                          <p className="text-[10px] text-slate-500 font-mono truncate">
-                            {selectedOrder.refundReference
-                              ? `Ref: ${selectedOrder.refundReference}`
-                              : selectedOrder.completedRefundAmount
-                              ? `₱${Number(selectedOrder.completedRefundAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} refunded`
-                              : 'Attached proof screenshot'}
-                          </p>
-                        </div>
-                      </div>
-                      {selectedOrder.refundReceipt && (
-                        <button
-                          type="button"
-                          onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
-                          className="px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer shrink-0"
-                        >
-                          View
-                        </button>
-                      )}
+                  {isAdmin && (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button variant="ghost" size="sm" icon="edit" onClick={() => setEditingAssistantOrder(selectedOrder)}>
+                        Edit
+                      </Button>
+                      <Button
+                        variant="danger-ghost"
+                        size="sm"
+                        icon="trash"
+                        onClick={() => void handleDeleteAssistantOrder(selectedOrder.id)}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   )}
                 </div>
+              </Card>
 
-                {/* Minimal Checklist (Hidden during Out-of-Stock Refund to keep UI minimal and clean) */}
-                {normalizeStatusStr(selectedOrder.status).toUpperCase() !== 'OUT_OF_STOCK' && (
-                  <div className="pb-2 space-y-2 text-[11px]">
-                    <p className="font-bold text-slate-400 uppercase text-[10px] tracking-wider">Verification Checklist</p>
-                    <div className="space-y-1">
-                      <p className={customerNameValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                        <span>{customerNameValid ? '✓' : '✗'}</span>
-                        <span>{customerNameValid ? 'Customer name verified' : 'Missing customer name'}</span>
-                      </p>
-                      <p className={phoneValidation.isValid ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                        <span>{phoneValidation.isValid ? '✓' : '✗'}</span>
-                        <span>{phoneValidation.isValid ? 'Valid PH Mobile format' : 'Incomplete phone number'}</span>
-                      </p>
-                      <p className={addressValidation.isComplete ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-amber-600 font-medium flex items-center gap-1.5'}>
-                        <span>{addressValidation.isComplete ? '✓' : '!'}</span>
-                        <span>{addressValidation.isComplete ? 'Delivery address complete' : addressValidation.warningMsg}</span>
-                      </p>
-                      <p className={selectedOrder.paymentReceipt ? 'text-emerald-600 font-medium flex items-center gap-1.5' : 'text-rose-600 font-medium flex items-center gap-1.5'}>
-                        <span>{selectedOrder.paymentReceipt ? '✓' : '✗'}</span>
-                        <span>{selectedOrder.paymentReceipt ? 'GCash reference screenshot received' : 'Awaiting customer GCash screenshot'}</span>
+              {/* The verification bench: the proof at a readable size, next to what it has to match. */}
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px] items-start">
+
+                {/* Payment proof */}
+                <Card>
+                  <div className="inv-card-header">
+                    <div className="min-w-0">
+                      <h3 className="inv-card-title">Payment proof</h3>
+                      <p className="inv-card-desc">
+                        {selectedOrder.paymentReceipt
+                          ? 'Check the reference and amount on the screenshot against the order.'
+                          : 'The customer has not sent a screenshot yet.'}
                       </p>
                     </div>
+                    {selectedOrder.paymentReceipt && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon="eye"
+                        onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
+                      >
+                        Full size
+                      </Button>
+                    )}
                   </div>
-                )}
 
+                  <div className="inv-card-body">
+                    {selectedOrder.paymentReceipt ? (
+                      <button
+                        type="button"
+                        onClick={() => handleViewReceipt(selectedOrder.paymentReceipt!, selectedOrder.id)}
+                        className="sfb-proof"
+                        title="Open the screenshot full size"
+                      >
+                        <img src={selectedOrder.paymentReceipt} alt="Customer payment screenshot" />
+                      </button>
+                    ) : (
+                      <EmptyState
+                        compact
+                        icon="alertCircle"
+                        title="No screenshot yet"
+                        description="Nothing to verify until the customer sends their GCash proof."
+                      />
+                    )}
+                  </div>
+                </Card>
+
+                {/* Reference + money + checks */}
+                <div className="space-y-4">
+                  <Card>
+                    <div className="inv-card-header">
+                      <h3 className="inv-card-title">Reference number</h3>
+                    </div>
+                    <div className="inv-card-body space-y-3">
+                      {((selectedOrder.paymentMethod || '').toLowerCase().includes('gcash') ||
+                        Boolean(selectedOrder.paymentReceipt)) && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={assistantRefNumber}
+                              onChange={(e) => handleRefNumberChange(e.target.value)}
+                              onBlur={handleSaveRefNumber}
+                              placeholder="Type or scan the GCash reference"
+                              aria-label="GCash reference number"
+                              className="inv-input font-mono"
+                            />
+                            {assistantRefNumber.trim() &&
+                              assistantRefNumber.trim() !== (selectedOrder.paymentReference || '').trim() && (
+                                <Button variant="secondary" size="sm" onClick={handleSaveRefNumber}>
+                                  Save
+                                </Button>
+                              )}
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            {isOcrScanning ? (
+                              <span className="inv-cell-secondary flex items-center gap-1.5">
+                                <span className="inv-spinner" aria-hidden="true" />
+                                {ocrStatusText || 'Reading the screenshot…'}
+                              </span>
+                            ) : (
+                              <>
+                                {ocrDetectedRef && <Badge tone="success">Read from screenshot</Badge>}
+                                {selectedOrder.paymentReceipt && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    icon="search"
+                                    onClick={() => runReceiptOcr(selectedOrder.paymentReceipt!, selectedOrder.id, true)}
+                                  >
+                                    Scan screenshot
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </Card>
+
+                  <Card>
+                    <div className="inv-card-header">
+                      <h3 className="inv-card-title">What was paid</h3>
+                    </div>
+                    <div className="inv-card-body">
+                      {(() => {
+                        const pickup = isPickup(selectedOrder)
+                        const fee = pickup ? 0 : Number(selectedOrder.deliveryFee ?? 0)
+                        const food = pickup ? selectedOrder.total : Math.max(0, selectedOrder.total - fee)
+                        return (
+                          <div className="inv-scope-panel">
+                            <div className="inv-scope-row">
+                              <span className="inv-scope-term">Food + VAT</span>
+                              <span className="inv-scope-value">{peso(food)}</span>
+                            </div>
+                            {!pickup && (
+                              <div className="inv-scope-row">
+                                <span className="inv-scope-term">Delivery</span>
+                                <span className="inv-scope-value">{peso(fee)}</span>
+                              </div>
+                            )}
+                            <div className="inv-scope-row">
+                              <span className="inv-scope-term">Paid by</span>
+                              <span className="inv-scope-value">{selectedOrder.paymentMethod || 'GCash'}</span>
+                            </div>
+                            <div className="inv-scope-row">
+                              <span className="inv-scope-term">Total</span>
+                              <span className="inv-scope-value">{peso(selectedOrder.total)}</span>
+                            </div>
+                          </div>
+                        )
+                      })()}
+
+                      <ul className="mt-3 space-y-1.5">
+                        {selectedOrder.items.map((it: any, i: number) => (
+                          <li key={i} className="flex items-baseline justify-between gap-3 text-sm">
+                            <span className="inv-cell-primary">{it.name}</span>
+                            <span className="inv-cell-secondary shrink-0">×{it.quantity}</span>
+                          </li>
+                        ))}
+                      </ul>
+
+                      <p className="inv-cell-secondary mt-3 leading-relaxed">{selectedOrder.address}</p>
+                    </div>
+                  </Card>
+
+                  {normalizeStatusStr(selectedOrder.status).toUpperCase() !== 'OUT_OF_STOCK' && (
+                    <Card>
+                      <div className="inv-card-header">
+                        <h3 className="inv-card-title">Before you approve</h3>
+                      </div>
+                      <div className="inv-card-body">
+                        <ul className="space-y-2">
+                          {[
+                            { ok: customerNameValid, yes: 'Customer name on file', no: 'No customer name' },
+                            { ok: phoneValidation.isValid, yes: 'Phone number looks valid', no: 'Phone number is incomplete' },
+                            {
+                              ok: addressValidation.isComplete,
+                              yes: 'Delivery address is complete',
+                              no: addressValidation.warningMsg || 'Address needs checking',
+                              warn: true,
+                            },
+                            {
+                              ok: Boolean(selectedOrder.paymentReceipt),
+                              yes: 'Payment screenshot received',
+                              no: 'Waiting for the payment screenshot',
+                            },
+                          ].map((c, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm">
+                              <Icon
+                                name={c.ok ? 'checkCircle' : c.warn ? 'alertCircle' : 'alertCircle'}
+                                className={`mt-0.5 h-4 w-4 shrink-0 ${
+                                  c.ok ? 'text-[var(--inv-success)]' : c.warn ? 'text-[var(--inv-warning)]' : 'text-[var(--inv-danger)]'
+                                }`}
+                              />
+                              <span className={c.ok ? 'inv-cell-secondary' : 'inv-cell-primary'}>{c.ok ? c.yes : c.no}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </Card>
+                  )}
+
+                  {(selectedOrder.refundReceipt || selectedOrder.refundReference) && (
+                    <Card>
+                      <div className="inv-card-header">
+                        <div className="min-w-0">
+                          <h3 className="inv-card-title">
+                            {selectedOrder.customerResolution === 'REPLACE' ? 'Cashback proof' : 'Refund proof'}
+                          </h3>
+                          <p className="inv-card-desc">
+                            {selectedOrder.refundReference
+                              ? `Ref ${selectedOrder.refundReference}`
+                              : selectedOrder.completedRefundAmount
+                              ? `${peso(Number(selectedOrder.completedRefundAmount))} sent back`
+                              : 'Screenshot attached'}
+                          </p>
+                        </div>
+                        {selectedOrder.refundReceipt && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            icon="eye"
+                            onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                          >
+                            View
+                          </Button>
+                        )}
+                      </div>
+                    </Card>
+                  )}
+                </div>
+              </div>
+
+              <Card>
+                <div className="inv-card-body">
                 {/* Pipeline Action Controls */}
                 <div className="pt-2 space-y-3">
                   {(() => {
@@ -1667,7 +1643,7 @@ export const AssistantRole: React.FC = () => {
                       return (
                         <div className="space-y-3">
                           <div className="w-full bg-rose-50 text-rose-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-rose-300 shadow-xs">
-                            ❌ Order Cancelled & Refunded
+                            Order Cancelled & Refunded
                           </div>
                           {selectedOrder.refundReceipt ? (
                             <div className="bg-white p-2.5 rounded-xl border border-rose-200 flex items-center justify-between gap-2 shadow-2xs">
@@ -1698,7 +1674,7 @@ export const AssistantRole: React.FC = () => {
                               disabled={isUploadingRefundProof}
                               className="w-full py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
                             >
-                              <span>📷</span> {isUploadingRefundProof ? 'Uploading...' : 'Attach Refund Screenshot'}
+                              {isUploadingRefundProof ? 'Uploading...' : 'Attach Refund Screenshot'}
                             </button>
                           )}
                         </div>
@@ -1718,59 +1694,50 @@ export const AssistantRole: React.FC = () => {
                       const isRefund = customerChoice === 'REFUND'
 
                       return (
-                        <div className="space-y-3 bg-rose-50/90 p-4 rounded-2xl border-2 border-rose-300 shadow-xs">
-                          <div className="flex items-start gap-2">
-                            <span className="text-xl">⚠️</span>
-                            <div>
-                              <h4 className="font-black text-xs text-rose-900 uppercase tracking-wide">
-                                {isRefund ? 'Customer Refund Request' : 'Kitchen Out of Stock Alert'}
-                              </h4>
-                              <p className="text-[11px] text-rose-700 leading-snug mt-0.5">
-                                {canProcessChoice
-                                  ? `Customer selected ${isRefund ? 'a full refund' : 'replacement dishes'}.`
-                                  : 'Waiting for the customer to choose replacements or request a full refund.'}
-                              </p>
-                            </div>
-                          </div>
+                        <div className="space-y-3">
+                          <Notice tone="danger">
+                            <strong>{isRefund ? 'The customer asked for a refund.' : 'The kitchen ran out of a dish.'}</strong>{' '}
+                            {canProcessChoice
+                              ? `They chose ${isRefund ? 'a full refund' : 'replacement dishes'} — review it below and settle the money.`
+                              : 'Waiting for the customer to pick replacements or ask for a full refund.'}
+                          </Notice>
 
-                          {/* Customer Phone Display */}
-                          <div className="bg-white/95 rounded-xl p-2.5 border border-rose-200 flex items-center justify-between text-xs">
-                            <div className="min-w-0">
-                              <span className="text-[10px] font-bold text-neutral-500 uppercase block tracking-wider">Customer Phone / GCash</span>
-                              <span className="font-mono font-bold text-neutral-900 truncate block mt-0.5">📱 {selectedOrder.phone}</span>
+                          <div className="inv-scope-panel">
+                            <div className="inv-scope-row">
+                              <span className="inv-scope-term">Customer GCash number</span>
+                              <span className="inv-scope-value font-mono">{selectedOrder.phone}</span>
                             </div>
+                            {oosItems.map((item: any, idx: number) => (
+                              <div key={idx} className="inv-scope-row">
+                                <span className="inv-scope-term">
+                                  Unavailable · {item.name || item.product_name_snapshot} ×{item.quantity || 1}
+                                </span>
+                                <span className="inv-scope-value">
+                                  {peso((item.price || item.unit_price || 0) * (item.quantity || 1))}
+                                </span>
+                              </div>
+                            ))}
+                            {canProcessChoice && isRefund && (
+                              <div className="inv-scope-row">
+                                <span className="inv-scope-term">Refund owed</span>
+                                <span className="inv-scope-value">{peso(selectedOrder.total)}</span>
+                              </div>
+                            )}
                           </div>
-
-                          {oosItems.length > 0 && (
-                            <div className="bg-white/90 rounded-xl p-3 border border-rose-200 text-xs space-y-1">
-                              <p className="font-extrabold text-[10px] text-rose-800 uppercase tracking-wider">Unavailable Items:</p>
-                              {oosItems.map((item: any, idx: number) => (
-                                <div key={idx} className="flex justify-between items-center text-rose-900 font-bold text-[11px]">
-                                  <span>{item.name || item.product_name_snapshot} (x{item.quantity || 1})</span>
-                                  <span>₱{((item.price || item.unit_price || 0) * (item.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
 
                           {canProcessChoice && isRefund && (
-                            <div className="bg-white rounded-xl border border-rose-200 p-3 text-xs text-rose-900 space-y-2">
-                              <div className="flex justify-between items-center">
-                                <span className="font-bold text-neutral-700">Refund Amount:</span>
-                                <span className="font-black text-rose-700 text-sm">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                              </div>
-                              {selectedOrder.refundReceipt ? (
-                                <button
-                                  type="button"
-                                  onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
-                                  className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
-                                >
-                                  <span>📷</span> View Attached Refund Proof Screenshot
-                                </button>
-                              ) : (
-                                <p className="text-[10px] text-neutral-400">Refund transaction screenshot can be attached in review modal</p>
-                              )}
-                            </div>
+                            selectedOrder.refundReceipt ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                icon="eye"
+                                onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
+                              >
+                                View refund proof
+                              </Button>
+                            ) : (
+                              <p className="inv-cell-secondary">Attach the refund screenshot when you settle this.</p>
+                            )
                           )}
 
                           {canProcessChoice && customerChoice === 'REPLACE' && (() => {
@@ -1805,7 +1772,7 @@ export const AssistantRole: React.FC = () => {
                                         onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
                                         className="text-[11px] text-blue-600 font-bold hover:underline flex items-center gap-1 cursor-pointer"
                                       >
-                                        <span>📷</span> View Attached Cashback Reference Photo
+                                        View Attached Cashback Reference Photo
                                       </button>
                                     ) : (
                                       <p className="text-[10px] text-rose-600 font-semibold">* Cashback reference photo required in resolution</p>
@@ -1817,17 +1784,13 @@ export const AssistantRole: React.FC = () => {
                           })()}
 
                           {canProcessChoice ? (
-                            <button
-                              type="button"
-                              onClick={() => setIsResolveModalOpen(true)}
-                              className="w-full bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3.5 rounded-2xl text-xs shadow-md shadow-rose-500/20 cursor-pointer transition-all active:scale-98"
-                            >
-                              {isRefund ? 'Review and process customer refund' : 'Review customer replacement'}
-                            </button>
-                          ) : (
-                            <div className="w-full bg-white/70 text-rose-800 font-bold py-3 rounded-xl text-xs text-center border border-rose-200">
-                              No customer choice to process yet.
+                            <div className="flex justify-end">
+                              <Button variant="danger" onClick={() => setIsResolveModalOpen(true)}>
+                                {isRefund ? 'Process refund' : 'Review replacement'}
+                              </Button>
                             </div>
+                          ) : (
+                            <p className="inv-cell-secondary">Nothing to process until the customer makes a choice.</p>
                           )}
                         </div>
                       )
@@ -1845,7 +1808,7 @@ export const AssistantRole: React.FC = () => {
                         <div className="bg-rose-50 border-2 border-rose-300 rounded-3xl p-5 text-center space-y-3.5 shadow-xs">
                           <div className="flex items-center justify-center gap-2 text-rose-900 font-black text-sm">
                             <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-pulse"></span>
-                            🚨 Customer Cancellation & Refund Requested
+                            Customer Cancellation & Refund Requested
                           </div>
                           <p className="text-xs text-rose-800 leading-relaxed font-medium">
                             Customer requested cancellation for this order. Since it was paid via GCash, a full refund of <strong className="text-rose-950 font-black">₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> must be sent to GCash number <strong className="text-rose-950 font-black">{selectedOrder.phone}</strong>.
@@ -1860,7 +1823,7 @@ export const AssistantRole: React.FC = () => {
                             }}
                             className="w-full bg-rose-600 hover:bg-rose-700 text-white font-black py-3.5 rounded-2xl text-xs shadow-md shadow-rose-500/20 cursor-pointer transition-all active:scale-98 flex items-center justify-center gap-2"
                           >
-                            <span>💸</span> Process Cancellation Refund (₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                            Process Cancellation Refund (₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                           </button>
                         </div>
                       )
@@ -1870,7 +1833,7 @@ export const AssistantRole: React.FC = () => {
                       return (
                         <div className="bg-neutral-50 border border-neutral-200 rounded-3xl p-4 text-center space-y-2">
                           <div className="flex items-center justify-center gap-1.5 text-neutral-800 font-black text-xs">
-                            <span>✓</span> Order Cancelled & Refund Completed
+                            Order Cancelled & Refund Completed
                           </div>
                           <p className="text-[11px] text-neutral-600">
                             Full refund of ₱{selectedOrder.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} was processed to {selectedOrder.phone}.
@@ -1881,7 +1844,7 @@ export const AssistantRole: React.FC = () => {
                               onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
                               className="text-[11px] font-bold text-blue-600 hover:underline flex items-center justify-center gap-1 mx-auto cursor-pointer"
                             >
-                              <span>📷</span> View Refund Proof Screenshot
+                              View Refund Proof Screenshot
                             </button>
                           )}
                           {selectedOrder.refundReference && (
@@ -1922,7 +1885,7 @@ export const AssistantRole: React.FC = () => {
                           <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-4 text-center space-y-2 shadow-xs">
                             <div className="flex items-center justify-center gap-1.5 text-emerald-900 font-extrabold text-xs">
                               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                              🛍️ Ready for Customer Store Pick-Up!
+                              Ready for Customer Store Pick-Up!
                             </div>
                             <p className="text-xs text-emerald-800 leading-snug">
                               Kitchen cooking is finished! Customer can now claim their order at the Cashier Store Counter. The POS Cashier will hand over the dishes.
@@ -1947,7 +1910,7 @@ export const AssistantRole: React.FC = () => {
 
                       return (
                         <div className="w-full bg-emerald-50 text-emerald-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-emerald-300 shadow-xs">
-                          🛵 Ready for Rider Dispatch (Official Receipt Printed)
+                          Ready for Rider Dispatch (Official Receipt Printed)
                         </div>
                       )
                     }
@@ -1955,7 +1918,7 @@ export const AssistantRole: React.FC = () => {
                     if (st === 'OUT_FOR_DELIVERY') {
                       return (
                         <div className="w-full bg-blue-50 text-blue-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-blue-300 shadow-xs">
-                          🛵 Out for Delivery with Rider
+                          Out for Delivery with Rider
                         </div>
                       )
                     }
@@ -1965,7 +1928,7 @@ export const AssistantRole: React.FC = () => {
                     if (isConfirmedOrLater) {
                       return (
                         <div className="w-full bg-emerald-50 text-emerald-800 font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 border border-emerald-300 shadow-xs">
-                          ✓ Confirmed & Sent to Kitchen ({st})
+                          Confirmed & Sent to Kitchen ({st})
                         </div>
                       )
                     }
@@ -1982,23 +1945,18 @@ export const AssistantRole: React.FC = () => {
                           onClick={() => handleConfirmPickUp(selectedOrder.id)}
                           className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
                         >
-                          <span>✅ Confirm Pick-Up Order & Send to Kitchen</span>
+                          <span>Confirm Pick-Up Order & Send to Kitchen</span>
                         </button>
                       )
                     }
 
                     const isReceiptRejected = st === 'RECEIPT_REJECTED'
-                    const isReceiptViewed = Boolean(
-                      selectedOrder.paymentReceipt &&
-                      viewedReceipts[selectedOrder.id] === selectedOrder.paymentReceipt &&
-                      !isReceiptRejected
-                    )
 
                     if (isReceiptRejected) {
                       return (
                         <div className="space-y-3 bg-rose-50 p-3.5 rounded-2xl border border-rose-200 text-center">
                           <div className="flex items-center justify-center gap-1.5 text-xs font-black text-rose-900">
-                            <span>❌</span> Receipt Rejected (Invalid Image)
+                            Receipt Rejected (Invalid Image)
                           </div>
                           <p className="text-[11px] text-rose-700 leading-relaxed">
                             {selectedOrder.rejectionReason
@@ -2020,41 +1978,21 @@ export const AssistantRole: React.FC = () => {
                     // 2. GCash Order WITH Reference Screenshot Submitted (Customer sent receipt)
                     if (hasReceipt) {
                       return (
-                        <div className="space-y-3 bg-emerald-50 p-3.5 rounded-2xl border border-emerald-300">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-extrabold text-emerald-950">Payment Receipt Screenshot Received</span>
-                            {isReceiptViewed ? (
-                              <span className="text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full">
-                                ✓ Inspected
-                              </span>
-                            ) : (
-                              <span className="text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full">
-                                Inspection required
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              disabled={!isReceiptViewed}
-                              onClick={() => isReceiptViewed && handleVerifyReceipt(selectedOrder.id, assistantRefNumber)}
-                              title={!isReceiptViewed ? 'Inspection required: Please click View to inspect the receipt screenshot first' : undefined}
-                              className={`flex-1 font-extrabold py-3 rounded-xl text-xs transition-all shadow-xs ${
-                                isReceiptViewed
-                                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 shadow-emerald-600/20'
-                                  : 'bg-neutral-200 text-neutral-400 border border-neutral-300 cursor-not-allowed opacity-75'
-                              }`}
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="inv-cell-secondary">
+                            Reference and amount match the screenshot? Approve to send this order to the kitchen.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <Button variant="danger-ghost" onClick={() => handleRejectReceipt(selectedOrder.id)}>
+                              Reject payment
+                            </Button>
+                            <Button
+                              variant="primary"
+                              icon="check"
+                              onClick={() => handleVerifyReceipt(selectedOrder.id, assistantRefNumber)}
                             >
                               Approve order
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRejectReceipt(selectedOrder.id)}
-                              className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-extrabold py-3 rounded-xl text-xs cursor-pointer transition-all shadow-xs active:scale-98"
-                            >
-                              Reject
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       )
@@ -2063,12 +2001,14 @@ export const AssistantRole: React.FC = () => {
                     // 3. GCash Order NOT YET Authorized by Assistant (Customer submitted order -> Assistant authorizes customer to pay now)
                     if (!isAuthorizedToPay || st === 'GCASH_PENDING_APPROVAL' || st === 'PENDING' || st === 'UNCONFIRMED') {
                       return (
-                        <button
-                          onClick={() => handleAuthorizeGCash(selectedOrder.id)}
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-500/20 active:scale-98"
-                        >
-                          <span>✅ Authorize Customer to Pay Now</span>
-                        </button>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="inv-cell-secondary">
+                            The customer cannot send payment until you let them through.
+                          </p>
+                          <Button variant="primary" icon="check" onClick={() => handleAuthorizeGCash(selectedOrder.id)}>
+                            Allow customer to pay
+                          </Button>
+                        </div>
                       )
                     }
 
@@ -2077,7 +2017,7 @@ export const AssistantRole: React.FC = () => {
                       <div className="space-y-3">
                         <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3.5 text-center space-y-1">
                           <p className="font-extrabold text-xs text-blue-900 flex items-center justify-center gap-1.5">
-                            <span>💳</span> Customer Permitted to Pay
+                            Customer Permitted to Pay
                           </p>
                           <p className="text-[11px] text-blue-700 leading-normal">
                             Customer is permitted to pay. Waiting for customer to transfer funds and upload their GCash reference screenshot.
@@ -2088,34 +2028,12 @@ export const AssistantRole: React.FC = () => {
                   })()}
                 </div>
 
-                {isAdmin && (
-                  <div className="pt-3 border-t border-amber-200/80 bg-amber-50/60 p-3.5 rounded-2xl space-y-2">
-                    <p className="text-[10px] font-black text-amber-800 uppercase tracking-wider">
-                      Admin Override Controls:
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setEditingAssistantOrder(selectedOrder)}
-                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white font-extrabold py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95"
-                      >
-                        ✏️ Edit Order
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteAssistantOrder(selectedOrder.id)}
-                        className="bg-red-600 hover:bg-red-700 text-white font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95"
-                      >
-                        🗑️ Delete Order
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              </Card>
+            </div>
+          )}
         </div>
-      </div>
+      </main>
 
       {/* Payment Receipt Image Preview Modal */}
       {previewReceiptUrl && (
@@ -2136,7 +2054,7 @@ export const AssistantRole: React.FC = () => {
                 onClick={() => setPreviewReceiptUrl(null)}
                 className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
               >
-                ✕
+                
               </button>
             </div>
 
@@ -2218,7 +2136,7 @@ export const AssistantRole: React.FC = () => {
                   onClick={() => setIsResolveModalOpen(false)}
                   className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
                 >
-                  ✕
+                  
                 </button>
               </div>
 
@@ -2238,8 +2156,7 @@ export const AssistantRole: React.FC = () => {
                         Unavailable: <span className="font-bold">{oosItems.map((i: any) => `${i.name || i.product_name_snapshot} (x${i.quantity || 1})`).join(', ') || 'Item out of stock'}</span>
                       </p>
                     </div>
-                    <span className="text-2xl p-2 bg-rose-100 rounded-2xl">💸</span>
-                  </div>
+                    </div>
 
                   {/* 2. Customer Phone Number */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5">
@@ -2247,7 +2164,7 @@ export const AssistantRole: React.FC = () => {
                       Customer Phone / GCash Number
                     </span>
                     <p className="text-sm font-black text-slate-900 mt-0.5 flex items-center gap-1.5 font-mono truncate">
-                      <span>📱</span> {selectedOrder.phone || '0917-000-0000'}
+                      {selectedOrder.phone || '0917-000-0000'}
                     </p>
                   </div>
 
@@ -2268,7 +2185,7 @@ export const AssistantRole: React.FC = () => {
                         disabled={isUploadingRefundProof}
                         className="px-2.5 py-1 text-[11px] font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg cursor-pointer transition-colors"
                       >
-                        {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? '📷 Replace Proof' : '📷 Attach Screenshot'}
+                        {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? 'Replace Proof' : 'Attach Screenshot'}
                       </button>
                     </div>
 
@@ -2289,7 +2206,7 @@ export const AssistantRole: React.FC = () => {
                             onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
                             className="mt-1 text-[11px] font-extrabold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
                           >
-                            <span>🔍</span> Click to view full screenshot
+                            Click to view full screenshot
                           </button>
                         </div>
                       </div>
@@ -2391,7 +2308,7 @@ export const AssistantRole: React.FC = () => {
                             </div>
                             {cashbackDifference > 0 && (
                               <div className="flex justify-between text-emerald-900 font-extrabold pt-1.5 border-t border-neutral-200">
-                                <span>💰 Cashback Difference Due:</span>
+                                <span>Cashback Difference Due:</span>
                                 <span className="font-black text-sm text-emerald-700">₱{cashbackDifference.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                               </div>
                             )}
@@ -2415,7 +2332,7 @@ export const AssistantRole: React.FC = () => {
                                   disabled={isUploadingRefundProof}
                                   className="px-2.5 py-1 text-[11px] font-bold text-emerald-800 bg-white hover:bg-emerald-100 border border-emerald-300 rounded-lg cursor-pointer transition-colors"
                                 >
-                                  {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? '📷 Replace Photo' : '📷 Attach Photo'}
+                                  {isUploadingRefundProof ? 'Uploading...' : selectedOrder.refundReceipt ? 'Replace Photo' : 'Attach Photo'}
                                 </button>
                               </div>
 
@@ -2436,7 +2353,7 @@ export const AssistantRole: React.FC = () => {
                                       onClick={() => setPreviewReceiptUrl(selectedOrder.refundReceipt || null)}
                                       className="mt-1 text-[11px] font-extrabold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
                                     >
-                                      <span>🔍</span> Click to preview full screenshot
+                                      Click to preview full screenshot
                                     </button>
                                   </div>
                                 </div>
@@ -2485,7 +2402,7 @@ export const AssistantRole: React.FC = () => {
                     {Number(selectedOrder.additionalRequired || 0) > 0 && (
                       <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
                         <div className="flex justify-between items-center">
-                          <span className="font-black text-amber-900">⚠️ Additional Payment Required:</span>
+                          <span className="font-black text-amber-900">Additional Payment Required:</span>
                           <span className="font-black text-sm text-amber-700">₱{Number(selectedOrder.additionalRequired).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
 
@@ -2515,7 +2432,7 @@ export const AssistantRole: React.FC = () => {
                               disabled={isVerifyingAdditionalPayment}
                               className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[11px] rounded-lg transition-colors cursor-pointer"
                             >
-                              {isVerifyingAdditionalPayment ? 'Verifying...' : '✓ Approve Additional Payment'}
+                              {isVerifyingAdditionalPayment ? 'Verifying...' : 'Approve Additional Payment'}
                             </button>
                           </div>
                         ) : (
@@ -2585,7 +2502,6 @@ export const AssistantRole: React.FC = () => {
               <div className="flex items-start justify-between border-b border-neutral-100 pb-3">
                 <div className="space-y-0.5">
                   <div className="flex items-center gap-2">
-                    <span className="p-1.5 bg-rose-100 text-rose-600 rounded-lg text-sm">💸</span>
                     <h3 className="text-base font-black text-neutral-900">
                       Process Cancellation Refund
                     </h3>
@@ -2600,7 +2516,7 @@ export const AssistantRole: React.FC = () => {
                   disabled={isSubmittingCancellationRefund}
                   className="p-1.5 hover:bg-neutral-100 rounded-xl text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
                 >
-                  ✕
+                  
                 </button>
               </div>
 
@@ -2623,7 +2539,7 @@ export const AssistantRole: React.FC = () => {
                   <span className="font-semibold text-neutral-800">{selectedOrder.paymentMethod || 'GCash Transfer'}</span>
                 </div>
                 <p className="text-[11px] text-rose-800/90 font-medium pt-1">
-                  💡 Send the refund via GCash to the number above, then submit <strong>either</strong> a screenshot proof <strong>or</strong> the GCash reference number.
+                  Send the refund via GCash to the number above, then submit <strong>either</strong> a screenshot proof <strong>or</strong> the GCash reference number.
                 </p>
               </div>
 
@@ -2675,7 +2591,7 @@ export const AssistantRole: React.FC = () => {
                     onClick={() => cancellationFileInputRef.current?.click()}
                     className="w-full border-2 border-dashed border-neutral-300 hover:border-rose-400 bg-neutral-50/50 hover:bg-rose-50/30 rounded-2xl p-4 text-center cursor-pointer transition-colors space-y-1 group"
                   >
-                    <div className="text-xl group-hover:scale-110 transition-transform">📷</div>
+                    <div className="text-xl group-hover:scale-110 transition-transform"></div>
                     <p className="text-xs font-bold text-neutral-700">Click to Attach Refund Screenshot</p>
                     <p className="text-[10px] text-neutral-400">PNG, JPG or WebP of the GCash receipt</p>
                   </button>

@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import NavbarCustomer from '../components/NavbarCustomer'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
-import { normalizeStatus } from './OnlineCustomer'
+import { normalizeStatus, blocksNewOrder } from './OnlineCustomer'
 import {
   OrderIcon,
   Panel,
@@ -160,6 +160,15 @@ export const CustomerPurchases: React.FC = () => {
 
   // Reorder items from completed order and redirect to billing
   const handleOrderAgain = (order: CustomerOrder) => {
+    // One order at a time: reordering while something is still in progress would only land the
+    // customer on a checkout screen that refuses to submit, so send them to that order instead.
+    const ongoing = activeOrders.find((o) => blocksNewOrder(o.status))
+    if (ongoing) {
+      alert(`You already have an ongoing order (#${ongoing.id}). You can order again once it has been delivered or picked up.`)
+      navigate(`/customer?orderId=${encodeURIComponent(String(ongoing.id))}&tab=tracking`)
+      return
+    }
+
     try {
       const user = getActiveUser()
       const cartKey = getCartKey(user)

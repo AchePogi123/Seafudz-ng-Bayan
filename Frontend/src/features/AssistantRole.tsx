@@ -929,40 +929,6 @@ export const AssistantRole: React.FC = () => {
     setNotification(`Receipt rejected for order #${orderId}. Customer notified to re-upload.`)
   }
 
-  const handleConfirmPickUp = async (orderId: string) => {
-    let stockWarning: string | null = null
-    try {
-      const res = await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/status`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'CONFIRMED' }),
-      })
-      const body = await res.json().catch(() => null)
-      if (body?.stockWarning) stockWarning = body.stockWarning.message || 'An ingredient ran out.'
-    } catch { }
-
-    try {
-      const globalOrders = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
-      const updatedGlobal = globalOrders.map((o: any) =>
-        o.id === orderId || o.ref === orderId ? { ...o, status: 'CONFIRMED' } : o
-      )
-      localStorage.setItem('seafudz_orders', JSON.stringify(updatedGlobal))
-
-      const activeOrderStr = localStorage.getItem('seafudz_active_online_order')
-      if (activeOrderStr) {
-        const activeObj = JSON.parse(activeOrderStr)
-        if (activeObj.id === orderId || activeObj.ref === orderId) {
-          localStorage.setItem('seafudz_active_online_order', JSON.stringify({ ...activeObj, status: 'CONFIRMED' }))
-        }
-      }
-      notifyOrderSync()
-    } catch { }
-
-    fetchAssistantOrders(true)
-    if (stockWarning) setStockAlert({ orderId, message: stockWarning })
-    setNotification(`Pick-up order #${orderId} confirmed! Sent to Kitchen!`)
-  }
-
   const [isVerifyingAdditionalPayment, setIsVerifyingAdditionalPayment] = useState(false)
 
   const handleVerifyAdditionalPayment = async () => {
@@ -1933,22 +1899,10 @@ export const AssistantRole: React.FC = () => {
                       )
                     }
 
-                    const isPickupOrder = String(selectedOrder.fulfillmentType || (selectedOrder as any).fulfillment_type || selectedOrder.type || '').toUpperCase().includes('PICKUP')
-                    const isPayInStore = String(selectedOrder.paymentMethod || '').toUpperCase().includes('STORE') || selectedOrder.paymentMethod === 'PAY_IN_STORE'
+                    // Pay in Store was removed: a pick-up is prepaid by GCash like a delivery, so
+                    // it goes through the same payment-proof check and has no counter-cash shortcut.
                     const hasReceipt = Boolean(selectedOrder.paymentReceipt || selectedOrder.paymentReference || st === 'RECEIPT_SUBMITTED')
                     const isAuthorizedToPay = Boolean(selectedOrder.gcashAuthorized || (selectedOrder as any).gcash_authorized || st === 'GCASH_AUTHORIZED')
-
-                    // 1. Pay in Store (Pick-Up) Flow
-                    if (isPickupOrder && isPayInStore) {
-                      return (
-                        <button
-                          onClick={() => handleConfirmPickUp(selectedOrder.id)}
-                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md active:scale-98"
-                        >
-                          <span>Confirm Pick-Up Order & Send to Kitchen</span>
-                        </button>
-                      )
-                    }
 
                     const isReceiptRejected = st === 'RECEIPT_REJECTED'
 

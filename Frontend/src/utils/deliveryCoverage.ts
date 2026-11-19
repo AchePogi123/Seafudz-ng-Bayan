@@ -522,3 +522,55 @@ export function findNearestDeliverableBarangay(lat: number, lng: number): {
     isWithinRadius,
   };
 }
+
+/**
+ * Looks up a deliverable barangay by its id.
+ */
+export function findDeliverableBarangayById(id: string): DeliverableBarangay | undefined {
+  return DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === id);
+}
+
+/**
+ * Builds the single-line address stored on the account / order from the
+ * customer's typed street details plus their selected covered barangay.
+ * Street details stay mandatory — the rider needs the exact drop-off point.
+ */
+export function composeCoveredAddress(street: string, barangay: DeliverableBarangay | null | undefined): string {
+  const cleanStreet = (street || '').trim();
+  if (!barangay) return cleanStreet;
+  const area = `${barangay.name}, ${barangay.city}`;
+  return cleanStreet ? `${cleanStreet}, ${area}` : area;
+}
+
+/**
+ * Inverse of composeCoveredAddress: splits a saved address back into the
+ * covered barangay it ends with and the free-text street portion, so the
+ * checkout form can be pre-filled from the registered account address.
+ */
+export function splitCoveredAddress(fullAddress: string): { barangayId: string; street: string } {
+  const clean = (fullAddress || '').trim();
+  if (!clean) return { barangayId: '', street: '' };
+
+  const lower = clean.toLowerCase();
+  let match: DeliverableBarangay | null = null;
+  let matchedSuffixLength = 0;
+
+  for (const b of DELIVERABLE_BARANGAYS_8KM) {
+    const suffix = `${b.name}, ${b.city}`.toLowerCase();
+    // Longest suffix wins so overlapping barangay names resolve correctly.
+    if (lower.endsWith(suffix) && suffix.length > matchedSuffixLength) {
+      match = b;
+      matchedSuffixLength = suffix.length;
+    }
+  }
+
+  if (!match) return { barangayId: '', street: clean };
+
+  const street = clean
+    .slice(0, clean.length - matchedSuffixLength)
+    .trim()
+    .replace(/,+$/, '')
+    .trim();
+
+  return { barangayId: match.id, street };
+}

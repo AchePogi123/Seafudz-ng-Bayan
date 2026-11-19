@@ -25,12 +25,19 @@ import { useMenuPrices } from '../utils/menuPriceManager'
 import { getActiveUser, saveActiveUser, isUuidString, isEmployeeRole, getEmployeeWorkModule } from '../cryptography/cryptoSession'
 import { notifyOrderSync, subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
-import { reverseGeocodeCoordinates, forwardGeocodeAddress, fetchRoadDistances, type Coordinates } from '../utils/locationServices'
+import { forwardGeocodeAddress, type Coordinates } from '../utils/locationServices'
 import {
     calculateDeliveryFee,
     matchKnownLocation,
-    SEAFUDZ_FLAGSHIP_STORE,
 } from '../utils/riderDispatchAlgorithms'
+import { BarangaySelect } from '../components/BarangaySelect'
+import {
+    STORE_FLAGSHIP_LOCATION,
+    findDeliverableBarangayById,
+    calculateDistanceKm,
+    composeCoveredAddress,
+    splitCoveredAddress,
+} from '../utils/deliveryCoverage'
 import { validatePhilippinePhone } from '../utils/phoneValidation'
 
 interface CartItem {
@@ -146,10 +153,28 @@ const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
     return []
 }
 
+/** Orders that are over and belong in Order History rather than in the active list. */
+export const SETTLED_ORDER_STATUSES = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED']
+
+/**
+ * Whether an order still occupies the customer's one order slot. A customer may only have one
+ * order on the go, so while this returns true for any of their orders, a new one cannot be started.
+ *
+ * A cancellation request frees the slot: by then the kitchen ticket is cancelled and the stock
+ * returned, so the order will never arrive — only the refund is outstanding, and waiting on the
+ * assistant for that should not keep the customer out of the store.
+ *
+ * Mirrors `ORDER_SLOT_FREED_STATUSES` in `Backend/src/routes/orderRoutes.js`.
+ */
+export function blocksNewOrder(rawStatus?: string): boolean {
+    const norm = normalizeStatus(rawStatus)
+    return !SETTLED_ORDER_STATUSES.includes(norm) && norm !== 'CANCEL_REQUESTED'
+}
+
 export function normalizeStatus(rawStatus?: string): string {
     if (!rawStatus) return 'PENDING'
     const upper = String(rawStatus).toUpperCase().trim()
-    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PAY_IN_STORE', 'PENDING_STORE_PICKUP', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
+    if (['GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_SUBMITTED', 'RECEIPT_REJECTED', 'PENDING', 'PENDING_VERIFICATION', 'UNCONFIRMED', 'NEW', 'ORDER PLACED'].includes(upper)) return 'PENDING'
     if (['CONFIRMED', 'PENDING_PREPARATION', 'APPROVED', 'VERIFIED', 'SENT_TO_KITCHEN', 'IN_KITCHEN', 'IN KITCHEN', 'IN_PROCESS'].includes(upper)) return 'CONFIRMED'
     if (['PREPARING', 'COOKING', 'IN_PREPARATION'].includes(upper)) return 'PREPARING'
     if (['READY', 'READY_FOR_PICKUP', 'PREPARED', 'DONE'].includes(upper)) return 'READY'
@@ -518,8 +543,6 @@ const getCategoryPillData = (cat: string) => {
     return { label: cat }
 }
 
-const distanceCache = new Map<string, { km: number; message: string; coords: Coordinates }>()
-
 export const OnlineCustomer: React.FC = () => {
     const navigate = useNavigate()
     const location = useLocation()
@@ -617,7 +640,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     })
 
     const activeOrders = useMemo(() => {
-                return customerOrders.filter((o: any) => !['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED'].includes(normalizeStatus(o.status)))
+                return customerOrders.filter((o: any) => !SETTLED_ORDER_STATUSES.includes(normalizeStatus(o.status)))
     }, [customerOrders])
 
     // Submitted Order tracking state initialized from URL param, localStorage, or user active order
@@ -649,6 +672,20 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         activeOrderRef.current = activeOrder
     }, [activeOrder])
 
+    /**
+     * A customer may only have one order on the go. `customerOrders` is the list synced from the
+     * server, and `activeOrder` is checked alongside it so the lock is in place the moment an
+     * order is placed, before the next sync lands.
+     */
+    const ongoingOrder = useMemo(() => {
+        const blocking = activeOrders.find((o: any) => blocksNewOrder(o.status))
+        if (blocking) return blocking
+        if (activeOrder && blocksNewOrder(activeOrder.status)) return activeOrder
+        return null
+    }, [activeOrders, activeOrder])
+    const hasOngoingOrder = Boolean(ongoingOrder)
+    const ongoingOrderId = ongoingOrder ? String(ongoingOrder.id || (ongoingOrder as any).ref || '') : ''
+
     // Select a specific order transaction to track
     const handleSelectActiveOrder = (order: any) => {
         if (!order) return
@@ -671,7 +708,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
         setActiveTab('tracking')
     }
-    void activeOrders;
     void handleSelectActiveOrder;
 
     // Refresh all orders for this customer from LocalStorage and Backend API
@@ -1007,15 +1043,34 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [fulfillmentType])
     const [customerName, setCustomerName] = useState('')
     const [phone, setPhone] = useState('')
-    const [address, setAddress] = useState('')
+    // Delivery coverage is enforced structurally: the Barangay / Area dropdown
+    // only lists areas inside the store's 8 km radius, so an out-of-range
+    // address cannot be composed here. No distance "detection" gate is needed.
+    const [selectedBarangayId, setSelectedBarangayId] = useState('')
+    const [streetAddress, setStreetAddress] = useState('')
     const [addressDetails, setAddressDetails] = useState('')
-    const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null)
-    const [isFindingAddress, setIsFindingAddress] = useState(false)
-    const [addressLookupMessage, setAddressLookupMessage] = useState('')
-    const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number | null>(null)
-    const [isCalculatingDeliveryFee, setIsCalculatingDeliveryFee] = useState(false)
-    const [deliveryDistanceMessage, setDeliveryDistanceMessage] = useState('')
-    const [paymentMethod, setPaymentMethod] = useState<'GCash' | 'PAY_IN_STORE'>('GCash')
+    // Rider drop-off pin only, derived from the address the customer typed.
+    // The app never reads the device's location.
+    const [refinedCoordinates, setRefinedCoordinates] = useState<Coordinates | null>(null)
+
+    const selectedBarangay = useMemo(
+        () => findDeliverableBarangayById(selectedBarangayId) ?? null,
+        [selectedBarangayId]
+    )
+    // Single-line address used by the order payload, receipts and the rider app.
+    const address = useMemo(
+        () => composeCoveredAddress(streetAddress, selectedBarangay),
+        [streetAddress, selectedBarangay]
+    )
+    // Pre-fills the form from an address already saved on the account.
+    const applySavedAddress = useCallback((saved: string) => {
+        const { barangayId, street } = splitCoveredAddress(saved)
+        if (barangayId) setSelectedBarangayId(barangayId)
+        setStreetAddress(street)
+    }, [])
+    // GCash is the only way to pay for an online order. Paying at the store counter was removed:
+    // a pick-up is prepaid like a delivery, so the kitchen never cooks an unpaid order.
+    const paymentMethod = 'GCash' as const
     const [paymentReceipt, _setPaymentReceipt] = useState<string | null>(null)
     const [gcashRefNumber, setGcashRefNumber] = useState<string>('')
     const [orderNotes, setOrderNotes] = useState('') // Special Order Instructions State
@@ -1075,46 +1130,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const [additionalRefNumber, setAdditionalRefNumber] = useState<string>('')
     const [isSubmittingOosChoice, setIsSubmittingOosChoice] = useState(false)
 
-    const handleUseCurrentLocation = () => {
-        if (!navigator.geolocation) {
-            setAddressLookupMessage('Location is not supported by this browser.')
-            return
-        }
-
-        setIsFindingAddress(true)
-        setAddressLookupMessage('')
-        navigator.geolocation.getCurrentPosition(
-            async ({ coords }) => {
-                const currentCoordinates = { lat: coords.latitude, lng: coords.longitude }
-                setAddressCoordinates(currentCoordinates)
-                setDeliveryDistanceKm(null)
-                setIsCalculatingDeliveryFee(true)
-                setDeliveryDistanceMessage('')
-                try {
-                    const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates)
-                    setAddress(resolvedAddress)
-                    setAddressLookupMessage('Location updated successfully. Add any unit or gate details below.')
-                } catch (error) {
-                    setAddress(`${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`)
-                    setAddressLookupMessage(
-                        `${error instanceof Error ? error.message : 'Could not find a readable address.'} Coordinates were added instead; add any helpful delivery details.`
-                    )
-                } finally {
-                    setIsFindingAddress(false)
-                }
-            },
-            (error) => {
-                setIsFindingAddress(false)
-                setAddressLookupMessage(
-                    error.code === 1
-                        ? 'Location permission was denied. Enter your delivery address manually.'
-                        : 'Could not get your location. Check your device settings and try again.'
-                )
-            },
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-        )
-    }
-
     const handleAdditionalReceiptChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
         if (!file) return
@@ -1147,7 +1162,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         // Instant local sync if values exist
         if (currentUser.fullname) setCustomerName(currentUser.fullname)
         if (currentUser.phone) setPhone(currentUser.phone)
-        if (currentUser.address) setAddress(currentUser.address)
+        if (currentUser.address) applySavedAddress(currentUser.address)
 
         if (fetchedProfileRef.current) return
         fetchedProfileRef.current = true
@@ -1177,7 +1192,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                     if (dbName) setCustomerName(dbName)
                     if (dbPhone) setPhone(dbPhone)
-                    if (dbAddress) setAddress(dbAddress)
+                    if (dbAddress) applySavedAddress(dbAddress)
                 }
             })
             .catch(() => { })
@@ -1425,8 +1440,22 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         }
     }, [activeOrder?.status])
 
+    /**
+     * Turns the customer back to the order already in progress. Used everywhere a second order
+     * could be started: adding to the cart, opening checkout, and submitting it.
+     */
+    const blockForOngoingOrder = (lead: string) => {
+        alert(`${lead}\n\nYour order${ongoingOrderId ? ` #${ongoingOrderId}` : ''} is still in progress. You can place a new order once it has been delivered or picked up.`)
+        setIsCartDrawerOpen(false)
+        setActiveTab('tracking')
+    }
+
     const handleProceedToCheckout = () => {
         if (hasUnavailableCartItems || hasDeletedCartItems) return
+        if (hasOngoingOrder) {
+            blockForOngoingOrder('You already have an ongoing order, so you cannot check out a new one yet.')
+            return
+        }
         const currentUser = getActiveUser()
         if (!currentUser) {
             setIsAuthModalOpen(true)
@@ -1681,138 +1710,72 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             return acc + displayPrice * ci.quantity
         }, 0)
     }, [cartItems, getEffectivePrice])
-    const [typedCoordinates, setTypedCoordinates] = useState<Coordinates | null>(null)
-    const [isGeocodingAddress, setIsGeocodingAddress] = useState(false)
-    const calculationSeqRef = useRef(0)
-
+    // Best-effort map-pin refinement for the rider only. The barangay centroid is
+    // always a valid fallback, so this never blocks or gates the order.
     useEffect(() => {
-        const seq = ++calculationSeqRef.current
-        const cleanAddress = address.trim()
-        const lookupKey = cleanAddress.toLowerCase()
-
-        if (!cleanAddress) {
-            setTypedCoordinates(null)
-            setDeliveryDistanceKm(null)
-            setIsCalculatingDeliveryFee(false)
-            setIsGeocodingAddress(false)
-            setDeliveryDistanceMessage('')
+        if (fulfillmentType !== 'DELIVERY' || !selectedBarangay) {
+            setRefinedCoordinates(null)
+            return
+        }
+        const composed = address.trim()
+        if (!composed || !streetAddress.trim()) {
+            setRefinedCoordinates(null)
             return
         }
 
-        // Fast in-memory cache check when manually typed
-        if (!addressCoordinates) {
-            const cached = distanceCache.get(lookupKey)
-            if (cached) {
-                setTypedCoordinates(cached.coords)
-                setDeliveryDistanceKm(cached.km)
-                setDeliveryDistanceMessage(cached.message)
-                setIsCalculatingDeliveryFee(false)
-                setIsGeocodingAddress(false)
-                return
-            }
+        const localMatch = matchKnownLocation(composed)
+        if (localMatch) {
+            setRefinedCoordinates({ lat: localMatch.lat, lng: localMatch.lng })
+            return
         }
-
-        setIsCalculatingDeliveryFee(true)
-        setDeliveryDistanceMessage('Verifying address location…')
 
         const controller = new AbortController()
         const timer = window.setTimeout(async () => {
-            if (seq !== calculationSeqRef.current) return
-
             try {
-                // 1. Resolve destination coordinates: GPS first, then calibrated local dictionary, then OpenStreetMap Nominatim
-                let targetCoords: Coordinates | null = addressCoordinates
-
-                if (!targetCoords) {
-                    const localMatch = matchKnownLocation(cleanAddress)
-                    if (localMatch) {
-                        targetCoords = { lat: localMatch.lat, lng: localMatch.lng }
-                    } else {
-                        setIsGeocodingAddress(true)
-                        try {
-                            const osmCoord = await forwardGeocodeAddress(cleanAddress, controller.signal)
-                            if (seq !== calculationSeqRef.current) return
-                            targetCoords = osmCoord
-                        } catch {
-                            // network or timeout handled
-                        } finally {
-                            if (seq === calculationSeqRef.current) {
-                                setIsGeocodingAddress(false)
-                            }
-                        }
-                    }
-                }
-
-                if (seq !== calculationSeqRef.current) return
-
-                if (!targetCoords) {
-                    setTypedCoordinates(null)
-                    setDeliveryDistanceKm(null)
-                    setDeliveryDistanceMessage('Could not locate this address. Please include your city or barangay, or tap Relocate.')
-                    return
-                }
-
-                setTypedCoordinates(targetCoords)
-
-                // 2. Query real driving road distance via OSRM
-                const origin = SEAFUDZ_FLAGSHIP_STORE
-                const distances = await fetchRoadDistances(origin, [{ id: 'checkout', coord: targetCoords }], controller.signal)
-                if (seq !== calculationSeqRef.current) return
-
-                const routeDistance = distances.get('checkout')
-                if (routeDistance === undefined) {
-                    setDeliveryDistanceKm(null)
-                    setDeliveryDistanceMessage('Road route unavailable for this address. Please verify.')
-                } else {
-                    const msg = routeDistance > 8
-                        ? `This address is approximately ${routeDistance.toFixed(1)} km away. Delivery is available only within our 8 km road limit.`
-                        : ''
-                    setDeliveryDistanceKm(routeDistance)
-                    setDeliveryDistanceMessage(msg)
-
-                    if (!addressCoordinates) {
-                        distanceCache.set(lookupKey, {
-                            km: routeDistance,
-                            message: msg,
-                            coords: targetCoords,
-                        })
-                    }
-                }
+                const coord = await forwardGeocodeAddress(composed, controller.signal)
+                if (coord) setRefinedCoordinates(coord)
             } catch {
-                if (seq === calculationSeqRef.current) {
-                    setDeliveryDistanceKm(null)
-                    setDeliveryDistanceMessage('Road distance calculation timed out. Please retry or tap Relocate.')
-                }
-            } finally {
-                if (seq === calculationSeqRef.current) {
-                    setIsCalculatingDeliveryFee(false)
-                    setIsGeocodingAddress(false)
-                }
+                // Geocoding is optional - fall back to the barangay centroid.
             }
-        }, 350)
+        }, 500)
 
         return () => {
             window.clearTimeout(timer)
             controller.abort()
         }
-    }, [address, addressCoordinates])
+    }, [fulfillmentType, selectedBarangay, address, streetAddress])
 
-    const deliveryDestination = addressCoordinates || typedCoordinates
+    // Coverage distance comes from the selected area, which is always within 8 km.
+    const deliveryDistanceKm = selectedBarangay ? selectedBarangay.distanceKm : null
+
+    // Rider drop-off pin: GPS or geocoded street if it is sane, else the area centroid.
+    const deliveryDestination = useMemo<Coordinates | null>(() => {
+        const centroid = selectedBarangay ? { lat: selectedBarangay.lat, lng: selectedBarangay.lng } : null
+        const candidate = refinedCoordinates
+        if (candidate) {
+            const pinDistance = calculateDistanceKm(
+                STORE_FLAGSHIP_LOCATION.lat,
+                STORE_FLAGSHIP_LOCATION.lng,
+                candidate.lat,
+                candidate.lng
+            )
+            if (pinDistance <= STORE_FLAGSHIP_LOCATION.maxRadiusKm) return candidate
+        }
+        return centroid
+    }, [refinedCoordinates, selectedBarangay])
 
     const deliveryFee = useMemo(
         () => {
             if (fulfillmentType === 'PICKUP') return 0
             if (subtotal <= 0) return 0
-            if (deliveryDistanceKm === null) return address.trim() ? null : 50
+            if (deliveryDistanceKm === null) return null
             return calculateDeliveryFee(deliveryDistanceKm)
         },
-        [fulfillmentType, subtotal, deliveryDistanceKm, address]
+        [fulfillmentType, subtotal, deliveryDistanceKm]
     )
-    const deliveryDistanceLabel = (isCalculatingDeliveryFee || isGeocodingAddress)
-        ? 'Calculating distance…'
-        : deliveryDistanceKm === null
-            ? ''
-            : `${deliveryDistanceKm.toFixed(1)} km`
+    const deliveryDistanceLabel = deliveryDistanceKm === null
+        ? ''
+        : `${deliveryDistanceKm.toFixed(1)} km`
     const total = useMemo(() => Math.round(subtotal + vat + (deliveryFee ?? 0)), [subtotal, vat, deliveryFee])
 
 
@@ -1881,6 +1844,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
+        if (hasOngoingOrder) {
+            blockForOngoingOrder('You can browse the menu, but you cannot start a new order yet.')
+            return
+        }
         const inCart = cartItems.find((ci) => ci.item.id === item.id)?.quantity ?? 0
         if (limitToStock(item.id, item.name, inCart + 1) <= inCart) return
 
@@ -1974,8 +1941,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleInitiateOrder = (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
-        if (isFindingAddress || isCalculatingDeliveryFee) {
-            alert('Please wait while your location and delivery fee are calculated.')
+        if (hasOngoingOrder) {
+            blockForOngoingOrder('You already have an ongoing order, so this one cannot be submitted yet.')
             return
         }
         if (hasUnavailableCartItems) {
@@ -2011,10 +1978,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             return
         }
         if (fulfillmentType === 'DELIVERY') {
-            if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
-                alert(deliveryDistanceKm === null
-                    ? 'The road distance could not be verified. Please try again before ordering.'
-                    : 'Delivery is available only within 8 km of the store.')
+            if (!selectedBarangayId) {
+                alert('Please choose your Barangay / Delivery Area from the list of areas we deliver to.')
+                return
+            }
+            if (!streetAddress.trim()) {
+                alert('Please enter your house/unit number and street so the rider knows exactly where to deliver.')
                 return
             }
         }
@@ -2023,8 +1992,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handlePlaceOrder = async (e?: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
-        if (fulfillmentType === 'DELIVERY' && (isFindingAddress || isCalculatingDeliveryFee)) {
-            alert('Please wait while your location and delivery fee are calculated.')
+        if (hasOngoingOrder) {
+            blockForOngoingOrder('You already have an ongoing order, so this one cannot be submitted yet.')
+            setIsConfirmOrderModalOpen(false)
             return
         }
         if (hasUnavailableCartItems) {
@@ -2072,10 +2042,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             return
         }
         if (fulfillmentType === 'DELIVERY') {
-            if (deliveryDistanceKm === null || deliveryDistanceKm > 8 || deliveryFee === null) {
-                alert(deliveryDistanceKm === null
-                    ? 'The road distance could not be verified. Please try again before ordering.'
-                    : 'Delivery is available only within 8 km of the store.')
+            if (!selectedBarangayId) {
+                alert('Please choose your Barangay / Delivery Area from the list of areas we deliver to.')
+                return
+            }
+            if (!streetAddress.trim()) {
+                alert('Please enter your house/unit number and street so the rider knows exactly where to deliver.')
                 return
             }
         }
@@ -2084,13 +2056,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setIsSubmittingOrder(true)
 
         try {
-            const isPayInStore = fulfillmentType === 'PICKUP' && paymentMethod === 'PAY_IN_STORE'
-            const initialStatus = isPayInStore ? 'PENDING_STORE_PICKUP' : 'GCASH_AUTHORIZED'
+            const initialStatus = 'GCASH_AUTHORIZED'
             const combinedAddress = fulfillmentType === 'PICKUP'
                 ? 'Store Pick-Up (Seafudz ng Bayan Store Counter, Caloocan)'
                 : (addressDetails.trim() ? `${address.trim()} (${addressDetails.trim()})` : address.trim())
 
-            const effectivePaymentMethod = isPayInStore ? 'Pay in Store' : 'GCash'
+            const effectivePaymentMethod = paymentMethod
 
             const orderPayload = {
                 type: fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : 'Delivery',
@@ -2102,8 +2073,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 customerName: customerName.trim(),
                 phone: phone.trim(),
                 deliveryAddress: combinedAddress,
-                deliveryLatitude: fulfillmentType === 'PICKUP' ? null : (deliveryDestination?.lat ?? addressCoordinates?.lat),
-                deliveryLongitude: fulfillmentType === 'PICKUP' ? null : (deliveryDestination?.lng ?? addressCoordinates?.lng),
+                deliveryLatitude: fulfillmentType === 'PICKUP' ? null : deliveryDestination?.lat,
+                deliveryLongitude: fulfillmentType === 'PICKUP' ? null : deliveryDestination?.lng,
                 paymentMethod: effectivePaymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 paymentReference: gcashRefNumber.trim() || undefined,
@@ -2114,8 +2085,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: fulfillmentType === 'PICKUP' ? 0 : deliveryFee,
                 total,
                 status: initialStatus,
-                gcashAuthorized: !isPayInStore,
-                gcash_authorized: !isPayInStore,
+                gcashAuthorized: true,
+                gcash_authorized: true,
                 items: cartItems.map((ci) => ({
                     id: ci.item.id,
                     name: ci.item.name,
@@ -2143,6 +2114,21 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             })
             const responseData: any = await res.json().catch(() => ({}))
             if (!res.ok || responseData.success === false) {
+                // The server is the authority on the one-ongoing-order rule: it catches the case
+                // where the order was placed on another device, or this screen's list is stale.
+                if (responseData.error === 'ACTIVE_ORDER_EXISTS') {
+                    alert(responseData.message || 'You already have an ongoing order. Please wait until it is delivered or picked up before placing another one.')
+                    setIsConfirmOrderModalOpen(false)
+                    setIsVerificationModalOpen(false)
+                    setIsCartDrawerOpen(false)
+                    void refreshCustomerOrders()
+                    setActiveTab('tracking')
+                    return
+                }
+                if (responseData.error === 'PAY_IN_STORE_REMOVED') {
+                    alert(responseData.message || 'Paying at the store counter is no longer available. Please pay for your order via GCash.')
+                    return
+                }
                 if (res.status === 409 || responseData.error === 'ITEM_DELETED' || responseData.error === 'ITEM_OUT_OF_STOCK') {
                     alert(`Cannot place order: ${responseData.message || 'One or more items in your cart are no longer available or have been deleted from the menu.'}`)
                     void refreshMenuItems()
@@ -2171,8 +2157,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 phone: serverOrder?.phone || serverOrder?.customer_phone || phone,
                 address: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
                 deliveryAddress: serverOrder?.address || serverOrder?.delivery_address || combinedAddress,
-                deliveryLatitude: serverOrder?.deliveryLatitude ?? (deliveryDestination?.lat ?? addressCoordinates?.lat),
-                deliveryLongitude: serverOrder?.deliveryLongitude ?? (deliveryDestination?.lng ?? addressCoordinates?.lng),
+                deliveryLatitude: serverOrder?.deliveryLatitude ?? deliveryDestination?.lat,
+                deliveryLongitude: serverOrder?.deliveryLongitude ?? deliveryDestination?.lng,
                 paymentMethod: serverOrder?.paymentMethod || serverOrder?.payment_method || effectivePaymentMethod,
                 paymentReceipt: paymentReceipt || undefined,
                 notes: orderNotes,
@@ -2182,7 +2168,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 deliveryFee: serverOrder?.deliveryFee ?? (fulfillmentType === 'PICKUP' ? 0 : deliveryFee),
                 total: serverOrder?.total ?? total,
                 status: (serverOrder?.status || initialStatus).toUpperCase(),
-                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized || serverOrder?.gcash_authorized || !isPayInStore),
+                gcashAuthorized: Boolean(serverOrder?.gcashAuthorized ?? serverOrder?.gcash_authorized ?? true),
                 createdAt: serverOrder?.created_at || serverOrder?.createdAt || new Date().toISOString(),
             }
 
@@ -2214,14 +2200,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             setCartItems([])
             setOrderNotes('')
 
-            if (isPayInStore) {
-                setActiveTab('tracking')
-                setIsVerificationModalOpen(false)
-            } else {
-                // Customer is directed immediately to GCash payment!
-                setActiveTab('billing')
-                setIsVerificationModalOpen(true)
-            }
+            // Customer is directed immediately to GCash payment!
+            setActiveTab('billing')
+            setIsVerificationModalOpen(true)
             setIsCartDrawerOpen(false)
             notifyOrderSync()
         } catch (err) {
@@ -2241,7 +2222,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         setActiveOrder(null)
         setCustomerName('')
         setPhone('')
-        setAddress('')
+        setStreetAddress('')
         setAddressDetails('')
         setOrderNotes('')
         setCartItems([])
@@ -2378,7 +2359,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
         if (!isLow) {
             return (
-                <span title={title} className="block text-[11px] leading-none text-neutral-500">
+                <span
+                    title={title}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-[3px] text-[11px] font-bold leading-none text-emerald-800"
+                >
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                     {left > 99 ? '99+' : left} servings left
                 </span>
             )
@@ -2387,10 +2372,32 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         return (
             <span
                 title={title}
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-50 px-2 py-[3px] text-[11px] font-medium leading-none text-amber-800"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-amber-100 px-2 py-[3px] text-[11px] font-bold leading-none text-amber-900 ring-1 ring-amber-300"
             >
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
                 Only {left} left
+            </span>
+        )
+    }
+
+    /** One line's unit price, using the same VAT-inclusive figure the subtotal uses. */
+    const unitPriceOf = (ci: CartItem) => ci.item.price ?? getEffectivePrice(ci.item.id, ci.item.price)
+
+    /** Remaining-servings note shown inside a cart line, so stock is visible while editing quantity. */
+    const renderCartStockNote = (itemId: string, available: boolean) => {
+        if (!available) return null
+        const left = getRemainingServings(itemId)
+        if (left === null || left <= 0) return null
+        const isLow = left <= LOW_SERVINGS_THRESHOLD
+        return (
+            <span
+                title={`About ${left} serving${left === 1 ? '' : 's'} can still be made`}
+                className={`mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2 py-[3px] text-[11px] font-bold leading-none ${
+                    isLow ? 'bg-amber-100 text-amber-900' : 'bg-emerald-50 text-emerald-800'
+                }`}
+            >
+                <span className={`h-1.5 w-1.5 rounded-full ${isLow ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                {isLow ? `Only ${left} serving${left === 1 ? '' : 's'} left` : `${left > 99 ? '99+' : left} servings left`}
             </span>
         )
     }
@@ -2562,6 +2569,31 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             </div>
                         )}
 
+                        {/*
+                          One order at a time. While an order is in progress the menu stays open to
+                          browse, but nothing can be added to the cart — the replacement flow above
+                          takes priority when it is running, so this steps aside for it.
+                        */}
+                        {hasOngoingOrder && !replacementTargetItem && (
+                            <Notice
+                                tone="brand"
+                                title="You have an order in progress"
+                                action={
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('tracking')}
+                                        className="w-full cursor-pointer rounded-xl bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 sm:w-auto"
+                                    >
+                                        Track my order
+                                    </button>
+                                }
+                            >
+                                Order{ongoingOrderId ? <strong className="font-semibold"> #{ongoingOrderId}</strong> : null} is still
+                                {' '}{describeOrderStatus(normalizeStatus(ongoingOrder?.status), { isPickup: String(ongoingOrder?.fulfillmentType || (ongoingOrder as any)?.fulfillment_type || ongoingOrder?.type || '').toUpperCase().includes('PICKUP') }).label.toLowerCase()}.
+                                {' '}You can look through the menu, but a new order can only be placed once this one has been delivered or picked up.
+                            </Notice>
+                        )}
+
                         {/* Welcome Banner Card with Animated Boat */}
                         <div className="relative flex items-center justify-between overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 p-5 text-white shadow-lg shadow-orange-500/20 sm:p-7 lg:p-8">
                             <div className="relative z-10 max-w-[62%] space-y-2 sm:max-w-[70%] lg:max-w-[72%] lg:space-y-3">
@@ -2713,6 +2745,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             ? ' — Confirmed & cooking in kitchen'
                                             : ' — Waiting for staff verification'}
                                     </p>
+                                    <p className="text-xs text-blue-800 mt-1">
+                                        A new order can only be placed once this one has been delivered or picked up.
+                                    </p>
                                 </div>
                                 {['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes(normalizeStatus(activeOrder.status)) ? (
                                     <button
@@ -2721,14 +2756,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
                                     >
                                         <span>View Kitchen Tracking</span>
-                                    </button>
-                                ) : ((activeOrder.paymentMethod || '').toLowerCase().includes('cod') || (activeOrder.paymentMethod || '').toLowerCase().includes('store')) ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab('tracking')}
-                                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-5 py-3 rounded-xl shadow-md shadow-emerald-500/20 transition-all cursor-pointer shrink-0 active:scale-95 flex items-center gap-2"
-                                    >
-                                        <span>View Order Tracking</span>
                                     </button>
                                 ) : (
                                     <button
@@ -2814,10 +2841,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     <div className="grid grid-cols-2 gap-2 p-1 bg-neutral-100 rounded-xl border border-neutral-200">
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                setFulfillmentType("DELIVERY")
-                                                if (paymentMethod === "PAY_IN_STORE") setPaymentMethod("GCash")
-                                            }}
+                                            onClick={() => setFulfillmentType("DELIVERY")}
                                             className={`py-2 px-3 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                                                 fulfillmentType === "DELIVERY"
                                                     ? "bg-white text-orange-600 shadow-xs"
@@ -2847,41 +2871,43 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 {fulfillmentType === "DELIVERY" && (
                                     <>
                                         <div className="flex flex-col gap-1.5">
-                                            <div className="flex flex-wrap items-center justify-between gap-2">
-                                                <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                                    Delivery Address *
-                                                </label>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleUseCurrentLocation}
-                                                    disabled={isFindingAddress}
-                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:border-neutral-300 disabled:cursor-wait disabled:opacity-60 cursor-pointer"
-                                                    title="Refresh or change your delivery location"
-                                                >
-                                                    <svg className={`w-3.5 h-3.5 text-neutral-500 ${isFindingAddress ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                                    </svg>
-                                                    {isFindingAddress ? 'Relocating…' : 'Relocate'}
-                                                </button>
-                                            </div>
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                                Delivery Address *
+                                            </label>
+                                            {/* Barangay / Area - the 8 km coverage gate.
+                                                Only areas inside the radius are listed, so the
+                                                customer cannot compose an out-of-range address. */}
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                                                Barangay / Delivery Area *
+                                            </label>
+                                            <p className="text-[11px] text-neutral-500 leading-snug">
+                                                Please enter a delivery address that is within our <strong>8 km range</strong>. Choose the Barangay / Area your address belongs to — only areas inside the range are listed.
+                                            </p>
+                                            <BarangaySelect
+                                                id="checkout-barangay"
+                                                variant="neutral"
+                                                value={selectedBarangayId}
+                                                onChange={(barangayId) => {
+                                                    setSelectedBarangayId(barangayId)
+                                                    setRefinedCoordinates(null)
+                                                }}
+                                                placeholder="-- Search or choose your Barangay / Delivery Area --"
+                                            />
+
+                                            <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider mt-1.5">
+                                                House / Unit No., Street, Landmark *
+                                            </label>
                                             <textarea
                                                 required={fulfillmentType === 'DELIVERY'}
                                                 rows={2}
-                                                disabled={isFindingAddress}
-                                                placeholder="Enter your complete delivery address (House/Unit, Street, Barangay, City)"
-                                                value={address}
-                                                onChange={(e) => {
-                                                    setAddress(e.target.value)
-                                                    setAddressCoordinates(null)
-                                                    setAddressLookupMessage('')
-                                                }}
+                                                placeholder="e.g. Phase 2 Package 4, Block 5 Lot 12, Langit Road"
+                                                value={streetAddress}
+                                                onChange={(e) => setStreetAddress(e.target.value)}
                                                 className="border border-neutral-200 rounded-xl px-4 py-2.5 text-sm transition-colors resize-none bg-white text-neutral-800 focus:outline-none focus:border-orange-500 focus:ring-2 focus:ring-orange-500/10 placeholder:text-neutral-400"
                                             />
-                                            {addressLookupMessage && (
-                                                <p role="status" className="text-xs text-neutral-500">
-                                                    {addressLookupMessage}
-                                                </p>
-                                            )}
+                                            <p className="text-[11px] text-neutral-400">
+                                                Your rider delivers to this exact spot, so please keep it complete and accurate, and make sure it is inside the area you selected above.
+                                            </p>
 
                                             {/* Store Delivery Policy Notice (Max 8 km) */}
                                             <div className="mt-1 flex items-start gap-2.5 rounded-xl bg-orange-50/80 border border-orange-200/80 p-2.5 text-xs text-orange-950">
@@ -2892,34 +2918,29 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 <div className="space-y-0.5">
                                                     <p className="font-bold text-orange-900 text-[11px] uppercase tracking-wide">Store Delivery Radius Policy (Max 8 km)</p>
                                                     <p className="text-[11px] text-orange-800 leading-snug">
-                                                        Our store only acknowledges delivery addresses within an <strong>8 km road range</strong> from our restaurant in Caloocan. Beyond 8 km, our riders cannot deliver.
+                                                        Please make sure your delivery address is within an <strong>8 km range</strong> of our restaurant in Caloocan — beyond that, our riders cannot deliver. Every area in the list above is already inside that range.
                                                     </p>
                                                 </div>
                                             </div>
 
-                                            {/* Real-time distance status feedback */}
-                                            {deliveryDistanceKm !== null ? (
+                                            {/* Coverage confirmation */}
+                                            {selectedBarangay ? (
                                                 <div className="mt-1">
-                                                    {deliveryDistanceKm <= 8 ? (
-                                                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
-                                                            <span>✓</span>
-                                                            <span>Address is within delivery range ({deliveryDistanceKm.toFixed(1)} km) • Delivery fee: ₱{deliveryFee?.toFixed(2) ?? '50.00'}</span>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-800 text-[11px] font-bold">
-                                                            <span>⚠️</span>
-                                                            <span>Outside 8 km delivery coverage ({deliveryDistanceKm.toFixed(1)} km). Store cannot deliver to this address.</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ) : (deliveryDistanceMessage || isCalculatingDeliveryFee) ? (
-                                                <div className="mt-1">
-                                                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 text-[11px] font-medium">
-                                                        <span>{isCalculatingDeliveryFee ? '⏳' : 'ℹ️'}</span>
-                                                        <span>{deliveryDistanceMessage || 'Calculating road route…'}</span>
+                                                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold">
+                                                        <span>✓</span>
+                                                        <span>
+                                                            {selectedBarangay.name} is within delivery range ({selectedBarangay.distanceKm === 0 ? 'store location' : `${selectedBarangay.distanceKm.toFixed(1)} km`}) • Delivery fee: ₱{(deliveryFee ?? 50).toFixed(2)}
+                                                        </span>
                                                     </div>
                                                 </div>
-                                            ) : null}
+                                            ) : (
+                                                <div className="mt-1">
+                                                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-neutral-100 border border-neutral-200 text-neutral-700 text-[11px] font-medium">
+                                                        <span>ℹ️</span>
+                                                        <span>Choose your Barangay / Delivery Area to see your delivery fee.</span>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="flex flex-col gap-1.5">
@@ -2951,75 +2972,43 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     />
                                 </div>
 
-                                {/* Payment Type Selection */}
+                                {/* Payment Method — GCash only, for delivery and store pick-up alike */}
                                 <div className="flex flex-col gap-3">
                                     <label className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                                        Select Payment Method
+                                        Payment Method
                                     </label>
                                     <div className="flex flex-wrap items-center gap-3">
-                                        {/* GCash Option */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setPaymentMethod('GCash')}
-                                            className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[150px] sm:w-44 ${paymentMethod === 'GCash'
-                                                ? 'border-blue-600 bg-blue-600 text-white shadow-md shadow-blue-500/25 active:scale-95'
-                                                : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
-                                                }`}
-                                        >
-                                            <span className={`font-black text-sm ${paymentMethod === 'GCash' ? 'text-white' : 'text-neutral-900'}`}>
+                                        <div className="px-4 py-2.5 rounded-xl border-2 border-blue-600 bg-blue-600 text-white shadow-md shadow-blue-500/25 text-left flex items-center justify-between gap-3 min-w-[150px] sm:w-44">
+                                            <span className="font-black text-sm text-white">
                                                 {fulfillmentType === 'PICKUP' ? 'Pay Now (GCash)' : 'GCash'}
                                             </span>
-                                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'GCash'
-                                                ? 'bg-white text-blue-600 shadow-2xs'
-                                                : 'bg-blue-50 text-blue-600 border border-blue-200'
-                                                }`}>
+                                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-white text-blue-600 shadow-2xs">
                                                 E-Wallet
                                             </span>
-                                        </button>
-
-                                        {/* Pay in Store Option (Pick-Up Only) */}
-                                        {fulfillmentType === 'PICKUP' && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setPaymentMethod('PAY_IN_STORE')}
-                                                className={`px-4 py-2.5 rounded-xl border-2 text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-3 min-w-[180px] sm:w-52 ${paymentMethod === 'PAY_IN_STORE'
-                                                    ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-500/25 active:scale-95'
-                                                    : 'border-neutral-200 hover:border-neutral-300 bg-white text-neutral-800 active:scale-95'
-                                                    }`}
-                                            >
-                                                <span className={`font-black text-sm ${paymentMethod === 'PAY_IN_STORE' ? 'text-white' : 'text-neutral-900'}`}>
-                                                    Pay in Store
-                                                </span>
-                                                <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-colors ${paymentMethod === 'PAY_IN_STORE'
-                                                    ? 'bg-white text-emerald-700 shadow-2xs'
-                                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                                    }`}>
-                                                    Counter Cash
-                                                </span>
-                                            </button>
-                                        )}
+                                        </div>
                                     </div>
-                                    {fulfillmentType === 'DELIVERY' && (
-                                        <p className="text-[11px] text-neutral-500 font-medium">
-                                            Online delivery orders are paid securely via GCash before dispatch.
-                                        </p>
-                                    )}
-
+                                    <p className="text-[11px] text-neutral-500 font-medium">
+                                        {fulfillmentType === 'DELIVERY'
+                                            ? 'Online delivery orders are paid securely via GCash before dispatch.'
+                                            : 'Store pick-up orders are paid via GCash before the kitchen starts cooking — there is no paying at the counter.'}
+                                    </p>
                                 </div>
 
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || (fulfillmentType === 'DELIVERY' && (isCalculatingDeliveryFee || isGeocodingAddress || (deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null)) || hasUnavailableCartItems || hasDeletedCartItems}
+                                        disabled={isSubmittingOrder || hasOngoingOrder || (fulfillmentType === 'DELIVERY' && (!selectedBarangayId || !streetAddress.trim())) || hasUnavailableCartItems || hasDeletedCartItems}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder
                                             ? 'Submitting Order...'
-                                            : (fulfillmentType === 'DELIVERY' && (isCalculatingDeliveryFee || isGeocodingAddress))
-                                                ? 'Calculating Route…'
-                                                : (fulfillmentType === 'DELIVERY' && ((deliveryDistanceKm !== null && deliveryDistanceKm > 8) || deliveryFee === null))
-                                                    ? 'Outside 8 km Delivery Zone'
-                                                    : 'Confirm & Submit Order'}
+                                            : hasOngoingOrder
+                                                ? 'Finish Your Current Order First'
+                                                : (fulfillmentType === 'DELIVERY' && !selectedBarangayId)
+                                                    ? 'Select Your Delivery Area'
+                                                    : (fulfillmentType === 'DELIVERY' && !streetAddress.trim())
+                                                        ? 'Enter Your Street Address'
+                                                        : 'Confirm & Submit Order'}
                                     </button>
                                     <button
                                         type="button"
@@ -3082,15 +3071,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         <>
                                             <div className="flex justify-between text-xs text-neutral-500">
                                                 <span>Delivery Fee {deliveryDistanceLabel && `(${deliveryDistanceLabel})`}</span>
-                                                <span className={deliveryFee === null ? 'text-rose-600 font-bold' : ''}>
-                                                    {deliveryFee === null ? 'Unavailable (Beyond 8 km)' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                                <span className={deliveryFee === null ? 'text-neutral-400 font-bold' : ''}>
+                                                    {deliveryFee === null ? 'Select your area' : `₱${deliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                                                 </span>
                                             </div>
-                                            {deliveryDistanceMessage && (
-                                                <p role="status" className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1">
-                                                    ⚠️ {deliveryDistanceMessage}
-                                                </p>
-                                            )}
                                         </>
                                     ) : (
                                         <div className="flex justify-between text-xs text-neutral-600 font-medium">
@@ -3913,8 +3897,6 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const rawPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone
                             const riderPhone = (!rawPhone) ? '0917-888-9999' : rawPhone
 
-                            const isPayInStore = String(activeOrder.paymentMethod || '').toUpperCase().includes('STORE') || activeOrder.paymentMethod === 'PAY_IN_STORE' || activeOrder.paymentMethod === 'COD'
-
                             return (
                                 <div className="space-y-6 mt-2">
                                     {/* ── Top Row: 2-column layout ── */}
@@ -4018,19 +4000,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </PanelRows>
                                                     </dl>
                                                     <div className="px-5 pb-5 pt-4">
-                                                        {isPayInStore && norm !== 'COMPLETED' ? (
-                                                            <PanelNote tone="brand" icon="info">
-                                                                Pay{' '}
-                                                                <strong className="font-semibold tabular-nums">
-                                                                    ₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                </strong>{' '}
-                                                                in cash to our cashier when you claim your order.
-                                                            </PanelNote>
-                                                        ) : (
-                                                            <PanelNote tone="positive" icon="info">
-                                                                Paid online. Show this screen or your reference number at the counter to claim your order.
-                                                            </PanelNote>
-                                                        )}
+                                                        <PanelNote tone="positive" icon="info">
+                                                            Paid online. Show this screen or your reference number at the counter to claim your order.
+                                                        </PanelNote>
                                                     </div>
                                                 </Panel>
                                             )}
@@ -4109,12 +4081,12 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             {/* Billing Card */}
                                             <Panel
                                                 title="Payment"
-                                                meta={isPayInStore ? (norm === 'COMPLETED' ? 'Paid at counter' : 'Pay at counter') : 'Paid online'}
+                                                meta="Paid online"
                                             >
                                                 <dl>
                                                     <PanelRows>
                                                         <InfoRow label="Method">
-                                                            {isPayInStore ? 'Cash at the counter' : `${activeOrder.paymentMethod || 'GCash'} transfer`}
+                                                            {`${activeOrder.paymentMethod || 'GCash'} transfer`}
                                                         </InfoRow>
                                                         {activeOrder.paymentReference && (
                                                             <InfoRow label="Reference" mono>{activeOrder.paymentReference}</InfoRow>
@@ -4185,7 +4157,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         </div>
                                                         <div className="flex items-baseline justify-between gap-4 border-t border-neutral-100 pt-3">
                                                             <dt className="text-sm font-semibold text-neutral-900">
-                                                                {isPayInStore && norm !== 'COMPLETED' ? 'Due at counter' : 'Total paid'}
+                                                                Total paid
                                                             </dt>
                                                             <dd className="text-xl font-extrabold tabular-nums tracking-tight text-neutral-900">
                                                                 ₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -4327,10 +4299,22 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                     Out of Stock
                                                                 </span>
                                                             )}
-                                                            <div className="flex items-center justify-between mt-2.5">
-                                                                <p className="text-sm text-orange-600 font-extrabold">
-                                                                    ₱{(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                </p>
+                                                            {renderCartStockNote(ci.item.id, isAvailable(ci.item.id))}
+                                                            <div className="flex items-end justify-between gap-2 mt-2">
+                                                                <div className="min-w-0">
+                                                                    {/* One row per unit ordered, then the sum, so the customer
+                                                                        can read the receipt rather than trust a single figure. */}
+                                                                    <div className="space-y-px">
+                                                                        {Array.from({ length: ci.quantity }, (_, i) => (
+                                                                            <p key={i} className="text-[11px] font-medium text-neutral-500 leading-tight tabular-nums">
+                                                                                ₱{unitPriceOf(ci).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                            </p>
+                                                                        ))}
+                                                                    </div>
+                                                                    <p className="mt-1 border-t border-neutral-200 pt-1 text-sm sm:text-base text-orange-600 font-extrabold leading-tight tabular-nums">
+                                                                        ₱{(unitPriceOf(ci) * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                    </p>
+                                                                </div>
                                                                 <CartQuantityControl
                                                                     quantity={ci.quantity}
                                                                     onIncrement={() => handleIncrement(ci.item.id)}
@@ -4432,10 +4416,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             setIsCartDrawerOpen(false)
                                             handleProceedToCheckout()
                                         }}
-                                        disabled={hasUnavailableCartItems || hasDeletedCartItems || cartItems.length === 0}
+                                        disabled={hasUnavailableCartItems || hasDeletedCartItems || cartItems.length === 0 || hasOngoingOrder}
                                         className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        <span>Proceed to Checkout</span>
+                                        <span>{hasOngoingOrder ? 'Finish Your Current Order First' : 'Proceed to Checkout'}</span>
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                                         </svg>

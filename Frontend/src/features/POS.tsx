@@ -700,7 +700,7 @@ export const POS: React.FC = () => {
       vat: calcVat,
       deliveryFee: calcDeliveryFee,
       cartItems: itemsList,
-      paymentMethod: order.paymentMethod || (isPickup ? 'Pay in Store' : 'GCash'),
+      paymentMethod: order.paymentMethod || 'GCash',
       paymentReference: paymentRef,
       customerName: order.customerName || order.customer || 'Online Customer',
       phone: order.phone || '0917-000-0000',
@@ -715,16 +715,15 @@ export const POS: React.FC = () => {
       alert(`Cannot hand over this order yet. The kitchen is still preparing it (current status: ${statusNorm}). Please wait until the kitchen marks it as Ready.`)
       return
     }
-    const isPayInStore = String(order.paymentMethod || '').toUpperCase().includes('STORE') || order.paymentMethod === 'PAY_IN_STORE'
-
     try {
       setIsSubmittingHandover(true)
+      // An online pick-up is prepaid by GCash, so the counter only hands the food over.
       await fetch(`${API_BASE_URL}/orders/${encodeURIComponent(orderId)}/pickup-handover`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cashierId: currentUser?.id,
-          paymentMethod: isPayInStore ? 'CASH' : 'GCASH',
+          paymentMethod: 'GCASH',
           cashReceived: cashTenderedVal !== undefined ? cashTenderedVal : (order.total || 0),
         }),
       }).catch(() => null)
@@ -2068,7 +2067,6 @@ export const POS: React.FC = () => {
                   const statusNorm = (ord.status || 'CONFIRMED').toUpperCase()
                   const isCompleted = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(statusNorm)
                   const isReady = statusNorm === 'READY'
-                  const isPayInStore = String(ord.paymentMethod || '').toUpperCase().includes('STORE') || ord.paymentMethod === 'PAY_IN_STORE'
 
                   return (
                     <div
@@ -2143,22 +2141,10 @@ export const POS: React.FC = () => {
                               </span>
                             )}
 
-                            {/* Payment Badge */}
-                            {isPayInStore ? (
-                              isCompleted ? (
-                                <span className="bg-emerald-50 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
-                                  💵 Paid in Store
-                                </span>
-                              ) : (
-                                <span className="bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black">
-                                  ⚠️ Collect ₱{Number(ord.total || 0).toFixed(2)} Cash
-                                </span>
-                              )
-                            ) : (
-                              <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
-                                ✅ Paid Online (GCash)
-                              </span>
-                            )}
+                            {/* Payment Badge — an online pick-up is always prepaid by GCash */}
+                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
+                              ✅ Paid Online (GCash)
+                            </span>
                           </div>
                         </div>
 
@@ -2219,31 +2205,16 @@ export const POS: React.FC = () => {
                           {/* Handover Action Button: Only allowed once kitchen marks order as READY */}
                           {!isCompleted ? (
                             isReady ? (
-                              isPayInStore ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setHandoverModalOrder(ord)
-                                    setCashTendered(String(ord.total || ''))
-                                  }}
-                                  className="bg-amber-600 hover:bg-amber-700 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
-                                  title="Collect cash from customer and hand over order"
-                                >
-                                  <span>💵</span>
-                                  <span>Collect & Hand Over</span>
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  disabled={isSubmittingHandover}
-                                  onClick={() => handlePickupHandover(ord)}
-                                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
-                                  title="Mark as picked up by customer"
-                                >
-                                  <span>🛍️</span>
-                                  <span>Mark as Picked Up</span>
-                                </button>
-                              )
+                              <button
+                                type="button"
+                                disabled={isSubmittingHandover}
+                                onClick={() => handlePickupHandover(ord)}
+                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                title="Mark as picked up by customer"
+                              >
+                                <span>🛍️</span>
+                                <span>Mark as Picked Up</span>
+                              </button>
                             ) : (
                               <span
                                 className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs whitespace-nowrap"

@@ -33,6 +33,53 @@ function itemDeletedError(name) {
   });
 }
 
+/**
+ * The statuses that give a customer their one order slot back.
+ *
+ * COMPLETED and CANCELLED are the obvious ones. CANCEL_REQUESTED counts too: by then the kitchen
+ * ticket is already cancelled and the stock already returned, so the order will never be cooked
+ * or delivered — only the refund paperwork is outstanding, and that is the assistant's job, not a
+ * reason to shut the customer out of the store for hours.
+ *
+ * Everything else — awaiting payment, awaiting the assistant, cooking, ready, out for delivery —
+ * is still their one ongoing order.
+ */
+export const ORDER_SLOT_FREED_STATUSES = ['COMPLETED', 'CANCELLED', 'CANCEL_REQUESTED'];
+
+/**
+ * Finds the ongoing online order an identified customer already has, so they cannot place a
+ * second one until the first is delivered/picked up or cancelled.
+ *
+ * Only applies to a customer we can actually name: a guest whose details did not resolve to a
+ * `customers` row (no sign-in, no phone, no name) cannot be attributed orders at all, and the
+ * checkout screen requires a signed-in account before it reaches this point.
+ *
+ * `inMemoryOrders` is consulted too, because a status set in memory can be a moment ahead of the
+ * orders table — an order the app already considers finished must not keep the customer blocked.
+ */
+export async function findOngoingCustomerOrder(client, { customerId, excludeOrderId }) {
+  if (!customerId) return null;
+
+  const { rows } = await client.query(
+    `SELECT id, status, fulfillment_type, total, created_at
+       FROM orders
+      WHERE customer_id = $1
+        AND COALESCE(order_type, 'ONLINE') = 'ONLINE'
+        AND id <> $2
+        AND UPPER(status) <> ALL($3::text[])
+      ORDER BY created_at ASC`,
+    [customerId, String(excludeOrderId || ''), ORDER_SLOT_FREED_STATUSES]
+  );
+
+  for (const row of rows) {
+    const cached = inMemoryOrders.get(String(row.id));
+    const liveStatus = String(cached?.status || row.status || '').toUpperCase();
+    if (!ORDER_SLOT_FREED_STATUSES.includes(liveStatus)) return row;
+  }
+
+  return null;
+}
+
 export async function assertItemsAvailable(client, items) {
   const ids = items
     .map((item) => item.product_id || item.productId || item.item?.id || item.id)
@@ -1072,11 +1119,30 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       });
     }
 
-    const isPayInStore = (paymentMethod || '').toUpperCase().includes('STORE') || (paymentMethod || '').toUpperCase().includes('COUNTER');
-    const initialPaymentMethod = isPickup
-      ? (isPayInStore ? 'Pay in Store' : 'GCash')
-      : 'GCash';
-    const isPayLater = isPickup && isPayInStore;
+    const rawOrderType = (req.body.orderType || req.body.type || '').toString().trim().toUpperCase();
+    const isPos = Boolean(
+      req.body.isPosOrder ||
+      req.body.is_pos_order ||
+      (requestedOrderId && String(requestedOrderId).startsWith('POS-')) ||
+      rawOrderType.includes('DINE') ||
+      rawOrderType.includes('TAKE') ||
+      rawOrderType.includes('ON_SITE')
+    );
+
+    // Pay in Store is gone: every online order — delivery AND store pick-up — is prepaid by
+    // GCash, so a pick-up can no longer be placed now and settled at the counter later.
+    // (A cashier's own POS ticket is a different thing and still takes cash at the counter.)
+    const requestedPayAtCounter = (paymentMethod || '').toUpperCase().includes('STORE')
+      || (paymentMethod || '').toUpperCase().includes('COUNTER');
+    if (!isPos && requestedPayAtCounter) {
+      return res.status(400).json({
+        success: false,
+        error: 'PAY_IN_STORE_REMOVED',
+        message: 'Paying at the store counter is no longer available. Please pay for your order via GCash.',
+      });
+    }
+
+    const initialPaymentMethod = 'GCash';
     const normalizedItems = rawItems.map(item => {
       const quantity = Number(item.quantity) || 1;
       const price = Number(item.price ?? item.unit_price ?? 0);
@@ -1092,20 +1158,10 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       };
     });
 
-    const rawOrderType = (req.body.orderType || req.body.type || '').toString().trim().toUpperCase();
-    const isPos = Boolean(
-      req.body.isPosOrder ||
-      req.body.is_pos_order ||
-      (requestedOrderId && String(requestedOrderId).startsWith('POS-')) ||
-      rawOrderType.includes('DINE') ||
-      rawOrderType.includes('TAKE') ||
-      rawOrderType.includes('ON_SITE')
-    );
-
     let requiresKitchenApproval = false;
-    let initialStatus = isPos ? (req.body.status || 'CONFIRMED') : (isPayLater ? 'PAY_IN_STORE' : 'GCASH_AUTHORIZED');
+    let initialStatus = isPos ? (req.body.status || 'CONFIRMED') : 'GCASH_AUTHORIZED';
     let kitchenApprovalStatus = 'NONE';
-    let isGcashAuthorized = !isPayLater && !isPos;
+    let isGcashAuthorized = !isPos;
 
     for (const item of normalizedItems) {
       const pId = String(item.product_id || item.productId || item.item?.id || item.id || '');
@@ -1263,6 +1319,30 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
         orderRecord.customer_id = validCustomerId;
 
+        // One ongoing order per online customer. Checked inside this transaction, right after the
+        // customer is resolved, so a double-submitted checkout cannot slip a second order past it.
+        if (!isPos) {
+          const ongoing = await findOngoingCustomerOrder(client, {
+            customerId: validCustomerId,
+            excludeOrderId: orderId,
+          });
+          if (ongoing) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+              success: false,
+              error: 'ACTIVE_ORDER_EXISTS',
+              message: `You already have an ongoing order (${ongoing.id}). Please wait until it is delivered or picked up before placing another one.`,
+              data: {
+                id: ongoing.id,
+                status: ongoing.status,
+                fulfillmentType: ongoing.fulfillment_type,
+                total: Number(ongoing.total || 0),
+                createdAt: ongoing.created_at,
+              },
+            });
+          }
+        }
+
         const dbOrderType = isPos ? 'ON_SITE' : 'ONLINE';
 
         await client.query(
@@ -1336,13 +1416,13 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         }
 
         const posPaymentStatus = (requiresKitchenApproval || initialStatus === 'AWAITING_KITCHEN_APPROVAL') ? 'PENDING' : 'PAID';
-        const finalPaymentMethod = req.body.paymentMethod || (isPayLater ? 'PAY_IN_STORE' : 'GCASH');
+        const finalPaymentMethod = req.body.paymentMethod || 'GCASH';
         const existingPayments = await client.query(`SELECT id FROM payments WHERE order_id = $1 LIMIT 1`, [orderId]);
         if (existingPayments.rows.length === 0) {
           await client.query(
             `INSERT INTO payments (order_id, payment_method, amount, status, reference_number, payment_receipt, updated_at)
              VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-            [orderId, isPos ? finalPaymentMethod : (isPayLater ? 'PAY_IN_STORE' : 'GCASH'), calcTotal, isPos ? posPaymentStatus : 'PENDING', orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
+            [orderId, isPos ? finalPaymentMethod : 'GCASH', calcTotal, isPos ? posPaymentStatus : 'PENDING', orderRecord.paymentReference || null, orderRecord.paymentReceipt || null]
           );
         } else {
           await client.query(
@@ -1414,6 +1494,28 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       inMemoryOrders.set(orderId, orderRecord);
     } catch (poolErr) {
       console.warn('Database connection unavailable, falling back to in-memory store:', poolErr.message);
+      // With no database there is no `customers` row to resolve, so the one-ongoing-order rule
+      // falls back to matching the phone number already attached to this session's orders.
+      if (!isPos) {
+        const digits = (value) => String(value || '').replace(/\D/g, '');
+        const thisPhone = digits(cleanPhone);
+        const ongoing = thisPhone && thisPhone !== digits('0917-000-0000')
+          ? [...inMemoryOrders.values()].find((order) => (
+              String(order.id) !== String(orderId)
+              && !order.is_pos_order
+              && digits(order.customer_phone || order.phone) === thisPhone
+              && !ORDER_SLOT_FREED_STATUSES.includes(String(order.status || '').toUpperCase())
+            ))
+          : null;
+        if (ongoing) {
+          return res.status(409).json({
+            success: false,
+            error: 'ACTIVE_ORDER_EXISTS',
+            message: `You already have an ongoing order (${ongoing.id}). Please wait until it is delivered or picked up before placing another one.`,
+            data: { id: ongoing.id, status: ongoing.status },
+          });
+        }
+      }
       inMemoryOrders.set(orderId, orderRecord);
     }
 

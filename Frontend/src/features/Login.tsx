@@ -4,15 +4,69 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../utils/supabase';
 import { API_BASE_URL } from '../utils/api';
 import { saveSessionToken, saveActiveUser, generateClientHashToken, getStoredSessionToken } from '../cryptography/cryptoSession';
-import { reverseGeocodeCoordinates, type Coordinates } from '../utils/locationServices';
 import { validatePhilippinePhone } from '../utils/phoneValidation';
 import {
   DELIVERABLE_BARANGAYS_8KM,
-  getDeliverableBarangaysByGroup,
-  findNearestDeliverableBarangay,
+  composeCoveredAddress,
 } from '../utils/deliveryCoverage';
+import { BarangaySelect } from '../components/BarangaySelect';
 
 type UserRole = 'customer' | 'cashier' | 'kitchen' | 'rider' | 'assistant';
+
+/* ---------------------------------------------------------------------------
+ * Shared registration form tokens.
+ * Kept here so every field in the sign-up flow sits on one scale: identical
+ * height, radius, border and focus ring, on desktop and on mobile.
+ * ------------------------------------------------------------------------- */
+const FIELD_BASE =
+  'w-full py-3 px-3.5 rounded-xl border font-sans text-sm font-medium placeholder-neutral-400 focus:outline-none transition-all box-border';
+const FIELD_IDLE =
+  'border-[#eadfd7] bg-[#fcfaf8] text-neutral-800 hover:border-[#d8b9a5] focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10';
+const FIELD_INVALID =
+  'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-4 focus:ring-red-500/10';
+const FIELD_LABEL = 'block text-xs font-semibold text-neutral-700 mb-1.5';
+const FIELD_HINT = 'text-[11px] text-neutral-500 leading-snug';
+
+/* Mobile sheet variants: same scale, tuned for the white sheet over the orange hero. */
+const MFIELD_BASE =
+  'w-full h-11 px-3.5 rounded-xl border text-xs font-medium placeholder-neutral-400 focus:outline-none transition-all box-border';
+const MFIELD_IDLE =
+  'border-neutral-200 bg-white text-neutral-800 focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10';
+const MFIELD_INVALID =
+  'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-2 focus:ring-red-500/10';
+const MFIELD_LABEL = 'block text-[11px] font-semibold text-neutral-700 mb-1';
+const MFIELD_HINT = 'text-[10px] text-neutral-500 leading-snug';
+
+const RequiredMark = () => <span className="text-[#a82c00]" aria-hidden="true">*</span>;
+
+/** Quiet section heading with a hairline rule, used to group the sign-up fields. */
+const FormSection: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({
+  title,
+  children,
+  className = '',
+}) => (
+  <section className={className}>
+    <div className="flex items-center gap-3 mb-3.5">
+      <h3 className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500 whitespace-nowrap">
+        {title}
+      </h3>
+      <span className="h-px flex-1 bg-[#eadfd7]" aria-hidden="true" />
+    </div>
+    <div className="space-y-3">{children}</div>
+  </section>
+);
+
+const CheckIcon = ({ className = 'w-3.5 h-3.5' }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+  </svg>
+);
+
+const AlertIcon = ({ className = 'w-4 h-4' }: { className?: string }) => (
+  <svg className={className} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+  </svg>
+);
 
 const Login = () => {
   const navigate = useNavigate();
@@ -57,26 +111,48 @@ return () => {
   const [lastName, setLastName] = useState('');
   const fullname = `${firstName.trim()} ${lastName.trim()}`.trim();
 
+  const suggestUsername = (first: string, last: string) =>
+    first.trim() && last.trim()
+      ? `${first.trim().charAt(0).toUpperCase()}.${last.trim()}`
+      : '';
+
   const handleFirstNameChange = (val: string) => {
     const clean = val.replace(/[0-9]/g, '');
     setFirstName(clean);
-    if (clean.trim() && lastName.trim()) {
-      setUsername(`${clean.trim().charAt(0).toUpperCase()}.${lastName.trim()}`);
-    } else {
-      setUsername('');
-    }
+    // Keep suggesting a username until the customer edits it themselves.
+    if (!isUsernameEdited) setUsername(suggestUsername(clean, lastName));
   };
 
   const handleLastNameChange = (val: string) => {
     const clean = val.replace(/[0-9]/g, '');
     setLastName(clean);
-    if (firstName.trim() && clean.trim()) {
-      setUsername(`${firstName.trim().charAt(0).toUpperCase()}.${clean.trim()}`);
-    } else {
-      setUsername('');
-    }
+    if (!isUsernameEdited) setUsername(suggestUsername(firstName, clean));
   };
   const [username, setUsername] = useState('');
+  const [isUsernameEdited, setIsUsernameEdited] = useState(false);
+  const [usernameError, setUsernameError] = useState('');
+
+  const validateUsername = (val: string) => {
+    const trimmed = val.trim();
+    if (!trimmed) return 'Username is required.';
+    if (trimmed.length < 3) return 'Username must be at least 3 characters.';
+    return '';
+  };
+
+  const handleUsernameChange = (val: string) => {
+    // Letters, numbers, spaces and . _ - only.
+    const clean = val.replace(/[^A-Za-z0-9._\- ]/g, '').slice(0, 30);
+    setUsername(clean);
+    setIsUsernameEdited(true);
+    setUsernameError(clean ? validateUsername(clean) : '');
+  };
+
+  /** Restores the name-based suggestion after the customer has edited it. */
+  const resetUsernameToSuggestion = () => {
+    setUsername(suggestUsername(firstName, lastName));
+    setIsUsernameEdited(false);
+    setUsernameError('');
+  };
   const [email, setEmail] = useState('');
   const [emailError, setEmailError] = useState('');
   const [isCheckingEmail, setIsCheckingEmail] = useState(false);
@@ -111,7 +187,11 @@ return () => {
   const [phoneError, setPhoneError] = useState('');
 
   const handlePhoneChange = (val: string) => {
-    setPhone(val);
+    // Digits only, with an optional leading + for the +63 country code.
+    // Applied on change so pasted text is cleaned too, not just typing.
+    const hasPlus = val.trimStart().startsWith('+');
+    const digits = val.replace(/\D/g, '');
+    setPhone(hasPlus ? `+${digits}` : digits);
     if (phoneError) setPhoneError('');
   };
 
@@ -127,13 +207,11 @@ return () => {
     }
   };
   const [address, setAddress] = useState('');
-  const [addressCoordinates, setAddressCoordinates] = useState<Coordinates | null>(null);
-  const [isFindingAddress, setIsFindingAddress] = useState(false);
-  const [addressLookupMessage, setAddressLookupMessage] = useState('');
+  // Coordinates come only from the chosen Barangay, never from device location.
+  const [addressCoordinates, setAddressCoordinates] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedBarangayId, setSelectedBarangayId] = useState('');
   const [streetAddress, setStreetAddress] = useState('');
 
-  const deliverableGroups = useMemo(() => getDeliverableBarangaysByGroup(), []);
   const selectedBarangay = useMemo(
     () => DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === selectedBarangayId),
     [selectedBarangayId]
@@ -141,93 +219,21 @@ return () => {
 
   const handleBarangaySelect = (barangayId: string) => {
     setSelectedBarangayId(barangayId);
-    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === barangayId);
-    if (target) {
-      const full = streetAddress.trim()
-        ? `${streetAddress.trim()}, ${target.name}, ${target.city}`
-        : `${target.name}, ${target.city}`;
-      setAddress(full);
-      setAddressCoordinates({ lat: target.lat, lng: target.lng });
-      setAddressLookupMessage(
-        `✓ Selected area is within delivery range (${target.distanceKm === 0 ? 'Store Origin' : `${target.distanceKm} km`} from store).`
-      );
-    } else {
-      setAddress(streetAddress.trim());
-      setAddressCoordinates(null);
-      setAddressLookupMessage('');
-    }
+    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === barangayId) ?? null;
+    setAddress(composeCoveredAddress(streetAddress, target));
+    setAddressCoordinates(target ? { lat: target.lat, lng: target.lng } : null);
   };
 
   const handleStreetAddressChange = (val: string) => {
     setStreetAddress(val);
-    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === selectedBarangayId);
-    if (target) {
-      const full = val.trim()
-        ? `${val.trim()}, ${target.name}, ${target.city}`
-        : `${target.name}, ${target.city}`;
-      setAddress(full);
-    } else {
-      setAddress(val);
-    }
-  };
-
-  const handleUseCurrentLocation = () => {
-    if (!navigator.geolocation) {
-      setAddressLookupMessage('Location is not supported by this browser.');
-      return;
-    }
-
-    setIsFindingAddress(true);
-    setAddressLookupMessage('');
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        const currentCoordinates = { lat: coords.latitude, lng: coords.longitude };
-        const coverageCheck = findNearestDeliverableBarangay(coords.latitude, coords.longitude);
-
-        if (!coverageCheck.isWithinRadius) {
-          setIsFindingAddress(false);
-          setAddressCoordinates(null);
-          setAddressLookupMessage(
-            `⚠️ Your detected location is ${coverageCheck.distanceToStoreKm.toFixed(1)} km away, outside our 8 km delivery coverage from Barangay 176 (Bagong Silang). Please select an address within 8 km.`
-          );
-          return;
-        }
-
-        // Within 8 km: auto-select the nearest deliverable barangay
-        if (coverageCheck.nearest) {
-          setSelectedBarangayId(coverageCheck.nearest.id);
-          setAddressCoordinates(currentCoordinates);
-          try {
-            const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates);
-            setStreetAddress(resolvedAddress);
-            setAddress(`${resolvedAddress}, ${coverageCheck.nearest.name}, ${coverageCheck.nearest.city}`);
-            setAddressLookupMessage(
-              `✓ Located within delivery zone: ${coverageCheck.nearest.name} (~${coverageCheck.distanceToStoreKm.toFixed(1)} km from store).`
-            );
-          } catch {
-            setAddress(`${coverageCheck.nearest.name}, ${coverageCheck.nearest.city}`);
-            setAddressLookupMessage(
-              `✓ Located within delivery zone: ${coverageCheck.nearest.name} (~${coverageCheck.distanceToStoreKm.toFixed(1)} km from store).`
-            );
-          }
-        }
-        setIsFindingAddress(false);
-      },
-      (error) => {
-        setIsFindingAddress(false);
-        setAddressLookupMessage(
-          error.code === 1
-            ? 'Location permission was denied. Please select your Barangay from the dropdown.'
-            : 'Could not get your location. Please select your Barangay from the dropdown.'
-        );
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-    );
+    const target = DELIVERABLE_BARANGAYS_8KM.find((b) => b.id === selectedBarangayId) ?? null;
+    setAddress(composeCoveredAddress(val, target));
   };
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -242,6 +248,9 @@ return () => {
     return '';
   };
 
+  const matchError = (pwd: string, confirm: string) =>
+    confirm && pwd !== confirm ? 'Passwords do not match.' : '';
+
   const handlePasswordChange = (val: string) => {
     setPassword(val);
     if (val) {
@@ -249,6 +258,13 @@ return () => {
     } else {
       setPasswordError('');
     }
+    // Keep the confirmation in sync when the first field is edited afterwards.
+    setConfirmPasswordError(matchError(val, confirmPassword));
+  };
+
+  const handleConfirmPasswordChange = (val: string) => {
+    setConfirmPassword(val);
+    setConfirmPasswordError(matchError(password, val));
   };
   const [verificationCode, setVerificationCode] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
@@ -492,8 +508,17 @@ return () => {
       return;
     }
 
-    if (!streetAddress.trim() && !address.trim()) {
-      setErrorMessage('Please enter your house/unit number, street, or landmark.');
+    if (!streetAddress.trim()) {
+      setErrorMessage('Please enter your house/unit number, street, or landmark so the rider knows exactly where to deliver.');
+      return;
+    }
+
+    const usernameErr = validateUsername(username);
+    if (usernameErr) {
+      setUsernameError(usernameErr);
+      setErrorMessage(usernameErr);
+      document.getElementById('register-username')?.focus();
+      document.getElementById('mobile-username')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
 
@@ -524,7 +549,12 @@ return () => {
     }
 
     if (password !== confirmPassword) {
+      setConfirmPasswordError('Passwords do not match.');
       setErrorMessage('Passwords do not match.');
+      document.getElementById('register-confirm-password')?.focus();
+      document
+        .getElementById('mobile-register-confirm-password')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
 
@@ -770,9 +800,10 @@ return () => {
       setStreetAddress('');
       setAddressCoordinates(null);
       setPasswordError('');
+      setConfirmPasswordError('');
+      setIsUsernameEdited(false);
+      setUsernameError('');
       setAddress('');
-      setAddressCoordinates(null);
-      setAddressLookupMessage('');
       setPassword('');
       setConfirmPassword('');
       setVerificationCode('');
@@ -984,7 +1015,7 @@ return () => {
           authMode === 'welcome'
             ? 'flex flex-col justify-center md:col-start-2'
             : authMode === 'signup'
-              ? 'flex flex-col justify-center md:rounded-l-[28px] lg:rounded-l-[36px] overflow-y-auto max-h-[92vh]'
+              ? 'login-form-scroll flex flex-col [justify-content:safe_center] md:rounded-l-[28px] lg:rounded-l-[36px] overflow-y-auto max-h-[92vh]'
               : 'flex flex-col justify-center md:rounded-r-[28px] lg:rounded-r-[36px]'
         }`}>
           {/* Notification when redirected from customer order */}
@@ -1183,13 +1214,13 @@ return () => {
 
           {/* VIEW 3: SIGN UP FORM */}
           {authMode === 'signup' && (
-            <form id="register-form" onSubmit={handleRegister} className="login-form-content max-w-md w-full mx-auto flex flex-col justify-center my-auto">
+            <form id="register-form" onSubmit={handleRegister} className="login-form-content max-w-md w-full mx-auto flex flex-col">
               <div>
                 <div className="flex items-center mb-3">
                   <button
                     type="button"
                     onClick={returnToWelcome}
-                    className="inline-flex items-center gap-1 text-xs font-bold text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-neutral-500 hover:text-neutral-800 transition-colors cursor-pointer"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
@@ -1198,328 +1229,354 @@ return () => {
                   </button>
                 </div>
 
-                <div className="mb-3">
+                <div>
                   <h2 className="text-xl sm:text-2xl font-black text-neutral-900 tracking-tight">
                     Join the feast
                   </h2>
                   <p className="text-xs text-neutral-500 font-medium mt-0.5">
                     Set up your profile to make ordering easier.
                   </p>
-                  <p className="text-[11px] font-medium text-neutral-400 mt-1">
-                    <span className="font-bold text-[#a82c00]">*</span> Indicates required fields.
+                  <p className="text-[11px] font-medium text-neutral-500 mt-1.5">
+                    <span className="font-bold text-[#a82c00]">*</span> Required field
                   </p>
                 </div>
 
-                {/* Name inputs */}
-                <div className="grid grid-cols-2 gap-2.5 mb-2.5">
-                  <div>
-                    <label htmlFor="register-first-name" className="block text-xs font-semibold text-neutral-700 mb-1.5">
-                      First Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
-                    <input
-                      id="register-first-name"
-                      type="text"
-                      placeholder="First Name"
-                      required
-                      pattern="[^0-9]*"
-                      onKeyDown={(e) => {
-                        if (/[0-9]/.test(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                      className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                      value={firstName}
-                      onChange={(e) => handleFirstNameChange(e.target.value)}
-                    />
+                <FormSection title="Your details" className="mt-7">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label htmlFor="register-first-name" className={FIELD_LABEL}>
+                        First name <RequiredMark />
+                      </label>
+                      <input
+                        id="register-first-name"
+                        type="text"
+                        placeholder="Juan"
+                        required
+                        pattern="[^0-9]*"
+                        autoComplete="given-name"
+                        onKeyDown={(e) => {
+                          if (/[0-9]/.test(e.key)) {
+                            e.preventDefault();
+                          }
+                        }}
+                        className={`${FIELD_BASE} ${FIELD_IDLE}`}
+                        value={firstName}
+                        onChange={(e) => handleFirstNameChange(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="register-last-name" className={FIELD_LABEL}>
+                        Last name <RequiredMark />
+                      </label>
+                      <input
+                        id="register-last-name"
+                        type="text"
+                        placeholder="Dela Cruz"
+                        required
+                        pattern="[^0-9]*"
+                        autoComplete="family-name"
+                        onKeyDown={(e) => {
+                          if (/[0-9]/.test(e.key)) {
+                            e.preventDefault();
+                          }
+                        }}
+                        className={`${FIELD_BASE} ${FIELD_IDLE}`}
+                        value={lastName}
+                        onChange={(e) => handleLastNameChange(e.target.value)}
+                      />
+                    </div>
                   </div>
+
                   <div>
-                    <label htmlFor="register-last-name" className="block text-xs font-semibold text-neutral-700 mb-1.5">
-                      Last Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="register-username" className="block text-xs font-semibold text-neutral-700">
+                        Username <RequiredMark />
+                      </label>
+                      {isUsernameEdited && suggestUsername(firstName, lastName) && (
+                        <button
+                          type="button"
+                          onClick={resetUsernameToSuggestion}
+                          className="text-[11px] font-bold text-[#a82c00] hover:underline cursor-pointer"
+                        >
+                          Use suggestion
+                        </button>
+                      )}
+                    </div>
                     <input
-                      id="register-last-name"
+                      id="register-username"
                       type="text"
-                      placeholder="Last Name"
                       required
-                      pattern="[^0-9]*"
-                      onKeyDown={(e) => {
-                        if (/[0-9]/.test(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                      className="w-full py-3 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                      value={lastName}
-                      onChange={(e) => handleLastNameChange(e.target.value)}
+                      maxLength={30}
+                      autoComplete="username"
+                      placeholder="Suggested from your name"
+                      value={username}
+                      onChange={(e) => handleUsernameChange(e.target.value)}
+                      aria-invalid={usernameError ? true : undefined}
+                      aria-describedby="register-username-hint"
+                      className={`${FIELD_BASE} ${usernameError ? FIELD_INVALID : FIELD_IDLE}`}
                     />
-                  </div>
-                </div>
-
-                {/* Username */}
-                <div className="mb-2.5">
-                  <input
-                    type="text"
-                    placeholder="Username"
-                    value={username}
-                    readOnly
-                    className="w-full py-3 px-3.5 rounded-2xl border border-neutral-200 font-sans text-xs font-medium text-neutral-500 bg-neutral-100 cursor-not-allowed box-border"
-                  />
-                </div>
-
-                {/* Email */}
-                <div className="mb-2.5">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label htmlFor="register-email" className="block text-xs font-semibold text-neutral-700">
-                      Email address <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
-                    {isCheckingEmail && (
-                      <span className="text-[11px] text-neutral-400 flex items-center gap-1">
-                        <span className="inline-block w-2.5 h-2.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
-                        Checking availability...
-                      </span>
+                    {usernameError ? (
+                      <p id="register-username-hint" role="alert" className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{usernameError}</span>
+                      </p>
+                    ) : (
+                      <p id="register-username-hint" className={`${FIELD_HINT} mt-1.5`}>
+                        We suggest one from your name — change it to whatever you like. You sign in with your email.
+                      </p>
                     )}
                   </div>
-                  <input
-                    id="register-email"
-                    type="email"
-                    placeholder="you@example.com"
-                    required
-                    className={`w-full py-3 px-3.5 rounded-xl border font-sans text-sm font-medium placeholder-neutral-400 focus:outline-none transition-all box-border ${
-                      emailError
-                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
-                        : 'border-[#eadfd7] bg-[#fcfaf8] text-neutral-800 hover:border-[#d8b9a5] focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10'
-                    }`}
-                    value={email}
-                    onChange={(e) => handleEmailChange(e.target.value)}
-                    onBlur={() => checkEmailAvailability(email)}
-                  />
-                  {emailError && (
-                    <div className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between text-xs text-red-700">
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                        </svg>
-                        {emailError}
-                      </span>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label htmlFor="register-email" className="block text-xs font-semibold text-neutral-700">
+                        Email address <RequiredMark />
+                      </label>
+                      {isCheckingEmail && (
+                        <span className="text-[11px] text-neutral-500 flex items-center gap-1">
+                          <span className="inline-block w-2.5 h-2.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
+                          Checking availability…
+                        </span>
+                      )}
+                    </div>
+                    <input
+                      id="register-email"
+                      type="email"
+                      placeholder="you@example.com"
+                      required
+                      autoComplete="email"
+                      aria-invalid={emailError ? true : undefined}
+                      className={`${FIELD_BASE} ${emailError ? FIELD_INVALID : FIELD_IDLE}`}
+                      value={email}
+                      onChange={(e) => handleEmailChange(e.target.value)}
+                      onBlur={() => checkEmailAvailability(email)}
+                    />
+                    {emailError && (
+                      <div role="alert" className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between gap-2 text-xs text-red-700">
+                        <span className="flex items-start gap-1.5">
+                          <AlertIcon className="w-4 h-4 text-red-500 shrink-0 mt-px" />
+                          <span>{emailError}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode('login');
+                            setLoginInput(email);
+                            setErrorMessage('');
+                            setEmailError('');
+                          }}
+                          className="text-xs font-bold text-[#a82c00] hover:underline whitespace-nowrap cursor-pointer"
+                        >
+                          Sign in →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="register-phone" className={FIELD_LABEL}>
+                      Phone number <RequiredMark />
+                    </label>
+                    <input
+                      id="register-phone"
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="09171234567"
+                      required
+                      maxLength={13}
+                      autoComplete="tel"
+                      aria-invalid={phoneError ? true : undefined}
+                      className={`${FIELD_BASE} ${phoneError ? FIELD_INVALID : FIELD_IDLE}`}
+                      value={phone}
+                      onChange={(e) => handlePhoneChange(e.target.value)}
+                      onBlur={handlePhoneBlur}
+                    />
+                    {phoneError && (
+                      <div role="alert" className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start gap-1.5 text-xs text-red-700">
+                        <AlertIcon className="w-4 h-4 text-red-500 shrink-0 mt-px" />
+                        <span>{phoneError}</span>
+                      </div>
+                    )}
+                  </div>
+                </FormSection>
+
+                <FormSection title="Where we deliver" className="mt-7">
+                  <div>
+                    <label htmlFor="register-barangay" className={FIELD_LABEL}>
+                      Barangay / Delivery area <RequiredMark />
+                    </label>
+                    <BarangaySelect
+                      id="register-barangay"
+                      variant="warm"
+                      value={selectedBarangayId}
+                      onChange={handleBarangaySelect}
+                      placeholder="Search or choose your barangay"
+                    />
+                    {selectedBarangay ? (
+                      <p className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold leading-snug text-emerald-700">
+                        <CheckIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>
+                          We deliver here
+                          {selectedBarangay.distanceKm === 0
+                            ? ' — this is our store location.'
+                            : ` — about ${selectedBarangay.distanceKm.toFixed(1)} km from our store.`}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className={`${FIELD_HINT} mt-1.5`}>
+                        We deliver within <strong className="font-semibold text-neutral-600">8 km</strong> of our store in Barangay 176 (Bagong Silang), Caloocan. Only areas inside that range are listed.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="register-street" className={FIELD_LABEL}>
+                      House / unit no., street, landmark <RequiredMark />
+                    </label>
+                    <input
+                      id="register-street"
+                      type="text"
+                      required
+                      autoComplete="address-line1"
+                      placeholder="Blk 5 Lot 12, Phase 2, Langit Road"
+                      value={streetAddress}
+                      onChange={(e) => handleStreetAddressChange(e.target.value)}
+                      className={`${FIELD_BASE} ${FIELD_IDLE}`}
+                    />
+                    <p className={`${FIELD_HINT} mt-1.5`}>
+                      Your rider delivers to this exact spot, so keep it complete.
+                    </p>
+                  </div>
+                </FormSection>
+
+                <FormSection title="Your login" className="mt-7">
+                  <div>
+                    <label htmlFor="register-password" className={FIELD_LABEL}>
+                      Password <RequiredMark />
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="register-password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Create a password"
+                        required
+                        autoComplete="new-password"
+                        aria-invalid={passwordError ? true : undefined}
+                        aria-describedby="register-password-hint"
+                        className={`${FIELD_BASE} pr-10 ${passwordError ? FIELD_INVALID : FIELD_IDLE}`}
+                        value={password}
+                        onChange={(e) => handlePasswordChange(e.target.value)}
+                      />
                       <button
                         type="button"
-                        onClick={() => {
-                          setAuthMode('login');
-                          setLoginInput(email);
-                          setErrorMessage('');
-                          setEmailError('');
-                        }}
-                        className="text-xs font-bold text-[#FF6900] hover:underline ml-2 whitespace-nowrap cursor-pointer"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-[#a82c00] p-1 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6900]/40 transition-colors cursor-pointer"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
                       >
-                        Sign in →
+                        {showPassword ? (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
                       </button>
                     </div>
-                  )}
-                </div>
+                    {passwordError ? (
+                      <p role="alert" className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{passwordError}</span>
+                      </p>
+                    ) : (
+                      <p id="register-password-hint" className={`${FIELD_HINT} mt-1.5`}>
+                        At least 8 characters, using both letters and numbers.
+                      </p>
+                    )}
+                  </div>
 
-                {/* Phone */}
-                <div className="mb-2.5">
-                  <label htmlFor="register-phone" className="block mb-1.5 text-xs font-semibold text-neutral-700">
-                    Phone number <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="register-phone"
-                    type="tel"
-                    placeholder="09XXXXXXXXX"
-                    required
-                    maxLength={13}
-                    className={`w-full py-3 px-3.5 rounded-xl border font-sans text-sm font-medium placeholder-neutral-400 focus:outline-none transition-all box-border ${
-                      phoneError
-                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500 focus:ring-4 focus:ring-red-500/10'
-                        : 'border-[#eadfd7] bg-[#fcfaf8] text-neutral-800 hover:border-[#d8b9a5] focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10'
-                    }`}
-                    value={phone}
-                    onChange={(e) => handlePhoneChange(e.target.value)}
-                    onBlur={handlePhoneBlur}
-                  />
-                  {phoneError && (
-                    <div className="mt-1.5 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start text-xs text-red-700">
-                      <svg className="w-4 h-4 text-red-500 shrink-0 mr-1.5 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <span>{phoneError}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Deliverable Area Dropdown (Strictly Within 8 km) */}
-                <div className="mb-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
-                    <label htmlFor="register-barangay" className="block text-xs font-semibold text-neutral-700">
-                      Barangay / Delivery Area (Max 8 km) <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  <div>
+                    <label htmlFor="register-confirm-password" className={FIELD_LABEL}>
+                      Confirm password <RequiredMark />
                     </label>
+                    <div className="relative">
+                      <input
+                        id="register-confirm-password"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        placeholder="Re-enter your password"
+                        required
+                        autoComplete="new-password"
+                        aria-invalid={confirmPasswordError ? true : undefined}
+                        aria-describedby="register-confirm-password-feedback"
+                        className={`${FIELD_BASE} pr-10 ${confirmPasswordError ? FIELD_INVALID : FIELD_IDLE}`}
+                        value={confirmPassword}
+                        onChange={(e) => handleConfirmPasswordChange(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-500 hover:text-[#a82c00] p-1 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF6900]/40 transition-colors cursor-pointer"
+                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showConfirmPassword ? (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                    {confirmPasswordError ? (
+                      <p id="register-confirm-password-feedback" role="alert" className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{confirmPasswordError}</span>
+                      </p>
+                    ) : confirmPassword && password ? (
+                      <p id="register-confirm-password-feedback" className="mt-1.5 flex items-start gap-1.5 text-[11px] font-semibold text-emerald-700">
+                        <CheckIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>Passwords match.</span>
+                      </p>
+                    ) : null}
+                  </div>
+                </FormSection>
+
+                <label className="mt-7 flex items-start gap-2.5 text-xs text-neutral-600 cursor-pointer font-medium leading-snug select-none">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => setTermsAccepted(e.target.checked)}
+                    className="accent-[#FF6900] w-4 h-4 rounded mt-px shrink-0 cursor-pointer"
+                    required
+                  />
+                  <span>
+                    I agree to the{' '}
                     <button
                       type="button"
-                      onClick={handleUseCurrentLocation}
-                      disabled={isFindingAddress}
-                      className="rounded-lg border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1.5"
+                      onClick={() => setShowTerms(true)}
+                      className="text-[#a82c00] hover:text-[#711d00] font-bold underline underline-offset-2 cursor-pointer"
                     >
-                      <svg className="w-3.5 h-3.5 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span>{isFindingAddress ? 'Detecting area…' : 'Detect closest area'}</span>
+                      Terms and Conditions
                     </button>
-                  </div>
-
-                  <select
-                    id="register-barangay"
-                    required
-                    value={selectedBarangayId}
-                    onChange={(e) => handleBarangaySelect(e.target.value)}
-                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border cursor-pointer"
-                  >
-                    <option value="">-- Choose your Barangay / Delivery Area --</option>
-                    {Object.entries(deliverableGroups).map(([groupName, barangays]) => (
-                      <optgroup key={groupName} label={groupName}>
-                        {barangays.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name} ({b.distanceKm === 0 ? 'Store Location' : `~${b.distanceKm} km`})
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Specific House / Unit / Street Details */}
-                <div className="mb-2.5">
-                  <label htmlFor="register-street" className="block text-xs font-semibold text-neutral-700 mb-1.5">
-                    House / Unit No., Street, Landmark <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="register-street"
-                    type="text"
-                    required
-                    placeholder="e.g. Phase 2 Package 4 Block 5 Lot 12, Langit Road"
-                    value={streetAddress}
-                    onChange={(e) => handleStreetAddressChange(e.target.value)}
-                    className="w-full py-2.5 px-3.5 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                  />
-
-                  {/* Coverage confirmation indicator */}
-                  {selectedBarangay && (
-                    <div className="mt-1.5 flex items-center gap-1.5 text-xs text-emerald-800 font-semibold bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/80">
-                      <span>✓</span>
-                      <span>
-                        Verified within 8 km delivery coverage • {selectedBarangay.name} ({selectedBarangay.distanceKm === 0 ? 'Store Flagship Hub' : `~${selectedBarangay.distanceKm} km away`})
-                      </span>
-                    </div>
-                  )}
-
-                  {addressLookupMessage && (
-                    <p role="status" className="text-xs text-neutral-500 mt-1">
-                      {addressLookupMessage}
-                    </p>
-                  )}
-
-                  <p className="text-[11px] text-neutral-400 mt-1.5 flex items-center gap-1">
-                    <span>📍</span>
-                    <span>Store: <strong>Barangay 176 (Bagong Silang), Caloocan</strong>. Deliveries restricted within 8 km.</span>
-                  </p>
-                </div>
-
-                {/* Password */}
-                <div className="mb-2.5 relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Password (min. 8 characters with letters & numbers)"
-                    required
-                    className={`w-full py-3 pl-3.5 pr-10 rounded-xl border ${passwordError ? 'border-red-500 focus:border-red-500' : 'border-[#eadfd7] focus:border-[#FF6900]'} font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border`}
-                    value={password}
-                    onChange={(e) => handlePasswordChange(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-[#a82c00] p-1 focus:outline-none transition-colors cursor-pointer"
-                    aria-label="Toggle password visibility"
-                  >
-                    {showPassword ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-                {passwordError && (
-                  <p className="text-[11px] text-red-500 font-semibold -mt-1 mb-2 text-left">
-                    {passwordError}
-                  </p>
-                )}
-
-                {/* Confirm Password */}
-                <div className="mb-2.5 relative">
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    placeholder="Confirm Password"
-                    required
-                    className="w-full py-3 pl-3.5 pr-10 rounded-xl border border-[#eadfd7] font-sans text-sm font-medium text-neutral-800 placeholder-neutral-400 bg-[#fcfaf8] hover:border-[#d8b9a5] focus:outline-none focus:border-[#FF6900] focus:bg-white focus:ring-4 focus:ring-[#FF6900]/10 transition-all box-border"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-[#a82c00] p-1 focus:outline-none transition-colors cursor-pointer"
-                    aria-label="Toggle password visibility"
-                  >
-                    {showConfirmPassword ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-
-                {/* Terms and Conditions */}
-                <div className="mb-4">
-                  <label className="flex items-start gap-2 text-[11px] text-neutral-600 cursor-pointer font-medium leading-tight select-none">
-                    <input
-                      type="checkbox"
-                      checked={termsAccepted}
-                      onChange={(e) => setTermsAccepted(e.target.checked)}
-                      className="accent-[#FF6900] rounded mt-0.5 cursor-pointer"
-                      required
-                    />
-                    <span>
-                      I agree to the{' '}
-                      <button
-                        type="button"
-                        onClick={() => setShowTerms(true)}
-                        className="text-[#a82c00] hover:text-[#711d00] font-bold underline cursor-pointer"
-                      >
-                        Terms and Conditions
-                      </button>
-                    </span>
-                  </label>
-                </div>
+                  </span>
+                </label>
               </div>
 
-              <div className="space-y-2.5 pt-1">
+              <div className="space-y-2.5 pt-5">
                 <button
                   type="submit"
                   disabled={isRegisterLoading}
                   className="w-full py-4 bg-orange-600 hover:bg-orange-700 text-white font-bold text-sm tracking-wide rounded-xl shadow-lg shadow-orange-600/25 transition-all duration-200 hover:-translate-y-0.5 active:scale-[0.99] cursor-pointer disabled:opacity-50"
                 >
-                  {isRegisterLoading ? 'CREATING ACCOUNT...' : 'Sign Up'}
+                  {isRegisterLoading ? 'Creating your account…' : 'Create account'}
                 </button>
 
-                <p className="text-center text-xs text-neutral-400 font-medium pt-2">
+                <p className="text-center text-xs text-neutral-500 font-medium pt-2">
                   Already have an account?{' '}
                   <button
                     type="button"
@@ -1776,256 +1833,309 @@ return () => {
             /* MOBILE: SIGNUP VIEW */
             <form onSubmit={handleRegister} className="flex-1 flex flex-col justify-between">
               <div className="space-y-3">
-                <div className="text-left mb-1">
-                  <h2 className="text-base font-bold text-neutral-900">Create Account</h2>
-                  <p className="text-[11px] text-neutral-400 font-medium">Join Seafudz ng Bayan to order fresh seafood</p>
+                <div className="text-left">
+                  <h2 className="text-base font-bold text-neutral-900">Create account</h2>
+                  <p className="text-[11px] text-neutral-500 font-medium mt-0.5">Join Seafudz ng Bayan to order fresh seafood</p>
+                  <p className="text-[10px] font-medium text-neutral-500 mt-1">
+                    <span className="font-bold text-[#a82c00]">*</span> Required field
+                  </p>
                 </div>
 
-                {/* Name inputs */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label htmlFor="mobile-first-name" className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                      First Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
-                    <input
-                      id="mobile-first-name"
-                      type="text"
-                      placeholder="First Name"
-                      required
-                      pattern="[^0-9]*"
-                      onKeyDown={(e) => {
-                        if (/[0-9]/.test(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                      value={firstName}
-                      onChange={(e) => handleFirstNameChange(e.target.value)}
-                      className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                    />
+                <FormSection title="Your details" className="text-left">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label htmlFor="mobile-first-name" className={MFIELD_LABEL}>
+                        First name <RequiredMark />
+                      </label>
+                      <input
+                        id="mobile-first-name"
+                        type="text"
+                        placeholder="Juan"
+                        required
+                        pattern="[^0-9]*"
+                        autoComplete="given-name"
+                        onKeyDown={(e) => {
+                          if (/[0-9]/.test(e.key)) {
+                            e.preventDefault();
+                          }
+                        }}
+                        value={firstName}
+                        onChange={(e) => handleFirstNameChange(e.target.value)}
+                        className={`${MFIELD_BASE} ${MFIELD_IDLE}`}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="mobile-last-name" className={MFIELD_LABEL}>
+                        Last name <RequiredMark />
+                      </label>
+                      <input
+                        id="mobile-last-name"
+                        type="text"
+                        placeholder="Dela Cruz"
+                        required
+                        pattern="[^0-9]*"
+                        autoComplete="family-name"
+                        onKeyDown={(e) => {
+                          if (/[0-9]/.test(e.key)) {
+                            e.preventDefault();
+                          }
+                        }}
+                        value={lastName}
+                        onChange={(e) => handleLastNameChange(e.target.value)}
+                        className={`${MFIELD_BASE} ${MFIELD_IDLE}`}
+                      />
+                    </div>
                   </div>
+
                   <div>
-                    <label htmlFor="mobile-last-name" className="block text-[11px] font-semibold text-neutral-700 mb-1">
-                      Last Name <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label htmlFor="mobile-username" className="block text-[11px] font-semibold text-neutral-700">
+                        Username <RequiredMark />
+                      </label>
+                      {isUsernameEdited && suggestUsername(firstName, lastName) && (
+                        <button
+                          type="button"
+                          onClick={resetUsernameToSuggestion}
+                          className="text-[10px] font-bold text-[#a82c00] hover:underline cursor-pointer"
+                        >
+                          Use suggestion
+                        </button>
+                      )}
+                    </div>
                     <input
-                      id="mobile-last-name"
+                      id="mobile-username"
                       type="text"
-                      placeholder="Last Name"
                       required
-                      pattern="[^0-9]*"
-                      onKeyDown={(e) => {
-                        if (/[0-9]/.test(e.key)) {
-                          e.preventDefault();
-                        }
-                      }}
-                      value={lastName}
-                      onChange={(e) => handleLastNameChange(e.target.value)}
-                      className="w-full h-11 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
+                      maxLength={30}
+                      autoComplete="username"
+                      placeholder="Suggested from your name"
+                      value={username}
+                      onChange={(e) => handleUsernameChange(e.target.value)}
+                      aria-invalid={usernameError ? true : undefined}
+                      aria-describedby="mobile-username-hint"
+                      className={`${MFIELD_BASE} ${usernameError ? MFIELD_INVALID : MFIELD_IDLE}`}
                     />
-                  </div>
-                </div>
-
-                {/* Username */}
-                <input
-                  type="text"
-                  placeholder="Username (Auto)"
-                  value={username}
-                  readOnly
-                  className="w-full h-10 px-3.5 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-500 bg-neutral-50 cursor-not-allowed box-border"
-                />
-
-                {/* Email */}
-                <div>
-                  <div className="relative">
-                    <input
-                      type="email"
-                      placeholder="Email Address"
-                      required
-                      value={email}
-                      onChange={(e) => handleEmailChange(e.target.value)}
-                      onBlur={() => checkEmailAvailability(email)}
-                      className={`w-full h-11 px-3.5 rounded-xl border text-xs font-medium placeholder-neutral-400 focus:outline-none box-border ${
-                        emailError
-                          ? 'border-red-400 bg-red-50 text-red-900 focus:ring-2 focus:ring-red-500/10'
-                          : 'border-neutral-200 bg-white text-neutral-800 focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10'
-                      }`}
-                    />
-                    {isCheckingEmail && (
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
+                    {usernameError ? (
+                      <p id="mobile-username-hint" role="alert" className="mt-1 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{usernameError}</span>
+                      </p>
+                    ) : (
+                      <p id="mobile-username-hint" className={`${MFIELD_HINT} mt-1`}>
+                        We suggest one from your name — change it to whatever you like. You sign in with your email.
+                      </p>
                     )}
                   </div>
-                  {emailError && (
-                    <div className="mt-1 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between text-[11px] text-red-700">
-                      <span>⚠️ {emailError}</span>
+
+                  <div>
+                    <label htmlFor="mobile-email" className={MFIELD_LABEL}>
+                      Email address <RequiredMark />
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="mobile-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        required
+                        autoComplete="email"
+                        aria-invalid={emailError ? true : undefined}
+                        value={email}
+                        onChange={(e) => handleEmailChange(e.target.value)}
+                        onBlur={() => checkEmailAvailability(email)}
+                        className={`${MFIELD_BASE} ${emailError ? MFIELD_INVALID : MFIELD_IDLE}`}
+                      />
+                      {isCheckingEmail && (
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 inline-block w-3.5 h-3.5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></span>
+                      )}
+                    </div>
+                    {emailError && (
+                      <div role="alert" className="mt-1 p-2 rounded-lg bg-red-50 border border-red-200 flex items-start justify-between gap-1.5 text-[11px] text-red-700">
+                        <span className="flex items-start gap-1.5">
+                          <AlertIcon className="w-3.5 h-3.5 text-red-500 shrink-0 mt-px" />
+                          <span>{emailError}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuthMode('login');
+                            setLoginInput(email);
+                            setErrorMessage('');
+                            setEmailError('');
+                          }}
+                          className="text-[11px] font-bold text-[#a82c00] hover:underline whitespace-nowrap"
+                        >
+                          Sign in →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="mobile-phone" className={MFIELD_LABEL}>
+                      Phone number <RequiredMark />
+                    </label>
+                    <input
+                      id="mobile-phone"
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="09171234567"
+                      required
+                      maxLength={13}
+                      autoComplete="tel"
+                      aria-invalid={phoneError ? true : undefined}
+                      value={phone}
+                      onChange={(e) => handlePhoneChange(e.target.value)}
+                      onBlur={handlePhoneBlur}
+                      className={`${MFIELD_BASE} ${phoneError ? MFIELD_INVALID : MFIELD_IDLE}`}
+                    />
+                    {phoneError && (
+                      <p role="alert" className="mt-1 flex items-start gap-1.5 text-[11px] text-red-600 font-medium">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{phoneError}</span>
+                      </p>
+                    )}
+                  </div>
+                </FormSection>
+
+                <FormSection title="Where we deliver" className="mt-6 text-left">
+                  <div>
+                    <label htmlFor="mobile-register-barangay" className={MFIELD_LABEL}>
+                      Barangay / Delivery area <RequiredMark />
+                    </label>
+                    <BarangaySelect
+                      id="mobile-register-barangay"
+                      variant="warmCompact"
+                      value={selectedBarangayId}
+                      onChange={handleBarangaySelect}
+                      placeholder="Search or choose your barangay"
+                    />
+                    {selectedBarangay ? (
+                      <p className="mt-1 flex items-start gap-1.5 text-[10px] font-semibold leading-snug text-emerald-700">
+                        <CheckIcon className="w-3 h-3 shrink-0 mt-px" />
+                        <span>
+                          We deliver here
+                          {selectedBarangay.distanceKm === 0
+                            ? ' — this is our store location.'
+                            : ` — about ${selectedBarangay.distanceKm.toFixed(1)} km from our store.`}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className={`${MFIELD_HINT} mt-1`}>
+                        We deliver within <strong className="font-semibold text-neutral-600">8 km</strong> of our store in Barangay 176 (Bagong Silang), Caloocan. Only areas inside that range are listed.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="mobile-register-street" className={MFIELD_LABEL}>
+                      House / unit no., street, landmark <RequiredMark />
+                    </label>
+                    <input
+                      id="mobile-register-street"
+                      type="text"
+                      required
+                      autoComplete="address-line1"
+                      placeholder="Blk 5 Lot 12, Phase 2, Langit Road"
+                      value={streetAddress}
+                      onChange={(e) => handleStreetAddressChange(e.target.value)}
+                      className={`${MFIELD_BASE} ${MFIELD_IDLE}`}
+                    />
+                    <p className={`${MFIELD_HINT} mt-1`}>
+                      Your rider delivers to this exact spot, so keep it complete.
+                    </p>
+                  </div>
+                </FormSection>
+
+                <FormSection title="Your login" className="mt-6 text-left">
+                  <div>
+                    <label htmlFor="mobile-register-password" className={MFIELD_LABEL}>
+                      Password <RequiredMark />
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="mobile-register-password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="Create a password"
+                        required
+                        autoComplete="new-password"
+                        aria-invalid={passwordError ? true : undefined}
+                        aria-describedby="mobile-password-hint"
+                        value={password}
+                        onChange={(e) => handlePasswordChange(e.target.value)}
+                        className={`${MFIELD_BASE} pr-10 ${passwordError ? MFIELD_INVALID : MFIELD_IDLE}`}
+                      />
                       <button
                         type="button"
-                        onClick={() => {
-                          setAuthMode('login');
-                          setLoginInput(email);
-                          setErrorMessage('');
-                          setEmailError('');
-                        }}
-                        className="text-[11px] font-bold text-[#FF6900] hover:underline ml-1 whitespace-nowrap"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 p-1 rounded-md cursor-pointer"
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
                       >
-                        Sign in →
+                        {showPassword ? (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                        )}
                       </button>
                     </div>
-                  )}
-                </div>
+                    {passwordError ? (
+                      <p role="alert" className="mt-1 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{passwordError}</span>
+                      </p>
+                    ) : (
+                      <p id="mobile-password-hint" className={`${MFIELD_HINT} mt-1`}>
+                        At least 8 characters, using both letters and numbers.
+                      </p>
+                    )}
+                  </div>
 
-                {/* Phone */}
-                {/* Phone */}
-                <div>
-                  <input
-                    type="tel"
-                    placeholder="Phone number (e.g. 09XXXXXXXXX)"
-                    required
-                    maxLength={13}
-                    value={phone}
-                    onChange={(e) => handlePhoneChange(e.target.value)}
-                    onBlur={handlePhoneBlur}
-                    className={`w-full h-11 px-3.5 rounded-xl border text-xs font-medium placeholder-neutral-400 bg-white focus:outline-none box-border ${
-                      phoneError
-                        ? 'border-red-400 bg-red-50/50 text-red-900 focus:border-red-500'
-                        : 'border-neutral-200 text-neutral-800 focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10'
-                    }`}
-                  />
-                  {phoneError && (
-                    <p className="mt-1 text-[11px] text-red-600 font-medium">{phoneError}</p>
-                  )}
-                </div>
-
-                {/* Deliverable Area Dropdown (Strictly Within 8 km) */}
-                <div className="space-y-1.5 text-left">
-                  <div className="flex flex-wrap items-center justify-between gap-1">
-                    <label htmlFor="mobile-register-barangay" className="text-xs font-bold text-neutral-800">
-                      Barangay / Area (Max 8 km) <span className="text-[#a82c00]" aria-hidden="true">*</span>
+                  <div>
+                    <label htmlFor="mobile-register-confirm-password" className={MFIELD_LABEL}>
+                      Confirm password <RequiredMark />
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleUseCurrentLocation}
-                      disabled={isFindingAddress}
-                      className="rounded-lg border border-orange-200 bg-orange-50 px-2 py-0.5 text-[10px] font-bold text-orange-700 transition-colors hover:bg-orange-100 disabled:cursor-wait disabled:opacity-60 cursor-pointer flex items-center gap-1"
-                    >
-                      <svg className="w-3 h-3 text-orange-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
-                      <span>{isFindingAddress ? 'Detecting…' : 'Detect closest'}</span>
-                    </button>
-                  </div>
-
-                  <select
-                    id="mobile-register-barangay"
-                    required
-                    value={selectedBarangayId}
-                    onChange={(e) => handleBarangaySelect(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border cursor-pointer"
-                  >
-                    <option value="">-- Choose Barangay / Area --</option>
-                    {Object.entries(deliverableGroups).map(([groupName, barangays]) => (
-                      <optgroup key={groupName} label={groupName}>
-                        {barangays.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name} ({b.distanceKm === 0 ? 'Store Location' : `~${b.distanceKm} km`})
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Specific House / Unit / Street */}
-                <div className="space-y-1.5 text-left">
-                  <label htmlFor="mobile-register-street" className="text-xs font-bold text-neutral-800">
-                    House / Unit No., Street, Landmark <span className="text-[#a82c00]" aria-hidden="true">*</span>
-                  </label>
-                  <input
-                    id="mobile-register-street"
-                    type="text"
-                    required
-                    placeholder="e.g. Phase 2 Package 4 Block 5 Lot 12, Langit Road"
-                    value={streetAddress}
-                    onChange={(e) => handleStreetAddressChange(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                  />
-
-                  {selectedBarangay && (
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-emerald-800 font-semibold bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200/80">
-                      <span>✓</span>
-                      <span>
-                        Within 8 km • {selectedBarangay.name} ({selectedBarangay.distanceKm === 0 ? 'Store Hub' : `~${selectedBarangay.distanceKm} km`})
-                      </span>
+                    <div className="relative">
+                      <input
+                        id="mobile-register-confirm-password"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        placeholder="Re-enter your password"
+                        required
+                        autoComplete="new-password"
+                        aria-invalid={confirmPasswordError ? true : undefined}
+                        aria-describedby="mobile-confirm-password-feedback"
+                        value={confirmPassword}
+                        onChange={(e) => handleConfirmPasswordChange(e.target.value)}
+                        className={`${MFIELD_BASE} pr-10 ${confirmPasswordError ? MFIELD_INVALID : MFIELD_IDLE}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-500 p-1 rounded-md cursor-pointer"
+                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showConfirmPassword ? (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                        )}
+                      </button>
                     </div>
-                  )}
-
-                  {addressLookupMessage && (
-                    <p role="status" className="text-[10px] text-neutral-500">
-                      {addressLookupMessage}
-                    </p>
-                  )}
-
-                  <p className="text-[10px] text-neutral-400 mt-0.5">
-                    📍 Store Origin: <strong>Barangay 176 (Bagong Silang), Caloocan</strong> (Max 8 km).
-                  </p>
-                </div>
-
-                {/* Passwords */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="Password (8+ chars, letters & nums)"
-                      required
-                      value={password}
-                      onChange={(e) => handlePasswordChange(e.target.value)}
-                      className={`w-full h-11 pl-3 pr-8 rounded-xl border ${passwordError ? 'border-red-500 focus:border-red-500' : 'border-neutral-200 focus:border-[#FF6900]'} text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500/10 box-border`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 p-1"
-                      aria-label="Toggle password"
-                    >
-                      {showPassword ? (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                      )}
-                    </button>
+                    {confirmPasswordError ? (
+                      <p id="mobile-confirm-password-feedback" role="alert" className="mt-1 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+                        <AlertIcon className="w-3.5 h-3.5 shrink-0 mt-px" />
+                        <span>{confirmPasswordError}</span>
+                      </p>
+                    ) : confirmPassword && password ? (
+                      <p id="mobile-confirm-password-feedback" className="mt-1 flex items-start gap-1.5 text-[10px] font-semibold text-emerald-700">
+                        <CheckIcon className="w-3 h-3 shrink-0 mt-px" />
+                        <span>Passwords match.</span>
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="relative">
-                    <input
-                      type={showConfirmPassword ? 'text' : 'password'}
-                      placeholder="Confirm"
-                      required
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      className="w-full h-11 pl-3 pr-8 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-800 placeholder-neutral-400 bg-white focus:outline-none focus:border-[#FF6900] focus:ring-2 focus:ring-orange-500/10 box-border"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 p-1"
-                      aria-label="Toggle password"
-                    >
-                      {showConfirmPassword ? (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858-5.908a10.03 10.03 0 013.122-.563c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m-6.165-4.131a3 3 0 11-4.243-4.243M3 3l18 18" /></svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                      )}
-                    </button>
-                  </div>
-                </div>
-                {passwordError && (
-                  <p className="text-[11px] text-red-500 font-semibold mt-1 mb-1 text-left">
-                    {passwordError}
-                  </p>
-                )}
+                </FormSection>
 
                 {/* Agreement checkbox */}
-                <div>
-                  <label className="flex items-start gap-2 cursor-pointer select-none text-left">
+                <div className="pt-1">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none text-left">
                     <input
                       type="checkbox"
                       checked={termsAccepted}
@@ -2033,7 +2143,7 @@ return () => {
                       className="mt-0.5 w-4 h-4 rounded border-neutral-300 text-[#FF6900] focus:ring-orange-500/20 cursor-pointer accent-[#FF6900]"
                       required
                     />
-                    <span className="text-[11px] text-neutral-500 leading-tight">
+                    <span className="text-[11px] text-neutral-600 leading-snug">
                       I agree to the{' '}
                       <button
                         type="button"
@@ -2043,11 +2153,10 @@ return () => {
                           setTermsActiveTab('terms');
                           setShowTerms(true);
                         }}
-                        className="text-[#FF6900] font-bold hover:underline cursor-pointer"
+                        className="text-[#a82c00] font-bold underline underline-offset-2 hover:text-[#711d00] cursor-pointer"
                       >
-                        User Agreement
-                      </button>{' '}
-                      and terms.
+                        Terms and Conditions
+                      </button>
                     </span>
                   </label>
                 </div>
@@ -2066,15 +2175,15 @@ return () => {
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      Creating Account...
+                      Creating your account…
                     </span>
                   ) : (
-                    'Sign Up'
+                    'Create account'
                   )}
                 </button>
 
                 <div className="text-center pt-0.5">
-                  <p className="text-xs text-neutral-400 font-medium">
+                  <p className="text-xs text-neutral-500 font-medium">
                     Already have an account?{' '}
                     <button
                       type="button"
@@ -2111,7 +2220,7 @@ return () => {
                 <h2 className="text-base sm:text-lg font-bold text-neutral-900 tracking-tight">
                   {termsActiveTab === 'terms' ? 'User Agreement' : 'Privacy Policy'}
                 </h2>
-                <p className="text-[11px] text-neutral-400 font-medium mt-0.5">
+                <p className="text-[11px] text-neutral-500 font-medium mt-0.5">
                   Seafudz ng Bayan • Updated October 2026
                 </p>
               </div>

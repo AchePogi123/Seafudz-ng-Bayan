@@ -24,7 +24,7 @@ interface MagazinePromoConfig {
 const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   {
     id: 'mixed-seafoods-bowl-699',
-    badge: '🔥 #1 BESTSELLER',
+    badge: 'No. 1 Bestseller',
     subheading: 'The Iconic Coastal Cajun Boil',
     tastingNotes: 'An abundance of wild mud crabs, plump tiger prawns, and sea mussels drenched in our signature garlic-cajun reduction. Cooked fresh upon order with sweet Batangas corn.',
     serves: '2 to 3 Persons',
@@ -33,7 +33,7 @@ const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   },
   {
     id: 'all-shrimp-tray-1099',
-    badge: '⭐ CHEF’S SIGNATURE',
+    badge: 'Chef’s Signature',
     subheading: 'Pure Tiger Prawn Indulgence',
     tastingNotes: 'Over a kilogram of succulent tiger prawns bathed in golden clarified butter and minced native garlic. Designed specifically for gatherings and shrimp lovers.',
     serves: '4 to 6 Persons',
@@ -42,7 +42,7 @@ const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   },
   {
     id: 'mixed-seafoods-tray-1199',
-    badge: '👑 THE GRAND FIESTA BILAO',
+    badge: 'The Grand Fiesta Bilao',
     subheading: 'The Ultimate Filipino Celebration Platter',
     tastingNotes: 'Our grandest presentation on an authentic woven bamboo bilao. Loaded to the brim with giant crabs, jumbo prawns, clams, and sweet corn. The undisputed centerpiece for any feast.',
     serves: '6 to 8 Persons',
@@ -51,7 +51,7 @@ const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   },
   {
     id: 'all-shrimp-alacarte-199',
-    badge: '🦐 SOLO DELICACY',
+    badge: 'Solo Delicacy',
     subheading: 'Gourmet Sautéed Prawns for One',
     tastingNotes: 'A satisfying solo portion of succulent prawns tossed vigorously in our savory garlic butter glaze. Perfect for lunch pairings or quick late-night seafood cravings.',
     serves: 'Solo Delight (1 Person)',
@@ -60,7 +60,7 @@ const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   },
   {
     id: 'cucumber-lemonade-big-50',
-    badge: '🍋 ARTISAN REFRESHER',
+    badge: 'Artisan Refresher',
     subheading: 'Cold-Pressed Citrus Palate Cleanser',
     tastingNotes: 'Crisp, garden-fresh cucumber slices blended with freshly squeezed lemons and cane nectar. Crafted intentionally to balance out the rich, savory garlic sauces of our seafood.',
     serves: '22oz Jumbo Cup',
@@ -69,7 +69,7 @@ const MAGAZINE_PROMOS: MagazinePromoConfig[] = [
   },
   {
     id: 'chicken-pastil-35',
-    badge: '⚡ SOUTHERN HERITAGE',
+    badge: 'Southern Heritage',
     subheading: 'Authentic Mindanao-Style Kagikit',
     tastingNotes: 'Tender shredded chicken slow-simmered for four hours in native ginger, garlic, and annatto aromatics. A hearty, flavorful staple wrapped hot and ready to savor.',
     serves: 'Hearty Solo Meal',
@@ -620,252 +620,191 @@ export const LandingPage: React.FC = () => {
         </div>
       </section>
 
-      {/* 5. SLIDEABLE MAGAZINE & BROCHURE SHOWCASE */}
+      {/* 5. THE SEAFOOD CHRONICLE — editorial spread, one signature plate at a time */}
       <section
         id="featured"
-        className="py-20 bg-slate-50 border-t border-slate-200"
+        className="py-20 sm:py-24 bg-white border-t border-slate-200"
         onMouseEnter={() => setIsSlidePaused(true)}
         onMouseLeave={() => setIsSlidePaused(false)}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {/* Magazine Editorial Header */}
-          <div className="text-center max-w-3xl mx-auto mb-10">
-            <span className="text-xs font-bold uppercase tracking-widest text-orange-700 bg-orange-100 px-3.5 py-1.5 rounded-full inline-block mb-3">
-              Culinary Magazine &amp; Brochure Showcase
-            </span>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black text-slate-900 tracking-tight leading-tight">
+          <div className="max-w-2xl mb-10 sm:mb-14">
+            <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 tracking-[-0.035em] leading-[0.95] text-balance">
               The Seafood Chronicle
             </h2>
-            <p className="text-sm sm:text-base text-slate-600 mt-3 leading-relaxed">
-              Flip through our chef-curated seafood platters, giant cajun boils, and refreshing accompaniments. Prepared fresh daily with dawn-sourced coastal catches.
+            <p className="mt-5 text-base sm:text-lg text-slate-600 leading-relaxed">
+              Six plates we are known for, photographed as they leave the kitchen. Dawn-sourced
+              coastal catch, boiled to order, served the way we would serve our own table.
             </p>
           </div>
 
-          {/* Main Magazine Slide Spread */}
           {magazineItems.length > 0 && (() => {
             const current = magazineItems[activeSlide] || magazineItems[0];
             return (
               <div
                 onTouchStart={handleTouchStart}
                 onTouchEnd={handleTouchEnd}
-                className="relative bg-white rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden transition-all duration-300"
+                className="overflow-hidden rounded-[28px] bg-[#0d1520] shadow-[0_44px_90px_-40px_rgba(15,23,42,0.55)] ring-1 ring-slate-900/10"
               >
-                <div className="grid grid-cols-1 lg:grid-cols-12 items-stretch">
-                  {/* Left Column: Big Picture Magazine Stage (Col 7) */}
-                  <div className="lg:col-span-7 relative min-h-[360px] sm:min-h-[460px] lg:min-h-[540px] bg-gradient-to-br from-amber-50/70 via-orange-50/40 to-slate-100 flex items-center justify-center p-6 sm:p-12 overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-100">
-                    {/* Subtle warm magazine radial ambient background */}
-                    <div className="absolute inset-0 bg-[radial-gradient(#ea580c_1px,transparent_1px)] [background-size:24px_24px] opacity-10 pointer-events-none" />
+                {/* How long this plate stays on screen */}
+                <div className="h-[3px] w-full bg-white/10">
+                  <div
+                    key={activeSlide}
+                    data-paused={isSlidePaused}
+                    className="sfz-spread-timer h-full w-full bg-orange-500"
+                  />
+                </div>
 
-                    {/* Giant Product Photo */}
-                    <div className="relative z-10 w-full h-full max-h-[460px] flex items-center justify-center">
+                <div className="grid grid-cols-1 lg:grid-cols-[1.12fr_1fr]">
+                  {/* The plate. Source photography is small (roughly 300px), so the
+                      sharp copy is never upscaled past its own resolution; a blurred,
+                      over-scaled copy of the same frame supplies the ground colour. */}
+                  <div className="relative min-h-[320px] sm:min-h-[400px] lg:min-h-[520px] overflow-hidden bg-[#0d1520]">
+                    <ProductImage
+                      key={`ambient-${current.id}`}
+                      src={current.image}
+                      fallbackSrc={current.bundledImage}
+                      alt=""
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-50 blur-3xl saturate-150 select-none"
+                    />
+                    <div className="pointer-events-none absolute inset-0 bg-[#0d1520]/40" />
+
+                    <div className="relative z-10 flex h-full items-center justify-center p-7 sm:p-9 lg:p-10">
                       <ProductImage
+                        key={current.id}
                         src={current.image}
                         fallbackSrc={current.bundledImage}
                         alt={current.name}
-                        className="w-full h-full max-h-[440px] object-contain drop-shadow-2xl transition-all duration-700 transform hover:scale-105 select-none"
+                        className="sfz-spread-photo max-h-[250px] sm:max-h-[320px] lg:max-h-[400px] w-full max-w-[460px] rounded-2xl object-contain shadow-[0_34px_64px_-22px_rgba(0,0,0,0.8)] select-none"
                       />
                     </div>
 
-                    {/* Floating Magazine Badges */}
-                    <div className="absolute top-4 left-4 z-20">
-                      <span className="bg-white/95 backdrop-blur-md text-orange-700 border border-orange-200/90 text-xs font-black uppercase tracking-wider px-3.5 py-1.5 rounded-full shadow-md">
-                        {current.badge}
-                      </span>
-                    </div>
+                    {/* Scrim keeps the tag legible over a bright photograph */}
+                    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-gradient-to-b from-[#0d1520]/70 to-transparent" />
 
-                    <div className="absolute top-4 right-4 z-20">
-                      <span className="bg-gradient-to-r from-orange-600 to-amber-600 text-white font-black text-sm sm:text-base px-4 py-1.5 rounded-full shadow-lg">
-                        ₱{current.effectivePrice.toLocaleString()}
-                      </span>
-                    </div>
+                    <span className="absolute left-5 top-5 z-20 rounded-full bg-white/95 px-3.5 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-[#9a3412] shadow-lg shadow-slate-950/25">
+                      {current.badge}
+                    </span>
 
-                    <div className="absolute bottom-4 left-4 z-20 hidden sm:inline-flex items-center gap-2 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1.5 rounded-full shadow-md">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                      <span>100% DAWN CATCH • STEAMED PIPING HOT</span>
-                    </div>
-
-                    {/* Left & Right Slide Navigation Arrows */}
                     <button
                       onClick={prevSlide}
-                      aria-label="Previous Magazine Page"
-                      className="absolute left-3 sm:left-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-orange-600 text-slate-800 hover:text-white shadow-xl flex items-center justify-center transition-all cursor-pointer z-30 active:scale-90 border border-slate-200/80"
+                      aria-label="Previous plate"
+                      className="absolute left-4 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-900 shadow-lg shadow-slate-950/25 transition-all hover:bg-white active:scale-90 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d1520]"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7" />
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                       </svg>
                     </button>
 
                     <button
                       onClick={nextSlide}
-                      aria-label="Next Magazine Page"
-                      className="absolute right-3 sm:right-5 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/95 hover:bg-orange-600 text-slate-800 hover:text-white shadow-xl flex items-center justify-center transition-all cursor-pointer z-30 active:scale-90 border border-slate-200/80"
+                      aria-label="Next plate"
+                      className="absolute right-4 top-1/2 z-30 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-slate-900 shadow-lg shadow-slate-950/25 transition-all hover:bg-white active:scale-90 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d1520]"
                     >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                       </svg>
                     </button>
                   </div>
 
-                  {/* Right Column: Editorial Article & Specifications (Col 5) */}
-                  <div className="lg:col-span-5 p-6 sm:p-9 lg:p-10 flex flex-col justify-between text-left bg-white">
-                    <div>
-                      {/* Top Editorial Ticker */}
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
-                        <span className="text-[11px] font-black uppercase tracking-widest text-slate-600">
-                          BROCHURE SPREAD 0{activeSlide + 1} / 0{totalSlides}
-                        </span>
-                        <span className="text-[11px] font-extrabold uppercase tracking-wider text-orange-600 bg-orange-50 px-2.5 py-0.5 rounded-md">
-                          {current.category}
-                        </span>
-                      </div>
-
-                      {/* Main Title & Subtitle */}
-                      <h3 className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-900 tracking-tight leading-tight">
-                        {current.name}
-                      </h3>
-                      <p className="text-xs sm:text-sm font-extrabold uppercase tracking-widest text-orange-600 mt-1">
-                        {current.subheading}
+                  {/* The write-up */}
+                  <div className="flex flex-col justify-between p-7 sm:p-10 lg:p-12">
+                    <div key={current.id} className="sfz-spread-copy">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-orange-400">
+                        {current.category}
                       </p>
 
-                      {/* Tasting Notes / Magazine Narrative */}
-                      <div className="mt-4 pt-3 border-t border-slate-100">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-600 block mb-1">
-                          Chef's Tasting Notes &amp; Preparation
-                        </span>
-                        <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-normal">
-                          {current.tastingNotes}
+                      <div className="mt-3">
+                        <h3 className="text-[2rem] sm:text-[2.6rem] lg:text-[2.9rem] font-black leading-[0.98] tracking-[-0.035em] text-white text-balance">
+                          {current.name}
+                        </h3>
+                        <p className="mt-2.5 text-base sm:text-lg font-medium leading-snug text-orange-200/90">
+                          {current.subheading}
                         </p>
                       </div>
 
-                      {/* Spec Sheet Grid */}
-                      <div className="grid grid-cols-2 gap-3 mt-5 pt-4 border-t border-slate-100">
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
-                            Portion Serving
-                          </span>
-                          <span className="text-xs font-black text-slate-800 mt-0.5 block">
-                            {current.serves}
-                          </span>
-                        </div>
-                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
-                            Signature Glaze
-                          </span>
-                          <span className="text-xs font-black text-slate-800 mt-0.5 block">
-                            {current.flavorProfile}
-                          </span>
-                        </div>
-                      </div>
+                      <p className="mt-6 text-sm sm:text-[15px] leading-relaxed text-slate-300">
+                        {current.tastingNotes}
+                      </p>
 
-                      {/* Ingredient Highlights Tags */}
-                      <div className="mt-4 flex flex-wrap gap-1.5">
-                        {current.highlights.map((tag) => (
-                          <span
-                            key={tag}
-                            className="bg-orange-50 text-orange-800 border border-orange-100 text-[11px] font-bold px-2.5 py-1 rounded-lg"
-                          >
-                            ✓ {tag}
-                          </span>
-                        ))}
-                      </div>
+                      <dl className="mt-7 border-t border-white/10 text-sm">
+                        <div className="flex flex-col gap-1 border-b border-white/10 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6">
+                          <dt className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Serves</dt>
+                          <dd className="font-semibold text-white sm:text-right">{current.serves}</dd>
+                        </div>
+                        <div className="flex flex-col gap-1 border-b border-white/10 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6">
+                          <dt className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Flavor</dt>
+                          <dd className="font-semibold text-white sm:text-right">{current.flavorProfile}</dd>
+                        </div>
+                        <div className="flex flex-col gap-1 py-3 sm:flex-row sm:items-baseline sm:justify-between sm:gap-6">
+                          <dt className="shrink-0 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Highlights</dt>
+                          <dd className="font-medium leading-relaxed text-slate-300 sm:text-right">
+                            {current.highlights.join(' · ')}
+                          </dd>
+                        </div>
+                      </dl>
                     </div>
 
-                    {/* Bottom CTA & Price Section */}
-                    <div className="pt-6 mt-6 border-t border-slate-100 flex items-center justify-between gap-4">
+                    <div className="mt-9 flex flex-wrap items-end justify-between gap-5 border-t border-white/10 pt-7">
                       <div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 block">
-                          Menu Price
-                        </span>
-                        <span className="text-2xl sm:text-3xl font-black text-orange-600">
+                        <p className="text-4xl sm:text-5xl font-black tracking-[-0.03em] text-white tabular-nums">
                           ₱{current.effectivePrice.toLocaleString()}
-                        </span>
+                        </p>
+                        <p className="mt-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                          Dawn catch · Steamed piping hot
+                        </p>
                       </div>
 
                       <button
                         onClick={() => handleFeaturedOrder(current)}
-                        className="inline-flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white font-bold text-xs sm:text-sm px-6 py-3.5 rounded-xl shadow-md hover:shadow-lg transition-all active:scale-95 cursor-pointer uppercase tracking-wider"
+                        className="group inline-flex items-center gap-2.5 rounded-full bg-orange-500 px-7 py-4 text-sm font-bold uppercase tracking-[0.1em] text-white shadow-lg shadow-orange-900/40 transition-all hover:bg-orange-400 active:scale-95 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0d1520]"
                       >
-                        <span>Order This Dish</span>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                        <span>Order this dish</span>
+                        <svg className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                         </svg>
                       </button>
                     </div>
                   </div>
                 </div>
-
-                {/* Slide Pagination Bar */}
-                <div className="bg-slate-50 border-t border-slate-100 px-6 py-3 flex items-center justify-between flex-wrap gap-3">
-                  <div className="flex items-center gap-2">
-                    {magazineItems.map((_, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => goToSlide(idx)}
-                        aria-label={`Go to slide ${idx + 1}`}
-                        className={`h-2.5 rounded-full transition-all cursor-pointer ${
-                          activeSlide === idx
-                            ? 'w-8 bg-orange-600'
-                            : 'w-2.5 bg-slate-300 hover:bg-slate-400'
-                        }`}
-                      />
-                    ))}
-                  </div>
-
-                  <span className="text-xs text-slate-600 font-semibold">
-                    Swipe or use arrows to flip • Pauses on hover
-                  </span>
-                </div>
               </div>
             );
           })()}
 
-          {/* Slideable Thumbnail Selector Strip (Brochure Deck) */}
-          <div className="mt-8">
-            <div className="flex items-center justify-between mb-3 px-1">
-              <span className="text-xs font-black uppercase tracking-widest text-slate-600">
-                Flip to Any Signature Item
-              </span>
-              <span className="text-xs text-orange-600 font-bold">
-                {magazineItems.length} Featured Items
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-              {magazineItems.map((item, idx) => {
-                const isActive = activeSlide === idx;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => goToSlide(idx)}
-                    className={`p-3 rounded-2xl text-left transition-all duration-300 cursor-pointer flex flex-col justify-between ${
-                      isActive
-                        ? 'bg-white border-2 border-orange-500 shadow-lg scale-102 ring-2 ring-orange-200'
-                        : 'bg-white/80 hover:bg-white border border-slate-200/90 hover:border-orange-300 shadow-xs'
-                    }`}
-                  >
-                    <div className="w-full aspect-square rounded-xl bg-slate-50 flex items-center justify-center p-2 mb-2 overflow-hidden">
-                      <ProductImage
-                        src={item.image}
-                        fallbackSrc={item.bundledImage}
-                        alt={item.name}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-black uppercase text-orange-600 block truncate">
-                        {item.badge}
-                      </span>
-                      <h4 className="text-xs font-bold text-slate-800 truncate mt-0.5">
-                        {item.name}
-                      </h4>
-                      <span className="text-xs font-black text-slate-700 block mt-1">
-                        ₱{item.effectivePrice.toLocaleString()}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+          {/* Jump to any plate */}
+          <div className="mt-6 grid grid-cols-3 gap-2.5 sm:gap-3 lg:grid-cols-6">
+            {magazineItems.map((item, idx) => {
+              const isActive = activeSlide === idx;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => goToSlide(idx)}
+                  aria-label={`Show ${item.name}`}
+                  aria-current={isActive ? 'true' : undefined}
+                  className={`group relative overflow-hidden rounded-2xl text-left transition-all duration-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+                    isActive ? 'ring-2 ring-orange-500' : 'ring-1 ring-slate-200 hover:ring-slate-300'
+                  }`}
+                >
+                  <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100">
+                    <ProductImage
+                      src={item.image}
+                      fallbackSrc={item.bundledImage}
+                      alt=""
+                      className={`h-full w-full object-cover transition-all duration-500 ${
+                        isActive ? 'scale-105' : 'grayscale-[0.35] group-hover:grayscale-0 group-hover:scale-105'
+                      }`}
+                    />
+                  </div>
+                  <div className="bg-white px-3 py-2.5">
+                    <p className="truncate text-xs font-bold text-slate-900">{item.name}</p>
+                    <p className={`mt-0.5 text-xs font-black tabular-nums ${isActive ? 'text-orange-600' : 'text-slate-500'}`}>
+                      ₱{item.effectivePrice.toLocaleString()}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {/* Promotional Advertisement Callout Banner */}

@@ -184,7 +184,7 @@ test('online customer order: nothing consumed until the payment is verified, ret
     customerName: 'Test Customer',
     phone: '09171234567',
     deliveryAddress: '123 Test St, Caloocan',
-    paymentMethod: 'Pay in Store',
+    paymentMethod: 'GCash',
     fulfillmentType: 'PICKUP',
     type: 'Store Pick-Up',
     orderType: 'ONLINE',
@@ -196,8 +196,8 @@ test('online customer order: nothing consumed until the payment is verified, ret
   const unpaid = await stockMap();
   for (const [id, v] of before) assert.equal(unpaid.get(id).stock, v.stock, `${id} untouched while unpaid`);
 
-  // The customer pays at the counter and the order is confirmed: now the stock moves.
-  // (A GCash order moves it earlier, when the reference / receipt is submitted.)
+  // The assistant approves the payment and the order is confirmed: now the stock moves.
+  // (Submitting the GCash reference / receipt moves it earlier than that.)
   const confirmed = await api('PATCH', '/user-flow/orders/E2E-5/status', { status: 'CONFIRMED' });
   assert.equal(confirmed.status, 200, JSON.stringify(confirmed.json));
   const mid = await stockMap();
@@ -217,7 +217,7 @@ test('online customer order that cannot be covered returns 409 and creates nothi
     id: 'E2E-6',
     customerName: 'Test Customer',
     phone: '09171234567',
-    paymentMethod: 'Pay in Store',
+    paymentMethod: 'GCash',
     fulfillmentType: 'PICKUP',
     type: 'Store Pick-Up',
     orderType: 'ONLINE',
@@ -241,7 +241,7 @@ test('unpaid orders past the hold time are cancelled and anything they hold is r
     id: 'E2E-7',
     customerName: 'Test Customer',
     phone: '09171234567',
-    paymentMethod: 'Pay in Store',
+    paymentMethod: 'GCash',
     fulfillmentType: 'PICKUP',
     type: 'Store Pick-Up',
     orderType: 'ONLINE',

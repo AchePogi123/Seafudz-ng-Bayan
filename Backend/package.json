@@ -11,6 +11,7 @@
     "migrate:create": "node src/migrations/create.js",
     "images:backfill": "node scripts/migrateProductImages.js",
     "reset:transactions": "node scripts/reset_transactions.js",
+    "seed:test-customer": "node scripts/create_test_customer.js",
     "test": "node --test"
   },
   "dependencies": {

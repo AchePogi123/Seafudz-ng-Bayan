@@ -9,9 +9,8 @@ import NavbarRider from '../components/Navbarrider'
 import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { supabase } from '../utils/supabase'
-import { normalizeStatus } from './OnlineCustomer'
+import { normalizeStatus, blocksNewOrder } from './OnlineCustomer'
 import { subscribeOrderSync } from '../utils/orderSync'
-import { reverseGeocodeCoordinates } from '../utils/locationServices'
 import { Badge, Button, Card, Field, Icon, Modal, Notice, SearchInput, Segmented } from './inventory/ui'
 import './inventory/admin-inventory.css'
 
@@ -385,8 +384,6 @@ export const AccMan: React.FC = () => {
     }, [])
     const [isSaving, setIsSaving] = useState(false)
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-    const [isRelocating, setIsRelocating] = useState(false)
-    const [relocateMessage, setRelocateMessage] = useState('')
 
     // Password fields (for Security tab)
     const [currentPassword, setCurrentPassword] = useState('')
@@ -426,44 +423,6 @@ export const AccMan: React.FC = () => {
     // Handlers
     const handleProfileChange = (field: keyof UserProfile, value: string) => {
         setEditForm((prev) => ({ ...prev, [field]: value }))
-    }
-
-    const handleRelocate = () => {
-        if (!navigator.geolocation) {
-            setRelocateMessage('Geolocation is not supported by your browser.')
-            return
-        }
-
-        setIsRelocating(true)
-        setRelocateMessage('')
-
-        navigator.geolocation.getCurrentPosition(
-            async ({ coords }) => {
-                const currentCoordinates = { lat: coords.latitude, lng: coords.longitude }
-                try {
-                    const resolvedAddress = await reverseGeocodeCoordinates(currentCoordinates)
-                    handleProfileChange('address', resolvedAddress)
-                    setRelocateMessage('Location detected! Click "Save Profile Changes" to save it to database.')
-                } catch (error) {
-                    const fallback = `${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}`
-                    handleProfileChange('address', fallback)
-                    setRelocateMessage(
-                        `${error instanceof Error ? error.message : 'Could not resolve address.'} Coordinates were added instead. Click "Save Profile Changes" to save.`
-                    )
-                } finally {
-                    setIsRelocating(false)
-                }
-            },
-            (error) => {
-                setIsRelocating(false)
-                setRelocateMessage(
-                    error.code === 1
-                        ? 'Location permission was denied. You can enter your delivery address manually.'
-                        : 'Could not get your location. Please check your device location settings.'
-                )
-            },
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
-        )
     }
 
     const handleSaveProfile = async (e: React.FormEvent) => {
@@ -525,7 +484,6 @@ export const AccMan: React.FC = () => {
                     })
                 }
                 window.dispatchEvent(new Event('seafudz_profile_updated'))
-                setRelocateMessage('')
                 setMessage({ type: 'success', text: responseData.message || 'Personal details saved to database successfully!' })
             } else {
                 const errorMsg = responseData.error ? `${responseData.message || 'Failed to update profile'}: ${responseData.error}` : (responseData.message || 'Failed to update personal details in database.')
@@ -542,7 +500,6 @@ export const AccMan: React.FC = () => {
 
     const handleResetProfile = () => {
         setEditForm({ ...profile })
-        setRelocateMessage('')
         setMessage(null)
     }
 
@@ -775,6 +732,18 @@ export const AccMan: React.FC = () => {
 
     // Reorder items from order history into cart and go to billing
     const handleOrderAgain = (order: CustomerOrder) => {
+        // One order at a time. Checkout refuses a second order anyway, so catch it here and send
+        // the customer to the one still in progress rather than to a checkout that cannot submit.
+        try {
+            const stored = localStorage.getItem(getActiveOrderKey(getActiveUser()))
+            const ongoing = stored ? JSON.parse(stored) : null
+            if (ongoing?.id && blocksNewOrder(ongoing.status)) {
+                alert(`You already have an ongoing order (#${ongoing.id}). You can order again once it has been delivered or picked up.`)
+                navigate(`/customer?orderId=${encodeURIComponent(String(ongoing.id))}&tab=tracking`)
+                return
+            }
+        } catch { }
+
         try {
             const user = getActiveUser()
             const cartKey = getCartKey(user)
@@ -1201,30 +1170,19 @@ export const AccMan: React.FC = () => {
                                             <Field
                                                 label="Delivery address"
                                                 htmlFor="acc-address"
-                                                hint={relocateMessage || undefined}
+                                                hint="Please enter an address within 8 km of our Caloocan store. You confirm your exact Barangay / Delivery Area when you place an order."
                                             >
                                                 <textarea
                                                     id="acc-address"
                                                     rows={3}
                                                     className="inv-textarea"
                                                     value={editForm.address}
-                                                    placeholder={
-                                                        isRelocating ? 'Finding your location…' : 'Where should we deliver?'
-                                                    }
+                                                    placeholder="Where should we deliver?"
                                                     onChange={(e) => handleProfileChange('address', e.target.value)}
                                                 />
-                                                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                                                    <Button
-                                                        variant="ghost"
-                                                        size="sm"
-                                                        icon="refresh"
-                                                        onClick={handleRelocate}
-                                                        loading={isRelocating}
-                                                    >
-                                                        {isRelocating ? 'Finding you…' : 'Use my location'}
-                                                    </Button>
+                                                <div className="mt-2">
                                                     <span className="inv-cell-secondary">
-                                                        We deliver within 8 km by road of the Caloocan store.
+                                                        We only deliver within 8 km of the Caloocan store.
                                                     </span>
                                                 </div>
                                             </Field>

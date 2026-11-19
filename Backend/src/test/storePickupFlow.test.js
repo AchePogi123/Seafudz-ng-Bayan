@@ -39,6 +39,22 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
   const testPickupOrderId = `SFB-TEST-PICKUP-${Date.now()}`;
   const testDeliveryOrderId = `SFB-TEST-DELIV-${Date.now()}`;
 
+  // A customer may only have one ongoing order, so the two orders below must belong to two
+  // different people. The server resolves a guest to a `customers` row by email, then phone, then
+  // name, so these identities are made unique per run — a fixed name or phone can land on a row
+  // left behind by an earlier run (or on a real customer) and make both orders the same person's.
+  const stamp = Date.now();
+  const pickupCustomer = {
+    customerName: `Pickup Tester ${stamp}`,
+    email: `pickup.tester.${stamp}@test.seafudz.ph`,
+    phone: `0917-${String(stamp).slice(-7, -4)}-${String(stamp).slice(-4)}`,
+  };
+  const deliveryCustomer = {
+    customerName: `Delivery Tester ${stamp}`,
+    email: `delivery.tester.${stamp}@test.seafudz.ph`,
+    phone: `0918-${String(stamp).slice(-7, -4)}-${String(stamp).slice(-4)}`,
+  };
+
   t.after(async () => {
     try {
       server.close();
@@ -69,6 +85,8 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
       await query(`DELETE FROM deliveries WHERE order_id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);
       await query(`DELETE FROM order_items WHERE order_id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);
       await query(`DELETE FROM orders WHERE id IN ($1, $2)`, [testPickupOrderId, testDeliveryOrderId]);
+      // Remove the two throwaway customer records this run auto-provisioned.
+      await query(`DELETE FROM customers WHERE email IN ($1, $2)`, [pickupCustomer.email, deliveryCustomer.email]);
       const pool = await getDbPool();
       if (pool) {
         await pool.end();
@@ -84,10 +102,9 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: testPickupOrderId,
-        customerName: 'Maria Santos',
-        phone: '0917-123-4567',
+        ...pickupCustomer,
         fulfillmentType: 'PICKUP',
-        paymentMethod: 'PAY_IN_STORE',
+        paymentMethod: 'GCash',
         items: [
           {
             name: 'All Shrimp Bowl',
@@ -125,8 +142,7 @@ test('Online Store Pick-Up end-to-end integration flow', async (t) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: testDeliveryOrderId,
-        customerName: 'Juan Dela Cruz',
-        phone: '0918-987-6543',
+        ...deliveryCustomer,
         fulfillmentType: 'DELIVERY',
         address: '123 Caloocan St, Metro Manila',
         deliveryLatitude: 14.65,

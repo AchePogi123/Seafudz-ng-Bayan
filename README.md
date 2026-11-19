@@ -122,4 +122,28 @@ Seafudz-ng-Bayan/
 | **Database** | `docker compose stop` | Stop local Postgres container |
 | **Backend** | `cd Backend && node server.js` | Start local Express API server |
 | **Frontend** | `cd Frontend && npm run dev` | Start local React dev server |
+| **Test data** | `cd Backend && npm run seed:test-customer` | Create/reset a dummy online-customer login for local testing (see below) |
 | **Deploy FE** | `firebase deploy` | Deploy frontend to Firebase Hosting |
+
+### 🧪 Dummy Customer Login (Local Only)
+
+`npm run seed:test-customer` (run from `Backend/`) seeds a customer account with a scrypt password hash in `customers.password_hash`, so it works without a Supabase project configured. Re-running resets the password rather than failing. It **refuses to run when `NODE_ENV=production`**, since the password is public.
+
+| Field | Default |
+| :--- | :--- |
+| Username | `testcustomer` |
+| Password | `Test1234!` |
+| Email | `testcustomer@seafudz.ph` |
+| Phone | `09171234567` |
+
+Log in at `/login` with **either** the username or the email. Its saved address sits inside the 8 km delivery radius, so checkout pre-fills the delivery-area dropdown.
+
+Override any field to make a second account:
+
+```bash
+cd Backend
+npm run seed:test-customer -- --username=shopper2 --password='Another1!' \
+  --name='Shopper Two' --email=shopper2@seafudz.ph
+```
+
+> **Note:** a customer may only have **one ongoing order at a time**, so if a test account still has an unfinished order it cannot place a new one. The script prints any open order it finds. Clear one by completing/cancelling it in the staff terminals, or reset all transactions with `npm run reset:transactions`.

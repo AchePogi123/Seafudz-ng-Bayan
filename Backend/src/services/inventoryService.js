@@ -175,7 +175,7 @@ function toOrderItems(rawItems) {
  */
 const UNPAID_STATUSES = [
   'PENDING', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_REJECTED',
-  'PENDING_COD', 'PAY_IN_STORE', 'PENDING_STORE_PICKUP',
+  'PENDING_COD',
 ];
 const unpaidHoldMinutes = () => {
   const n = Number(process.env.UNPAID_DEMAND_HOLD_MINUTES);

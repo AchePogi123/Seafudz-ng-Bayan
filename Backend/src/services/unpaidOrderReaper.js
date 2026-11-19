@@ -4,9 +4,10 @@
  * An online order does not take ingredients until its payment is verified, so most stale orders
  * hold nothing; they are still cancelled here so they do not sit in the assistant's queue
  * forever, and any order that does hold stock (a POS ticket, or one reserved before the payment
- * fell through) gets it back. This is OFF unless you set:
+ * fell through) gets it back. This also matters to the customer now that they may only have one
+ * ongoing order at a time: an order they placed and abandoned would otherwise block them for good.
+ * This is OFF unless you set:
  *   UNPAID_ORDER_HOLD_MINUTES        minutes before an unpaid GCash order (no receipt yet) is cancelled
- *   PAY_IN_STORE_HOLD_MINUTES        minutes before a pay-in-store order is cancelled (default: same value x3)
  * Orders that already have a receipt waiting for the assistant are never touched.
  */
 import { query } from '../config/db.js';
@@ -16,16 +17,14 @@ import { releaseOrderStock, withTransaction } from './inventoryService.js';
 
 const CHECK_EVERY_MS = 5 * 60 * 1000;
 
-async function cancelStaleOrders(gcashMinutes, storeMinutes) {
+async function cancelStaleOrders(gcashMinutes) {
   const { rows } = await query(
     `SELECT o.id, o.status FROM orders o
       WHERE o.created_at IS NOT NULL
-        AND (
-          (o.status IN ('GCASH_AUTHORIZED', 'RECEIPT_REJECTED') AND o.created_at < NOW() - ($1 || ' minutes')::interval)
-          OR (o.status IN ('PAY_IN_STORE', 'PENDING_STORE_PICKUP') AND o.created_at < NOW() - ($2 || ' minutes')::interval)
-        )
+        AND o.status IN ('GCASH_AUTHORIZED', 'RECEIPT_REJECTED')
+        AND o.created_at < NOW() - ($1 || ' minutes')::interval
         AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.order_id = o.id AND p.status = 'PAID')`,
-    [String(gcashMinutes), String(storeMinutes)]
+    [String(gcashMinutes)]
   );
 
   for (const { id } of rows) {
@@ -58,12 +57,10 @@ async function cancelStaleOrders(gcashMinutes, storeMinutes) {
 export function startUnpaidOrderReaper() {
   const gcash = Number(process.env.UNPAID_ORDER_HOLD_MINUTES);
   if (!Number.isFinite(gcash) || gcash <= 0) return null;
-  const store = Number(process.env.PAY_IN_STORE_HOLD_MINUTES);
-  const storeMinutes = Number.isFinite(store) && store > 0 ? store : gcash * 3;
 
-  console.log(`[INVENTORY] Unpaid orders are released after ${gcash} min (GCash) / ${storeMinutes} min (pay in store).`);
+  console.log(`[INVENTORY] Unpaid orders are released after ${gcash} min.`);
   const timer = setInterval(() => {
-    cancelStaleOrders(gcash, storeMinutes).catch((err) => console.error('[INVENTORY] Expiry check failed:', err.message));
+    cancelStaleOrders(gcash).catch((err) => console.error('[INVENTORY] Expiry check failed:', err.message));
   }, CHECK_EVERY_MS);
   timer.unref?.();
   return timer;

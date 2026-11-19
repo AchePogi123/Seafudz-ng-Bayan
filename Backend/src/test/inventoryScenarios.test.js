@@ -153,13 +153,13 @@ function posOrder(id, lines, orderType = 'DINE_IN') {
   });
 }
 
-/** An online order as the customer app sends it (DELIVERY pays by GCash, PICKUP pays in store). */
+/** An online order as the customer app sends it: delivery and pick-up alike prepay by GCash. */
 function onlineOrder(id, lines, fulfillmentType = 'DELIVERY') {
   return api('POST', '/user-flow/orders', {
     id,
     phone: '0917-000-0000',
     deliveryAddress: '123 Test St, Caloocan',
-    paymentMethod: fulfillmentType === 'PICKUP' ? 'Pay in Store' : 'GCash',
+    paymentMethod: 'GCash',
     fulfillmentType,
     type: fulfillmentType === 'PICKUP' ? 'Store Pick-Up' : 'Delivery',
     orderType: 'ONLINE',
@@ -171,12 +171,13 @@ function onlineOrder(id, lines, fulfillmentType = 'DELIVERY') {
 const submitReceipt = (id) =>
   api('PATCH', `/assistant/orders/${id}/upload-receipt`, { paymentReference: `GC-${id}`, paymentReceipt: 'data:image/png;base64,ZmFrZQ==' });
 
-/** The assistant approves the proof (or takes the cash for a pick-up) and sends it to the kitchen. */
+/** The assistant approves the payment proof and sends the order to the kitchen. */
 const confirmPayment = (id) => api('PATCH', `/assistant/orders/${id}/status`, { status: 'CONFIRMED' });
 
 /**
- * An online order the customer has actually paid for, so it is holding stock: GCash orders submit
- * the reference / receipt, pay-in-store pick-ups are confirmed at the counter.
+ * An online order the customer has actually paid for, so it is holding stock. Both routes into
+ * the kitchen are exercised: a delivery submits its reference / receipt, a pick-up is approved
+ * straight to CONFIRMED by the assistant.
  * Placing an online order only CHECKS the stock; the ingredients leave inventory here.
  */
 async function paidOnlineOrder(id, lines, fulfillmentType = 'DELIVERY') {

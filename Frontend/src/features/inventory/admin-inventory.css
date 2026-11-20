@@ -6,7 +6,8 @@
 
 .admin-inventory-workspace,
 .inv-scope,
-.inv-menu {
+.inv-menu,
+.inv-ssel-pop {
   --inv-bg: #f6f7f9;
   --inv-surface: #ffffff;
   --inv-surface-2: #f9fafb;
@@ -51,13 +52,15 @@
 }
 
 .admin-inventory-workspace ::selection,
-.inv-scope ::selection {
+.inv-scope ::selection,
+.inv-ssel-pop ::selection {
   background: #fed7aa;
   color: #431407;
 }
 
 .admin-inventory-workspace :is(*, *::before, *::after),
-.inv-scope :is(*, *::before, *::after) {
+.inv-scope :is(*, *::before, *::after),
+.inv-ssel-pop :is(*, *::before, *::after) {
   scrollbar-color: #d0d5dd transparent;
   scrollbar-width: thin;
 }
@@ -1431,30 +1434,38 @@ button.inv-input-suffix:focus-visible {
 .inv-ssel-placeholder { color: var(--inv-placeholder); }
 
 .inv-ssel-pop {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  min-width: 220px;
+  /* Rendered into <body>, so it is positioned against the trigger's viewport rect and cannot be
+     clipped by .inv-lines' overflow or the scrolling modal body. */
+  position: fixed;
+  /* Above the modal (60), row menus (70) and toasts (80): an open list overlaps them all. */
+  z-index: 90;
+  min-width: 240px;
   border: 1px solid var(--inv-border);
   border-radius: var(--inv-radius);
   background: var(--inv-surface);
   box-shadow: var(--inv-shadow-lg);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
+/* Opened upward when there is not enough room below. */
+.inv-ssel-pop.is-flipped { transform: translateY(-100%); }
 
 .inv-ssel-search {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 0 10px;
+  height: 38px;
   border-bottom: 1px solid var(--inv-border);
   background: var(--inv-surface-2);
 }
+.inv-ssel-search-icon { width: 14px; height: 14px; flex-shrink: 0; color: var(--inv-text-3); }
 .inv-ssel-search input {
   flex: 1;
   min-width: 0;
+  height: 100%;
   border: 0;
   background: transparent;
   font-size: 13px;
@@ -1462,28 +1473,84 @@ button.inv-input-suffix:focus-visible {
 }
 .inv-ssel-search input:focus { outline: none; }
 .inv-ssel-search input::placeholder { color: var(--inv-placeholder); }
+.inv-ssel-clear {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  color: var(--inv-text-3);
+  cursor: pointer;
+}
+.inv-ssel-clear:hover { background: var(--inv-border); color: var(--inv-text); }
+.inv-ssel-clear:focus-visible { outline: none; box-shadow: var(--inv-focus); }
 
 .inv-ssel-list {
-  max-height: 240px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   margin: 0;
   padding: 4px;
   list-style: none;
 }
 .inv-ssel-option {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 6px 8px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--inv-text);
   cursor: pointer;
 }
 .inv-ssel-option.is-active { background: var(--inv-surface-2); }
-.inv-ssel-option.is-selected { font-weight: 600; color: var(--inv-brand); }
-.inv-ssel-option.is-pinned { border-top: 1px solid var(--inv-border); margin-top: 4px; padding-top: 9px; }
+.inv-ssel-option.is-selected { font-weight: 600; }
+.inv-ssel-check { display: grid; place-items: center; color: var(--inv-brand); }
 .inv-ssel-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inv-ssel-hint { flex-shrink: 0; font-size: 11px; color: var(--inv-text-3); }
-.inv-ssel-empty { margin: 0; padding: 14px 12px; font-size: 13px; color: var(--inv-text-3); }
+.inv-ssel-hint {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--inv-text-3);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.inv-ssel-empty { padding: 18px 14px; text-align: center; }
+.inv-ssel-empty-title { margin: 0; font-size: 13px; font-weight: 500; color: var(--inv-text); }
+.inv-ssel-empty-note { margin: 3px 0 0; font-size: 12px; color: var(--inv-text-3); }
+
+/* Pinned actions sit outside the scrolling list so they never scroll out of reach. */
+.inv-ssel-foot { flex: 0 0 auto; padding: 4px; border-top: 1px solid var(--inv-border); background: var(--inv-surface-2); }
+.inv-ssel-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--inv-primary);
+  cursor: pointer;
+  text-align: left;
+}
+.inv-ssel-action:hover { background: var(--inv-surface); }
+.inv-ssel-action:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .inv-ssel-pop { animation: inv-ssel-in 0.14s var(--inv-ease) both; }
+  .inv-ssel-pop.is-flipped { animation-name: inv-ssel-in-up; }
+}
+@keyframes inv-ssel-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes inv-ssel-in-up {
+  from { opacity: 0; transform: translateY(calc(-100% + 4px)); }
+  to { opacity: 1; transform: translateY(-100%); }
+}

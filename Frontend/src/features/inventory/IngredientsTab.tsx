@@ -10,6 +10,11 @@ import type {
   TransactionType,
 } from './inventoryTypes'
 import { FOOD_CATEGORIES, PACKAGING_CATEGORIES, MEASUREMENT_UNITS } from './inventoryTypes'
+import {
+  toBaseUnit,
+  unitsConvert as doUnitsConvert,
+  unitsMismatch as doUnitsMismatch,
+} from './unitConversion'
 import InventoryConfirmModal from './InventoryConfirmModal'
 import {
   Badge,
@@ -85,15 +90,6 @@ const PURCHASE_UNITS: { value: string; label: string }[] = [
 ]
 
 const PAGE_SIZE = 12
-
-/** Converts a purchase quantity into the item's base unit where the units are related. */
-function toBaseUnit(qty: number, purchaseUnit: string, baseUnit: string) {
-  if (baseUnit === 'g' && purchaseUnit === 'kg') return qty * 1000
-  if (baseUnit === 'kg' && purchaseUnit === 'g') return qty / 1000
-  if (baseUnit === 'ml' && purchaseUnit === 'L') return qty * 1000
-  if (baseUnit === 'L' && purchaseUnit === 'ml') return qty / 1000
-  return qty
-}
 
 const today = () => new Date().toISOString().split('T')[0]
 
@@ -402,10 +398,11 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
       ? toBaseUnit(Number(purchaseQty), purchaseUnit, selectedStockItem.baseUnit)
       : 0
   const unitsConvert = selectedStockItem
-    ? toBaseUnit(1, purchaseUnit, selectedStockItem.baseUnit) !== 1
+    ? doUnitsConvert(purchaseUnit, selectedStockItem.baseUnit)
     : false
-  const unitsMismatch =
-    selectedStockItem && !unitsConvert && purchaseUnit !== selectedStockItem.baseUnit
+  const unitsMismatch = Boolean(
+    selectedStockItem && doUnitsMismatch(purchaseUnit, selectedStockItem.baseUnit)
+  )
 
   const handleConfirmStockModal = (e: React.FormEvent) => {
     e.preventDefault()

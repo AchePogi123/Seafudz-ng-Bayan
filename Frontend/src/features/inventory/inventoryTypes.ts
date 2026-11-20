@@ -170,9 +170,8 @@ export interface PurchaseOrderItem {
   category: IngredientCategory
   orderedQuantity: number
   receivedQuantity: number
+  /** Always the item's own base unit: stock is held in that unit, so lines are stored in it too. */
   unit: MeasurementUnit
-  unitCost: number
-  totalCost: number
   batchNumber?: string
   expirationDate?: string
 }
@@ -186,7 +185,6 @@ export interface PurchaseOrder {
   expectedDeliveryDate: string
   status: PurchaseOrderStatus
   items: PurchaseOrderItem[]
-  totalAmount: number
   notes?: string
   receivedAt?: string
   receivedBy?: string

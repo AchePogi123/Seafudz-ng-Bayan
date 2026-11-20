@@ -242,34 +242,12 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
     [activePOs, reportStart]
   )
 
-  const totalFoodSpend = useMemo(() => {
-    return purchaseOrdersInPeriod.reduce((sum, po) => {
-      const foodLines = po.items.filter((it) => (it.itemType || 'FOOD') === 'FOOD')
-      return sum + foodLines.reduce((lineSum, it) => lineSum + it.totalCost, 0)
-    }, 0)
-  }, [purchaseOrdersInPeriod])
-
-  const totalPackagingSpend = useMemo(() => {
-    return purchaseOrdersInPeriod.reduce((sum, po) => {
-      const pkgLines = po.items.filter((it) => it.itemType === 'PACKAGING')
-      return sum + pkgLines.reduce((lineSum, it) => lineSum + it.totalCost, 0)
-    }, 0)
-  }, [purchaseOrdersInPeriod])
-
-  const totalPurchasesSpend = totalFoodSpend + totalPackagingSpend
   const pendingOrdersCount = purchaseOrders.filter((po) => po.status === 'PENDING').length
-  const supplierPurchaseSummary = useMemo(() => {
-    const totals = new Map<string, { amount: number; orders: number }>()
-    purchaseOrdersInPeriod.forEach((order) => {
-      const current = totals.get(order.supplierName) || { amount: 0, orders: 0 }
-      current.amount += order.totalAmount
-      current.orders += 1
-      totals.set(order.supplierName, current)
-    })
-    return Array.from(totals.entries())
-      .map(([supplierName, total]) => ({ supplierName, ...total }))
-      .sort((a, b) => b.amount - a.amount)
-  }, [purchaseOrdersInPeriod])
+  const receivedOrdersCount = purchaseOrdersInPeriod.filter((po) => po.status === 'FULLY_RECEIVED').length
+  const orderedLineCount = useMemo(
+    () => purchaseOrdersInPeriod.reduce((sum, po) => sum + po.items.length, 0),
+    [purchaseOrdersInPeriod]
+  )
 
   const reorderItems = ingredients
     .filter((i) => i.currentStock <= i.minStockLevel)
@@ -416,38 +394,11 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
       {activeReportSubTab === 'PURCHASING' && (
         <div className="space-y-5">
           <div className="inv-stats">
-            <Metric label="Total spend" value={formatPeso(totalPurchasesSpend)} note="Excludes cancelled orders" />
-            <Metric label="Food" value={formatPeso(totalFoodSpend)} note="Food ingredient lines" />
-            <Metric label="Packaging" value={formatPeso(totalPackagingSpend)} note="Packaging lines" />
+            <Metric label="Orders placed" value={String(purchaseOrdersInPeriod.length)} note="Excludes cancelled orders" />
+            <Metric label="Received" value={String(receivedOrdersCount)} note="Fully delivered" />
             <Metric label="Pending orders" value={String(pendingOrdersCount)} note="Awaiting delivery" />
+            <Metric label="Lines ordered" value={String(orderedLineCount)} note="Items across all orders" />
           </div>
-          <Card>
-            <CardHeader title="Spend by supplier" description={`Orders placed over ${period}`} />
-            {supplierPurchaseSummary.length === 0 ? (
-              <EmptyState compact icon="cart" title="No purchase orders in this period" />
-            ) : (
-              <div className="inv-table-wrap">
-                <table className="inv-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Supplier</th>
-                      <th scope="col" className="is-num">Orders</th>
-                      <th scope="col" className="is-num">Order value</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {supplierPurchaseSummary.map((supplier) => (
-                      <tr key={supplier.supplierName}>
-                        <td className="inv-cell-primary">{supplier.supplierName}</td>
-                        <td className="is-num">{supplier.orders}</td>
-                        <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(supplier.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
         </div>
       )}
 

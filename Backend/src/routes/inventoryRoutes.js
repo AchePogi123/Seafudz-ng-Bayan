@@ -8,7 +8,7 @@ import { Router } from 'express';
 import { randomUUID } from 'crypto';
 import { requireAuth, requireRole } from '../middleware/authMiddleware.js';
 import { withTransaction, broadcastInventoryChange } from '../services/inventoryService.js';
-import { stockStatus } from '../utils/inventoryMath.js';
+import { stockStatus, convertQty } from '../utils/inventoryMath.js';
 
 const router = Router();
 const guard = [requireAuth, requireRole(['admin'])];
@@ -94,8 +94,6 @@ function buildPurchaseOrders(poRows, itemRows) {
       orderedQuantity: num(i.ordered_quantity),
       receivedQuantity: num(i.received_quantity),
       unit: i.unit,
-      unitCost: num(i.unit_cost),
-      totalCost: num(i.total_cost),
       batchNumber: i.batch_number || undefined,
       expirationDate: i.expiration_date ? new Date(i.expiration_date).toISOString().split('T')[0] : undefined,
     });
@@ -110,7 +108,6 @@ function buildPurchaseOrders(poRows, itemRows) {
     expectedDeliveryDate: iso(p.expected_delivery_date),
     status: p.status,
     items: byPo.get(p.id) || [],
-    totalAmount: num(p.total_amount),
     notes: p.notes || undefined,
     receivedAt: iso(p.received_at),
     receivedBy: p.received_by || undefined,
@@ -628,20 +625,28 @@ router.post('/inventory/purchase-orders', ...guard, wrap(async (req, res) => {
     const { rows: countRows } = await client.query(`SELECT COUNT(*)::int AS n FROM inventory_purchase_orders WHERE po_number LIKE $1`, [`PO-${new Date().getFullYear()}-%`]);
     const poNumber = `PO-${new Date().getFullYear()}-${String(countRows[0].n + 1).padStart(3, '0')}`;
     const id = shortId('po');
-    const total = b.items.reduce((s, i) => s + num(i.orderedQuantity) * num(i.unitCost), 0);
     await client.query(
-      `INSERT INTO inventory_purchase_orders (id, po_number, supplier_id, supplier_name, expected_delivery_date, status, total_amount, notes)
-       VALUES ($1,$2,$3,$4,$5,'PENDING',$6,$7)`,
-      [id, poNumber, b.supplierId, sup.rows[0].name, b.expectedDeliveryDate || new Date(Date.now() + 2 * 86400000), total, b.notes || null]
+      `INSERT INTO inventory_purchase_orders (id, po_number, supplier_id, supplier_name, expected_delivery_date, status, notes)
+       VALUES ($1,$2,$3,$4,$5,'PENDING',$6)`,
+      [id, poNumber, b.supplierId, sup.rows[0].name, b.expectedDeliveryDate || new Date(Date.now() + 2 * 86400000), b.notes || null]
     );
     for (const i of b.items) {
       if (!i.ingredientId || !(num(i.orderedQuantity) > 0)) throw new HttpError(400, 'Every line needs an item and a quantity above 0.', 'VALIDATION');
+      // Stock is held in the item's base unit, so a line ordered in a related unit (5 kg against a
+      // base unit of g) is converted on the way in. Storing the raw number would receive 5 g.
+      const ing = (await client.query(
+        `SELECT base_unit FROM inventory_ingredients WHERE id = $1`,
+        [i.ingredientId]
+      )).rows[0];
+      if (!ing) throw new HttpError(400, 'One of the ordered items no longer exists.', 'VALIDATION');
+      const orderedInBase = convertQty(num(i.orderedQuantity), i.unit || ing.base_unit, ing.base_unit);
+      if (!(orderedInBase > 0)) throw new HttpError(400, 'Every line needs an item and a quantity above 0.', 'VALIDATION');
       await client.query(
         `INSERT INTO inventory_purchase_order_items
-           (id, purchase_order_id, ingredient_id, ingredient_name, item_type, category, ordered_quantity, unit, unit_cost, total_cost)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+           (id, purchase_order_id, ingredient_id, ingredient_name, item_type, category, ordered_quantity, unit)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [shortId('poi'), id, i.ingredientId, i.ingredientName || i.ingredientId, i.itemType || 'FOOD', i.category || null,
-         num(i.orderedQuantity), i.unit, num(i.unitCost), num(i.orderedQuantity) * num(i.unitCost)]
+         orderedInBase, ing.base_unit]
       );
     }
     const state = await loadState(client);
@@ -679,7 +684,9 @@ router.post('/inventory/purchase-orders/:id/receive', ...guard, wrap(async (req,
     for (const id of ingredientIds) locked.set(id, await lockIngredient(client, id));
 
     for (const r of received) {
-      const qty = num(r.receivedQty);
+      // Lines are stored in the item's base unit; a client sending a related unit is converted.
+      const baseUnit = locked.get(r.ingredientId)?.base_unit;
+      const qty = baseUnit ? convertQty(num(r.receivedQty), r.unit || baseUnit, baseUnit) : num(r.receivedQty);
       if (!(qty > 0)) continue;
       await client.query(
         `UPDATE inventory_purchase_order_items

@@ -10,6 +10,7 @@ import type {
   IngredientCategory,
 } from './inventoryTypes'
 import { MEASUREMENT_UNITS } from './inventoryTypes'
+import { describeConversion, toBaseUnit, unitsMismatch } from './unitConversion'
 import InventoryConfirmModal from './InventoryConfirmModal'
 import {
   Badge,
@@ -29,7 +30,6 @@ import {
   TypeBadge,
   fieldAria,
   formatDate,
-  formatPeso,
   formatQty,
   type BadgeTone,
 } from './ui'
@@ -97,9 +97,9 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
       itemType: InventoryItemType
       category: IngredientCategory
       orderedQuantity: number
+      /** The unit the user is typing in; converted to the item's base unit on submit. */
       unit: MeasurementUnit
-      unitCost: number
-      totalCost: number
+      baseUnit: MeasurementUnit
     }>
   >([])
   const [poFormErrors, setPoFormErrors] = useState<Record<string, string>>({})
@@ -165,8 +165,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
           category: defaultIng.category,
           orderedQuantity: defaultIng.preferredRestockQty || (defaultIng.itemType === 'PACKAGING' ? 200 : 10),
           unit: defaultIng.baseUnit,
-          unitCost: defaultIng.costPerUnit || 10,
-          totalCost: (defaultIng.preferredRestockQty || 10) * (defaultIng.costPerUnit || 10),
+          baseUnit: defaultIng.baseUnit,
         },
       ])
     } else {
@@ -193,8 +192,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
         category: defaultIng?.category || 'Seafoods',
         orderedQuantity: itemType === 'PACKAGING' ? 100 : 5,
         unit: defaultIng?.baseUnit || (itemType === 'PACKAGING' ? 'pcs' : 'kg'),
-        unitCost: defaultIng?.costPerUnit || 0,
-        totalCost: (itemType === 'PACKAGING' ? 100 : 5) * (defaultIng?.costPerUnit || 0),
+        baseUnit: defaultIng?.baseUnit || (itemType === 'PACKAGING' ? 'pcs' : 'kg'),
       },
     ])
   }
@@ -207,7 +205,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
   // Update Item Line
   const handleItemLineChange = (
     index: number,
-    field: 'ingredientId' | 'orderedQuantity' | 'unitCost' | 'unit',
+    field: 'ingredientId' | 'orderedQuantity' | 'unit',
     value: string | number
   ) => {
     setPoItems((prev) => {
@@ -221,16 +219,9 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
         row.itemType = ing?.itemType || 'FOOD'
         row.category = ing?.category || 'Seafoods'
         row.unit = ing ? ing.baseUnit : 'pcs'
-        row.unitCost = ing ? ing.costPerUnit : 0
-        row.totalCost = row.orderedQuantity * row.unitCost
+        row.baseUnit = ing ? ing.baseUnit : 'pcs'
       } else if (field === 'orderedQuantity') {
-        const qty = Math.max(0, Number(value) || 0)
-        row.orderedQuantity = qty
-        row.totalCost = qty * row.unitCost
-      } else if (field === 'unitCost') {
-        const cost = Math.max(0, Number(value) || 0)
-        row.unitCost = cost
-        row.totalCost = row.orderedQuantity * cost
+        row.orderedQuantity = Math.max(0, Number(value) || 0)
       } else if (field === 'unit') {
         row.unit = value as MeasurementUnit
       }
@@ -240,10 +231,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     })
   }
 
-  const totalPOCost = useMemo(() => {
-    return poItems.reduce((sum, item) => sum + item.totalCost, 0)
-  }, [poItems])
-
   // Submit PO
   const handleSubmitPO = (e: React.FormEvent) => {
     e.preventDefault()
@@ -252,6 +239,8 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     if (poItems.length === 0) errors.lines = 'Add at least one item to order.'
     else if (poItems.some((it) => !it.ingredientId)) errors.lines = 'Choose an item on every line, or remove empty lines.'
     else if (poItems.some((it) => !(it.orderedQuantity > 0))) errors.lines = 'Every line needs a quantity greater than 0.'
+    else if (poItems.some((it) => unitsMismatch(it.unit, it.baseUnit)))
+      errors.lines = 'A line is ordered in a unit that cannot be converted into how that item is stocked. Pick a matching unit.'
     if (poExpectedDate && poExpectedDate < new Date().toISOString().split('T')[0])
       errors.expected = 'Expected delivery cannot be in the past.'
     setPoFormErrors(errors)
@@ -268,11 +257,10 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
         ingredientName: item.ingredientName,
         itemType: ing?.itemType || item.itemType || 'FOOD',
         category: ing?.category || item.category || 'Seafoods',
-        orderedQuantity: item.orderedQuantity,
+        // Stock is held in the item's base unit, so the line is converted before it is saved.
+        orderedQuantity: toBaseUnit(item.orderedQuantity, item.unit, item.baseUnit),
         receivedQuantity: 0,
-        unit: item.unit,
-        unitCost: item.unitCost,
-        totalCost: item.totalCost,
+        unit: item.baseUnit,
       }
     })
 
@@ -284,7 +272,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
       expectedDeliveryDate: poExpectedDate || new Date(Date.now() + 86400000 * 2).toISOString(),
       status: 'PENDING',
       items: finalItems,
-      totalAmount: totalPOCost,
       notes: poNotes.trim(),
     })
 
@@ -345,7 +332,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
 
   const cancellingPO = purchaseOrders.find((po) => po.id === cancellingPOId)
 
-  const lineCols = 'sm:grid-cols-[minmax(0,1fr)_96px_88px_116px_104px_32px]'
+  const lineCols = 'sm:grid-cols-[minmax(0,1fr)_112px_96px_32px]'
 
   return (
     <div className="space-y-5">
@@ -452,7 +439,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                   <th scope="col" className="hidden md:table-cell">Supplier</th>
                   <th scope="col" className="hidden lg:table-cell">Items</th>
                   <th scope="col" className="hidden sm:table-cell">Expected</th>
-                  <th scope="col" className="is-num">Total</th>
                   <th scope="col">Status</th>
                   <th scope="col" className="is-actions">
                     <span className="sr-only">Actions</span>
@@ -478,7 +464,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                       </div>
                     </td>
                     <td className="hidden whitespace-nowrap sm:table-cell">{formatDate(po.expectedDeliveryDate)}</td>
-                    <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(po.totalAmount)}</td>
                     <td>
                       <Badge tone={PO_STATUS[po.status].tone} dot>
                         {PO_STATUS[po.status].label}
@@ -535,13 +520,10 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
         onClose={() => setIsCreateModalOpen(false)}
         size="xl"
         title="New purchase order"
-        description="Choose a supplier and the items to order. Prices default to each item's last unit cost."
+        description="Choose a supplier and the items to order."
         onSubmit={handleSubmitPO}
         footer={
           <>
-            <span className="mr-auto text-sm text-[var(--inv-text-3)]">
-              Total <b className="ml-1 text-base font-semibold text-[var(--inv-text)]">{formatPeso(totalPOCost)}</b>
-            </span>
             <Button variant="secondary" onClick={() => setIsCreateModalOpen(false)}>
               Cancel
             </Button>
@@ -618,8 +600,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                   <span>Item</span>
                   <span>Quantity</span>
                   <span>Unit</span>
-                  <span>Unit cost</span>
-                  <span className="text-right">Line total</span>
                   <span />
                 </div>
                 {poItems.map((item, idx) => (
@@ -678,25 +658,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                         ))}
                       </select>
                     </label>
-                    <label>
-                      <span className="inv-line-label">Unit cost</span>
-                      <span className="inv-input-group">
-                        <span className="inv-input-prefix">₱</span>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          min="0"
-                          step="0.01"
-                          className="inv-input inv-input--sm has-prefix"
-                          value={item.unitCost}
-                          onChange={(e) => handleItemLineChange(idx, 'unitCost', e.target.value)}
-                        />
-                      </span>
-                    </label>
-                    <div className="text-right text-sm font-semibold text-[var(--inv-text)]">
-                      <span className="inv-line-label sm:hidden">Line total</span>
-                      {formatPeso(item.totalCost)}
-                    </div>
                     <div className="flex justify-end">
                       <IconButton
                         icon="trash"
@@ -705,6 +666,22 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                         onClick={() => handleRemoveLineItem(idx)}
                       />
                     </div>
+                    {(() => {
+                      const converted = describeConversion(item.orderedQuantity, item.unit, item.baseUnit)
+                      const mismatched = unitsMismatch(item.unit, item.baseUnit)
+                      if (!converted && !mismatched) return null
+                      return (
+                        <p
+                          className={`col-span-2 -mt-1 text-xs sm:col-span-4 ${
+                            mismatched ? 'text-[var(--inv-danger)]' : 'text-[var(--inv-text-3)]'
+                          }`}
+                        >
+                          {mismatched
+                            ? `${item.unit} cannot be converted to ${item.baseUnit}, how this item is stocked.`
+                            : `${converted} · stocked in ${item.baseUnit}`}
+                        </p>
+                      )
+                    })()}
                   </div>
                 ))}
               </div>
@@ -911,7 +888,6 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                     <th scope="col">Item</th>
                     <th scope="col" className="is-num">Ordered</th>
                     <th scope="col" className="is-num">Received</th>
-                    <th scope="col" className="is-num">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -919,10 +895,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                     <tr key={it.id}>
                       <td>
                         <div className="inv-cell-primary">{it.ingredientName}</div>
-                        <div className="inv-cell-secondary">
-                          {formatPeso(it.unitCost)} / {it.unit}
-                          {it.batchNumber && <> · {it.batchNumber}</>}
-                        </div>
+                        {it.batchNumber && <div className="inv-cell-secondary">{it.batchNumber}</div>}
                       </td>
                       <td className="is-num">
                         {formatQty(it.orderedQuantity)} {it.unit}
@@ -930,15 +903,10 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                       <td className="is-num">
                         {formatQty(it.receivedQuantity)} {it.unit}
                       </td>
-                      <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(it.totalCost)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
-            <div className="flex items-center justify-between border-t border-[var(--inv-border)] pt-4">
-              <span className="text-sm text-[var(--inv-text-3)]">Order total</span>
-              <span className="text-lg font-semibold text-[var(--inv-text)]">{formatPeso(viewingPO.totalAmount)}</span>
             </div>
             {viewingPO.notes && (
               <p className="text-sm text-[var(--inv-text-2)]">

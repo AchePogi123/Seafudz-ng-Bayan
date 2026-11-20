@@ -391,7 +391,9 @@ export const AdminInventoryManagement: React.FC = () => {
       addToast({
         type: 'success',
         title: 'Purchase Order Created',
-        description: `${created.poNumber} has been submitted with total value ₱${created.totalAmount.toFixed(2)}.`,
+        description: `${created.poNumber} has been submitted with ${created.items.length} ${
+          created.items.length === 1 ? 'line' : 'lines'
+        }.`,
       })
     } catch (err) {
       fail('Could not create the purchase order', err)

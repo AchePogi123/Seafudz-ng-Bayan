@@ -27,6 +27,7 @@ import {
   formatQty,
   type BadgeTone,
 } from './ui'
+import { SearchableSelect } from './SearchableSelect'
 
 const servingsTone = (n: number): BadgeTone => (n > 20 ? 'success' : n > 0 ? 'warning' : 'danger')
 
@@ -640,18 +641,18 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                             <div key={idx} className={`inv-line grid-cols-[minmax(0,1fr)_minmax(0,1fr)_32px] ${foodLineCols}`}>
                               <label className="col-span-3 sm:col-span-1">
                                 <span className="inv-line-label">Ingredient</span>
-                                <select
-                                  className="inv-select inv-select--sm"
+                                <SearchableSelect
+                                  ariaLabel={`Ingredient ${idx + 1}`}
                                   value={row.ingredientId}
-                                  onChange={(e) => handleFoodRowChange(idx, 'ingredientId', e.target.value)}
-                                >
-                                  <option value="">Choose an ingredient</option>
-                                  {(foodIngredients.length > 0 ? foodIngredients : ingredients).map((ing) => (
-                                    <option key={ing.id} value={ing.id}>
-                                      {ing.name}
-                                    </option>
-                                  ))}
-                                </select>
+                                  onChange={(next) => handleFoodRowChange(idx, 'ingredientId', next)}
+                                  placeholder="Choose an ingredient"
+                                  searchPlaceholder="Search the stockroom…"
+                                  options={(foodIngredients.length > 0 ? foodIngredients : ingredients).map((ing) => ({
+                                    value: ing.id,
+                                    label: ing.name,
+                                    hint: `${formatQty(ing.currentStock)} ${ing.baseUnit}`,
+                                  }))}
+                                />
                               </label>
                               <label>
                                 <span className="inv-line-label">Portion</span>
@@ -756,18 +757,18 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                           <div key={row.id || idx} className={`inv-line grid-cols-2 ${pkgLineCols}`}>
                             <label className="col-span-2 sm:col-span-1">
                               <span className="inv-line-label">Packaging item</span>
-                              <select
-                                className="inv-select inv-select--sm"
+                              <SearchableSelect
+                                ariaLabel={`Packaging item ${idx + 1}`}
                                 value={row.packagingId}
-                                onChange={(e) => handlePackagingRowChange(idx, 'packagingId', e.target.value)}
-                              >
-                                <option value="">Choose packaging</option>
-                                {(packagingMaterials.length > 0 ? packagingMaterials : ingredients).map((pkg) => (
-                                  <option key={pkg.id} value={pkg.id}>
-                                    {pkg.name}
-                                  </option>
-                                ))}
-                              </select>
+                                onChange={(next) => handlePackagingRowChange(idx, 'packagingId', next)}
+                                placeholder="Choose packaging"
+                                searchPlaceholder="Search packaging…"
+                                options={(packagingMaterials.length > 0 ? packagingMaterials : ingredients).map((pkg) => ({
+                                  value: pkg.id,
+                                  label: pkg.name,
+                                  hint: `${formatQty(pkg.currentStock)} ${pkg.baseUnit}`,
+                                }))}
+                              />
                             </label>
                             <label>
                               <span className="inv-line-label">Qty</span>

@@ -14,6 +14,7 @@ import { useMenuAvailability } from '../../utils/menuAvailability'
 import { API_BASE_URL, getAuthHeaders } from '../../utils/api'
 import { notifyProductCatalogSync, subscribeProductCatalogSync } from '../../utils/orderSync'
 import type { Ingredient, IngredientCategory, MeasurementUnit, ProductRecipe, RecipeIngredient } from './inventoryTypes'
+import { SearchableSelect } from './SearchableSelect'
 import { FOOD_CATEGORIES, MEASUREMENT_UNITS } from './inventoryTypes'
 import InventoryConfirmModal from './InventoryConfirmModal'
 import type { ToastMessage } from './InventoryToast'
@@ -36,6 +37,7 @@ import {
   cx,
   fieldAria,
   formatPeso,
+  formatQty,
 } from './ui'
 
 type ViewMode = 'table' | 'grid'
@@ -1360,20 +1362,21 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
                     >
                       <label className="col-span-2 sm:col-span-1">
                         <span className="inv-line-label">Ingredient</span>
-                        <select
-                          className="inv-select inv-select--sm"
-                          aria-label={`Ingredient ${index + 1}`}
+                        <SearchableSelect
+                          ariaLabel={`Ingredient ${index + 1}`}
                           value={line.ingredientId}
-                          onChange={(event) => handlePickRecipeIngredient(line.lineId, event.target.value)}
-                        >
-                          <option value="">Choose an ingredient</option>
-                          {foodIngredients.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name}
-                            </option>
-                          ))}
-                          <option value="__new__">+ Not in the stockroom yet…</option>
-                        </select>
+                          onChange={(next) => handlePickRecipeIngredient(line.lineId, next)}
+                          placeholder="Choose an ingredient"
+                          searchPlaceholder="Search the stockroom…"
+                          options={[
+                            ...foodIngredients.map((item) => ({
+                              value: item.id,
+                              label: item.name,
+                              hint: `${formatQty(item.currentStock)} ${item.baseUnit}`,
+                            })),
+                            { value: '__new__', label: '+ Not in the stockroom yet…', pinned: true },
+                          ]}
+                        />
                       </label>
                       <label>
                         <span className="inv-line-label">Per serving</span>

@@ -1407,3 +1407,83 @@ button.inv-input-suffix:focus-visible {
   .kds-btn:active { transform: none; }
 }
 
+
+
+/* ------------------------------------------------- Searchable select
+   A select that can be typed into. Closed it reads exactly like .inv-select;
+   open it drops a filter box above the options. Used wherever a line has to
+   pick out of the whole stockroom. */
+.inv-ssel { position: relative; width: 100%; min-width: 0; }
+
+.inv-ssel-trigger {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  overflow: hidden;
+}
+.inv-ssel-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-ssel-trigger:focus-visible { outline: none; box-shadow: var(--inv-focus); border-color: var(--inv-brand); }
+.inv-ssel-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.inv-ssel-placeholder { color: var(--inv-placeholder); }
+
+.inv-ssel-pop {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  min-width: 220px;
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  background: var(--inv-surface);
+  box-shadow: var(--inv-shadow-lg);
+  overflow: hidden;
+}
+
+.inv-ssel-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--inv-border);
+  background: var(--inv-surface-2);
+}
+.inv-ssel-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  color: var(--inv-text);
+}
+.inv-ssel-search input:focus { outline: none; }
+.inv-ssel-search input::placeholder { color: var(--inv-placeholder); }
+
+.inv-ssel-list {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+}
+.inv-ssel-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--inv-text);
+  cursor: pointer;
+}
+.inv-ssel-option.is-active { background: var(--inv-surface-2); }
+.inv-ssel-option.is-selected { font-weight: 600; color: var(--inv-brand); }
+.inv-ssel-option.is-pinned { border-top: 1px solid var(--inv-border); margin-top: 4px; padding-top: 9px; }
+.inv-ssel-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inv-ssel-hint { flex-shrink: 0; font-size: 11px; color: var(--inv-text-3); }
+.inv-ssel-empty { margin: 0; padding: 14px 12px; font-size: 13px; color: var(--inv-text-3); }

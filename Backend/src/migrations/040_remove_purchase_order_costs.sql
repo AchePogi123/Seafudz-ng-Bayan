@@ -37,6 +37,36 @@ UPDATE inventory_purchase_order_items AS poi
  WHERE ing.id = poi.ingredient_id
    AND poi.unit IS DISTINCT FROM ing.base_unit;
 
+-- Keep the recorded costs before the columns go. Dropping a column is irreversible, and these
+-- are real purchasing figures, so they are copied into archive tables first. Nothing in the
+-- application reads them; they exist so the numbers can still be answered for or restored.
+DO $archive$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'inventory_purchase_order_items' AND column_name = 'unit_cost'
+  ) AND to_regclass('public.inventory_po_item_cost_archive') IS NULL THEN
+    EXECUTE $sql$
+      CREATE TABLE inventory_po_item_cost_archive AS
+        SELECT id, purchase_order_id, ingredient_id, ingredient_name,
+               ordered_quantity, unit, unit_cost, total_cost, NOW() AS archived_at
+          FROM inventory_purchase_order_items
+    $sql$;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'inventory_purchase_orders' AND column_name = 'total_amount'
+  ) AND to_regclass('public.inventory_po_total_archive') IS NULL THEN
+    EXECUTE $sql$
+      CREATE TABLE inventory_po_total_archive AS
+        SELECT id, po_number, supplier_name, order_date, status, total_amount, NOW() AS archived_at
+          FROM inventory_purchase_orders
+    $sql$;
+  END IF;
+END
+$archive$;
+
 ALTER TABLE inventory_purchase_order_items DROP COLUMN IF EXISTS unit_cost;
 ALTER TABLE inventory_purchase_order_items DROP COLUMN IF EXISTS total_cost;
 ALTER TABLE inventory_purchase_orders      DROP COLUMN IF EXISTS total_amount;

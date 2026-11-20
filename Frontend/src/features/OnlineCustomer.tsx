@@ -157,6 +157,12 @@ const getOrderOutOfStockItems = (order: OnlineOrderState | null) => {
 export const SETTLED_ORDER_STATUSES = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED']
 
 /**
+ * How long a locally-stored order is trusted before the backend must vouch for it. Covers the
+ * window between placing an order and it becoming queryable.
+ */
+const STALE_LOCAL_ORDER_GRACE_MS = 10 * 60 * 1000
+
+/**
  * Whether an order still occupies the customer's one order slot. A customer may only have one
  * order on the go, so while this returns true for any of their orders, a new one cannot be started.
  *
@@ -715,6 +721,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         const user = currentUserArg !== undefined ? currentUserArg : getActiveUser()
         const userOrdersKey = getOrdersKey(user)
         const orderMap = new Map<string, any>()
+        let backendServedIds: Set<string> | null = null
 
         try {
             const localList = JSON.parse(localStorage.getItem(userOrdersKey) || '[]')
@@ -762,6 +769,11 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 const json = await res.json()
                 const backendList = json.data || json
                 if (Array.isArray(backendList)) {
+                    backendServedIds = new Set(
+                        backendList
+                            .filter((order: any) => order && (order.id || order.ref))
+                            .map((order: any) => String(order.id || order.ref))
+                    )
                     backendList.forEach((order: any) => {
                         if (!order || (!order.id && !order.ref)) return
                         const key = String(order.id || order.ref)
@@ -778,6 +790,44 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                 }
             }
         } catch { }
+
+        // The server is the source of truth. An order the backend no longer knows about is a stale
+        // local ghost (e.g. it only ever lived in the backend's in-memory map and was lost on a
+        // restart). Without pruning, it is re-persisted on every refresh and keeps the
+        // single-ongoing-order lock engaged forever. Fresh orders are kept, since a just-placed
+        // order may not be queryable yet.
+        if (backendServedIds) {
+            const now = Date.now()
+            Array.from(orderMap.entries()).forEach(([key, order]: [string, any]) => {
+                if (backendServedIds!.has(key)) return
+                if (SETTLED_ORDER_STATUSES.includes(normalizeStatus(order?.status))) return
+                const placedAt = new Date(order?.createdAt || order?.created_at || 0).getTime()
+                if (!placedAt || now - placedAt < STALE_LOCAL_ORDER_GRACE_MS) return
+                orderMap.delete(key)
+                try {
+                    const activeRaw = localStorage.getItem(getActiveOrderKey(user))
+                    const active = activeRaw ? JSON.parse(activeRaw) : null
+                    if (active && String(active.id || active.ref || '') === key) {
+                        localStorage.removeItem(getActiveOrderKey(user))
+                        localStorage.removeItem('seafudz_active_online_order')
+                        setActiveOrder(null)
+                    }
+                } catch { }
+            })
+
+            try {
+                const globalList = JSON.parse(localStorage.getItem('seafudz_orders') || '[]')
+                if (Array.isArray(globalList)) {
+                    localStorage.setItem(
+                        'seafudz_orders',
+                        JSON.stringify(globalList.filter((o: any) => {
+                            const key = String(o?.id || o?.ref || '')
+                            return !key || orderMap.has(key) || !backendServedIds!.size
+                        }))
+                    )
+                }
+            } catch { }
+        }
 
         const merged = Array.from(orderMap.values())
         merged.sort((a: any, b: any) => {

@@ -400,6 +400,11 @@ export const MenuCard: React.FC<MenuCardProps> = ({
   const effectiveAvailable = isAvailable
   const servingsLeft = typeof remainingServings === 'number' ? remainingServings : null
   const isRunningLow = effectiveAvailable && servingsLeft !== null && servingsLeft > 0 && servingsLeft <= LOW_SERVINGS_THRESHOLD
+  /**
+   * Stock is shown on the card itself, the same way the customer menu shows it, so a cashier
+   * reads how many servings are left before adding rather than after the cart rejects the line.
+   */
+  const showServingsPill = effectiveAvailable && servingsLeft !== null && servingsLeft > 0
   const currentRole = getActiveUser()?.role?.toLowerCase()
   const canManageAvailability = currentRole === 'kitchen' || currentRole === 'admin'
   const canEditPrice = currentRole === 'admin'
@@ -448,12 +453,6 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           {item.category}
         </span>
 
-        {isRunningLow && (
-          <span className="absolute top-2.5 right-2.5 bg-amber-100 text-amber-900 font-bold text-[11px] px-2.5 py-0.5 rounded-md border border-amber-300 shadow-2xs">
-            Only {servingsLeft} left
-          </span>
-        )}
-
         {/* Unavailable Banner if item is out of stock */}
         {!effectiveAvailable && (
           <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-[1px] flex items-center justify-center p-2 pointer-events-none">
@@ -480,6 +479,19 @@ export const MenuCard: React.FC<MenuCardProps> = ({
           <p className="text-xs text-neutral-500 font-normal mt-1 line-clamp-2 min-h-[32px] leading-relaxed">
             {item.description}
           </p>
+          {showServingsPill && (
+            <span
+              title={`About ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} can still be made`}
+              className={`mt-2 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-[3px] text-[11px] font-bold leading-none ${
+                isRunningLow ? 'bg-amber-100 text-amber-900 ring-1 ring-amber-300' : 'bg-emerald-50 text-emerald-800'
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${isRunningLow ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+              {isRunningLow
+                ? `Only ${servingsLeft} serving${servingsLeft === 1 ? '' : 's'} left`
+                : `${servingsLeft > 99 ? '99+' : servingsLeft} servings left`}
+            </span>
+          )}
         </div>
 
         {/* Price & Add / Availability Toggle Action Bar */}

@@ -15,7 +15,12 @@ export const cx = (...c: Array<string | false | null | undefined>) => c.filter(B
 
 /* ------------------------------------------------------------------- icons */
 
-const PATHS = {
+/**
+ * Shared with the staff side (`components/PosIcon.tsx`), which draws the same family on the same
+ * 24px grid at the same stroke, so a receipt or a cooking pot reads identically to the customer
+ * and to the cashier looking at the same order.
+ */
+export const ORDER_ICON_PATHS = {
   receipt: 'M7 3h10a1 1 0 011 1v16l-3-2-3 2-3-2-3 2V4a1 1 0 011-1zm2 5h6M9 12h6',
   check: 'M5 12.5l4.5 4.5L19 7.5',
   cooking: 'M5 11h14m-7-4V5m-6 6a6 6 0 0012 0M4 20h16',
@@ -29,6 +34,8 @@ const PATHS = {
   alert: 'M12 9v4m0 4h.01M10.3 3.9L2.4 17.6A2 2 0 004.1 20.6h15.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z',
   camera: 'M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V8zm9 10a4 4 0 100-8 4 4 0 000 8z',
 } as const
+
+const PATHS = ORDER_ICON_PATHS
 
 export type OrderIconName = keyof typeof PATHS
 

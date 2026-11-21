@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { useLocation, Link } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { getActiveUser, saveActiveUser, isUuidString } from '../cryptography/cryptoSession'
 import { API_BASE_URL } from '../utils/api'
 import NavShell from './nav/NavShell'
@@ -119,16 +119,6 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
   return (
     <>
       <NavShell role="customer" subtitle={getCurrentPageName()} singleRow>
-        {location.pathname !== '/customer/purchases' && location.pathname !== '/purchases' && (
-          <Link
-            to="/customer/purchases"
-            className="rounded-lg px-1.5 py-1.5 text-[13px] font-bold whitespace-nowrap text-slate-700 transition-colors select-none hover:text-orange-600 sm:px-2 sm:text-sm cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2"
-            title="View Your Purchases"
-          >
-            Your Purchases
-          </Link>
-        )}
-
         {/* Shopping Cart Button in Header */}
         {onOpenCart && (
           <button

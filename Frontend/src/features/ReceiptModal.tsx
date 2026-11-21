@@ -1,4 +1,42 @@
 import React from 'react'
+import { getActiveUser, isUuidString } from '../cryptography/cryptoSession'
+
+/**
+ * Anything interpolated into a print document is operator- or customer-supplied:
+ * a dish name, an address, a handwritten note. It is written straight into an
+ * iframe document, so it is escaped on the way in.
+ */
+const escapeHtml = (value: unknown) =>
+  String(value ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
+  )
+
+/**
+ * Who pressed print.
+ *
+ * Staff share a terminal between shifts, so a slip that comes back disputed —
+ * a wrong total, a tray that went to the wrong name — has to name the person
+ * who produced it, not just the till it came out of. Falls back to the role
+ * alone, and then to "Unknown", rather than printing a blank line or a raw id.
+ */
+export const getPrintedByLabel = (): string => {
+  const user = getActiveUser()
+  if (!user) return 'Unknown'
+
+  const rawRole = String(user.role || '').trim()
+  const roleLabel = rawRole ? rawRole.charAt(0).toUpperCase() + rawRole.slice(1).toLowerCase() : ''
+
+  // A profile read straight out of storage can still carry a uuid where a name
+  // belongs, so fall back to the email prefix the way the token path does
+  // rather than printing an id nobody on the floor recognises.
+  const candidates = [user.fullname, user.username, user.email?.split('@')[0]]
+  const name = candidates
+    .map((value) => String(value ?? '').trim())
+    .find((value) => value && !isUuidString(value)) || ''
+
+  if (name && roleLabel) return `${name} (${roleLabel})`
+  return name || roleLabel || 'Unknown'
+}
 
 interface CartItem {
   item: {
@@ -68,6 +106,7 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
       }, 0)
   const vatAmount = typeof vat === 'number' ? vat : rawSubtotal * 0.12
   const dateStr = new Date().toLocaleString()
+  const printedBy = getPrintedByLabel()
 
   return `
     <!DOCTYPE html>
@@ -118,13 +157,14 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
         <div class="divider"></div>
 
         <div>
-          ${orderId ? `<div class="flex-row"><span>Order ID:</span><span class="font-bold">${orderId}</span></div>` : ''}
-          <div class="flex-row"><span>Type:</span><span class="font-bold">${type}</span></div>
-          ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${table}</span></div>` : ''}
-          ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${customerName}</span></div>` : ''}
-          ${phone ? `<div class="flex-row"><span>Phone:</span><span>${phone}</span></div>` : ''}
-          ${address ? `<div style="font-size: 10px; margin-top: 2px;"><span>Address: </span><span>${address}</span></div>` : ''}
-          <div class="flex-row" style="margin-top:2px;"><span>Date:</span><span style="font-size: 10px;">${dateStr}</span></div>
+          ${orderId ? `<div class="flex-row"><span>Order ID:</span><span class="font-bold">${escapeHtml(orderId)}</span></div>` : ''}
+          <div class="flex-row"><span>Type:</span><span class="font-bold">${escapeHtml(type)}</span></div>
+          ${table && table !== 'N/A' ? `<div class="flex-row"><span>Location:</span><span class="font-bold">${escapeHtml(table)}</span></div>` : ''}
+          ${customerName ? `<div class="flex-row"><span>Customer:</span><span class="font-bold">${escapeHtml(customerName)}</span></div>` : ''}
+          ${phone ? `<div class="flex-row"><span>Phone:</span><span>${escapeHtml(phone)}</span></div>` : ''}
+          ${address ? `<div style="font-size: 10px; margin-top: 2px;"><span>Address: </span><span>${escapeHtml(address)}</span></div>` : ''}
+          <div class="flex-row" style="margin-top:2px;"><span>Date:</span><span style="font-size: 10px;">${escapeHtml(dateStr)}</span></div>
+          <div class="flex-row"><span>Printed by:</span><span class="font-bold">${escapeHtml(printedBy)}</span></div>
         </div>
 
         <div class="divider"></div>
@@ -142,8 +182,8 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
               .map(
                 (ci) => `
               <tr>
-                <td>${ci.item.name}</td>
-                <td class="text-center">x${ci.quantity}</td>
+                <td>${escapeHtml(ci.item.name)}</td>
+                <td class="text-center">x${escapeHtml(ci.quantity)}</td>
                 <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
             `
@@ -164,8 +204,8 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
         <div class="divider"></div>
 
         <div>
-          <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${paymentMethod}</span></div>
-          ${paymentReference ? `<div class="flex-row"><span>Reference No:</span><span class="font-bold" style="font-family: monospace;">${paymentReference}</span></div>` : ''}
+          <div class="flex-row"><span>Payment Mode:</span><span class="font-bold">${escapeHtml(paymentMethod)}</span></div>
+          ${paymentReference ? `<div class="flex-row"><span>Reference No:</span><span class="font-bold" style="font-family: monospace;">${escapeHtml(paymentReference)}</span></div>` : ''}
           ${paymentMethod === 'Cash' && cashReceived
             ? `
             <div class="flex-row"><span>Cash Received:</span><span>₱${parseFloat(cashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
@@ -299,6 +339,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
       }, 0)
   const vatAmount = typeof vat === 'number' ? vat : rawSubtotal * 0.12
   const dateStr = new Date().toLocaleString()
+  const printedBy = getPrintedByLabel()
 
   const handlePrint = () => {
     setIsPrinting(true)
@@ -393,6 +434,10 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
               <div className="flex justify-between pt-1">
                 <span>Date:</span>
                 <span className="text-neutral-800 text-[10px]">{dateStr}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Printed by:</span>
+                <span className="font-bold text-neutral-800">{printedBy}</span>
               </div>
             </div>
 

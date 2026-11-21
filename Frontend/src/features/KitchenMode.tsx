@@ -7,7 +7,7 @@ import { AdminEditTransactionModal } from '../components/AdminEditTransactionMod
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import KitchenStockPanel from '../components/KitchenStockPanel'
-import { executeReceiptPrint } from './ReceiptModal'
+import { executeReceiptPrint, getPrintedByLabel } from './ReceiptModal'
 import { Badge, Button, Icon } from './inventory/ui'
 import './inventory/admin-inventory.css'
 
@@ -115,6 +115,7 @@ const generateKitchenSlipHtml = (order: KitchenOrder): string => {
       <div class="ref">${escapeHtml(order.queue)}</div>
       <div class="row" style="margin-top:6px;"><span>Type</span><span>${pickup ? 'STORE PICK-UP' : 'DELIVERY'}</span></div>
       <div class="row"><span>Ready at</span><span>${escapeHtml(new Date().toLocaleString())}</span></div>
+      <div class="row"><span>Printed by</span><span>${escapeHtml(getPrintedByLabel())}</span></div>
     </div>
 
     <div class="divider"></div>

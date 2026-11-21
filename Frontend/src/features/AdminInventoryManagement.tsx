@@ -161,6 +161,9 @@ export const AdminInventoryManagement: React.FC = () => {
     setSearchParams({ tab: tabId, ...params })
   }
   const statusParam = searchParams.get('status') || undefined
+  /** ?item= / ?q= single out one stock item on the Items tab (used by recipe links) */
+  const itemParam = searchParams.get('item') || undefined
+  const queryParam = searchParams.get('q') || undefined
 
   // Snap to the canonical tab when the URL carries an unknown ?tab= value
   useEffect(() => {
@@ -652,6 +655,8 @@ export const AdminInventoryManagement: React.FC = () => {
                 suppliers={suppliers}
                 transactions={transactions}
                 initialStatus={statusParam}
+                initialItemId={itemParam}
+                initialQuery={queryParam}
                 onAddIngredient={handleAddIngredient}
                 onEditIngredient={handleEditIngredient}
                 onDeleteIngredient={handleDeleteIngredient}
@@ -665,6 +670,7 @@ export const AdminInventoryManagement: React.FC = () => {
                 recipes={recipes}
                 onSaveRecipe={handleSaveRecipe}
                 onDeleteRecipe={handleDeleteRecipe}
+                onNavigateTab={handleTabChange}
               />
             )}
 

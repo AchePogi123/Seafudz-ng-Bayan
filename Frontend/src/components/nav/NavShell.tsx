@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import SidebarDrawer from '../SidebarDrawer'
 import BrandLogo from '../BrandLogo'
+import { getActiveUser, isEmployeeRole } from '../../cryptography/cryptoSession'
 
 /**
  * Shared chrome for every role's navbar.
@@ -110,6 +111,53 @@ export const NavStatusPill: React.FC<{ children: React.ReactNode }> = ({ childre
 )
 
 /* ------------------------------------------------------------------ */
+/* Signed-in identity                                                  */
+/* ------------------------------------------------------------------ */
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  cashier: 'Cashier',
+  kitchen: 'Kitchen',
+  rider: 'Rider',
+  assistant: 'Assistant',
+}
+
+/**
+ * Who is working this terminal. Staff share devices between shifts, so the
+ * role is the part that must be readable without looking for it; the name
+ * follows quietly and drops away when the bar gets tight.
+ */
+const staffIdentity = (): { roleLabel: string; name: string } | null => {
+  const user = getActiveUser()
+  const role = (user?.role || '').toLowerCase().trim()
+  if (!isEmployeeRole(role)) return null
+  return {
+    roleLabel: ROLE_LABELS[role] || role.charAt(0).toUpperCase() + role.slice(1),
+    name: (user?.fullname || user?.username || '').trim(),
+  }
+}
+
+export const NavIdentity: React.FC<{ roleLabel: string; name: string }> = ({ roleLabel, name }) => (
+  (
+    <span
+      className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-full sm:self-center border border-slate-200 bg-white px-2.5 py-1 text-[12px] leading-5 text-slate-700"
+      title={name ? `Signed in as ${name} (${roleLabel})` : `Signed in as ${roleLabel}`}
+    >
+      <span className="sr-only">Signed in as </span>
+      <span className="font-semibold">{roleLabel}</span>
+      {name && (
+        <>
+          <span aria-hidden="true" className="text-slate-300">
+            /
+          </span>
+          <span className="hidden max-w-[16ch] truncate text-slate-500 sm:inline">{name}</span>
+        </>
+      )}
+    </span>
+  )
+)
+
+/* ------------------------------------------------------------------ */
 /* Shell                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -127,6 +175,7 @@ export interface NavShellProps {
 export const NavShell: React.FC<NavShellProps> = ({ role, subtitle, children, singleRow = false }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const triggerRef = React.useRef<HTMLButtonElement>(null)
+  const identity = staffIdentity()
 
   return (
     <>
@@ -155,13 +204,14 @@ export const NavShell: React.FC<NavShellProps> = ({ role, subtitle, children, si
           <BrandLogo to="/" size="md" subtitle={subtitle} />
         </div>
 
-        {children && (
+        {(children || identity) && (
           <div
             className={`flex min-w-0 items-center gap-2.5 sm:gap-3 ${
               singleRow ? 'shrink-0' : 'w-full flex-col items-stretch justify-end sm:w-auto sm:flex-row sm:items-center'
             }`}
           >
             {children}
+            {identity && <NavIdentity roleLabel={identity.roleLabel} name={identity.name} />}
           </div>
         )}
       </header>

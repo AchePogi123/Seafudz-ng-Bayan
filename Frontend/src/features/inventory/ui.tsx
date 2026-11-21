@@ -185,6 +185,54 @@ export const SearchInput: React.FC<{
   </div>
 )
 
+/* --------------------------------------------------- Compact filter chip */
+
+/**
+ * A native <select> wearing a compact "Label · Value" face, so a row of
+ * filters reads as one line of settings instead of a stack of form fields.
+ * The real control sits transparent on top: native menu, native keyboard.
+ */
+export function FilterSelect<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+  neutralValue,
+  className,
+}: {
+  options: ReadonlyArray<{ value: T; label: string; count?: number }>
+  value: T
+  onChange: (value: T) => void
+  label: string
+  /** the value that means "not filtering"; anything else tints the chip */
+  neutralValue?: T
+  className?: string
+}) {
+  const current = options.find((o) => o.value === value)
+  const isSet = neutralValue !== undefined && value !== neutralValue
+  return (
+    <span className={cx('inv-filter', isSet && 'inv-filter--on', className)}>
+      <select
+        aria-label={label}
+        className="inv-filter-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.count === undefined ? o.label : `${o.label} (${o.count})`}
+          </option>
+        ))}
+      </select>
+      <span className="inv-filter-face" aria-hidden="true">
+        <span className="inv-filter-label">{label}</span>
+        <span className="inv-filter-value">{current?.label ?? value}</span>
+        <Icon name="chevronDown" className="inv-filter-caret h-3.5 w-3.5" />
+      </span>
+    </span>
+  )
+}
+
 /* ----------------------------------------------------- Segmented control */
 
 export function Segmented<T extends string>({

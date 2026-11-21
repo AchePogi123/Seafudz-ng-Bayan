@@ -36,6 +36,7 @@ interface RecipesBOMTabProps {
   recipes: ProductRecipe[]
   onSaveRecipe: (recipe: ProductRecipe) => void
   onDeleteRecipe: (productId: string) => void
+  onNavigateTab: (tabId: string, params?: Record<string, string>) => void
 }
 
 export interface IngredientYieldDetail {
@@ -135,9 +136,21 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
   recipes,
   onSaveRecipe,
   onDeleteRecipe,
+  onNavigateTab,
 }) => {
   // The live catalog, so dishes added on the Menu tab can be given a recipe here too
   const { menuItems } = useProductImages()
+
+  /**
+   * Jump to the Items tab with this stock item already singled out, so a cook
+   * reading a recipe can go straight from "out of stock" to restocking it.
+   */
+  const openInItems = (stockItemId: string | undefined, name: string) => {
+    const match =
+      (stockItemId && ingredients.find((i) => i.id === stockItemId)) ||
+      ingredients.find((i) => i.name.toLowerCase() === name.toLowerCase())
+    onNavigateTab('ingredients', match ? { item: match.id } : { q: name })
+  }
 
   // Menu selection & filters
   const [productSearch, setProductSearch] = useState('')
@@ -591,7 +604,20 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                   </span>
                   {estimate.limitingIngredient && (
                     <span className="text-[var(--inv-text-3)]">
-                      Limited by <b className="font-medium text-[var(--inv-text)]">{estimate.limitingIngredient.ingredientName}</b>
+                      Limited by{' '}
+                      <button
+                        type="button"
+                        className="inv-row-link inv-row-link--hint"
+                        onClick={() =>
+                          openInItems(
+                            estimate.limitingIngredient?.ingredientId,
+                            estimate.limitingIngredient?.ingredientName || ''
+                          )
+                        }
+                        title={`Open ${estimate.limitingIngredient.ingredientName} in Items`}
+                      >
+                        {estimate.limitingIngredient.ingredientName}
+                      </button>
                     </span>
                   )}
                 </div>
@@ -900,7 +926,14 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                               <tr key={i} className={cx(detail && !detail.hasStock && 'is-critical', detail?.isLimiting && detail.hasStock && 'is-attention')}>
                                 <td>
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className="inv-cell-primary">{ing.ingredientName}</span>
+                                    <button
+                                      type="button"
+                                      className="inv-row-link inv-row-link--hint"
+                                      onClick={() => openInItems(ing.ingredientId, ing.ingredientName)}
+                                      title={`Open ${ing.ingredientName} in Items`}
+                                    >
+                                      {ing.ingredientName}
+                                    </button>
                                     {detail && !detail.hasStock ? (
                                       <Badge tone="danger">Out of stock</Badge>
                                     ) : (
@@ -949,7 +982,16 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                           <tbody>
                             {activeRecipe.packagingRequirements.map((pkg, i) => (
                               <tr key={pkg.id || i}>
-                                <td className="inv-cell-primary">{pkg.packagingName}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="inv-row-link inv-row-link--hint"
+                                    onClick={() => openInItems(pkg.packagingId, pkg.packagingName)}
+                                    title={`Open ${pkg.packagingName} in Items`}
+                                  >
+                                    {pkg.packagingName}
+                                  </button>
+                                </td>
                                 <td>
                                   <Badge>{channelLabel(pkg.fulfillmentType)}</Badge>
                                 </td>

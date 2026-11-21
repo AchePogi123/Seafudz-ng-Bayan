@@ -24,6 +24,7 @@ import {
   Card,
   EmptyState,
   Field,
+  FilterSelect,
   Icon,
   IconButton,
   Modal,
@@ -1010,60 +1011,72 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
               value={searchQuery}
               onChange={(value) => applyFilter(() => setSearchQuery(value))}
             />
-            <select
-              aria-label="Category"
-              className="inv-select w-full sm:w-auto lg:hidden"
-              value={selectedCategory}
-              onChange={(event) => applyFilter(() => setSelectedCategory(event.target.value))}
-            >
-              {CLIENT_CATEGORIES.map((category) => (
-                <option key={category} value={category}>
-                  {category === 'All Menu' ? 'All dishes' : category} ({categoryCounts[category] || 0})
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label="Availability"
-              className="inv-select w-full sm:w-auto"
-              value={stockFilter}
-              onChange={(event) => applyFilter(() => setStockFilter(event.target.value as StockFilter))}
-            >
-              <option value="all">Any availability</option>
-              <option value="in_stock">On the menu</option>
-              <option value="out_of_stock">Out of stock</option>
-            </select>
-            <select
-              aria-label="Pricing"
-              className="inv-select w-full sm:w-auto"
-              value={priceFilter}
-              onChange={(event) => applyFilter(() => setPriceFilter(event.target.value as PriceFilter))}
-            >
-              <option value="all">Any price</option>
-              <option value="standard">Catalog price</option>
-              <option value="custom">Price override</option>
-            </select>
-            <select
-              aria-label="Sort dishes"
-              className="inv-select w-full sm:w-auto"
-              value={sortBy}
-              onChange={(event) => setSortBy(event.target.value as SortOption)}
-            >
-              <option value="default">Menu order</option>
-              <option value="name_asc">Name A–Z</option>
-              <option value="name_desc">Name Z–A</option>
-              <option value="price_asc">Price, low to high</option>
-              <option value="price_desc">Price, high to low</option>
-            </select>
-            <Segmented
-              label="View"
-              size="sm"
-              value={viewMode}
-              onChange={handleSetViewMode}
-              options={[
-                { value: 'table', label: 'List' },
-                { value: 'grid', label: 'Cards' },
-              ]}
-            />
+            <div className="inv-filters">
+              <FilterSelect
+                className="lg:hidden"
+                label="Category"
+                value={selectedCategory}
+                neutralValue="All Menu"
+                onChange={(value) => applyFilter(() => setSelectedCategory(value))}
+                options={CLIENT_CATEGORIES.map((category) => ({
+                  value: category,
+                  label: category === 'All Menu' ? 'All dishes' : category,
+                  count: categoryCounts[category] || 0,
+                }))}
+              />
+              <FilterSelect<StockFilter>
+                label="Availability"
+                value={stockFilter}
+                neutralValue="all"
+                onChange={(value) => applyFilter(() => setStockFilter(value))}
+                options={[
+                  { value: 'all', label: 'Any' },
+                  { value: 'in_stock', label: 'On the menu' },
+                  { value: 'out_of_stock', label: 'Out of stock' },
+                ]}
+              />
+              <FilterSelect<PriceFilter>
+                label="Price"
+                value={priceFilter}
+                neutralValue="all"
+                onChange={(value) => applyFilter(() => setPriceFilter(value))}
+                options={[
+                  { value: 'all', label: 'Any' },
+                  { value: 'standard', label: 'Catalog' },
+                  { value: 'custom', label: 'Overridden' },
+                ]}
+              />
+              <FilterSelect<SortOption>
+                label="Sort"
+                value={sortBy}
+                neutralValue="default"
+                onChange={setSortBy}
+                options={[
+                  { value: 'default', label: 'Menu order' },
+                  { value: 'name_asc', label: 'Name A\u2013Z' },
+                  { value: 'name_desc', label: 'Name Z\u2013A' },
+                  { value: 'price_asc', label: 'Price, low to high' },
+                  { value: 'price_desc', label: 'Price, high to low' },
+                ]}
+              />
+              {hasActiveFilters && (
+                <button type="button" className="inv-filter-reset" onClick={resetFilters}>
+                  <Icon name="close" className="h-3.5 w-3.5" />
+                  Clear filters
+                </button>
+              )}
+              <span className="inv-filters-sep" aria-hidden="true" />
+              <Segmented
+                label="View"
+                size="sm"
+                value={viewMode}
+                onChange={handleSetViewMode}
+                options={[
+                  { value: 'table', label: 'List' },
+                  { value: 'grid', label: 'Cards' },
+                ]}
+              />
+            </div>
           </Toolbar>
 
           {selectedItemIds.size > 0 && (

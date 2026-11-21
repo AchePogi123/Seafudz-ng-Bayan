@@ -502,40 +502,49 @@ export const CustomerPurchases: React.FC = () => {
     navigate(`/customer?orderId=${encodeURIComponent(order.id)}&tab=tracking`)
   }
 
+  // One page inset for the whole screen, exactly as the customer menu sets it, so the bar and the
+  // cards below it share a single left edge instead of each carrying its own.
   return (
-    <div className="purchases-view flex min-h-screen flex-col bg-[#f8f6f4] font-sans text-neutral-800">
-      <div className="sticky top-0 z-50 mx-auto w-full max-w-6xl p-2 sm:p-4">
+    <div className="purchases-view min-h-screen bg-[#f8f6f4] p-4 font-sans text-neutral-800 lg:p-6">
+      {/*
+        The bar stays reachable down a long list of orders. It carries the page ground with it
+        (negative inset plus the same background), so cards scroll beneath an opaque band rather
+        than showing through the gap above a translucent header.
+      */}
+      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-6 bg-[#f8f6f4] px-4 pb-3 pt-4 lg:-mx-6 lg:-mt-6 lg:px-6 lg:pt-6">
         <NavbarCustomer />
       </div>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 space-y-5 px-3 py-4 sm:px-6 sm:py-6 lg:px-8">
-        {/* Where this screen sits: the menu behind it, finished orders beside it. */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-          <Link
-            to="/customer"
-            className="group inline-flex items-center gap-2 text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900"
-          >
-            <OrderIcon name="arrowLeft" className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
-            <span>Back to menu</span>
-          </Link>
+      <main className="mx-auto w-full max-w-6xl space-y-5 xl:max-w-7xl">
+        {/* Where you are and where else orders live: one group, read before the title. */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Link
+              to="/customer"
+              className="group inline-flex items-center gap-2 text-sm font-medium text-neutral-600 transition-colors hover:text-neutral-900"
+            >
+              <OrderIcon name="arrowLeft" className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+              <span>Back to menu</span>
+            </Link>
 
-          <Link
-            to="/account?tab=orders"
-            className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition-colors hover:border-neutral-300 hover:text-neutral-900"
-            title="Completed and cancelled orders"
-          >
-            <span>Order history</span>
-            <OrderIcon name="arrowRight" className="h-3.5 w-3.5 text-neutral-400" />
-          </Link>
+            <Link
+              to="/account?tab=orders"
+              className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 transition-colors hover:border-neutral-300 hover:text-neutral-900"
+              title="Completed and cancelled orders"
+            >
+              <span>Order history</span>
+              <OrderIcon name="arrowRight" className="h-3.5 w-3.5 text-neutral-400" />
+            </Link>
+          </div>
+
+          <header>
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Orders in progress</h1>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-neutral-500">
+              Everything you have ordered that is still being prepared or delivered. Finished orders live in your
+              order history.
+            </p>
+          </header>
         </div>
-
-        <header className="px-1">
-          <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Orders in progress</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Everything you have ordered that is still being prepared or delivered. Finished orders live in your
-            order history.
-          </p>
-        </header>
 
         {/* Filter and search, in the same bar language as the menu */}
         <div className="rounded-2xl border border-neutral-200 bg-white px-2.5 py-2.5">
@@ -567,7 +576,7 @@ export const CustomerPurchases: React.FC = () => {
               })}
             </div>
 
-            <div className="shrink-0 md:ml-auto md:w-64 lg:w-72">
+            <div className="shrink-0 md:ml-auto md:w-56 lg:w-64">
               <div className="flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 transition-colors focus-within:border-orange-400 focus-within:bg-white">
                 <svg className="h-4 w-4 shrink-0 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="11" cy="11" r="7" />
@@ -656,7 +665,7 @@ export const CustomerPurchases: React.FC = () => {
                 <article
                   key={order.id}
                   onClick={() => setSelectedOrder(order)}
-                  className="flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-colors hover:border-neutral-300"
+                  className="flex cursor-pointer flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-neutral-300 hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.28)]"
                 >
                   {/* What the customer came for: where this order is, in words. */}
                   <div className="px-5 pb-4 pt-4">
@@ -863,7 +872,7 @@ export const CustomerPurchases: React.FC = () => {
                 </button>
               </div>
 
-              <div className="space-y-5 overflow-y-auto px-5 py-5">
+              <div className="purchases-scroll space-y-5 overflow-y-auto px-5 py-5">
                 {/* Status, in a sentence, before any table of facts */}
                 <div>
                   <StatusPill tone={status.tone}>{status.label}</StatusPill>

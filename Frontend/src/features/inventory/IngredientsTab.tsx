@@ -48,6 +48,10 @@ interface IngredientsTabProps {
   suppliers: Supplier[]
   transactions?: StockTransaction[]
   initialStatus?: string
+  /** Single out one stock item on arrival — set by the Recipes tab's ingredient links */
+  initialItemId?: string
+  /** Fallback when a recipe names an item that is no longer in the stockroom */
+  initialQuery?: string
   onAddIngredient: (item: Omit<Ingredient, 'id' | 'updatedAt' | 'status'>) => void
   onEditIngredient: (item: Ingredient) => void
   onDeleteIngredient: (id: string) => void
@@ -98,6 +102,8 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   suppliers,
   transactions = [],
   initialStatus,
+  initialItemId,
+  initialQuery,
   onAddIngredient,
   onEditIngredient,
   onDeleteIngredient,
@@ -107,7 +113,11 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   const normalizedInitial: StatusFilter = STATUS_FILTERS.includes(initialStatus as StatusFilter)
     ? (initialStatus as StatusFilter)
     : 'ALL'
-  const [searchQuery, setSearchQuery] = useState('')
+  /** The item a recipe link pointed at, resolved to the name the search box filters on. */
+  const focusedName = initialItemId
+    ? ingredients.find((item) => item.id === initialItemId)?.name || initialQuery || ''
+    : initialQuery || ''
+  const [searchQuery, setSearchQuery] = useState(focusedName)
   const [selectedType, setSelectedType] = useState<'ALL' | InventoryItemType>('ALL')
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL')
   const [selectedStatus, setSelectedStatus] = useState<StatusFilter>(normalizedInitial)
@@ -118,6 +128,15 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     setSelectedStatus(normalizedInitial)
     setCurrentPage(1)
   }, [normalizedInitial])
+
+  // Arriving from a recipe link: narrow to that one item and drop any other filter.
+  useEffect(() => {
+    if (!focusedName) return
+    setSearchQuery(focusedName)
+    setSelectedType('ALL')
+    setSelectedCategory('ALL')
+    setCurrentPage(1)
+  }, [focusedName])
 
   /* -------------------------------------------------------- Overlays */
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)

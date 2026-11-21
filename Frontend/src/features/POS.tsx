@@ -18,6 +18,7 @@ import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
 import { CancelConfirmModal } from '../components/CancelConfirmModal'
 import { NoticeModal } from '../components/NoticeModal'
 import { useProductImages } from '../utils/useProductImages'
+import { PosIcon, type PosIconName } from '../components/PosIcon'
 import { useMenuAvailability, refreshMenuAvailability, setMenuFulfillment } from '../utils/menuAvailability'
 import { useCartStockGuard, overageMessage } from '../utils/cartStock'
 
@@ -87,6 +88,19 @@ export const getOrderCartItems = (ord: any): CartItem[] => {
   }))
 }
 
+type SubModuleId = 'new_order' | 'processing_orders' | 'online_receipts' | 'store_pickups'
+
+/**
+ * The four jobs a cashier switches between. Kept as data so every tab is built by the same code:
+ * the bar used to be four hand-written blocks that had drifted apart on colour and weight.
+ */
+const SUB_MODULES: ReadonlyArray<{ id: SubModuleId; label: string; icon: PosIconName }> = [
+  { id: 'new_order', label: 'New order', icon: 'cart' },
+  { id: 'processing_orders', label: 'On-site orders', icon: 'clipboard' },
+  { id: 'online_receipts', label: 'Online receipts', icon: 'receipt' },
+  { id: 'store_pickups', label: 'Store pick-ups', icon: 'bag' },
+]
+
 export const POS: React.FC = () => {
   const currentUser = getActiveUser()
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
@@ -146,7 +160,7 @@ export const POS: React.FC = () => {
 
 
   // Sub-module navigation state: 'new_order' | 'processing_orders' | 'online_receipts' | 'store_pickups'
-  const [activeSubModule, setActiveSubModule] = useState<'new_order' | 'processing_orders' | 'online_receipts' | 'store_pickups'>('new_order')
+  const [activeSubModule, setActiveSubModule] = useState<SubModuleId>('new_order')
   const [posOrders, setPosOrders] = useState<any[]>([])
   const [posSearchQuery, setPosSearchQuery] = useState('')
   const [posStatusFilter, setPosStatusFilter] = useState<'all' | 'kitchen' | 'ready' | 'completed' | 'cancelled'>('all')
@@ -936,9 +950,9 @@ export const POS: React.FC = () => {
             type="button"
             disabled={currentPage === 1}
             onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-2xs inline-flex items-center gap-1.5"
           >
-            ← Previous
+            <PosIcon name="arrowLeft" className="h-3.5 w-3.5" /> Previous
           </button>
 
           <div className="flex items-center gap-1">
@@ -948,7 +962,7 @@ export const POS: React.FC = () => {
                   key={i}
                   type="button"
                   onClick={() => onPageChange(p)}
-                  className={`w-8 h-8 rounded-xl font-black text-xs transition-all cursor-pointer ${
+                  className={`w-8 h-8 rounded-xl font-semibold text-xs transition-all cursor-pointer ${
                     currentPage === p
                       ? 'bg-orange-500 text-white shadow-xs'
                       : 'bg-neutral-50 hover:bg-neutral-100 text-neutral-700 border border-neutral-200'
@@ -968,9 +982,9 @@ export const POS: React.FC = () => {
             type="button"
             disabled={currentPage === totalPages}
             onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-extrabold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-2xs"
+            className="px-3 py-1.5 rounded-xl border border-neutral-200 font-semibold text-neutral-700 hover:bg-neutral-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer shadow-2xs inline-flex items-center gap-1.5"
           >
-            Next →
+            Next <PosIcon name="arrowRight" className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
@@ -1316,93 +1330,62 @@ export const POS: React.FC = () => {
         <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
 
         {/* POS Sub-Module Switcher Bar */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-white p-2 rounded-2xl border border-neutral-200/80 shadow-2xs gap-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setActiveSubModule('new_order')}
-              className={`px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer ${
-                activeSubModule === 'new_order'
-                  ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-              }`}
-            >
-              <span>🛒</span>
-              <span>New Order (POS Register)</span>
-            </button>
-            <button
-              onClick={() => setActiveSubModule('processing_orders')}
-              className={`px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer relative ${
-                activeSubModule === 'processing_orders'
-                  ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-              }`}
-            >
-              <span>📋</span>
-              <span>On-Site Processing Orders</span>
-              {activeProcessingCount > 0 && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  activeSubModule === 'processing_orders' ? 'bg-white text-orange-600' : 'bg-orange-500 text-white'
-                }`}>
-                  {activeProcessingCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveSubModule('online_receipts')}
-              className={`px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer relative ${
-                activeSubModule === 'online_receipts'
-                  ? 'bg-orange-500 text-white shadow-md shadow-orange-500/20'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-              }`}
-            >
-              <span>🧾</span>
-              <span>Online Receipts</span>
-              {unprintedOnlineCount > 0 && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  activeSubModule === 'online_receipts' ? 'bg-white text-orange-600' : 'bg-amber-500 text-white'
-                }`}>
-                  {unprintedOnlineCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveSubModule('store_pickups')}
-              className={`px-5 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm flex items-center gap-2 transition-all cursor-pointer relative ${
-                activeSubModule === 'store_pickups'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
-                  : 'text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100'
-              }`}
-            >
-              <span>🛍️</span>
-              <span>Store Pickups</span>
-              {pendingPickupCount > 0 && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                  activeSubModule === 'store_pickups' ? 'bg-white text-emerald-700' : 'bg-emerald-600 text-white'
-                }`}>
-                  {pendingPickupCount}
-                </span>
-              )}
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => setIsAdminCreateOpen(true)}
-                className="px-4 py-2.5 rounded-xl font-extrabold text-xs sm:text-sm bg-neutral-900 hover:bg-black text-white flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
-              >
-                <span>➕</span>
-                <span>Create Transaction (Admin)</span>
-              </button>
-            )}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-white p-2 rounded-2xl border border-neutral-200/80 shadow-2xs gap-2">
+          <div className="flex items-center gap-1 flex-wrap">
+            {SUB_MODULES.map((tab) => {
+              const isSelected = activeSubModule === tab.id
+              const count =
+                tab.id === 'processing_orders'
+                  ? activeProcessingCount
+                  : tab.id === 'online_receipts'
+                    ? unprintedOnlineCount
+                    : tab.id === 'store_pickups'
+                      ? pendingPickupCount
+                      : 0
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveSubModule(tab.id)}
+                  aria-current={isSelected ? 'page' : undefined}
+                  className={`flex cursor-pointer items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold transition-colors sm:text-sm ${
+                    isSelected
+                      ? 'bg-orange-500 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                  }`}
+                >
+                  <PosIcon name={tab.icon} className="h-4 w-4 shrink-0" />
+                  <span>{tab.label}</span>
+                  {count > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-neutral-100 text-neutral-600'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
           </div>
 
-          <div className="text-xs text-neutral-400 font-semibold px-2 hidden md:block">
-            Userflow: <strong className="text-neutral-700">Cashier Official Receipt Printing</strong>
-          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setIsAdminCreateOpen(true)}
+              className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 sm:text-sm"
+            >
+              <PosIcon name="plus" className="h-4 w-4" />
+              <span>Create transaction</span>
+            </button>
+          )}
         </div>
 
         {posNotification && (
-          <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-2xl flex items-center justify-between text-xs font-extrabold shadow-2xs">
+          <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-2xl flex items-center justify-between text-xs font-semibold shadow-2xs">
             <span>{posNotification}</span>
-            <button onClick={() => setPosNotification(null)} className="text-emerald-700 font-black cursor-pointer">✕</button>
+            <button onClick={() => setPosNotification(null)} className="inline-flex items-center justify-center text-emerald-700 cursor-pointer"><PosIcon name="close" className="h-3.5 w-3.5" /></button>
           </div>
         )}
 
@@ -1464,7 +1447,7 @@ export const POS: React.FC = () => {
                   <button
                     key={tab.id}
                     onClick={() => setPosStatusFilter(tab.id as any)}
-                    className={`px-4 py-2 rounded-xl text-xs font-extrabold whitespace-nowrap transition-all cursor-pointer ${
+                    className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
                       posStatusFilter === tab.id
                         ? 'bg-neutral-900 text-white shadow-xs'
                         : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-600'
@@ -1487,9 +1470,9 @@ export const POS: React.FC = () => {
                 {posSearchQuery && (
                   <button
                     onClick={() => setPosSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center justify-center text-neutral-400 hover:text-neutral-600 cursor-pointer"
                   >
-                    ✕
+                    <PosIcon name="close" className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
@@ -1498,7 +1481,7 @@ export const POS: React.FC = () => {
             {/* Orders Row-by-Row List (Paginated: 10 per page) */}
             {filteredPosOrders.length === 0 ? (
               <div className="bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                <span className="text-3xl block mb-2">📋</span>
+                <PosIcon name="clipboard" className="mx-auto mb-3 h-8 w-8 text-neutral-300" />
                 <h3 className="font-bold text-neutral-700 text-base">No on-site orders found</h3>
                 <p className="text-xs mt-1">
                   {posSearchQuery ? `No results matching "${posSearchQuery}"` : 'Orders submitted at the POS cashier terminal will appear here for kitchen tracking.'}
@@ -1507,7 +1490,7 @@ export const POS: React.FC = () => {
             ) : (
               <div className="space-y-3">
                 {/* Desktop Column Header Guide */}
-                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[11px] font-semibold text-neutral-500 uppercase tracking-wider items-center">
                   <div className="xl:col-span-3">Order Ref & Status</div>
                   <div className="xl:col-span-4">Ordered Dishes & Notes</div>
                   <div className="xl:col-span-2 text-right">Payment & Total</div>
@@ -1532,34 +1515,38 @@ export const POS: React.FC = () => {
                       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
                         {/* Col 1: Order Ref, Type, Time, Status (xl:col-span-3) */}
                         <div className="xl:col-span-3 flex items-start gap-3">
-                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
-                            <span className="text-[8px] uppercase tracking-wider font-extrabold text-neutral-400">POS</span>
-                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
+                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-semibold text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
+                            <span className="text-[11px] uppercase tracking-wider font-semibold text-neutral-400">POS</span>
+                            <span className="text-sm font-bold leading-tight">#{globalIdx}</span>
                           </div>
 
                           <div className="space-y-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 truncate" title={`REF: ${String(ord.ref || ord.id || 'N/A')}`}>
+                              <span className="font-mono font-semibold text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 truncate" title={`REF: ${String(ord.ref || ord.id || 'N/A')}`}>
                                 REF: {String(ord.ref || ord.id || 'N/A')}
                               </span>
                               <span
-                                className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border ${
+                                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
                                   isCancelled
                                     ? 'bg-neutral-100 text-neutral-600 border-neutral-300'
                                     : isCompleted
                                     ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
                                     : isReady
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 animate-pulse'
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                     : isCooking
-                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                                     : 'bg-amber-50 text-amber-800 border-amber-200'
                                 }`}
                               >
-                                ● {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In Kitchen'}
+                                {/* A drawn dot, not a typed bullet: it sits on the text baseline and
+                                    takes the pill's own colour. "Ready" no longer pulses — a counter
+                                    full of blinking badges is noise, and the tone already says it. */}
+                                <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                                {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In kitchen'}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
-                              <span className="font-extrabold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
+                              <span className="font-semibold text-neutral-800">{String(ord.type || 'On-Site Order')}</span>
                               {(() => {
                                 const cName = String(ord.customerName || ord.customer_name || ord.customer || ord.name || '').trim();
                                 if (cName && cName !== 'Walk-In' && cName !== 'Walk-In Customer') {
@@ -1580,7 +1567,7 @@ export const POS: React.FC = () => {
 
                         {/* Col 2: Ordered Dishes & Notes (xl:col-span-4) */}
                         <div className="xl:col-span-4 space-y-1">
-                          <div className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider">
+                          <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
                             Ordered Dishes ({dishes.reduce((acc, d) => acc + (d.quantity || 1), 0)}):
                           </div>
                           <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto pr-1">
@@ -1594,9 +1581,9 @@ export const POS: React.FC = () => {
                                     className="inline-flex items-center gap-1 border rounded-md px-1.5 py-0.5 text-[11px] font-semibold bg-neutral-100 border-neutral-200/70 text-neutral-700"
                                   >
                                     <span className="truncate max-w-[130px]">{d.name}</span>
-                                    <span className="font-mono font-black text-neutral-900">x{d.quantity}</span>
+                                    <span className="font-mono font-bold text-neutral-900">x{d.quantity}</span>
                                     {d.price > 0 && (
-                                      <span className="text-neutral-500 font-mono text-[10px]">
+                                      <span className="text-neutral-500 font-mono text-[11px]">
                                         (₱{(d.price * d.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
                                       </span>
                                     )}
@@ -1614,10 +1601,10 @@ export const POS: React.FC = () => {
 
                         {/* Col 3: Payment & Total Amount (xl:col-span-2) */}
                         <div className="xl:col-span-2 text-left xl:text-right space-y-0.5">
-                          <span className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider block">
+                          <span className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider block">
                             {String(ord.paymentMethod || 'Paid (POS)')}
                           </span>
-                          <span className="text-base font-black font-mono text-neutral-900 block">
+                          <span className="text-base font-bold font-mono text-neutral-900 block">
                             ₱{orderTotalNum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
@@ -1631,34 +1618,34 @@ export const POS: React.FC = () => {
                                   <button
                                     type="button"
                                     onClick={() => setModifyingPosOrder(ord)}
-                                    className="bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
+                                    className="bg-neutral-100 hover:bg-neutral-200 text-neutral-800 border border-neutral-300 font-semibold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs flex items-center gap-1"
                                   >
-                                    <span>✏️</span> Modify
+                                    <PosIcon name="edit" className="h-3.5 w-3.5" /> Modify
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => promptCancelPosOrder(ord)}
-                                    className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
+                                    className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-semibold px-3 py-1.5 rounded-xl text-xs transition-all cursor-pointer active:scale-95 flex items-center gap-1"
                                   >
-                                    <span>❌</span> Cancel
+                                    <PosIcon name="close" className="h-3.5 w-3.5" /> Cancel
                                   </button>
                                 </>
                               ) : isCooking ? (
                                 <div className="flex items-center gap-1.5">
                                   <span className="bg-neutral-100 text-neutral-500 border border-neutral-200 font-semibold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1 cursor-not-allowed">
-                                    <span>🔒</span> Locked
+                                    <PosIcon name="lock" className="h-3.5 w-3.5" /> Locked
                                   </span>
-                                  <span className="bg-blue-50 text-blue-700 border border-blue-200 font-extrabold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1">
-                                    <span>🍳</span> Cooking
+                                  <span className="bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold px-2.5 py-1 rounded-lg text-[11px] flex items-center gap-1">
+                                    <PosIcon name="cooking" className="h-3.5 w-3.5" /> Cooking
                                   </span>
                                 </div>
                               ) : isReady ? (
                                 <button
                                   type="button"
                                   onClick={() => handleCompletePosOrder(ord.id)}
-                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
                                 >
-                                  <span>✅</span> Mark Served
+                                  <PosIcon name="check" className="h-3.5 w-3.5" /> Mark Served
                                 </button>
                               ) : null}
                             </div>
@@ -1685,17 +1672,17 @@ export const POS: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => setEditingPosOrder(ord)}
-                                className="text-neutral-500 hover:text-neutral-800 text-[11px] font-bold px-2 py-0.5 rounded hover:bg-neutral-100 cursor-pointer"
+                                className="inline-flex items-center gap-1 text-neutral-500 hover:text-neutral-800 text-[11px] font-semibold px-2 py-0.5 rounded hover:bg-neutral-100 cursor-pointer"
                               >
-                                ✏️ Edit
+                                <PosIcon name="edit" className="h-3.5 w-3.5" /> Edit
                               </button>
                               <span className="text-neutral-300">•</span>
                               <button
                                 type="button"
                                 onClick={() => handleDeletePosOrder(ord.id)}
-                                className="text-rose-600 hover:text-rose-800 text-[11px] font-bold px-2 py-0.5 rounded hover:bg-rose-50 cursor-pointer"
+                                className="inline-flex items-center gap-1 text-rose-600 hover:text-rose-800 text-[11px] font-semibold px-2 py-0.5 rounded hover:bg-rose-50 cursor-pointer"
                               >
-                                🗑️ Delete
+                                <PosIcon name="trash" className="h-3.5 w-3.5" /> Delete
                               </button>
                             </div>
                           )}
@@ -1716,8 +1703,8 @@ export const POS: React.FC = () => {
             {/* Header & Filter Controls */}
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-neutral-200/80 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg sm:text-xl font-black text-neutral-900 flex items-center gap-2">
-                  <span>🧾</span> Confirmed Online Receipts
+                <h2 className="text-lg sm:text-xl font-bold text-neutral-900 flex items-center gap-2">
+                  <PosIcon name="receipt" className="h-5 w-5 text-orange-500" /> Confirmed Online Receipts
                 </h2>
                 <p className="text-xs text-neutral-500 font-medium">
                   View and print official restaurant receipts for online delivery & GCash orders confirmed by Assistant
@@ -1737,9 +1724,9 @@ export const POS: React.FC = () => {
                   {onlineSearchQuery && (
                     <button
                       onClick={() => setOnlineSearchQuery('')}
-                      className="absolute right-2.5 top-2.5 text-neutral-400 hover:text-neutral-700 text-xs font-black cursor-pointer"
+                      className="absolute right-2.5 top-2.5 inline-flex items-center justify-center text-neutral-400 hover:text-neutral-700 cursor-pointer"
                     >
-                      ✕
+                      <PosIcon name="close" className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
@@ -1749,7 +1736,7 @@ export const POS: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setOnlineFilter('all')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       onlineFilter === 'all'
                         ? 'bg-white text-orange-600 shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
@@ -1760,24 +1747,24 @@ export const POS: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setOnlineFilter('unprinted')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
                       onlineFilter === 'unprinted'
                         ? 'bg-amber-500 text-white shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
                     }`}
                   >
-                    <span>🖨️</span> Unprinted ({unprintedOnlineCount})
+                    <PosIcon name="printer" className="h-3.5 w-3.5" /> Unprinted ({unprintedOnlineCount})
                   </button>
                   <button
                     type="button"
                     onClick={() => setOnlineFilter('printed')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
                       onlineFilter === 'printed'
                         ? 'bg-emerald-600 text-white shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
                     }`}
                   >
-                    <span>✅</span> Printed ({onlineReceipts.length - unprintedOnlineCount})
+                    <PosIcon name="check" className="h-3.5 w-3.5" /> Printed ({onlineReceipts.length - unprintedOnlineCount})
                   </button>
                 </div>
               </div>
@@ -1786,8 +1773,8 @@ export const POS: React.FC = () => {
             {/* Orders Row-by-Row List (FIFO Queue) */}
             {filteredOnlineReceipts.length === 0 ? (
               <div className="bg-white p-12 rounded-2xl border border-neutral-200 text-center space-y-3">
-                <div className="text-4xl">🧾</div>
-                <h3 className="text-base font-black text-neutral-800">No Confirmed Online Receipts Found</h3>
+                <PosIcon name="receipt" className="mx-auto h-9 w-9 text-neutral-300" />
+                <h3 className="text-base font-bold text-neutral-800">No Confirmed Online Receipts Found</h3>
                 <p className="text-xs text-neutral-500 max-w-sm mx-auto">
                   {onlineSearchQuery
                     ? `No online orders matched search "${onlineSearchQuery}".`
@@ -1799,7 +1786,7 @@ export const POS: React.FC = () => {
             ) : (
               <div className="space-y-3">
                 {/* Desktop Column Header Guide */}
-                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[11px] font-semibold text-neutral-500 uppercase tracking-wider items-center">
                   <div className="xl:col-span-3">Queue & Order Ref</div>
                   <div className="xl:col-span-3">Customer & Delivery Info</div>
                   <div className="xl:col-span-3">Ordered Dishes</div>
@@ -1822,49 +1809,49 @@ export const POS: React.FC = () => {
                       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
                         {/* Col 1: Queue Rank, ID, Time, Print Badge (col-span-3) */}
                         <div className="xl:col-span-3 flex items-center gap-3">
-                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
-                            <span className="text-[8px] uppercase tracking-wider font-extrabold opacity-85">FIFO</span>
-                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
+                          <div className="flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-semibold text-xs bg-neutral-100 text-neutral-700 border border-neutral-200">
+                            <span className="text-[11px] uppercase tracking-wider font-semibold opacity-85">FIFO</span>
+                            <span className="text-sm font-bold leading-tight">#{globalIdx}</span>
                           </div>
 
                           <div className="space-y-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
+                              <span className="font-mono font-semibold text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
                                 #{orderId}
                               </span>
                               {isPrinted ? (
-                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
-                                  <span>✅</span> Printed
+                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+                                  <PosIcon name="check" className="h-3.5 w-3.5" /> Printed
                                 </span>
                               ) : (
-                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1 animate-pulse">
-                                  <span>🖨️</span> Unprinted
+                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1 animate-pulse">
+                                  <PosIcon name="printer" className="h-3.5 w-3.5" /> Unprinted
                                 </span>
                               )}
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
-                              <span>🕒 {formatOrderTime(ord.createdAt || ord.created_at || ord.dateTime)}</span>
+                              <span className="inline-flex items-center gap-1"><PosIcon name="clock" className="h-3 w-3" /> {formatOrderTime(ord.createdAt || ord.created_at || ord.dateTime)}</span>
                               <span>•</span>
-                              <span className="text-orange-600 font-extrabold text-[10px] uppercase">{statusNorm}</span>
+                              <span className="text-orange-600 font-semibold text-[11px] uppercase">{statusNorm}</span>
                             </div>
                           </div>
                         </div>
 
                         {/* Col 2: Customer, Phone, Address, Payment (col-span-3) */}
                         <div className="xl:col-span-3 space-y-0.5 text-xs">
-                          <div className="font-extrabold text-neutral-900 flex items-center gap-1.5">
-                            <span className="text-neutral-400">👤</span>
+                          <div className="font-semibold text-neutral-900 flex items-center gap-1.5">
+                            <PosIcon name="user" className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                             <span className="truncate">{ord.customerName || ord.customer || 'Online Customer'}</span>
                           </div>
                           <div className="text-neutral-500 font-semibold text-[11px] flex items-center gap-1.5">
-                            <span className="text-neutral-400">📞</span>
+                            <PosIcon name="phone" className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                             <span>{ord.phone || 'N/A'}</span>
                             <span className="text-neutral-300">•</span>
-                            <span className="text-orange-600 font-extrabold">{ord.paymentMethod || 'GCash'}</span>
+                            <span className="text-orange-600 font-semibold">{ord.paymentMethod || 'GCash'}</span>
                           </div>
                           {ord.deliveryAddress && (
                             <div className="text-neutral-400 text-[11px] font-medium truncate flex items-center gap-1.5" title={ord.deliveryAddress}>
-                              <span className="text-neutral-400 shrink-0">📍</span>
+                              <PosIcon name="pin" className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
                               <span className="truncate">{ord.deliveryAddress}</span>
                             </div>
                           )}
@@ -1872,9 +1859,9 @@ export const POS: React.FC = () => {
                             <div className="pt-0.5">
                               <span
                                 onClick={() => setPreviewProofModalUrl(ord.deliveryProof)}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100"
+                                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 cursor-pointer hover:bg-emerald-100"
                               >
-                                <span>📷</span> Delivery Photo Verified
+                                <PosIcon name="camera" className="h-3.5 w-3.5" /> Delivery Photo Verified
                               </span>
                             </div>
                           )}
@@ -1882,7 +1869,7 @@ export const POS: React.FC = () => {
 
                         {/* Col 3: Ordered Items (col-span-3) */}
                         <div className="xl:col-span-3">
-                          <div className="text-[10px] font-extrabold text-neutral-400 uppercase tracking-wider mb-1">
+                          <div className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">
                             Items ({items.reduce((acc: number, i: any) => acc + (i.quantity || 1), 0)}):
                           </div>
                           <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto pr-1">
@@ -1895,7 +1882,7 @@ export const POS: React.FC = () => {
                                   className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
                                 >
                                   <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
-                                  <span className="font-mono font-black text-orange-600">x{it.quantity || 1}</span>
+                                  <span className="font-mono font-bold text-orange-600">x{it.quantity || 1}</span>
                                 </span>
                               ))
                             )}
@@ -1904,10 +1891,10 @@ export const POS: React.FC = () => {
 
                         {/* Col 4: Total Amount (col-span-1) */}
                         <div className="xl:col-span-1 text-left xl:text-right">
-                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
+                          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
                             Total:
                           </span>
-                          <span className="text-base font-black font-mono text-neutral-900">
+                          <span className="text-base font-bold font-mono text-neutral-900">
                             ₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
@@ -1918,29 +1905,29 @@ export const POS: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => setPreviewProofModalUrl(ord.deliveryProof)}
-                              className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-extrabold px-2.5 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
+                              className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-semibold px-2.5 py-2 rounded-xl text-xs transition-colors cursor-pointer active:scale-95 text-center flex items-center gap-1"
                               title="View Rider Proof of Delivery Photo"
                             >
-                              <span>📷</span> Proof
+                              <PosIcon name="camera" className="h-3.5 w-3.5" /> Proof
                             </button>
                           )}
                           <button
                             type="button"
                             onClick={() => handleViewOnlineReceipt(ord)}
-                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
+                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-semibold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
                           >
-                            <span>👁️</span> View
+                            <PosIcon name="eye" className="h-3.5 w-3.5" /> View
                           </button>
                           <button
                             type="button"
                             onClick={() => handlePrintOnlineReceipt(ord)}
-                            className={`font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
+                            className={`font-semibold px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
                               isPrinted
                                 ? 'bg-neutral-700 hover:bg-neutral-800 shadow-neutral-500/20'
                                 : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
                             }`}
                           >
-                            <span>🖨️</span>
+                            <PosIcon name="printer" className="h-3.5 w-3.5" />
                             <span>{isPrinted ? 'Re-print' : 'Print Receipt'}</span>
                           </button>
                         </div>
@@ -1960,8 +1947,8 @@ export const POS: React.FC = () => {
             {/* Header & Filter Controls */}
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-neutral-200/80 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg sm:text-xl font-black text-neutral-900 flex items-center gap-2">
-                  <span>🛍️</span> Online Store Pick-Up Orders
+                <h2 className="text-lg sm:text-xl font-bold text-neutral-900 flex items-center gap-2">
+                  <PosIcon name="bag" className="h-5 w-5 text-orange-500" /> Online Store Pick-Up Orders
                 </h2>
                 <p className="text-xs text-neutral-500 font-medium">
                   Manage store pick-ups, collect counter cash payments, print receipts, and hand over completed orders
@@ -1981,9 +1968,9 @@ export const POS: React.FC = () => {
                   {pickupSearchQuery && (
                     <button
                       onClick={() => setPickupSearchQuery('')}
-                      className="absolute right-2.5 top-2.5 text-neutral-400 hover:text-neutral-700 text-xs font-black cursor-pointer"
+                      className="absolute right-2.5 top-2.5 inline-flex items-center justify-center text-neutral-400 hover:text-neutral-700 cursor-pointer"
                     >
-                      ✕
+                      <PosIcon name="close" className="h-3.5 w-3.5" />
                     </button>
                   )}
                 </div>
@@ -1993,7 +1980,7 @@ export const POS: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPickupFilter('all')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                       pickupFilter === 'all'
                         ? 'bg-white text-emerald-700 shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
@@ -2004,35 +1991,35 @@ export const POS: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => setPickupFilter('ready')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
                       pickupFilter === 'ready'
                         ? 'bg-emerald-600 text-white shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
                     }`}
                   >
-                    <span>🛍️</span> Ready ({readyPickupCount})
+                    <PosIcon name="bag" className="h-3.5 w-3.5" /> Ready ({readyPickupCount})
                   </button>
                   <button
                     type="button"
                     onClick={() => setPickupFilter('pending')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
                       pickupFilter === 'pending'
                         ? 'bg-amber-500 text-white shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
                     }`}
                   >
-                    <span>🍳</span> Cooking ({onlineReceipts.filter((o) => isPickupOrder(o) && ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING'].includes((o.status || '').toUpperCase())).length})
+                    <PosIcon name="cooking" className="h-3.5 w-3.5" /> Cooking ({onlineReceipts.filter((o) => isPickupOrder(o) && ['CONFIRMED', 'PREPARING', 'IN_PROCESS', 'COOKING'].includes((o.status || '').toUpperCase())).length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setPickupFilter('completed')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 ${
                       pickupFilter === 'completed'
                         ? 'bg-neutral-800 text-white shadow-2xs'
                         : 'text-neutral-600 hover:text-neutral-900'
                     }`}
                   >
-                    <span>✓</span> Picked Up ({onlineReceipts.filter((o) => isPickupOrder(o) && ['COMPLETED', 'DELIVERED', 'SERVED'].includes((o.status || '').toUpperCase())).length})
+                    <PosIcon name="check" className="h-3.5 w-3.5" /> Picked Up ({onlineReceipts.filter((o) => isPickupOrder(o) && ['COMPLETED', 'DELIVERED', 'SERVED'].includes((o.status || '').toUpperCase())).length})
                   </button>
                 </div>
               </div>
@@ -2041,17 +2028,17 @@ export const POS: React.FC = () => {
             {/* Pickups Table / Cards */}
             {filteredStorePickups.length === 0 ? (
               <div className="bg-white rounded-2xl border border-neutral-200/80 p-12 text-center shadow-2xs">
-                <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center text-3xl mx-auto mb-4 border border-emerald-100">
-                  🛍️
+                <div className="w-16 h-16 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-100">
+                  <PosIcon name="bag" className="h-7 w-7" />
                 </div>
-                <h3 className="text-base font-extrabold text-neutral-800">No Store Pick-Up Orders Found</h3>
+                <h3 className="text-base font-semibold text-neutral-800">No Store Pick-Up Orders Found</h3>
                 <p className="text-xs text-neutral-500 max-w-md mx-auto mt-1 leading-relaxed">
                   When customers select "Store Pick-Up" during checkout, their orders will appear here for preparation tracking and handover.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[10px] font-black text-neutral-500 uppercase tracking-wider items-center">
+                <div className="hidden xl:grid xl:grid-cols-12 gap-4 px-5 py-2.5 bg-neutral-100/70 border border-neutral-200/60 rounded-xl text-[11px] font-semibold text-neutral-500 uppercase tracking-wider items-center">
                   <div className="xl:col-span-3">Queue & Order Ref</div>
                   <div className="xl:col-span-3">Customer & Pick-Up Info</div>
                   <div className="xl:col-span-3">Ordered Dishes</div>
@@ -2078,32 +2065,32 @@ export const POS: React.FC = () => {
                       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center">
                         {/* Col 1: Queue Rank, ID, Time, Print Badge (col-span-3) */}
                         <div className="xl:col-span-3 flex items-center gap-3">
-                          <div className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-black text-xs ${
+                          <div className={`flex flex-col items-center justify-center w-11 h-11 rounded-xl shrink-0 font-semibold text-xs ${
                             isReady
                               ? 'bg-emerald-600 text-white shadow-sm shadow-emerald-600/30'
                               : 'bg-neutral-100 text-neutral-700 border border-neutral-200'
                           }`}>
-                            <span className="text-[8px] uppercase tracking-wider font-extrabold opacity-85">PICKUP</span>
-                            <span className="text-sm font-black leading-tight">#{globalIdx}</span>
+                            <span className="text-[11px] uppercase tracking-wider font-semibold opacity-85">PICKUP</span>
+                            <span className="text-sm font-bold leading-tight">#{globalIdx}</span>
                           </div>
 
                           <div className="space-y-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-mono font-black text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
+                              <span className="font-mono font-semibold text-xs sm:text-sm text-neutral-900 bg-neutral-100 px-2 py-0.5 rounded-lg border border-neutral-200 max-w-[180px] sm:max-w-[200px] truncate" title={`#${orderId}`}>
                                 #{orderId}
                               </span>
                               {isPrinted ? (
-                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
-                                  <span>✅</span> Printed
+                                <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+                                  <PosIcon name="check" className="h-3.5 w-3.5" /> Printed
                                 </span>
                               ) : (
-                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[9px] font-black flex items-center gap-1">
-                                  <span>🖨️</span> Unprinted
+                                <span className="bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full text-[11px] font-semibold flex items-center gap-1">
+                                  <PosIcon name="printer" className="h-3.5 w-3.5" /> Unprinted
                                 </span>
                               )}
                             </div>
                             <div className="text-[11px] text-neutral-400 font-semibold flex items-center gap-2">
-                              <span>🕒 {formatOrderTime(ord.createdAt || ord.dateTime)}</span>
+                              <span className="inline-flex items-center gap-1"><PosIcon name="clock" className="h-3 w-3" /> {formatOrderTime(ord.createdAt || ord.dateTime)}</span>
                               <span className="text-neutral-300">•</span>
                               <span className="text-emerald-700 font-bold">Pick-Up Fee: ₱0.00</span>
                             </div>
@@ -2113,44 +2100,44 @@ export const POS: React.FC = () => {
                         {/* Col 2: Customer, Contact, Pick-Up Details & Status (col-span-3) */}
                         <div className="xl:col-span-3 space-y-1.5 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-black text-xs sm:text-sm text-neutral-900 truncate">
+                            <span className="font-semibold text-xs sm:text-sm text-neutral-900 truncate">
                               {ord.customerName || ord.customer || 'Online Customer'}
                             </span>
-                            <span className="text-[11px] font-mono text-neutral-500 font-bold">
-                              📞 {ord.phone || '0917-000-0000'}
+                            <span className="inline-flex items-center gap-1 text-[11px] font-mono text-neutral-500 font-semibold">
+                              <PosIcon name="phone" className="h-3 w-3 shrink-0" /> {ord.phone || '0917-000-0000'}
                             </span>
                           </div>
 
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {/* Status Badge */}
                             {isReady ? (
-                              <span className="bg-emerald-500 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1 shadow-xs animate-pulse">
-                                <span>🛍️</span> READY FOR PICK-UP
+                              <span className="bg-emerald-500 text-white px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide flex items-center gap-1 shadow-xs animate-pulse">
+                                <PosIcon name="bag" className="h-3 w-3" /> Ready for pick-up
                               </span>
                             ) : isCompleted ? (
-                              <span className="bg-neutral-800 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
-                                <span>✓</span> PICKED UP
+                              <span className="bg-neutral-800 text-white px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide flex items-center gap-1">
+                                <PosIcon name="check" className="h-3 w-3" /> Picked up
                               </span>
                             ) : statusNorm === 'PREPARING' ? (
-                              <span className="bg-amber-500 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
-                                <span>🍳</span> COOKING IN KITCHEN
+                              <span className="bg-amber-500 text-white px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide flex items-center gap-1">
+                                <PosIcon name="cooking" className="h-3 w-3" /> Cooking in kitchen
                               </span>
                             ) : (
-                              <span className="bg-blue-600 text-white px-2.5 py-0.5 rounded-full text-[10px] font-black tracking-wide flex items-center gap-1">
-                                <span>✓</span> CONFIRMED
+                              <span className="bg-indigo-600 text-white px-2.5 py-0.5 rounded-full text-[11px] font-semibold tracking-wide flex items-center gap-1">
+                                <PosIcon name="check" className="h-3 w-3" /> Confirmed
                               </span>
                             )}
 
                             {/* Payment Badge — an online pick-up is always prepaid by GCash */}
-                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[9px] font-black">
-                              ✅ Paid Online (GCash)
+                            <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full text-[11px] font-semibold">
+                              <PosIcon name="check" className="h-3.5 w-3.5" /> Paid online (GCash)
                             </span>
                           </div>
                         </div>
 
                         {/* Col 3: Ordered Dishes (col-span-3) */}
                         <div className="xl:col-span-3">
-                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden mb-1">
+                          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden mb-1">
                             Dishes Ordered:
                           </span>
                           <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
@@ -2163,7 +2150,7 @@ export const POS: React.FC = () => {
                                   className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-md text-[11px] font-bold text-neutral-800 transition-colors"
                                 >
                                   <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
-                                  <span className="font-mono font-black text-emerald-700">x{it.quantity || 1}</span>
+                                  <span className="font-mono font-bold text-emerald-700">x{it.quantity || 1}</span>
                                 </span>
                               ))
                             )}
@@ -2172,10 +2159,10 @@ export const POS: React.FC = () => {
 
                         {/* Col 4: Total Amount (col-span-1) */}
                         <div className="xl:col-span-1 text-left xl:text-right">
-                          <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
+                          <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block xl:hidden">
                             Total Due:
                           </span>
-                          <span className="text-base font-black font-mono text-neutral-900">
+                          <span className="text-base font-bold font-mono text-neutral-900">
                             ₱{Number(ord.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         </div>
@@ -2185,20 +2172,20 @@ export const POS: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleViewOnlineReceipt(ord)}
-                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-extrabold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
+                            className="bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-300 font-semibold px-3 py-2 rounded-xl text-xs transition-all cursor-pointer active:scale-95 shadow-2xs text-center flex items-center gap-1"
                           >
-                            <span>👁️</span> View
+                            <PosIcon name="eye" className="h-3.5 w-3.5" /> View
                           </button>
                           <button
                             type="button"
                             onClick={() => handlePrintOnlineReceipt(ord)}
-                            className={`font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
+                            className={`font-semibold px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1 text-white ${
                               isPrinted
                                 ? 'bg-neutral-700 hover:bg-neutral-800 shadow-neutral-500/20'
                                 : 'bg-orange-500 hover:bg-orange-600 shadow-orange-500/20'
                             }`}
                           >
-                            <span>🖨️</span>
+                            <PosIcon name="printer" className="h-3.5 w-3.5" />
                             <span>{isPrinted ? 'Re-print' : 'Print'}</span>
                           </button>
 
@@ -2209,10 +2196,10 @@ export const POS: React.FC = () => {
                                 type="button"
                                 disabled={isSubmittingHandover}
                                 onClick={() => handlePickupHandover(ord)}
-                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold px-3.5 py-2 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
                                 title="Mark as picked up by customer"
                               >
-                                <span>🛍️</span>
+                                <PosIcon name="bag" className="h-3.5 w-3.5" />
                                 <span>Mark as Picked Up</span>
                               </button>
                             ) : (
@@ -2220,12 +2207,12 @@ export const POS: React.FC = () => {
                                 className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-3 py-1.5 rounded-xl flex items-center gap-1.5 shadow-2xs whitespace-nowrap"
                                 title="Order is still being prepared in the kitchen. Handover and claiming are available once the kitchen marks it as Ready."
                               >
-                                <span>🍳</span> Cooking in Kitchen
+                                <PosIcon name="cooking" className="h-3.5 w-3.5" /> Cooking in kitchen
                               </span>
                             )
                           ) : (
-                            <span className="text-xs font-bold text-neutral-400 bg-neutral-100 border border-neutral-200 px-3 py-1.5 rounded-xl">
-                              ✓ Claimed
+                            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-neutral-500 bg-neutral-100 border border-neutral-200 px-3 py-1.5 rounded-xl">
+                              <PosIcon name="check" className="h-3.5 w-3.5" /> Claimed
                             </span>
                           )}
                         </div>
@@ -2367,7 +2354,7 @@ export const POS: React.FC = () => {
                 onClick={() => setPreviewProofModalUrl(null)}
                 className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition text-sm font-bold cursor-pointer"
               >
-                ✕
+                <PosIcon name="close" className="h-3.5 w-3.5" />
               </button>
             </div>
             <div className="p-3 bg-neutral-950 flex items-center justify-center overflow-auto max-h-[75vh]">
@@ -2403,11 +2390,11 @@ export const POS: React.FC = () => {
             {/* Modal Header */}
             <div className="bg-amber-500 text-white p-4 sm:p-5 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl">
-                  💵
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                  <PosIcon name="cash" className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-base leading-tight">Collect Cash & Hand Over</h3>
+                  <h3 className="font-semibold text-base leading-tight">Collect Cash & Hand Over</h3>
                   <p className="text-xs text-amber-100 font-medium mt-0.5">
                     Store Pick-Up Order #{handoverModalOrder.id || handoverModalOrder.ref}
                   </p>
@@ -2418,7 +2405,7 @@ export const POS: React.FC = () => {
                 onClick={() => setHandoverModalOrder(null)}
                 className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white font-bold cursor-pointer transition-colors"
               >
-                ✕
+                <PosIcon name="close" className="h-3.5 w-3.5" />
               </button>
             </div>
 
@@ -2426,13 +2413,13 @@ export const POS: React.FC = () => {
             <div className="p-5 space-y-4">
               <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-200/80 flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Customer</span>
-                  <p className="text-sm font-black text-neutral-900">{handoverModalOrder.customerName || handoverModalOrder.customer || 'Online Customer'}</p>
-                  <p className="text-xs text-neutral-500 font-mono font-bold mt-0.5">📞 {handoverModalOrder.phone || 'N/A'}</p>
+                  <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">Customer</span>
+                  <p className="text-sm font-bold text-neutral-900">{handoverModalOrder.customerName || handoverModalOrder.customer || 'Online Customer'}</p>
+                  <p className="mt-0.5 inline-flex items-center gap-1 text-xs font-mono font-semibold text-neutral-500"><PosIcon name="phone" className="h-3 w-3 shrink-0" /> {handoverModalOrder.phone || 'N/A'}</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block">Total Due</span>
-                  <p className="text-xl font-black font-mono text-amber-600">
+                  <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">Total Due</span>
+                  <p className="text-xl font-bold font-mono text-amber-600">
                     ₱{Number(handoverModalOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
@@ -2453,7 +2440,7 @@ export const POS: React.FC = () => {
                     value={cashTendered}
                     onChange={(e) => setCashTendered(e.target.value)}
                     placeholder="Enter cash amount received"
-                    className="w-full pl-8 pr-4 py-2.5 bg-neutral-50 text-neutral-900 border border-neutral-300 rounded-xl text-base font-black font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
+                    className="w-full pl-8 pr-4 py-2.5 bg-neutral-50 text-neutral-900 border border-neutral-300 rounded-xl text-base font-bold font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
                   />
                 </div>
               </div>
@@ -2500,7 +2487,7 @@ export const POS: React.FC = () => {
                   <span className="text-xs font-bold">
                     {Number(cashTendered) >= Number(handoverModalOrder.total || 0) ? 'Change to Return:' : 'Insufficient Amount:'}
                   </span>
-                  <span className="text-base font-black font-mono">
+                  <span className="text-base font-bold font-mono">
                     ₱{Math.abs(Number(cashTendered) - Number(handoverModalOrder.total || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
@@ -2512,7 +2499,7 @@ export const POS: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setHandoverModalOrder(null)}
-                className="px-4 py-2.5 text-xs font-extrabold text-neutral-600 hover:text-neutral-800 bg-white border border-neutral-300 rounded-xl cursor-pointer hover:bg-neutral-100 transition-colors"
+                className="px-4 py-2.5 text-xs font-semibold text-neutral-600 hover:text-neutral-800 bg-white border border-neutral-300 rounded-xl cursor-pointer hover:bg-neutral-100 transition-colors"
               >
                 Cancel
               </button>
@@ -2520,13 +2507,13 @@ export const POS: React.FC = () => {
                 type="button"
                 disabled={isSubmittingHandover || !cashTendered || Number(cashTendered) < Number(handoverModalOrder.total || 0)}
                 onClick={() => handlePickupHandover(handoverModalOrder, Number(cashTendered))}
-                className="px-5 py-2.5 text-xs font-black text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl cursor-pointer shadow-md shadow-amber-600/20 transition-all flex items-center gap-1.5"
+                className="px-5 py-2.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl cursor-pointer shadow-md shadow-amber-600/20 transition-all flex items-center gap-1.5"
               >
                 {isSubmittingHandover ? (
                   <span>Processing...</span>
                 ) : (
                   <>
-                    <span>✓</span>
+                    <PosIcon name="check" className="h-3.5 w-3.5" />
                     <span>Confirm Payment & Hand Over</span>
                   </>
                 )}

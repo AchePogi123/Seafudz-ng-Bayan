@@ -3947,86 +3947,191 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             const rawPhone = activeOrder.riderPhone || (activeOrder as any).rider_phone
                             const riderPhone = (!rawPhone) ? '0917-888-9999' : rawPhone
 
+                            /**
+                             * Once the rider has handed the food over, the right-hand column grows a
+                             * rider card and a proof photo while the left column stops at the order
+                             * list — leaving the receipt stranded at the bottom of a tall column with
+                             * white space beside it. On a delivered order the payment sits under the
+                             * address instead, where the eye already is. One definition, two homes.
+                             */
+                            const isHandedOver = !isPickupOrder && ['DELIVERED', 'COMPLETED'].includes(norm)
+                            const paymentPanel = (
+                                                <Panel
+                                                    title="Payment"
+                                                    meta="Paid online"
+                                                >
+                                                    <dl>
+                                                        <PanelRows>
+                                                            <InfoRow label="Method">
+                                                                {`${activeOrder.paymentMethod || 'GCash'} transfer`}
+                                                            </InfoRow>
+                                                            {activeOrder.paymentReference && (
+                                                                <InfoRow label="Reference" mono>{activeOrder.paymentReference}</InfoRow>
+                                                            )}
+                                                            {activeOrder.paymentReceipt && (
+                                                                <InfoRow label="Receipt">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.paymentReceipt || null)}
+                                                                        className="inline-flex items-center gap-2 rounded-lg font-semibold text-orange-700 transition-colors hover:text-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 cursor-pointer"
+                                                                    >
+                                                                        <img
+                                                                            src={activeOrder.paymentReceipt}
+                                                                            alt=""
+                                                                            width={32}
+                                                                            height={32}
+                                                                            loading="lazy"
+                                                                            className="h-8 w-8 rounded-md border border-neutral-200 object-cover"
+                                                                        />
+                                                                        <span className="text-xs">View</span>
+                                                                    </button>
+                                                                </InfoRow>
+                                                            )}
+                                                            {activeOrder.refundReceipt && (
+                                                                <InfoRow label="Refund proof">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
+                                                                        className="inline-flex items-center gap-2 rounded-lg font-semibold text-orange-700 transition-colors hover:text-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 cursor-pointer"
+                                                                    >
+                                                                        <img
+                                                                            src={activeOrder.refundReceipt}
+                                                                            alt=""
+                                                                            width={32}
+                                                                            height={32}
+                                                                            loading="lazy"
+                                                                            className="h-8 w-8 rounded-md border border-neutral-200 object-cover"
+                                                                        />
+                                                                        <span className="text-xs">View</span>
+                                                                    </button>
+                                                                </InfoRow>
+                                                            )}
+                                                        </PanelRows>
+                                                    </dl>
+
+                                                    {/* Price Breakdown */}
+                                                    <div className="border-t border-neutral-100 px-5 py-4">
+                                                        <dl className="space-y-2.5">
+                                                            <div className="flex items-baseline justify-between gap-4 text-sm">
+                                                                <dt className="text-neutral-500">Subtotal</dt>
+                                                                <dd className="font-medium tabular-nums text-neutral-700">
+                                                                    ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (isPickupOrder ? 0 : (activeOrder.deliveryFee || 50)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </dd>
+                                                            </div>
+                                                            <div className="flex items-baseline justify-between gap-4 text-sm">
+                                                                <dt className="text-neutral-500">VAT (12%)</dt>
+                                                                <dd className="font-medium tabular-nums text-neutral-700">
+                                                                    ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (isPickupOrder ? 0 : (Number(activeOrder.deliveryFee || 50))))) / 1.12 * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </dd>
+                                                            </div>
+                                                            <div className="flex items-baseline justify-between gap-4 text-sm">
+                                                                <dt className="text-neutral-500">Delivery fee</dt>
+                                                                <dd className={isPickupOrder ? 'font-medium text-emerald-700' : 'font-medium tabular-nums text-neutral-700'}>
+                                                                    {isPickupOrder
+                                                                        ? 'None'
+                                                                        : `₱${(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                                                </dd>
+                                                            </div>
+                                                            <div className="flex items-baseline justify-between gap-4 border-t border-neutral-100 pt-3">
+                                                                <dt className="text-sm font-semibold text-neutral-900">
+                                                                    Total paid
+                                                                </dt>
+                                                                <dd className="text-xl font-extrabold tabular-nums tracking-tight text-neutral-900">
+                                                                    ₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </dd>
+                                                            </div>
+                                                        </dl>
+                                                    </div>
+                                                </Panel>
+                            )
+
                             return (
                                 <div className="space-y-6 mt-2">
                                     {/* ── Top Row: 2-column layout ── */}
                                     <div className={`grid grid-cols-1 items-start ${isPickupOrder || isOutForDelivery ? 'lg:grid-cols-2' : 'md:grid-cols-2'} gap-5`}>
 
-                                        {/* LEFT: Delivery / Pick-Up & Order Info Card */}
-                                        <Panel
-                                            title={isPickupOrder ? 'Pick-up & order details' : 'Delivery & order details'}
-                                            meta={`${(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items`}
-                                        >
-                                            <dl>
-                                                <PanelRows>
-                                                    <InfoRow label="Customer">
-                                                        {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
-                                                    </InfoRow>
-                                                    <InfoRow label="Phone" mono>
-                                                        {activeOrder.phone || (activeOrder as any).customer_phone || 'Not provided'}
-                                                    </InfoRow>
-                                                    {isPickupOrder ? (
-                                                        <InfoRow label="Pick up at" stacked>
-                                                            Seafudz ng Bayan Store Counter
-                                                            <span className="mt-0.5 block text-xs text-neutral-500">
-                                                                Caloocan City Counter Branch &middot; 10:00 AM – 10:00 PM
-                                                            </span>
+                                        {/* LEFT: Delivery / Pick-Up & Order Info Card, and — once the
+                                            order has been handed over — the receipt beneath it. The
+                                            grid must keep exactly two children, so the column is a
+                                            wrapper rather than a bare Panel. */}
+                                        <div className="space-y-5">
+                                            <Panel
+                                                title={isPickupOrder ? 'Pick-up & order details' : 'Delivery & order details'}
+                                                meta={`${(activeOrder.items || []).reduce((acc: number, ci: any) => acc + (ci.quantity || 1), 0)} items`}
+                                            >
+                                                <dl>
+                                                    <PanelRows>
+                                                        <InfoRow label="Customer">
+                                                            {activeOrder.customerName || (activeOrder as any).customer || (activeOrder as any).customer_name || 'Customer'}
                                                         </InfoRow>
-                                                    ) : (
-                                                        <InfoRow label="Deliver to" stacked>
-                                                            {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery address on file'}
+                                                        <InfoRow label="Phone" mono>
+                                                            {activeOrder.phone || (activeOrder as any).customer_phone || 'Not provided'}
                                                         </InfoRow>
-                                                    )}
-                                                    {activeOrder.notes && (
-                                                        <InfoRow label="Notes" stacked>{activeOrder.notes}</InfoRow>
-                                                    )}
-                                                </PanelRows>
-                                            </dl>
+                                                        {isPickupOrder ? (
+                                                            <InfoRow label="Pick up at" stacked>
+                                                                Seafudz ng Bayan Store Counter
+                                                                <span className="mt-0.5 block text-xs text-neutral-500">
+                                                                    Caloocan City Counter Branch &middot; 10:00 AM – 10:00 PM
+                                                                </span>
+                                                            </InfoRow>
+                                                        ) : (
+                                                            <InfoRow label="Deliver to" stacked>
+                                                                {activeOrder.address || (activeOrder as any).deliveryAddress || (activeOrder as any).delivery_address || 'Delivery address on file'}
+                                                            </InfoRow>
+                                                        )}
+                                                        {activeOrder.notes && (
+                                                            <InfoRow label="Notes" stacked>{activeOrder.notes}</InfoRow>
+                                                        )}
+                                                    </PanelRows>
+                                                </dl>
 
-                                            {isPickupOrder && (
-                                                <div className="px-5 pt-4">
-                                                    <PanelNote tone="positive" icon="info">
-                                                        Show order <strong className="font-mono font-semibold">{activeOrder.id || (activeOrder as any).ref}</strong> to our cashier when you claim it.
-                                                    </PanelNote>
-                                                </div>
-                                            )}
+                                                {isPickupOrder && (
+                                                    <div className="px-5 pt-4">
+                                                        <PanelNote tone="positive" icon="info">
+                                                            Show order <strong className="font-mono font-semibold">{activeOrder.id || (activeOrder as any).ref}</strong> to our cashier when you claim it.
+                                                        </PanelNote>
+                                                    </div>
+                                                )}
 
-                                            <div className="px-5 pb-5 pt-5">
-                                                <h5 className="text-xs font-semibold text-neutral-500">Your order</h5>
-                                                <ul className="mt-2 divide-y divide-neutral-100">
-                                                    {(() => {
-                                                        const replacements = activeOrder.customerReplacements || []
-                                                        const isReplaced = (ci: any) => {
-                                                            const st = String(ci.item_status || ci.itemStatus || '').toUpperCase()
-                                                            if (['REPLACED', 'REFUNDED', 'CANCELLED'].includes(st)) return true
-                                                            const name = ci.name || ci.product_name_snapshot || ci.item?.name || ''
-                                                            return replacements.some((r: any) =>
-                                                                (r.oldItemId !== undefined && String(r.oldItemId) === String(ci.id)) ||
-                                                                (r.oldItemName && String(r.oldItemName).trim().toLowerCase() === name.trim().toLowerCase())
-                                                            )
-                                                        }
-                                                        return (activeOrder.items || [])
-                                                            .filter((ci: any) => !isReplaced(ci))
-                                                            .map((ci: any, idx: number) => {
-                                                                const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
-                                                                const qty = ci.quantity || 1
-                                                                const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
-                                                                return (
-                                                                    <li key={idx} className="flex items-baseline justify-between gap-4 py-2.5">
-                                                                        <span className="flex min-w-0 items-baseline gap-2.5">
-                                                                            <span className="shrink-0 text-xs font-semibold tabular-nums text-neutral-500">{qty}×</span>
-                                                                            <span className="truncate text-sm text-neutral-800">{name}</span>
-                                                                        </span>
-                                                                        <span className="shrink-0 text-sm font-semibold tabular-nums text-neutral-900">
-                                                                            ₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                        </span>
-                                                                    </li>
+                                                <div className="px-5 pb-5 pt-5">
+                                                    <h5 className="text-xs font-semibold text-neutral-500">Your order</h5>
+                                                    <ul className="mt-2 divide-y divide-neutral-100">
+                                                        {(() => {
+                                                            const replacements = activeOrder.customerReplacements || []
+                                                            const isReplaced = (ci: any) => {
+                                                                const st = String(ci.item_status || ci.itemStatus || '').toUpperCase()
+                                                                if (['REPLACED', 'REFUNDED', 'CANCELLED'].includes(st)) return true
+                                                                const name = ci.name || ci.product_name_snapshot || ci.item?.name || ''
+                                                                return replacements.some((r: any) =>
+                                                                    (r.oldItemId !== undefined && String(r.oldItemId) === String(ci.id)) ||
+                                                                    (r.oldItemName && String(r.oldItemName).trim().toLowerCase() === name.trim().toLowerCase())
                                                                 )
-                                                            })
-                                                    })()}
-                                                </ul>
-                                            </div>
-                                        </Panel>
+                                                            }
+                                                            return (activeOrder.items || [])
+                                                                .filter((ci: any) => !isReplaced(ci))
+                                                                .map((ci: any, idx: number) => {
+                                                                    const name = ci.name || ci.product_name_snapshot || ci.item?.name || 'Seafood Dish'
+                                                                    const qty = ci.quantity || 1
+                                                                    const price = Number(ci.price ?? ci.unit_price ?? ci.item?.price ?? 0)
+                                                                    return (
+                                                                        <li key={idx} className="flex items-baseline justify-between gap-4 py-2.5">
+                                                                            <span className="flex min-w-0 items-baseline gap-2.5">
+                                                                                <span className="shrink-0 text-xs font-semibold tabular-nums text-neutral-500">{qty}×</span>
+                                                                                <span className="truncate text-sm text-neutral-800">{name}</span>
+                                                                            </span>
+                                                                            <span className="shrink-0 text-sm font-semibold tabular-nums text-neutral-900">
+                                                                                ₱{(price * qty).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                            </span>
+                                                                        </li>
+                                                                    )
+                                                                })
+                                                        })()}
+                                                    </ul>
+                                                </div>
+                                            </Panel>
+
+                                            {isHandedOver && paymentPanel}
+                                        </div>
 
                                         {/* RIGHT: Pick-Up Details / Rider + Billing Stacked */}
                                         <div className="space-y-5">
@@ -4128,94 +4233,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 </Panel>
                                             )}
 
-                                            {/* Billing Card */}
-                                            <Panel
-                                                title="Payment"
-                                                meta="Paid online"
-                                            >
-                                                <dl>
-                                                    <PanelRows>
-                                                        <InfoRow label="Method">
-                                                            {`${activeOrder.paymentMethod || 'GCash'} transfer`}
-                                                        </InfoRow>
-                                                        {activeOrder.paymentReference && (
-                                                            <InfoRow label="Reference" mono>{activeOrder.paymentReference}</InfoRow>
-                                                        )}
-                                                        {activeOrder.paymentReceipt && (
-                                                            <InfoRow label="Receipt">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.paymentReceipt || null)}
-                                                                    className="inline-flex items-center gap-2 rounded-lg font-semibold text-orange-700 transition-colors hover:text-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 cursor-pointer"
-                                                                >
-                                                                    <img
-                                                                        src={activeOrder.paymentReceipt}
-                                                                        alt=""
-                                                                        width={32}
-                                                                        height={32}
-                                                                        loading="lazy"
-                                                                        className="h-8 w-8 rounded-md border border-neutral-200 object-cover"
-                                                                    />
-                                                                    <span className="text-xs">View</span>
-                                                                </button>
-                                                            </InfoRow>
-                                                        )}
-                                                        {activeOrder.refundReceipt && (
-                                                            <InfoRow label="Refund proof">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => setPreviewScreenshotUrl(activeOrder.refundReceipt || null)}
-                                                                    className="inline-flex items-center gap-2 rounded-lg font-semibold text-orange-700 transition-colors hover:text-orange-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 cursor-pointer"
-                                                                >
-                                                                    <img
-                                                                        src={activeOrder.refundReceipt}
-                                                                        alt=""
-                                                                        width={32}
-                                                                        height={32}
-                                                                        loading="lazy"
-                                                                        className="h-8 w-8 rounded-md border border-neutral-200 object-cover"
-                                                                    />
-                                                                    <span className="text-xs">View</span>
-                                                                </button>
-                                                            </InfoRow>
-                                                        )}
-                                                    </PanelRows>
-                                                </dl>
-
-                                                {/* Price Breakdown */}
-                                                <div className="border-t border-neutral-100 px-5 py-4">
-                                                    <dl className="space-y-2.5">
-                                                        <div className="flex items-baseline justify-between gap-4 text-sm">
-                                                            <dt className="text-neutral-500">Subtotal</dt>
-                                                            <dd className="font-medium tabular-nums text-neutral-700">
-                                                                ₱{(activeOrder.subtotal !== undefined ? Number(activeOrder.subtotal) : Math.round(Number(activeOrder.total || 0) / 1.12 - (isPickupOrder ? 0 : (activeOrder.deliveryFee || 50)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                            </dd>
-                                                        </div>
-                                                        <div className="flex items-baseline justify-between gap-4 text-sm">
-                                                            <dt className="text-neutral-500">VAT (12%)</dt>
-                                                            <dd className="font-medium tabular-nums text-neutral-700">
-                                                                ₱{(activeOrder.vat !== undefined ? Number(activeOrder.vat) : Math.round((activeOrder.subtotal || (Number(activeOrder.total || 0) - (isPickupOrder ? 0 : (Number(activeOrder.deliveryFee || 50))))) / 1.12 * 0.12)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                            </dd>
-                                                        </div>
-                                                        <div className="flex items-baseline justify-between gap-4 text-sm">
-                                                            <dt className="text-neutral-500">Delivery fee</dt>
-                                                            <dd className={isPickupOrder ? 'font-medium text-emerald-700' : 'font-medium tabular-nums text-neutral-700'}>
-                                                                {isPickupOrder
-                                                                    ? 'None'
-                                                                    : `₱${(activeOrder.deliveryFee ?? 50).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                                            </dd>
-                                                        </div>
-                                                        <div className="flex items-baseline justify-between gap-4 border-t border-neutral-100 pt-3">
-                                                            <dt className="text-sm font-semibold text-neutral-900">
-                                                                Total paid
-                                                            </dt>
-                                                            <dd className="text-xl font-extrabold tabular-nums tracking-tight text-neutral-900">
-                                                                ₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                            </dd>
-                                                        </div>
-                                                    </dl>
-                                                </div>
-                                            </Panel>
+                                            {!isHandedOver && paymentPanel}
                                         </div>
                                     </div>
                                 </div>

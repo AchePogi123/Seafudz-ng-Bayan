@@ -57,4 +57,11 @@ export const PosIcon: React.FC<{
   </svg>
 )
 
+/**
+ * The same component under the name the set actually has. The POS was simply the
+ * first staff screen to need it; the rider dispatch board draws from it too.
+ */
+export const StaffIcon = PosIcon
+export type StaffIconName = PosIconName
+
 export default PosIcon

@@ -3,6 +3,7 @@ import { NavbarRider } from '../components/Navbarrider'
 import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
+import { StaffIcon } from '../components/PosIcon'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { fetchRoadDistances } from '../utils/locationServices'
 import {
@@ -105,21 +106,11 @@ const RIDER_DEMO_ORDERS: DeliveryJob[] = [
   },
 ]
 
-export const isCodOrder = (_order?: { paymentMethod?: string; [key: string]: any } | null): boolean => {
-  return false
-}
-
-export const getPaymentMethodDisplay = (_paymentMethod?: string) => {
-  return {
-    type: 'GCASH' as const,
-    label: 'GCash (Paid Online)',
-    shortLabel: 'GCash',
-    badgeClass: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-    pillClass: 'bg-emerald-600 text-white',
-    tagText: 'Paid Online',
-    icon: '📱',
-  }
-}
+/**
+ * Every delivery order is paid online before it is dispatched, so a rider never collects cash.
+ * These two helpers encoded that as a per-order lookup; the redesigned screen states the rule
+ * once for the whole shift instead, and nothing reads them any more.
+ */
 
 /**
  * Normalization helpers to identify companion orders placed by the same customer
@@ -385,11 +376,17 @@ export const RideRoleDemo: React.FC = () => {
   const isAdmin = currentUser?.role?.toLowerCase() === 'admin'
 
   const [rawDeliveries, setRawDeliveries] = useState<DeliveryJob[]>([])
+  /**
+   * Deliveries that have left the active board — handed over, cancelled, or aged out. The queue
+   * drops them so a finished job cannot be started again; the rider still needs to look one up,
+   * so they are kept here rather than thrown away.
+   */
+  const [pastDeliveries, setPastDeliveries] = useState<DeliveryJob[]>([])
   const [roadMetrics, setRoadMetrics] = useState<Map<string, number>>(() => new Map())
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false)
   const [routingUnavailable, setRoutingUnavailable] = useState(false)
   const [customerDetailsOrder, setCustomerDetailsOrder] = useState<DeliveryJob | null>(null)
-  const [activeTab, setActiveTab] = useState<'Ready' | 'All' | 'Out for Delivery'>('Ready')
+  const [activeTab, setActiveTab] = useState<'Ready' | 'All' | 'Out for Delivery' | 'Past'>('Ready')
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -409,55 +406,14 @@ export const RideRoleDemo: React.FC = () => {
   // Admin CRUD Modal states
   const [editingRiderOrder, setEditingRiderOrder] = useState<any | null>(null)
 
-  const handleDeleteRiderOrder = async (orderId: string) => {
-    const isDemoOrder = import.meta.env.DEV && orderId.startsWith('DEMO-RIDER-')
-    const confirmDelete = window.confirm(
-      isDemoOrder
-        ? `Remove demo order ${orderId} from the Rider view?`
-        : `Are you sure you want to permanently delete Delivery #${orderId}? This will remove it from the database.`
-    )
-    if (!confirmDelete) return
+  /**
+   * Deleting a delivery used to live here, behind an admin check. It is gone: the rider board is
+   * a view of work in progress, and destroying the order record from it would take the row the
+   * kitchen, the cashier and the customer's own tracking all still read. Orders are cancelled
+   * through the assistant flow, which leaves the record and its history intact.
+   */
 
-    if (isDemoOrder) {
-      setHiddenOrderIds((prev) => {
-        const next = new Set(prev).add(orderId)
-        try {
-          localStorage.setItem('seafudz_rider_hidden_orders', JSON.stringify(Array.from(next)))
-        } catch {}
-        return next
-      })
-      if (customerDetailsOrder?.id === orderId) setCustomerDetailsOrder(null)
-      setNotification(`Demo order ${orderId} removed from Rider view.`)
-      return
-    }
 
-    try {
-      await fetch(`${API_BASE_URL}/orders/${orderId}`, { method: 'DELETE' }).catch(() => {})
-    } catch {}
-
-    try {
-      const stored = localStorage.getItem('seafudz_orders')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        const updated = parsed.filter((o: any) => o.id !== orderId && o.ref !== orderId)
-        localStorage.setItem('seafudz_orders', JSON.stringify(updated))
-      }
-      notifyOrderSync()
-    } catch {}
-
-    if (customerDetailsOrder?.id === orderId) setCustomerDetailsOrder(null)
-    void fetchDeliveries(true)
-    setNotification(`Delivery #${orderId} deleted from DB by Admin.`)
-  }
-
-  const [hiddenOrderIds, setHiddenOrderIds] = useState<Set<string>>(() => {
-    try {
-      const saved = localStorage.getItem('seafudz_rider_hidden_orders')
-      return saved ? new Set(JSON.parse(saved)) : new Set()
-    } catch {
-      return new Set()
-    }
-  })
   const ITEMS_PER_PAGE = 6
   const isFetchingRef = useRef(false)
   const lastFetchRef = useRef(0)
@@ -474,12 +430,7 @@ export const RideRoleDemo: React.FC = () => {
 
     try {
       const combinedMap = new Map<string, DeliveryJob>()
-
-      let hiddenSet = new Set<string>()
-      try {
-        const saved = localStorage.getItem('seafudz_rider_hidden_orders')
-        if (saved) hiddenSet = new Set(JSON.parse(saved))
-      } catch {}
+      const pastMap = new Map<string, DeliveryJob>()
 
       let printedReceiptsSet = new Set<string>()
       try {
@@ -521,15 +472,58 @@ export const RideRoleDemo: React.FC = () => {
               if (isPos) return
 
               const id = o.id
-              if (hiddenSet.has(id)) return
 
               const rawStatus = (o.status || '').toUpperCase()
+
+              /**
+               * Build the rider's view of an order. Shared by the active queue and the archive so
+               * a past delivery carries the same address, items and totals it had while it ran.
+               */
+              const toJob = (displayStatus: string): DeliveryJob => {
+                const addr = o.address || o.deliveryAddress || 'Monumento, Caloocan'
+                const lat = o.deliveryLatitude ?? o.delivery_latitude
+                const lng = o.deliveryLongitude ?? o.delivery_longitude
+                return {
+                  id,
+                  ref: id,
+                  customerId: o.customerId || o.customer_id || o.userId || undefined,
+                  userId: o.userId || o.customerId || o.customer_id || undefined,
+                  tripId: tripMap[id] || (o.ref ? tripMap[o.ref] : undefined),
+                  customer: o.customer || o.customerName || 'Online Customer',
+                  phone: o.phone || '0917-000-0000',
+                  address: addr,
+                  items: (Array.isArray(o.items) ? o.items : []).filter(
+                    (i: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase())
+                  ),
+                  total: o.total || 0,
+                  deliveryFee:
+                    o.deliveryFee == null && o.delivery_fee == null ? undefined : Number(o.deliveryFee ?? o.delivery_fee),
+                  status: displayStatus,
+                  createdAt:
+                    o.createdAt || o.created_at || (o.dateTime && !isNaN(Date.parse(o.dateTime)) ? o.dateTime : new Date().toISOString()),
+                  paymentMethod:
+                    o.paymentMethod || o.payment_method || (typeof o.payment === 'string' ? o.payment : undefined) || 'GCash',
+                  coord:
+                    lat != null && lng != null && Number.isFinite(Number(lat)) && Number.isFinite(Number(lng))
+                      ? { lat: Number(lat), lng: Number(lng), label: addr }
+                      : geocodeAddress(addr),
+                  riderCashReceived:
+                    o.rider_cash_received != null
+                      ? Number(o.rider_cash_received)
+                      : o.riderCashReceived != null
+                        ? Number(o.riderCashReceived)
+                        : undefined,
+                  deliveryProof: o.deliveryProof || o.delivery_proof || undefined,
+                }
+              }
 
               // Once an order is completed, delivered, served, or cancelled, record it as finished and exclude from active rider queue
               const finishedStatuses = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANCELLED', 'REJECTED']
               if (finishedStatuses.includes(rawStatus) || isOrderCompleted(rawStatus)) {
                 if (id) finishedOrderIds.add(id)
                 if (o.ref) finishedOrderIds.add(o.ref)
+                // Off the queue, but kept so the rider can look it up afterwards.
+                if (id) pastMap.set(id, toJob(['CANCELLED', 'REJECTED'].includes(rawStatus) ? 'Cancelled' : 'Completed'))
                 return
               }
 
@@ -538,6 +532,9 @@ export const RideRoleDemo: React.FC = () => {
               if (orderTs !== null && Date.now() - orderTs > 12 * 60 * 60 * 1000) {
                 if (id) finishedOrderIds.add(id)
                 if (o.ref) finishedOrderIds.add(o.ref)
+                // Aged out rather than delivered. It must not read "Completed" (nobody said it
+                // arrived) nor "Ready" (it is not actionable any more), so it gets its own word.
+                if (id) pastMap.set(id, toJob('Expired'))
                 return
               }
 
@@ -648,7 +645,7 @@ export const RideRoleDemo: React.FC = () => {
               if (isPos) return
 
               const id = o.id || o.ref
-              if (!id || hiddenSet.has(id) || (o.ref && hiddenSet.has(o.ref)) || combinedMap.has(id)) return
+              if (!id || combinedMap.has(id)) return
 
               // Strict guard: If backend marked this order as finished/completed/cancelled, skip it!
               if (finishedOrderIds.has(id) || (o.ref && finishedOrderIds.has(o.ref))) return
@@ -770,13 +767,17 @@ export const RideRoleDemo: React.FC = () => {
           demoStatuses = JSON.parse(localStorage.getItem(DEMO_ORDER_STATUS_KEY) || '{}')
         } catch {}
         RIDER_DEMO_ORDERS.forEach((order) => {
-          if (!hiddenSet.has(order.id)) {
-            combinedMap.set(order.id, { ...order, status: demoStatuses[order.id] || order.status })
-          }
+          combinedMap.set(order.id, { ...order, status: demoStatuses[order.id] || order.status })
         })
       }
 
       setRawDeliveries(Array.from(combinedMap.values()))
+      // Newest first: a rider looking something up wants the last drop, not the first.
+      setPastDeliveries(
+        Array.from(pastMap.values()).sort(
+          (a, b) => (parseOrderTimestamp(b.createdAt || '') ?? 0) - (parseOrderTimestamp(a.createdAt || '') ?? 0)
+        )
+      )
     } finally {
       isFetchingRef.current = false
     }
@@ -808,28 +809,13 @@ export const RideRoleDemo: React.FC = () => {
   }, [notification])
 
   // Hide bundle from UI
-  const handleHideBundle = (bundle: DeliveryBundle, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation()
-    setHiddenOrderIds((prev) => {
-      const next = new Set(prev)
-      bundle.orders.forEach((o) => {
-        next.add(o.id)
-        if (o.ref) next.add(o.ref)
-      })
-      try {
-        localStorage.setItem('seafudz_rider_hidden_orders', JSON.stringify(Array.from(next)))
-      } catch {}
-      return next
-    })
-    if (customerDetailsOrder && bundle.orders.some((o) => o.id === customerDetailsOrder.id)) {
-      setCustomerDetailsOrder(null)
-    }
-    setNotification(
-      bundle.isBundle
-        ? `Combined delivery (${bundle.orders.length} orders) removed from Rider view.`
-        : `Order ${bundle.primaryOrder.ref} removed from Rider view.`
-    )
-  }
+  /**
+   * Clearing a stop off the board used to live here. It is gone with the delete action: a rider
+   * works the queue the assistant dispatched, and cannot decide a job is no longer theirs. Stops
+   * leave the board one way only — by being delivered, cancelled, or ageing out — and all three
+   * land in the Past tab rather than vanishing.
+   */
+
 
   // Unified status updater supporting batch updates for bundled companion orders
   const handleUpdateOrdersStatus = async (
@@ -1145,13 +1131,17 @@ export const RideRoleDemo: React.FC = () => {
     return groupDeliveriesIntoBundles(pricedDeliveries)
   }, [pricedDeliveries])
 
+  // Run through the same grouper for one shape of data downstream. In practice a finished
+  // delivery always stands alone: `areOrdersCompanion` only ever combines ready-with-ready or
+  // same-trip in-transit pairs, so nothing here matches.
+  const pastBundles = useMemo<DeliveryBundle[]>(() => {
+    return groupDeliveriesIntoBundles(pastDeliveries)
+  }, [pastDeliveries])
+
   // Filter & sort bundled deliveries
   const filteredBundles = useMemo(() => {
-    const list = bundledDeliveries.filter((b) => {
-      // Check if all orders in this bundle are hidden
-      const allHidden = b.orders.every((o) => hiddenOrderIds.has(o.id) || hiddenOrderIds.has(o.ref))
-      if (allHidden) return false
-
+    const source = activeTab === 'Past' ? pastBundles : bundledDeliveries
+    const list = source.filter((b) => {
       const matchesTab = (() => {
         if (activeTab === 'All') {
           // "All" tab represents all active deliveries (Ready and Out for Delivery).
@@ -1164,8 +1154,9 @@ export const RideRoleDemo: React.FC = () => {
         if (activeTab === 'Out for Delivery') {
           return b.status.toLowerCase() === 'out for delivery'
         }
-        if (activeTab === 'Completed') {
-          return isOrderCompleted(b.status)
+        if (activeTab === 'Past') {
+          // The archive is already only finished work; nothing further to narrow.
+          return true
         }
         return false
       })()
@@ -1187,7 +1178,9 @@ export const RideRoleDemo: React.FC = () => {
       )
     })
 
-    if (sortBy === 'proximity') {
+    // Sorting past work by how near it is would be nonsense: it is already done, so the
+    // archive is always newest first whatever the live board is sorted by.
+    if (sortBy === 'proximity' && activeTab !== 'Past') {
       return list.sort((a, b) => (a.roadDistanceKm ?? Infinity) - (b.roadDistanceKm ?? Infinity))
     }
     return list.sort((a, b) => {
@@ -1195,7 +1188,7 @@ export const RideRoleDemo: React.FC = () => {
       const bTime = parseOrderTimestamp(b.latestCreatedAt || '') ?? 0
       return bTime - aTime
     })
-  }, [bundledDeliveries, activeTab, searchQuery, hiddenOrderIds, sortBy])
+  }, [bundledDeliveries, pastBundles, activeTab, searchQuery, sortBy])
 
   // Reset pagination when filter or search changes
   useEffect(() => {
@@ -1219,881 +1212,694 @@ export const RideRoleDemo: React.FC = () => {
   }, [customerDetailsOrder, bundledDeliveries])
 
 
-  return (
-    <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 text-neutral-900 font-sans pb-24 lg:pb-6">
-      <div className="w-full max-w-7xl mx-auto flex flex-col gap-4 sm:gap-6">
-        {/* Standard Project Navigation Bar */}
-        <NavbarRider />
+  /**
+   * The stop's state in one vocabulary, shared with the kitchen and customer views.
+   * Tone carries meaning the same way it does everywhere else in the product:
+   * emerald ready, amber waiting on the kitchen, indigo in motion, neutral done.
+   */
+  const stopState = (b: DeliveryBundle) => {
+    if (b.status === 'Out for Delivery') return { label: 'On the way', tone: 'bg-indigo-50 text-indigo-700 border-indigo-200' }
+    if (b.status === 'Cancelled') return { label: 'Cancelled', tone: 'bg-neutral-100 text-neutral-500 border-neutral-300' }
+    if (b.status === 'Expired') return { label: 'Closed, not delivered', tone: 'bg-neutral-100 text-neutral-500 border-neutral-300' }
+    if (b.status === 'Completed') return { label: 'Delivered', tone: 'bg-emerald-50 text-emerald-800 border-emerald-200' }
+    if (b.status === 'Ready') return { label: 'Ready to pick up', tone: 'bg-emerald-50 text-emerald-800 border-emerald-200' }
+    if (b.hasPreparing && b.readyCount > 0)
+      return { label: `${b.readyCount} of ${b.orders.length} ready`, tone: 'bg-amber-50 text-amber-800 border-amber-200' }
+    return { label: 'Kitchen cooking', tone: 'bg-amber-50 text-amber-800 border-amber-200' }
+  }
 
+  const peso = (n: number) =>
+    `₱${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  /**
+   * The number on each tab has to agree with what that tab will actually show, so it is counted
+   * with the same rules `filteredBundles` uses: hidden stops are dropped, "Ready" includes a
+   * bundle with any packed package, and "All" means every stop still in play.
+   */
+  const tabCounts = useMemo(() => {
+    const visible = bundledDeliveries
+    return {
+      Ready: visible.filter((b) => b.status.toLowerCase() === 'ready' || (b.isBundle && b.readyCount > 0)).length,
+      All: visible.filter((b) => !isOrderCompleted(b.status)).length,
+      'Out for Delivery': visible.filter((b) => b.status.toLowerCase() === 'out for delivery').length,
+      Past: pastBundles.length,
+    }
+  }, [bundledDeliveries, pastBundles])
+
+  return (
+    <div className="rider-view min-h-screen bg-[#f8f6f4] p-4 font-sans text-neutral-900 lg:p-6">
+      {/*
+        The bar travels with the rider down a long list of stops and carries the page ground
+        with it, so stop rows pass beneath an opaque band rather than through the gap above it.
+      */}
+      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-5 bg-[#f8f6f4] px-4 pb-3 pt-4 lg:-mx-6 lg:-mt-6 lg:px-6 lg:pt-6">
+        <NavbarRider />
+      </div>
+
+      {/*
+        One column, not a dashboard grid. This screen is read on a phone held in one hand at the
+        roadside: the rider has one next stop, so the page is a worklist of stops, widest at a
+        comfortable reading measure rather than spread across a monitor.
+      */}
+      <main className="mx-auto w-full max-w-3xl space-y-4">
         {notification && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-2xl flex items-center justify-between text-sm font-bold shadow-xs">
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-900">
             <span>{notification}</span>
-            <button onClick={() => setNotification(null)} className="text-emerald-500 font-extrabold cursor-pointer">×</button>
+            <button
+              type="button"
+              onClick={() => setNotification(null)}
+              aria-label="Dismiss"
+              className="inline-flex shrink-0 cursor-pointer items-center justify-center rounded-lg p-1 text-emerald-700 transition-colors hover:bg-emerald-100"
+            >
+              <StaffIcon name="close" className="h-4 w-4" />
+            </button>
           </div>
         )}
 
-        {/* Fixed delivery origin and delivery distance controls */}
-        <div className="bg-white border border-neutral-200 p-4 rounded-2xl shadow-xs flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-            <span className="font-extrabold text-neutral-700">Delivery Origin: Barangay 176, Bagong Silang, Caloocan</span>
+        <header className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Your stops</h1>
+          <p className="text-sm leading-relaxed text-neutral-500">
+            Everything dispatched to you, nearest first. Orders for the same address travel as one stop.
+          </p>
+        </header>
 
-            <span className="text-[11px] font-mono text-neutral-500 hidden sm:inline">
-              ({riderLocation.lat.toFixed(4)}, {riderLocation.lng.toFixed(4)})
+        {/*
+          The facts that are true of every stop, stated once instead of repeated on each card.
+          Every delivery is prepaid, so "collect no cash" is a standing rule of the shift — the old
+          screen restated it fourteen times and buried what actually differs between stops.
+        */}
+        <section className="rounded-2xl border border-neutral-200 bg-white">
+          <div className="flex items-center gap-3 border-b border-neutral-100 px-4 py-3">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+              <StaffIcon name="cash" className="h-4 w-4" />
             </span>
-            {routingUnavailable && (
-              <span role="status" className="text-amber-700">
-                Road distance unavailable; stored or base fees are shown.
-              </span>
-            )}
-            {isLoadingRoutes && (
-              <span role="status" className="text-neutral-500">
-                Calculating delivery distances…
-              </span>
-            )}
-            <span className="text-[11px] text-neutral-400">₱50 under 3.9 km; ₱100 from 3.9 to 8 km</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-neutral-500">Sort By:</span>
-            <button
-              onClick={() => setSortBy('proximity')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer border ${
-                sortBy === 'proximity'
-                  ? 'bg-orange-50 text-orange-700 border-orange-200 shadow-2xs'
-                  : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50'
-              }`}
-            >
-              Nearest by Road Distance
-            </button>
-            <button
-              onClick={() => setSortBy('newest')}
-              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer border ${
-                sortBy === 'newest'
-                  ? 'bg-orange-50 text-orange-700 border-orange-200 shadow-2xs'
-                  : 'bg-white text-neutral-600 border-neutral-200 hover:bg-neutral-50'
-              }`}
-            >
-              Newest First
-            </button>
-          </div>
-        </div>
-
-        {/* Main Content Layout */}
-        <div className="grid grid-cols-1 gap-4 sm:gap-6 items-start">
-          <div className="flex flex-col gap-4">
-            {/* Search and Tabs Row */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              {/* Tabs */}
-              <div className="flex items-center gap-1.5 bg-white p-1.5 rounded-2xl border border-neutral-200 shadow-2xs overflow-x-auto">
-                {(['Ready', 'All', 'Out for Delivery'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-3.5 py-2 rounded-xl font-extrabold text-xs flex items-center gap-1.5 transition-all cursor-pointer whitespace-nowrap ${
-                      activeTab === tab
-                        ? 'bg-[#ff7b00] text-white shadow-xs'
-                        : 'text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50'
-                    }`}
-                  >
-                    <span>{tab} Orders</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Search Bar */}
-              <div className="flex items-center gap-2 min-w-[240px]">
-                <div className="relative flex-1">
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search customer, ref, address..."
-                    className="w-full pl-9 pr-8 py-2.5 bg-white rounded-2xl border border-neutral-200 text-xs font-semibold focus:outline-none focus:border-orange-500 shadow-2xs transition-all placeholder:text-neutral-400"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 font-bold text-xs cursor-pointer"
-                      aria-label="Clear search"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-neutral-900">Collect no cash</p>
+              <p className="text-[13px] leading-relaxed text-neutral-500">
+                Every delivery is paid online before dispatch. Hand the packages over and take the photo.
+              </p>
             </div>
+          </div>
 
-            {/* Grid of Delivery Cards (Bundled & Single) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {paginatedBundles.length === 0 ? (
-                <div className="col-span-2 bg-white p-12 rounded-3xl border border-neutral-200 text-center text-neutral-400">
-                  <h3 className="font-bold text-neutral-700">No delivery orders found.</h3>
-                  <p className="text-xs mt-1">
-                    {searchQuery ? `No results matching "${searchQuery}"` : 'Orders dispatched by Assistant will show up here live.'}
-                  </p>
-                </div>
-              ) : (
-                paginatedBundles.map((bundle) => {
-                  if (bundle.isBundle) {
-                    // Render Unified Bundled Delivery Card (Multiple Orders for Same Customer)
-                    return (
-                      <div
-                        key={bundle.bundleKey}
-                        onClick={() => setCustomerDetailsOrder(bundle.primaryOrder)}
-                        className="bg-gradient-to-br from-white via-white to-orange-50/30 rounded-3xl p-5 border-2 border-orange-300 transition-all shadow-sm hover:shadow-md hover:border-orange-400 cursor-pointer relative"
-                      >
-                        <div className="flex items-start justify-between gap-2 border-b border-orange-100 pb-3">
-                          <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-500 text-white shadow-2xs">
-                                <span>📦</span>
-                                <span>COMBINED DELIVERY ({bundle.orders.length} ORDERS)</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
-                                <span>📱</span>
-                                <span>GCash Paid Online</span>
-                              </span>
-                            </div>
-                            <h4 className="text-base font-black leading-tight mt-1.5 text-neutral-900">{bundle.customer}</h4>
-                            <p className="text-xs text-neutral-500 mt-0.5">Phone: {bundle.phone}</p>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <span
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                                bundle.status === 'Ready'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : bundle.status === 'Out for Delivery'
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                  : bundle.hasPreparing && bundle.readyCount > 0
-                                  ? 'bg-orange-50 text-orange-700 border border-orange-200'
-                                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-                              }`}
-                            >
-                              ● {bundle.hasPreparing && bundle.readyCount > 0
-                                ? `${bundle.readyCount} Ready • ${bundle.preparingCount} Cooking`
-                                : bundle.status}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => handleHideBundle(bundle, e)}
-                              title="Remove bundle from Rider UI"
-                              className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                            >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
-                            </button>
-                          </div>
-                        </div>
+          <dl className="divide-y divide-neutral-100 px-4 sm:flex sm:divide-y-0 sm:divide-x">
+            <div className="py-3 sm:flex-1 sm:pr-4">
+              <dt className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                <StaffIcon name="pin" className="h-3 w-3" /> Leaving from
+              </dt>
+              <dd className="mt-1 text-[13px] leading-relaxed text-neutral-700">
+                Barangay 176, Bagong Silang, Caloocan
+                <span className="ml-1.5 font-mono text-[11px] tabular-nums text-neutral-400">
+                  {riderLocation.lat.toFixed(4)}, {riderLocation.lng.toFixed(4)}
+                </span>
+              </dd>
+            </div>
+            <div className="py-3 sm:flex-1 sm:pl-4">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Delivery fee</dt>
+              <dd className="mt-1 text-[13px] leading-relaxed text-neutral-700">
+                <span className="tabular-nums">₱50</span> under 3.9 km ·{' '}
+                <span className="tabular-nums">₱100</span> from 3.9 to 8 km
+              </dd>
+            </div>
+          </dl>
 
-                        {/* Distance & Combined Delivery Fee */}
-                        <div className="pt-2.5 pb-1 flex items-center justify-between text-xs">
-                          <div className="inline-flex items-center gap-1.5 bg-orange-100/70 border border-orange-200 text-orange-900 font-extrabold px-2.5 py-1 rounded-lg text-[11px]">
-                            <span>{bundle.roadDistanceKm === undefined ? 'Distance unavailable' : `${bundle.roadDistanceKm.toFixed(1)} km`}</span>
-                            <span className="text-orange-300">•</span>
-                            <span>
-                              Combined Delivery Fee ₱{bundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({bundle.orders.length}× separate orders)
-                            </span>
-                          </div>
-                        </div>
+          {(isLoadingRoutes || routingUnavailable) && (
+            <p
+              role="status"
+              className={`flex items-center gap-2 border-t border-neutral-100 px-4 py-2.5 text-[13px] ${
+                routingUnavailable ? 'text-amber-700' : 'text-neutral-500'
+              }`}
+            >
+              <StaffIcon name={routingUnavailable ? 'alert' : 'clock'} className="h-3.5 w-3.5 shrink-0" />
+              {routingUnavailable
+                ? 'Road distances are unavailable right now; stored or base fees are shown.'
+                : 'Working out road distances…'}
+            </p>
+          )}
+        </section>
 
-                        {/* Address */}
-                        <div className="py-1 text-xs text-neutral-600">
-                          <p className="truncate font-medium text-neutral-700">📍 {bundle.address}</p>
-                        </div>
+        {/* Filter, search and order — the same bar language the rest of the staff app uses. */}
+        <section className="space-y-2.5 rounded-2xl border border-neutral-200 bg-white p-2.5">
+          <div className="flex items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {(['Ready', 'Out for Delivery', 'Past', 'All'] as const).map((tab) => {
+              const isSelected = activeTab === tab
+              const count = tabCounts[tab]
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  aria-current={isSelected ? 'true' : undefined}
+                  className={`flex shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 py-2 text-sm font-medium transition-colors ${
+                    isSelected ? 'bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                  }`}
+                >
+                  <span>
+                    {tab === 'Out for Delivery'
+                      ? 'On the way'
+                      : tab === 'Past'
+                        ? 'Delivered'
+                        : tab === 'Ready'
+                          ? 'Ready'
+                          : 'All'}
+                  </span>
+                  <span className={`text-[11px] tabular-nums ${isSelected ? 'text-white/70' : 'text-neutral-400'}`}>{count}</span>
+                </button>
+              )
+            })}
+          </div>
 
-                        {/* Mini breakdown of companion packages */}
-                        <div className="mt-1 mb-2 space-y-1.5 bg-white/70 p-2.5 rounded-2xl border border-orange-100">
-                          {bundle.orders.map((ord, idx) => {
-                            return (
-                              <div key={ord.id} className="flex items-center justify-between text-xs border-b border-neutral-100 last:border-b-0 pb-1 last:pb-0">
-                                <div className="flex items-center gap-1.5 truncate">
-                                  <span className="text-[10px] font-black text-orange-600">#{idx + 1}</span>
-                                  <span className="font-mono text-[10px] font-bold text-neutral-500 truncate max-w-[100px]">{ord.ref}</span>
-                                  <span className="text-neutral-300">•</span>
-                                  <span className="text-neutral-700 truncate max-w-[140px]">
-                                    {ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                                  <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                    ord.status === 'Ready'
-                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                      : ord.status === 'Out for Delivery'
-                                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  }`}>
-                                    {ord.status === 'Ready' ? '✓ Ready' : ord.status === 'Out for Delivery' ? '🛵 Transit' : '🔥 Cooking'}
-                                  </span>
-                                  <span className="font-bold text-neutral-800 text-[11px]">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                  <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                                    GCash
-                                  </span>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-
-                        {/* Footer Totals */}
-                        <div className="flex items-center justify-between border-t border-orange-100 pt-2.5 text-xs font-bold">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[#ff7b00] text-sm font-black">
-                              ₱{bundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Total
-                            </span>
-                            <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-300 text-[10px] font-black">
-                              Prepaid Online (₱0 Cash)
-                            </span>
-                          </div>
-                          <span className="text-neutral-400 font-medium text-[11px]">{bundle.latestCreatedAt}</span>
-                        </div>
-                      </div>
-                    )
-                  }
-
-                  // Render Single Delivery Card
-                  const ord = bundle.primaryOrder
-                  const payInfo = getPaymentMethodDisplay(ord.paymentMethod)
-                  return (
-                    <div
-                      key={ord.id}
-                      onClick={() => setCustomerDetailsOrder(ord)}
-                      className="bg-white rounded-3xl p-5 border border-neutral-200 transition-all shadow-xs hover:shadow-md cursor-pointer"
-                    >
-                      <div className="flex items-start justify-between gap-2 border-b border-neutral-100 pb-3">
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-neutral-400">Ref: {ord.ref}</span>
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${payInfo.badgeClass}`}>
-                              <span>{payInfo.icon}</span>
-                              <span>{payInfo.shortLabel}</span>
-                            </span>
-                          </div>
-                          <h4 className="text-base font-black leading-tight mt-1 text-neutral-800">{ord.customer}</h4>
-                          <p className="text-xs text-neutral-500 mt-0.5">Phone: {ord.phone}</p>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase ${
-                              ord.status === 'Ready'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : ord.status === 'Out for Delivery'
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            }`}
-                          >
-                            ● {ord.status}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => handleHideBundle(bundle, e)}
-                            title="Remove from Rider UI"
-                            className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Delivery distance and fee */}
-                      <div className="pt-2.5 pb-1 flex items-center justify-between text-xs">
-                        <div className="inline-flex items-center gap-1.5 bg-orange-50 border border-orange-200 text-orange-800 font-extrabold px-2.5 py-1 rounded-lg text-[11px]">
-                          <span>{ord.roadDistanceKm === undefined ? 'Distance unavailable' : `${ord.roadDistanceKm.toFixed(1)} km`}</span>
-                          <span className="text-orange-300">•</span>
-                          <span>
-                            {ord.deliveryFee === null
-                              ? 'Outside 8 km delivery limit'
-                              : `Delivery fee ₱${ord.deliveryFee?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="py-2 text-xs text-neutral-600 space-y-1">
-                        <p className="truncate"><span className="font-medium text-neutral-700">📍 {ord.address}</span></p>
-                        <p className="truncate"><span className="font-medium text-neutral-700">{ord.items.map((i) => `${i.name} (${i.quantity})`).join(', ')}</span></p>
-                      </div>
-
-                      <div className="flex items-center justify-between border-t border-neutral-100 pt-3 text-xs font-bold">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[#ff7b00] text-sm">₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                          <span className="px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-extrabold">
-                            Paid Online
-                          </span>
-                        </div>
-                        <span className="text-neutral-400 font-medium text-[11px]">{ord.createdAt}</span>
-                      </div>
-                    </div>
-                  )
-                })
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-2 transition-colors focus-within:border-orange-400 focus-within:bg-white">
+              <StaffIcon name="search" className="h-4 w-4 shrink-0 text-neutral-500" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search a name, address or reference"
+                aria-label="Search your stops"
+                className="w-full border-none bg-transparent text-sm text-neutral-900 outline-none placeholder:text-neutral-500"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  className="shrink-0 cursor-pointer text-neutral-400 transition-colors hover:text-neutral-700"
+                >
+                  <StaffIcon name="close" className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
 
-            {/* Pagination Controls */}
-            {filteredBundles.length > ITEMS_PER_PAGE && (
-              <div className="bg-white px-5 py-3.5 rounded-2xl border border-neutral-200 shadow-2xs flex items-center justify-between">
-                <span className="text-xs font-bold text-neutral-500">
-                  Page <span className="text-neutral-900 font-black">{currentPage}</span> of{' '}
-                  <span className="text-neutral-900 font-black">{totalPages}</span> ({filteredBundles.length} deliveries
-                  {filteredBundles.some((b) => b.isBundle) ? ` • ${filteredBundles.reduce((acc, b) => acc + b.orders.length, 0)} total customer packages` : ''})
-                </span>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-neutral-100 hover:bg-neutral-200 text-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
-                  >
-                    Prev
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={currentPage >= totalPages}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-[#ff7b00] hover:bg-[#e66f00] text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all active:scale-95 flex items-center gap-1"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* DETAIL MODAL (Bundled & Single Deliveries) */}
-      {activeBundle && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          onClick={() => setCustomerDetailsOrder(null)}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="rider-customer-details-title"
-            className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="mb-4 flex items-start justify-between gap-4 border-b border-neutral-100 pb-3">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  {activeBundle.isBundle && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-orange-500 text-white shadow-2xs">
-                      <span>📦</span> BUNDLED DELIVERY ({activeBundle.orders.length} ORDERS)
-                    </span>
-                  )}
-                </div>
-                <h2 id="rider-customer-details-title" className="text-lg font-black text-neutral-900 mt-1">
-                  {activeBundle.customer}
-                </h2>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  {activeBundle.isBundle
-                    ? `Combined transit for ${activeBundle.orders.length} orders to single destination`
-                    : `Order ${activeBundle.primaryOrder.ref}`}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCustomerDetailsOrder(null)}
-                className="rounded-lg px-2 py-1 text-sm font-bold text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 cursor-pointer"
-                aria-label="Close customer details"
-              >
-                Close
-              </button>
+            {/* Distance only orders work still to be done, so the archive hides the control. */}
+            <div className={`flex shrink-0 items-center gap-1 rounded-full bg-neutral-100 p-1 ${activeTab === 'Past' ? 'hidden' : ''}`}>
+              {([['proximity', 'Nearest'], ['newest', 'Newest']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSortBy(key)}
+                  aria-current={sortBy === key ? 'true' : undefined}
+                  className={`cursor-pointer rounded-full px-3 py-1.5 text-[13px] font-medium transition-colors ${
+                    sortBy === key ? 'bg-white text-neutral-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]' : 'text-neutral-600 hover:text-neutral-900'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
+          </div>
+        </section>
 
-            <div className="space-y-3.5 text-sm">
-              {/* Customer Info */}
-              <div>
-                <p className="text-xs font-bold uppercase text-neutral-400">Phone</p>
-                <p className="mt-0.5 text-neutral-800 font-semibold">{activeBundle.phone}</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase text-neutral-400">Delivery Address</p>
-                <p className="mt-0.5 text-neutral-800">{activeBundle.address}</p>
-              </div>
-
-              {/* Status and Overall Payment Mode */}
-              <div className="flex items-center justify-between border-y border-neutral-100 py-2.5">
-                <div>
-                  <p className="text-xs font-bold uppercase text-neutral-400">Delivery Status</p>
-                  <p className="mt-0.5 font-bold text-neutral-800">{activeBundle.status}</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-bold uppercase text-neutral-400">Payment Summary</p>
-                  <div className="mt-0.5 flex items-center gap-1.5 justify-end">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-50 text-emerald-800 border border-emerald-200">
-                      <span>📱</span>
-                      <span>Paid Online via GCash</span>
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Road distance and Delivery Fee breakdown */}
-              <div className="grid grid-cols-2 gap-3 rounded-xl bg-orange-50 p-3">
-                <div>
-                  <p className="text-xs font-bold uppercase text-neutral-500">Road Distance</p>
-                  <p className="mt-0.5 font-bold text-neutral-900">
-                    {activeBundle.roadDistanceKm === undefined ? 'Unavailable' : `${activeBundle.roadDistanceKm.toFixed(1)} km`}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs font-bold uppercase text-neutral-500">Total Rider Delivery Fee</p>
-                  <p className="mt-0.5 font-bold text-orange-700">
-                    ₱{activeBundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                  {activeBundle.isBundle && (
-                    <span className="text-[10px] text-orange-600 block font-semibold">
-                      ({activeBundle.orders.length} separate orders × ₱50.00 each)
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Itemized Packages Breakdown */}
-              <div className="space-y-2.5">
-                <p className="text-xs font-bold uppercase text-neutral-500 tracking-wider">
-                  {activeBundle.isBundle ? `Bundled Packages to Deliver (${activeBundle.orders.length} Orders)` : 'Order Items'}
-                </p>
-                {activeBundle.orders.map((ord, idx) => {
-                  const ordPayInfo = getPaymentMethodDisplay(ord.paymentMethod)
-                  return (
-                    <div key={ord.id} className="rounded-2xl border border-neutral-200 bg-neutral-50/80 p-3.5 space-y-2 shadow-2xs">
-                      <div className="flex items-center justify-between border-b border-neutral-200/60 pb-2">
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-black text-orange-600 uppercase">Package #{idx + 1}</span>
-                            <span className="text-[10px] font-mono font-bold text-neutral-500">{ord.ref}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span
-                            className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full ${
-                              ord.status === 'Ready'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                : ord.status === 'Out for Delivery'
-                                ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                : 'bg-amber-100 text-amber-800 border border-amber-200'
-                            }`}
-                          >
-                            ● {ord.status === 'Ready' ? 'Ready for Pickup' : ord.status === 'Out for Delivery' ? 'In Transit' : 'Cooking in Kitchen'}
-                          </span>
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border ${ordPayInfo.badgeClass}`}>
-                            <span>{ordPayInfo.icon}</span>
-                            <span>{ordPayInfo.label}</span>
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Items */}
-                      <ul className="space-y-1 text-xs text-neutral-800">
-                        {ord.items.map((item, itemIdx) => (
-                          <li key={`${item.name}-${itemIdx}`} className="flex justify-between">
-                            <span>{item.name}</span>
-                            <span className="font-semibold">x{item.quantity}</span>
-                          </li>
-                        ))}
-                      </ul>
-
-                      {/* Subtotal and Cash Rule */}
-                      <div className="flex items-center justify-between pt-1.5 border-t border-neutral-200/60 text-xs">
-                        <span className="font-semibold">
-                          <span className="text-emerald-700 font-bold flex items-center gap-1">
-                            <span>📱</span> Paid via GCash (₱0.00 cash to collect)
-                          </span>
+        {/* The stops themselves. One row per destination, however many packages it holds. */}
+        {paginatedBundles.length === 0 ? (
+          <div className="rounded-2xl border border-neutral-200 bg-white px-6 py-14 text-center">
+            <StaffIcon name="scooter" className="mx-auto h-9 w-9 text-neutral-300" />
+            <h2 className="mt-3.5 text-base font-semibold text-neutral-900">
+              {searchQuery
+                ? 'Nothing matches that search'
+                : activeTab === 'Past'
+                  ? 'Nothing delivered yet'
+                  : 'No stops right now'}
+            </h2>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-neutral-500">
+              {searchQuery
+                ? `No stop matches “${searchQuery}”. Try a customer name, an address or an order reference.`
+                : activeTab === 'Past'
+                  ? 'Stops you have finished move here once they close.'
+                  : 'Orders appear here the moment the assistant dispatches them.'}
+            </p>
+          </div>
+        ) : (
+          <ol className="space-y-3">
+            {paginatedBundles.map((bundle) => {
+              const state = stopState(bundle)
+              const shown = bundle.orders.slice(0, 3)
+              const hidden = bundle.orders.length - shown.length
+              const packageCount = bundle.orders.length
+              return (
+                <li key={bundle.bundleKey}>
+                  <article
+                    onClick={() => setCustomerDetailsOrder(bundle.primaryOrder)}
+                    className="cursor-pointer overflow-hidden rounded-2xl border border-neutral-200 bg-white transition-[border-color,box-shadow] duration-150 ease-out hover:border-neutral-300 hover:shadow-[0_1px_2px_rgba(15,23,42,0.04),0_12px_28px_-18px_rgba(15,23,42,0.28)]"
+                  >
+                    <div className="px-4 pb-3.5 pt-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${state.tone}`}>
+                          <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                          {state.label}
                         </span>
-                        <span className="font-mono font-bold text-neutral-800">
-                          ₱{ord.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+                        {/* How far: the number this list is sorted by, so it reads as a figure. */}
+                        <span className="shrink-0 text-sm font-semibold tabular-nums text-neutral-900">
+                          {bundle.roadDistanceKm === undefined ? '— km' : `${bundle.roadDistanceKm.toFixed(1)} km`}
                         </span>
                       </div>
 
-                      {/* Admin CRUD options for individual order */}
-                      {isAdmin && !ord.id.startsWith('DEMO-RIDER-') && (
-                        <div className="flex gap-2 pt-1 border-t border-neutral-200/60">
-                          <button
-                            type="button"
-                            onClick={() => setEditingRiderOrder(ord)}
-                            className="text-[10px] font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg px-2.5 py-1 cursor-pointer"
-                          >
-                            Edit Package #{idx + 1}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleDeleteRiderOrder(ord.id)}
-                            className="text-[10px] font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg px-2.5 py-1 cursor-pointer"
-                          >
-                            Delete Package #{idx + 1}
-                          </button>
+                      {/* Who to ask for, then where to go: the two things said at the gate. */}
+                      <h3 className="mt-2.5 text-base font-bold leading-tight text-neutral-900">{bundle.customer}</h3>
+                      <p className="mt-1 flex items-start gap-1.5 text-sm leading-relaxed text-neutral-600">
+                        <StaffIcon name="pin" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                        <span>{bundle.address}</span>
+                      </p>
+                      <p className="mt-1 flex items-center gap-1.5 text-[13px] text-neutral-500">
+                        <StaffIcon name="phone" className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                        <span className="font-mono tabular-nums">{bundle.phone}</span>
+                      </p>
+                    </div>
+
+                    {/* What is in the bag. A bundle is just a stop with more lines. */}
+                    <div className="divide-y divide-neutral-100 border-t border-neutral-100 px-4">
+                      {shown.map((ord) => (
+                        <div key={ord.id} className="flex items-baseline justify-between gap-4 py-2.5 text-[13px]">
+                          <span className="min-w-0 truncate text-neutral-700">
+                            {ord.items.map((i) => `${i.quantity}× ${i.name}`).join(', ') || 'Package'}
+                          </span>
+                          <span className="shrink-0 font-mono text-[11px] tabular-nums text-neutral-400">{ord.ref}</span>
                         </div>
+                      ))}
+                      {hidden > 0 && (
+                        <p className="py-2.5 text-[13px] text-neutral-500">
+                          and {hidden} more {hidden === 1 ? 'package' : 'packages'}
+                        </p>
                       )}
                     </div>
-                  )
-                })}
-              </div>
 
-              {/* Combined Financial Summary Box */}
-              <div className="rounded-2xl border border-neutral-200 bg-white p-3.5 space-y-2 shadow-xs">
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-neutral-600 font-medium">Combined Orders Value:</span>
-                  <span className="font-mono font-bold text-neutral-800">
-                    ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-neutral-600 font-medium">Total Delivery Fees Included:</span>
-                  <span className="font-mono text-neutral-700">
-                    ₱{activeBundle.totalDeliveryFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
+                    <div className="flex items-center justify-between gap-3 border-t border-neutral-100 px-4 py-3">
+                      <p className="text-[13px] text-neutral-500">
+                        {packageCount} {packageCount === 1 ? 'package' : 'packages'} ·{' '}
+                        <span className="tabular-nums">{peso(bundle.totalCombinedAmount)}</span> prepaid
+                      </p>
+                      {/*
+                        The whole row is clickable as a thumb convenience, but a row is not a
+                        control: this button is the same action reachable by keyboard, and it
+                        names the stop so it is not one of twelve identical "Open"s to a reader.
+                      */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setCustomerDetailsOrder(bundle.primaryOrder)
+                        }}
+                        className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-[13px] font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+                      >
+                        Open<span className="sr-only"> the stop for {bundle.customer}</span>
+                        <StaffIcon name="arrowRight" className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </article>
+                </li>
+              )
+            })}
+          </ol>
+        )}
 
-                <div className="flex justify-between items-center pt-2 border-t border-neutral-100">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-neutral-800">Total Cash to Collect</p>
-                    <p className="text-[10px] text-neutral-500">
-                      Fully paid online via GCash (₱0.00 cash).
-                    </p>
+        {filteredBundles.length > ITEMS_PER_PAGE && (
+          <div className="flex select-none flex-col items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3 sm:flex-row">
+            <p className="text-[13px] text-neutral-500">
+              Page <span className="font-semibold tabular-nums text-neutral-900">{currentPage}</span> of{' '}
+              <span className="font-semibold tabular-nums text-neutral-900">{totalPages}</span> ·{' '}
+              <span className="tabular-nums">{filteredBundles.length}</span>{' '}
+              {filteredBundles.length === 1 ? 'stop' : 'stops'}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-neutral-200 px-3.5 py-2 text-[13px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                <StaffIcon name="arrowLeft" className="h-3.5 w-3.5" /> Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-neutral-200 px-3.5 py-2 text-[13px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+              >
+                Next <StaffIcon name="arrowRight" className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* The stop, in full: where it goes, what is in it, and the one thing to do next. */}
+      {activeBundle && (() => {
+        const state = stopState(activeBundle)
+        const proofShown = activeBundle.deliveryProof || deliveryProofImage
+        const onProofPicked = async (e: React.ChangeEvent<HTMLInputElement>) => {
+          const file = e.target.files?.[0]
+          if (!file) return
+          try {
+            setIsProcessingDeliveryProof(true)
+            setDeliveryProofError(null)
+            const base64 = await compressImageToBase64(file)
+            setDeliveryProofImage(base64)
+          } catch {
+            setDeliveryProofError('That photo could not be processed. Try taking it again.')
+          } finally {
+            setIsProcessingDeliveryProof(false)
+          }
+        }
+
+        return (
+          <div
+            className="rider-scrim fixed inset-0 z-50 flex items-end justify-center bg-neutral-950/55 p-0 sm:items-center sm:p-6"
+            onClick={() => setCustomerDetailsOrder(null)}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rider-stop-title"
+              onClick={(e) => e.stopPropagation()}
+              className="rider-sheet flex max-h-[92vh] w-full max-w-lg transform-gpu flex-col overflow-hidden rounded-t-2xl border border-neutral-200 bg-white shadow-xl shadow-neutral-900/10 sm:rounded-2xl"
+            >
+              <header className="flex shrink-0 items-start justify-between gap-4 border-b border-neutral-100 px-5 py-4">
+                <div className="min-w-0">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${state.tone}`}>
+                    <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
+                    {state.label}
+                  </span>
+                  <h2 id="rider-stop-title" className="mt-1.5 text-lg font-bold leading-tight text-neutral-900">
+                    {activeBundle.customer}
+                  </h2>
+                  <p className="mt-0.5 text-[13px] text-neutral-500">
+                    {activeBundle.isBundle
+                      ? `${activeBundle.orders.length} packages travelling to one address`
+                      : `Order ${activeBundle.primaryOrder.ref}`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCustomerDetailsOrder(null)}
+                  aria-label="Close stop details"
+                  className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+                >
+                  <StaffIcon name="close" className="h-4 w-4" />
+                </button>
+              </header>
+
+              <div className="rider-scroll min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+                {/* Where and who */}
+                <dl className="divide-y divide-neutral-100 rounded-2xl border border-neutral-200">
+                  <div className="flex items-start gap-3 px-4 py-3">
+                    <StaffIcon name="pin" className="mt-0.5 h-4 w-4 shrink-0 text-neutral-400" />
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Deliver to</dt>
+                      <dd className="mt-0.5 text-sm leading-relaxed text-neutral-900">{activeBundle.address}</dd>
+                    </div>
                   </div>
-                  <span className="font-mono font-black text-base text-emerald-700">
-                    ₱0.00
-                  </span>
-                </div>
-              </div>
+                  <div className="flex items-start gap-3 px-4 py-3">
+                    <StaffIcon name="phone" className="mt-0.5 h-4 w-4 shrink-0 text-neutral-400" />
+                    <div className="min-w-0">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Phone</dt>
+                      <dd className="mt-0.5 font-mono text-sm tabular-nums text-neutral-900">{activeBundle.phone}</dd>
+                    </div>
+                  </div>
+                  <div className="flex gap-4 px-4 py-3">
+                    <div className="flex-1">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Road distance</dt>
+                      <dd className="mt-0.5 text-sm font-semibold tabular-nums text-neutral-900">
+                        {activeBundle.roadDistanceKm === undefined ? 'Unavailable' : `${activeBundle.roadDistanceKm.toFixed(1)} km`}
+                      </dd>
+                    </div>
+                    <div className="flex-1">
+                      <dt className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">Delivery fee</dt>
+                      <dd className="mt-0.5 text-sm font-semibold tabular-nums text-neutral-900">
+                        {peso(activeBundle.totalDeliveryFee)}
+                        {activeBundle.isBundle && (
+                          <span className="ml-1 text-[11px] font-normal text-neutral-500">
+                            ({activeBundle.orders.length} orders)
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  </div>
+                </dl>
 
-              {/* Ready status note & actions: Rider has not started delivery yet */}
-              {activeBundle.status === 'Ready' && (
-                <div className="space-y-3 pt-1">
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3 text-xs text-emerald-950 flex items-center gap-2.5">
-                    <svg
-                      className="w-5 h-5 shrink-0 text-emerald-600"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>
-                      {activeBundle.isBundle
-                        ? `All ${activeBundle.orders.length} orders for ${activeBundle.customer} are prepared and packed at the store. Tap Start Delivery to begin combined transit.`
-                        : `This order is ready for pickup at the store. Click Start Delivery to begin transit.`}
+                {/* What to carry */}
+                <section className="overflow-hidden rounded-2xl border border-neutral-200">
+                  <h3 className="border-b border-neutral-100 px-4 py-3 text-sm font-bold text-neutral-900">
+                    {activeBundle.isBundle ? `${activeBundle.orders.length} packages` : 'Package'}
+                  </h3>
+                  <div className="divide-y divide-neutral-100">
+                    {activeBundle.orders.map((ord, idx) => {
+                      const ordLabel =
+                        ord.status === 'Ready' ? 'Ready' : ord.status === 'Out for Delivery' ? 'On the way' : 'Cooking'
+                      const ordTone =
+                        ord.status === 'Ready'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : ord.status === 'Out for Delivery'
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                      return (
+                        <div key={ord.id} className="px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate font-mono text-[11px] tabular-nums text-neutral-500">
+                              {activeBundle.isBundle ? `${idx + 1} · ` : ''}{ord.ref}
+                            </span>
+                            <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${ordTone}`}>
+                              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                              {ordLabel}
+                            </span>
+                          </div>
+                          <ul className="mt-2 space-y-1">
+                            {ord.items.map((item, itemIdx) => (
+                              <li key={`${item.name}-${itemIdx}`} className="flex items-baseline justify-between gap-4 text-[13px]">
+                                <span className="min-w-0 text-neutral-700">
+                                  <span className="tabular-nums text-neutral-500">{item.quantity}×</span> {item.name}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="mt-2 text-[13px] tabular-nums text-neutral-500">{peso(ord.total)} · paid online</p>
+
+                          {/*
+                            No delete here. Destroying an order from a delivery screen removes the
+                            record the kitchen, the cashier and the customer all still rely on, and
+                            a rider has no business doing it from the roadside. Correcting a
+                            package stays available to an admin; removing one does not.
+                          */}
+                          {isAdmin && !ord.id.startsWith('DEMO-RIDER-') && activeTab !== 'Past' && (
+                            <div className="mt-2.5">
+                              <button
+                                type="button"
+                                onClick={() => setEditingRiderOrder(ord)}
+                                className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 transition-colors hover:bg-neutral-50"
+                              >
+                                <StaffIcon name="edit" className="h-3 w-3" /> Edit
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="flex items-baseline justify-between gap-4 border-t border-neutral-100 px-4 py-3">
+                    <span className="text-[13px] text-neutral-500">Order value, already paid</span>
+                    <span className="text-sm font-semibold tabular-nums text-neutral-900">
+                      {peso(activeBundle.totalCombinedAmount)}
                     </span>
                   </div>
+                </section>
+
+                {/* The photo is the one thing the rider must produce, so it sits in the flow. */}
+                {activeBundle.status === 'Out for Delivery' && (
+                  <section
+                    className={`overflow-hidden rounded-2xl border ${
+                      deliveryProofError ? 'border-rose-300' : 'border-neutral-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3">
+                      <h3 className="flex items-center gap-2 text-sm font-bold text-neutral-900">
+                        <StaffIcon name="camera" className="h-4 w-4 text-neutral-400" />
+                        Handover photo
+                      </h3>
+                      <span className="shrink-0 rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
+                        Required
+                      </span>
+                    </div>
+
+                    <div className="p-4">
+                      {deliveryProofImage ? (
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewProofModalUrl(deliveryProofImage)}
+                            className="shrink-0 cursor-pointer overflow-hidden rounded-xl border border-neutral-200 transition-opacity hover:opacity-85"
+                            title="View full size"
+                          >
+                            <img src={deliveryProofImage} alt="The handover photo you took" className="h-16 w-16 object-cover" />
+                          </button>
+                          <div className="min-w-0 flex-1">
+                            <p className="flex items-center gap-1.5 text-[13px] font-semibold text-emerald-700">
+                              <StaffIcon name="check" className="h-3.5 w-3.5" /> Photo attached
+                            </p>
+                            <p className="mt-0.5 text-[13px] text-neutral-500">Tap it to zoom, or take it again.</p>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                              <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-[13px] font-medium text-neutral-700 transition-colors hover:bg-neutral-50">
+                                <StaffIcon name="camera" className="h-3.5 w-3.5" />
+                                Take again
+                                <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onProofPicked} />
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeliveryProofImage(null)
+                                  setDeliveryProofError(null)
+                                }}
+                                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1 text-[13px] font-medium text-neutral-600 transition-colors hover:bg-neutral-50 hover:text-neutral-900"
+                              >
+                                <StaffIcon name="close" className="h-3.5 w-3.5" />
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <label className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-neutral-300 px-4 py-7 text-center transition-colors hover:border-orange-400 hover:bg-orange-50/40">
+                          {isProcessingDeliveryProof ? (
+                            <span className="flex items-center gap-2 text-[13px] font-medium text-neutral-600">
+                              <span className="h-4 w-4 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" />
+                              Processing photo…
+                            </span>
+                          ) : (
+                            <>
+                              <StaffIcon name="camera" className="h-7 w-7 text-neutral-400" />
+                              <span className="mt-2 text-sm font-semibold text-neutral-900">Take the handover photo</span>
+                              <span className="mt-0.5 text-[13px] leading-relaxed text-neutral-500">
+                                Photograph the packages with the customer at the door.
+                              </span>
+                            </>
+                          )}
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={onProofPicked} />
+                        </label>
+                      )}
+
+                      {deliveryProofError && (
+                        <p className="mt-3 flex items-start gap-1.5 text-[13px] font-medium text-rose-700">
+                          <StaffIcon name="alert" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>{deliveryProofError}</span>
+                        </p>
+                      )}
+                    </div>
+                  </section>
+                )}
+
+                {/* A finished stop keeps its evidence. */}
+                {activeBundle.status === 'Completed' && proofShown && (
+                  <section className="overflow-hidden rounded-2xl border border-neutral-200">
+                    <div className="flex items-center justify-between gap-3 border-b border-neutral-100 px-4 py-3">
+                      <h3 className="flex items-center gap-2 text-sm font-bold text-neutral-900">
+                        <StaffIcon name="check" className="h-4 w-4 text-emerald-600" />
+                        Handed over
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewProofModalUrl(proofShown)}
+                        className="shrink-0 cursor-pointer text-[13px] font-semibold text-neutral-700 underline-offset-2 hover:underline"
+                      >
+                        View photo
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewProofModalUrl(proofShown)}
+                      className="block w-full cursor-pointer transition-opacity hover:opacity-95"
+                    >
+                      <img src={proofShown} alt="Handover photo" className="h-32 w-full object-cover" />
+                    </button>
+                  </section>
+                )}
+
+                {/* What the kitchen is still holding, when it is holding anything. */}
+                {activeBundle.status === 'Preparing' && (
+                  <p className="flex items-start gap-2.5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-relaxed text-amber-900">
+                    <StaffIcon name="cooking" className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      {activeBundle.readyCount > 0
+                        ? `${activeBundle.readyCount} of ${activeBundle.orders.length} packages are packed at the counter; ${activeBundle.preparingCount} is still cooking. Wait and take them together, or dispatch what is ready now.`
+                        : 'The kitchen is still cooking this order. You can start once it is marked ready.'}
+                    </span>
+                  </p>
+                )}
+              </div>
+
+              {/*
+                The action sits on the floor of the sheet, within thumb reach, and stays there
+                while the detail above it scrolls. One action per state, never two competing.
+              */}
+              <footer className="shrink-0 border-t border-neutral-100 bg-white px-5 py-4">
+                {activeBundle.status === 'Ready' ? (
                   <button
                     type="button"
                     onClick={() => void handleStartBundleDelivery(activeBundle)}
-                    className="w-full rounded-xl bg-orange-600 hover:bg-orange-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
+                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span>
-                      Start Delivery {activeBundle.isBundle ? `(${activeBundle.orders.length} Orders Combined)` : ''}
-                    </span>
+                    <StaffIcon name="scooter" className="h-4 w-4" />
+                    Start delivery{activeBundle.isBundle ? ` · ${activeBundle.orders.length} packages` : ''}
                   </button>
-                </div>
-              )}
-
-              {/* Preparing status: Either cooking in kitchen, or partially ready */}
-              {activeBundle.status === 'Preparing' && (
-                <div className="space-y-3 pt-1">
-                  {activeBundle.readyCount > 0 ? (
-                    <>
-                      <div className="rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-xs text-amber-950 flex items-start gap-2.5">
-                        <span className="text-base shrink-0">🍳</span>
-                        <div>
-                          <p className="font-bold text-amber-900">
-                            Partial Ready ({activeBundle.readyCount} of {activeBundle.orders.length} Packages Ready)
-                          </p>
-                          <p className="text-[11px] text-amber-800 mt-0.5 leading-snug">
-                            {activeBundle.readyCount} package is packed and ready for pickup at the counter, while {activeBundle.preparingCount} package is still cooking in the kitchen. You can wait for the kitchen to finish so both packages travel together, or dispatch the ready package now.
-                          </p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleStartReadyPackagesOnly(activeBundle)}
-                        className="w-full rounded-xl bg-amber-600 hover:bg-amber-700 px-4 py-3 text-sm font-bold text-white transition-all shadow-md active:scale-98 cursor-pointer text-center flex items-center justify-center gap-2"
-                      >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        <span>
-                          Dispatch Ready Package Only ({activeBundle.readyCount} Ready)
-                        </span>
-                      </button>
-                    </>
-                  ) : (
-                    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs text-neutral-600 flex items-center gap-2.5">
-                      <span className="text-lg shrink-0">⏳</span>
-                      <span>The kitchen is currently cooking this customer's order. Once marked Ready by the kitchen, you can start delivery.</span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Out for Delivery status: Item is in transit / being delivered */}
-              {activeBundle.status === 'Out for Delivery' && (
-                <div className="space-y-3 pt-1">
-                  {/* GCash / Online Payment: Customer prepaid online, no cash collection */}
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 p-3.5 text-xs text-emerald-950 flex items-center gap-2.5">
-                    <svg className="w-5 h-5 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <div>
-                      <p className="font-bold">Customer paid online via GCash</p>
-                      <p className="text-emerald-800 mt-0.5">
-                        {activeBundle.isBundle
-                          ? `All ${activeBundle.orders.length} packages are prepaid. Hand over the items to customer. No cash collection is needed.`
-                          : `Order is out for delivery. Hand over the items to customer. No cash collection is needed.`}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-emerald-200 bg-white p-3.5 space-y-2 shadow-2xs">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-neutral-600">Payment Method:</span>
-                      <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] border border-emerald-200">
-                        <span>📱</span> GCash (Prepaid Online)
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-neutral-600">Combined Order Value:</span>
-                      <span className="font-mono font-bold text-neutral-800">
-                        ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs pt-1.5 border-t border-neutral-100">
-                      <span className="font-bold text-neutral-800">Cash to Collect from Customer:</span>
-                      <span className="font-mono font-black text-emerald-700 text-sm">
-                        ₱0.00 (Prepaid Online)
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Required Proof of Delivery Photo Section */}
-                  <div className={`rounded-2xl border p-3.5 space-y-2.5 transition-all ${deliveryProofError ? 'border-red-400 bg-red-50/50' : 'border-neutral-200 bg-neutral-50/70'}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm">📸</span>
-                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
-                          Proof of Delivery Photo
-                        </span>
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white shadow-2xs">
-                          Required
-                        </span>
-                      </div>
-                      {deliveryProofImage && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDeliveryProofImage(null)
-                            setDeliveryProofError(null)
-                          }}
-                          className="text-[11px] font-bold text-rose-600 hover:text-rose-700 cursor-pointer"
-                        >
-                          ✕ Remove
-                        </button>
-                      )}
-                    </div>
-
-                    {deliveryProofImage ? (
-                      <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-neutral-200">
-                        <img
-                          src={deliveryProofImage}
-                          alt="Delivery Proof"
-                          onClick={() => setPreviewProofModalUrl(deliveryProofImage)}
-                          className="w-16 h-16 object-cover rounded-lg border border-neutral-200 cursor-pointer hover:opacity-85 shadow-2xs shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-bold text-emerald-800 flex items-center gap-1">
-                            <span>✓</span> Delivery Photo Attached
-                          </p>
-                          <p className="text-[11px] text-neutral-500 truncate">Tap image to zoom or tap Retake</p>
-                          <label className="mt-1 inline-block text-[11px] font-bold text-blue-600 hover:text-blue-700 cursor-pointer underline">
-                            Retake Photo
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              className="hidden"
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0]
-                                if (!file) return
-                                try {
-                                  setIsProcessingDeliveryProof(true)
-                                  setDeliveryProofError(null)
-                                  const base64 = await compressImageToBase64(file)
-                                  setDeliveryProofImage(base64)
-                                } catch {
-                                  setDeliveryProofError('Failed to process image. Please try again.')
-                                } finally {
-                                  setIsProcessingDeliveryProof(false)
-                                }
-                              }}
-                            />
-                          </label>
-                        </div>
-                      </div>
-                    ) : (
-                      <label className="flex flex-col items-center justify-center border-2 border-dashed border-neutral-300 hover:border-emerald-500 rounded-xl p-4 cursor-pointer bg-white hover:bg-emerald-50/30 transition-all text-center group">
-                        {isProcessingDeliveryProof ? (
-                          <div className="flex items-center gap-2 text-xs font-bold text-neutral-600">
-                            <span className="animate-spin text-sm">⏳</span>
-                            <span>Processing photo...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="w-10 h-10 rounded-full bg-neutral-100 group-hover:bg-emerald-100 text-neutral-600 group-hover:text-emerald-700 flex items-center justify-center text-lg mb-1.5 transition-colors">
-                              📷
-                            </div>
-                            <span className="text-xs font-bold text-neutral-800 group-hover:text-emerald-700">
-                              Take Photo / Upload Delivery Proof
-                            </span>
-                            <span className="text-[10px] text-neutral-400 mt-0.5">
-                              Snap a photo of the handed-over package at customer's location
-                            </span>
-                          </>
-                        )}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0]
-                            if (!file) return
-                            try {
-                              setIsProcessingDeliveryProof(true)
-                              setDeliveryProofError(null)
-                              const base64 = await compressImageToBase64(file)
-                              setDeliveryProofImage(base64)
-                            } catch {
-                              setDeliveryProofError('Failed to process image. Please try again.')
-                            } finally {
-                              setIsProcessingDeliveryProof(false)
-                            }
-                          }}
-                        />
-                      </label>
-                    )}
-
-                    {deliveryProofError && (
-                      <p className="text-xs font-bold text-red-600 flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                        <span>{deliveryProofError}</span>
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Complete Delivery Action Button */}
+                ) : activeBundle.status === 'Preparing' && activeBundle.readyCount > 0 ? (
                   <button
                     type="button"
-                    disabled={!deliveryProofImage || isProcessingDeliveryProof}
-                    onClick={() => void handleCompleteBundleDelivery(activeBundle)}
-                    className={`w-full rounded-xl px-4 py-3 text-sm font-bold text-white transition-all active:scale-98 text-center flex items-center justify-center gap-2 ${
-                      !deliveryProofImage || isProcessingDeliveryProof
-                        ? 'bg-neutral-300 cursor-not-allowed text-neutral-500 shadow-none'
-                        : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-md'
-                    }`}
-                    title={!deliveryProofImage ? 'Proof of delivery photo is required before marking as received' : ''}
+                    onClick={() => void handleStartReadyPackagesOnly(activeBundle)}
+                    className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-orange-500 px-5 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-orange-600"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                    </svg>
-                    <span>
-                      Mark {activeBundle.isBundle ? 'Both as Delivered' : 'as Delivered'}
-                    </span>
+                    <StaffIcon name="scooter" className="h-4 w-4" />
+                    Take the {activeBundle.readyCount} ready {activeBundle.readyCount === 1 ? 'package' : 'packages'} now
                   </button>
-                  {!deliveryProofImage && (
-                    <p className="text-[11px] text-amber-700 text-center font-semibold flex items-center justify-center gap-1">
-                      <span>⚠️</span>
-                      <span>Attach delivery proof photo above to unlock completion</span>
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/* Completed status summary */}
-              {activeBundle.status === 'Completed' && (
-                <div className="rounded-2xl border border-neutral-200 bg-neutral-50 p-3.5 space-y-2 text-xs">
-                  <div className="flex justify-between items-center font-bold text-neutral-800">
-                    <span>Payment Mode:</span>
-                    <span className="inline-flex items-center gap-1 font-black px-2.5 py-0.5 rounded-full text-[11px] bg-neutral-200 text-neutral-800">
-                      GCash Paid Online
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-neutral-600">
-                    <span>Total Order Value:</span>
-                    <span className="font-mono font-bold text-neutral-800">
-                      ₱{activeBundle.totalCombinedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-neutral-600">
-                    <span>Cash Collected by Rider:</span>
-                    <span className="font-mono font-bold text-emerald-700">
-                      ₱0.00 (Prepaid Online)
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center text-[11px] text-neutral-500 pt-1 border-t border-neutral-200/60">
-                    <span>Delivery Status:</span>
-                    <span className="font-bold text-emerald-600 uppercase">Delivered & Completed</span>
-                  </div>
-
-                  {(activeBundle.deliveryProof || deliveryProofImage) && (
-                    <div className="pt-2 border-t border-neutral-200/60 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-neutral-700 flex items-center gap-1.5">
-                          <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                          </svg>
-                          Proof of Delivery Photo:
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setPreviewProofModalUrl(activeBundle.deliveryProof || deliveryProofImage)}
-                          className="text-[11px] font-bold text-emerald-700 hover:underline"
-                        >
-                          View Full Image
-                        </button>
-                      </div>
-                      <div
-                        onClick={() => setPreviewProofModalUrl(activeBundle.deliveryProof || deliveryProofImage)}
-                        className="relative w-full h-28 rounded-xl overflow-hidden border border-neutral-200 cursor-pointer group bg-neutral-900/5 hover:opacity-95 transition"
-                      >
-                        <img
-                          src={activeBundle.deliveryProof || deliveryProofImage || ''}
-                          alt="Delivery Proof"
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition">
-                          <span className="bg-black/70 text-white text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
-                            🔍 Click to Zoom
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeBundle.status !== 'Ready' &&
-                activeBundle.status !== 'Out for Delivery' &&
-                activeBundle.status !== 'Completed' && (
+                ) : activeBundle.status === 'Out for Delivery' ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={!deliveryProofImage || isProcessingDeliveryProof}
+                      onClick={() => void handleCompleteBundleDelivery(activeBundle)}
+                      title={!deliveryProofImage ? 'Take the handover photo first' : undefined}
+                      className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-sm font-semibold text-white transition-colors ${
+                        !deliveryProofImage || isProcessingDeliveryProof
+                          ? 'cursor-not-allowed bg-neutral-200 text-neutral-500'
+                          : 'cursor-pointer bg-emerald-600 hover:bg-emerald-700'
+                      }`}
+                    >
+                      <StaffIcon name="check" className="h-4 w-4" />
+                      Mark {activeBundle.isBundle ? 'all packages' : 'this stop'} delivered
+                    </button>
+                    {!deliveryProofImage && (
+                      <p className="mt-2 text-center text-[13px] text-neutral-500">
+                        Take the handover photo above to finish this stop.
+                      </p>
+                    )}
+                  </>
+                ) : activeBundle.status === 'Completed' ? (
+                  <p className="flex items-center justify-center gap-2 text-[13px] font-medium text-neutral-500">
+                    <StaffIcon name="check" className="h-4 w-4 text-emerald-600" />
+                    Delivered — nothing left to do here.
+                  </p>
+                ) : activeBundle.status === 'Cancelled' ? (
+                  <p className="flex items-center justify-center gap-2 text-[13px] font-medium text-neutral-500">
+                    <StaffIcon name="info" className="h-4 w-4 text-neutral-400" />
+                    This order was cancelled. It was never handed over.
+                  </p>
+                ) : activeBundle.status === 'Expired' ? (
+                  <p className="flex items-center justify-center gap-2 text-center text-[13px] font-medium text-neutral-500">
+                    <StaffIcon name="info" className="h-4 w-4 shrink-0 text-neutral-400" />
+                    Closed without a handover — it sat on the board longer than a shift.
+                  </p>
+                ) : (
                   <button
                     type="button"
                     disabled
-                    className="w-full cursor-not-allowed rounded-xl bg-neutral-200 px-4 py-3 text-sm font-bold text-neutral-500"
+                    className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-neutral-200 px-5 py-3.5 text-sm font-semibold text-neutral-500"
                   >
-                    Waiting for Kitchen
+                    <StaffIcon name="clock" className="h-4 w-4" />
+                    Waiting for the kitchen
                   </button>
                 )}
-            </div>
-          </section>
-        </div>
-      )}
+              </footer>
+            </section>
+          </div>
+        )
+      })()}
 
       {/* ADMIN CRUD MODALS */}
       <AdminEditTransactionModal
@@ -2103,48 +1909,25 @@ export const RideRoleDemo: React.FC = () => {
         onSave={() => void fetchDeliveries(true)}
       />
 
-      {/* Proof of Delivery Image Preview Modal */}
+      {/* Full-size handover photo */}
       {previewProofModalUrl && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 animate-in fade-in duration-200"
+        <div
+          className="fixed inset-0 z-60 flex cursor-pointer items-center justify-center bg-neutral-950/80 p-4"
           onClick={() => setPreviewProofModalUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Handover photo, full size"
         >
-          <div 
-            className="relative max-w-2xl w-full max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 bg-neutral-900 text-white border-b border-neutral-800">
-              <div className="flex items-center gap-2">
-                <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <h3 className="text-sm font-bold">Proof of Delivery Photo</h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreviewProofModalUrl(null)}
-                className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition text-sm font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="p-3 bg-neutral-950 flex items-center justify-center overflow-auto max-h-[75vh]">
-              <img
-                src={previewProofModalUrl}
-                alt="Proof of Delivery Full Preview"
-                className="max-w-full max-h-[70vh] object-contain rounded-lg"
-              />
-            </div>
-            <div className="p-3 bg-neutral-100 border-t border-neutral-200 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setPreviewProofModalUrl(null)}
-                className="px-4 py-2 text-xs font-bold text-neutral-700 bg-white border border-neutral-300 rounded-lg hover:bg-neutral-50 shadow-xs cursor-pointer"
-              >
-                Close Preview
-              </button>
-            </div>
+          <div className="relative max-h-[85vh] max-w-xl rounded-2xl bg-white p-2 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <img src={previewProofModalUrl} alt="Handover photo, full size" className="max-h-[80vh] w-auto rounded-xl object-contain" />
+            <button
+              type="button"
+              onClick={() => setPreviewProofModalUrl(null)}
+              aria-label="Close photo"
+              className="absolute -right-3 -top-3 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-neutral-900 text-white shadow-lg"
+            >
+              <StaffIcon name="close" className="h-4 w-4" />
+            </button>
           </div>
         </div>
       )}

@@ -1408,14 +1408,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     const executeCancelOrder = async () => {
         if (!activeOrder || normalizeStatus(activeOrder.status) === 'OUT_OF_STOCK' || outOfStockItems.length > 0) return
 
-        const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
-            || String(activeOrder.status || '').toUpperCase() === 'PENDING_COD'
-        const hasGcashPayment = !isCOD && (
-            String(activeOrder.paymentMethod || '').toUpperCase().includes('GCASH')
-            || Boolean(activeOrder.paymentReceipt)
-            || Boolean(activeOrder.gcashAuthorized)
-            || Boolean(activeOrder.referenceNumber)
-        )
+        // A refund is owed only if the money has actually been sent. An online order is labelled
+        // GCash the moment it is placed and sits at GCASH_AUTHORIZED until the customer pays, so
+        // the receipt or the reference is what proves it — mirrors the rule the backend applies.
+        const hasPaid = Boolean(activeOrder.paymentReceipt) || Boolean(activeOrder.referenceNumber)
 
         setIsCancellingOrder(true)
         try {
@@ -1426,7 +1422,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                     'Content-Type': 'application/json',
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-                body: JSON.stringify({ status: hasGcashPayment ? 'CANCEL_REQUESTED' : 'CANCELLED' }),
+                body: JSON.stringify({ status: hasPaid ? 'CANCEL_REQUESTED' : 'CANCELLED' }),
             })
 
             const resData = await res.json().catch(() => ({}))
@@ -4775,14 +4771,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
             {/* Minimal & Modern Order Cancellation Confirmation Modal */}
             {isCancelConfirmModalOpen && activeOrder && (() => {
-                const isCOD = String(activeOrder.paymentMethod || '').toUpperCase().includes('COD')
-                    || String(activeOrder.status || '').toUpperCase() === 'PENDING_COD'
-                const hasGcashPayment = !isCOD && (
-                    String(activeOrder.paymentMethod || '').toUpperCase().includes('GCASH')
-                    || Boolean(activeOrder.paymentReceipt)
-                    || Boolean(activeOrder.gcashAuthorized)
-                    || Boolean(activeOrder.referenceNumber)
-                )
+                // Only promise a refund when money has genuinely been sent (see executeCancelOrder).
+                const hasPaid = Boolean(activeOrder.paymentReceipt) || Boolean(activeOrder.referenceNumber)
                 const refundAmount = Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                 const targetPhone = activeOrder.phone || phone || 'your contact number'
 
@@ -4798,7 +4788,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             <div className="flex items-start justify-between gap-3 border-b border-neutral-100 pb-3">
                                 <div>
                                     <h3 className="text-base sm:text-lg font-black text-neutral-900">
-                                        {hasGcashPayment ? 'Request Cancellation & Refund' : 'Cancel Order'}
+                                        {hasPaid ? 'Request Cancellation & Refund' : 'Cancel Order'}
                                     </h3>
                                     <p className="text-xs text-neutral-500 mt-0.5">
                                         Order ID: <span className="font-mono font-bold text-neutral-700">{(activeOrder as any).ref || activeOrder.id}</span>
@@ -4817,7 +4807,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </button>
                             </div>
 
-                            {hasGcashPayment ? (
+                            {hasPaid ? (
                                 <div className="space-y-3">
                                     <div className="p-3.5 bg-neutral-50 border border-neutral-200 rounded-xl space-y-1.5 text-xs">
                                         <div className="flex justify-between items-center text-neutral-700 font-semibold">
@@ -4860,7 +4850,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 >
                                     {isCancellingOrder
                                         ? 'Processing...'
-                                        : (hasGcashPayment ? 'Request Refund' : 'Cancel Order')}
+                                        : (hasPaid ? 'Request Refund' : 'Cancel Order')}
                                 </button>
                             </div>
                         </div>

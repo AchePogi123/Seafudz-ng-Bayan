@@ -175,7 +175,6 @@ function toOrderItems(rawItems) {
  */
 const UNPAID_STATUSES = [
   'PENDING', 'GCASH_PENDING_APPROVAL', 'GCASH_AUTHORIZED', 'RECEIPT_REJECTED',
-  'PENDING_COD',
 ];
 const unpaidHoldMinutes = () => {
   const n = Number(process.env.UNPAID_DEMAND_HOLD_MINUTES);
@@ -623,9 +622,46 @@ async function releaseRows(client, rows, orderId, { wasteFood, reason, performed
   return { released: returnedIds.length, wasted: wastedIds.length, ingredientIds: ids };
 }
 
-/** Returns an order's reserved stock. Food is written off if the kitchen had already started. */
+/**
+ * True when this order still owes the customer money that nobody has handed back yet.
+ *
+ * A cancelled order that was paid for is only really over once the assistant or the cashier has
+ * returned the money, so until that refund is marked COMPLETED the order keeps holding its
+ * ingredients: the food was taken off the shelf for a transaction that is still open, and putting
+ * it back early would let the counter sell stock twice over a cancellation that may yet be
+ * reversed or disputed.
+ */
+export async function hasUnsettledRefund(client, orderId) {
+  // Under a savepoint: this runs inside the caller's transaction, and on a database without the
+  // refunds table (pre-migration-008) a failed statement would otherwise abort the whole
+  // transaction and take the cancellation down with it.
+  await client.query('SAVEPOINT inv_refund_check');
+  try {
+    const { rows } = await client.query(
+      `SELECT 1 FROM refunds WHERE order_id = $1 AND UPPER(status) = 'PENDING' LIMIT 1`,
+      [String(orderId)]
+    );
+    await client.query('RELEASE SAVEPOINT inv_refund_check');
+    return rows.length > 0;
+  } catch (err) {
+    await client.query('ROLLBACK TO SAVEPOINT inv_refund_check');
+    console.warn(`${INFO} Could not check for an unsettled refund on order ${orderId}: ${err.message}`);
+    return false; // no refunds ledger means nothing can be owed
+  }
+}
+
+/**
+ * Returns an order's reserved stock. Food is written off if the kitchen had already started.
+ *
+ * `requireRefundSettled` makes the release wait for the money: the cancellation paths pass it so
+ * that stock comes back at the moment the refund is paid out, not at the moment the order was
+ * marked cancelled.
+ */
 export async function returnForOrder(client, orderId, opts = {}) {
   if (!(await hasInventoryTables(client))) return { released: 0, wasted: 0 };
+  if (opts.requireRefundSettled && (await hasUnsettledRefund(client, orderId))) {
+    return { released: 0, wasted: 0, heldForRefund: true };
+  }
   const open = await client.query(
     `SELECT id, ingredient_id, item_type, quantity FROM order_inventory_ledger
      WHERE order_id = $1 AND state = 'RESERVED' ORDER BY id FOR UPDATE`,
@@ -811,7 +847,10 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
   const served = ['COMPLETED', 'DELIVERED', 'SERVED'].includes(s);
   const started = served || ['PREPARING', 'COOKING', 'READY', 'OUT_FOR_DELIVERY'].includes(s);
   const confirmed = ['RECEIPT_SUBMITTED', 'CONFIRMED', 'PENDING_PREPARATION'].includes(s);
-  const cancelled = ['CANCELLED', 'CANCEL_REQUESTED', 'KITCHEN_REJECTED'].includes(s);
+  // A cancellation REQUEST is not a cancellation: a paid order keeps holding its ingredients
+  // until the assistant or the cashier has actually handed the money back
+  // (see `settleRefundedOrderStock`). Only an outcome that ends the order releases stock here.
+  const cancelled = ['CANCELLED', 'KITCHEN_REJECTED'].includes(s);
   if (!started && !confirmed && !cancelled) return null;
 
   // The customer has paid by the time an order reaches RECEIPT_SUBMITTED / CONFIRMED, and it is
@@ -830,7 +869,8 @@ export async function syncInventoryForStatus(orderId, status, opts = {}) {
         if (served) await markConsumed(client, orderId);
         return null;
       }
-      return returnForOrder(client, orderId, opts);
+      // Stock stays put while a refund is outstanding; the refund payout releases it.
+      return returnForOrder(client, orderId, { ...opts, requireRefundSettled: true });
     });
     await announceRelease(orderId, result);
     return result;

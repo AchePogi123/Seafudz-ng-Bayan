@@ -24,7 +24,7 @@ The inventory view is an administrator-facing web screen with dashboard, ingredi
 
 ## Capabilities and Constraints
 
-- The existing UI distinguishes food ingredients from packaging materials and reports stock health, low-stock alerts, recent movements, and stock valuation.
+- The existing UI distinguishes food ingredients from packaging materials and reports stock health, low-stock alerts, recent movements, and what needs reordering. Inventory tracks quantities only — there is no costing, so nothing is valued in pesos.
 - The screen includes ingredient and packaging entry points, purchase-order creation, and recipes/BOM access.
 - Preserve the existing inventory functionality, terms, and data behavior; do not imply capabilities that are not implemented.
 - Currency is shown as Philippine pesos in the existing UI.

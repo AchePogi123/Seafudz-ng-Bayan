@@ -4,6 +4,14 @@ import NavbarCashier from '../components/NavbarCashier'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { countsAsSale } from '../utils/salesRecognition'
+import {
+  isCancelledOrder,
+  readRefundAccountability,
+  refundActorLabel,
+  refundMethodLabel,
+  refundSummaryLine,
+  type RefundAccountability,
+} from '../utils/refundAccountability'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal, type TransactionData } from '../components/AdminEditTransactionModal'
 
@@ -37,6 +45,9 @@ export interface LiveTransaction {
   deliveryFee?: number
   riderCashReceived?: number
   riderName?: string
+  /** Where this transaction's money stands if it was cancelled: see `refundAccountability`. */
+  refund?: RefundAccountability
+  cancelledAt?: string
 }
 
 interface SummaryData {
@@ -50,7 +61,17 @@ interface SummaryData {
     gcash: { total: number; count: number }
     maya: { total: number; count: number }
     hybrid: { total: number; count: number }
-    cod: { total: number; count: number }
+  }
+  /**
+   * Cancelled orders are not revenue, but a cancelled order that was paid for is money the till
+   * is holding until somebody hands it back, so the shift report accounts for both halves.
+   */
+  cancellations: {
+    count: number
+    refundedCount: number
+    refundedAmount: number
+    awaitingCount: number
+    awaitingAmount: number
   }
 }
 
@@ -192,8 +213,8 @@ const SalesReportCashier: React.FC = () => {
       gcash: { total: 0, count: 0 },
       maya: { total: 0, count: 0 },
       hybrid: { total: 0, count: 0 },
-      cod: { total: 0, count: 0 },
     },
+    cancellations: { count: 0, refundedCount: 0, refundedAmount: 0, awaitingCount: 0, awaitingAmount: 0 },
   })
 
   // Admin CRUD Modal states
@@ -335,6 +356,8 @@ const SalesReportCashier: React.FC = () => {
         (dbO.deliveries && Array.isArray(dbO.deliveries) && dbO.deliveries.find((d: any) => d.delivery_proof || d.deliveryProof)?.deliveryProof)
       ),
       status: readString(dbO.status) || 'Completed',
+      refund: readRefundAccountability(dbO),
+      cancelledAt: readString(dbO.cancelled_at, dbO.cancelledAt),
     }
   }, [])
 
@@ -439,10 +462,25 @@ const SalesReportCashier: React.FC = () => {
         gcash: { total: 0, count: 0 },
         maya: { total: 0, count: 0 },
         hybrid: { total: 0, count: 0 },
-        cod: { total: 0, count: 0 },
       }
 
       let grossRevenue = 0
+
+      // A cancelled order is not a sale, but if it was paid for the money is owed until a named
+      // member of staff returns it, so the shift has to be able to account for it either way.
+      const cancellations = { count: 0, refundedCount: 0, refundedAmount: 0, awaitingCount: 0, awaitingAmount: 0 }
+      orders.forEach((order) => {
+        if (!isCancelledOrder(order.status ?? order.orderStatus ?? order.order_status)) return
+        const refund = readRefundAccountability(order)
+        cancellations.count += 1
+        if (refund.state === 'COMPLETED') {
+          cancellations.refundedCount += 1
+          cancellations.refundedAmount += refund.amount
+        } else if (refund.state === 'PENDING') {
+          cancellations.awaitingCount += 1
+          cancellations.awaitingAmount += refund.amount
+        }
+      })
 
       const settledOrders = orders.filter((order) => countsAsSale(order))
 
@@ -464,10 +502,9 @@ const SalesReportCashier: React.FC = () => {
         } else if (payment.includes('maya')) {
           breakdown.maya.total += total
           breakdown.maya.count += 1
-        } else if (payment.includes('cod')) {
-          breakdown.cod.total += total
-          breakdown.cod.count += 1
         } else {
+          // A legacy row still labelled COD was cash that arrived at the door.
+
           breakdown.cash.total += total
           breakdown.cash.count += 1
         }
@@ -480,6 +517,11 @@ const SalesReportCashier: React.FC = () => {
         vatCollected: 0,
         averageOrderValue: settledOrders.length > 0 ? grossRevenue / settledOrders.length : 0,
         breakdown,
+        cancellations: {
+          ...cancellations,
+          refundedAmount: Math.round(cancellations.refundedAmount * 100) / 100,
+          awaitingAmount: Math.round(cancellations.awaitingAmount * 100) / 100,
+        },
       }
     } catch (err) {
       console.warn('Failed to calculate sales summary:', err)
@@ -542,6 +584,8 @@ const SalesReportCashier: React.FC = () => {
               riderName: readString(order.riderName, order.rider_name) || undefined,
               paymentReceipt: readString(order.paymentReceipt, order.payment_receipt) || undefined,
               deliveryProof: readString(order.deliveryProof, order.delivery_proof) || undefined,
+              refund: readRefundAccountability(order),
+              cancelledAt: readString(order.cancelled_at, order.cancelledAt),
             }
             orderMap.set(tx.id, tx)
           })
@@ -576,6 +620,9 @@ const SalesReportCashier: React.FC = () => {
                 referenceNumber: dbO.referenceNumber || existing?.referenceNumber || dbO.paymentReference || existing?.paymentReference,
                 paymentReceipt: dbO.paymentReceipt || existing?.paymentReceipt,
                 deliveryProof: dbO.deliveryProof || existing?.deliveryProof,
+                // The ledger's own view of the payout wins over a cached copy.
+                refund: dbO.refund?.state !== 'NONE' ? dbO.refund : (existing?.refund ?? dbO.refund),
+                cancelledAt: dbO.cancelledAt || existing?.cancelledAt,
               })
             }
           })
@@ -701,212 +748,335 @@ const SalesReportCashier: React.FC = () => {
     return range
   }
 
+  const grossTotal = summaryData.grossRevenue > 0 ? summaryData.grossRevenue : 0
+  const cashShare = grossTotal > 0 ? Math.round((summaryData.breakdown.cash.total / grossTotal) * 100) : 0
+  const gcashShare = grossTotal > 0 ? Math.round((summaryData.breakdown.gcash.total / grossTotal) * 100) : 0
+  const hybridShare = grossTotal > 0 ? Math.max(0, 100 - cashShare - gcashShare) : 0
+
   return (
-    <div className="min-h-screen bg-slate-50/70 text-slate-900 font-sans pb-16 antialiased">
-      {/* Navigation Header */}
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-16 antialiased">
+      {/* Navigation Header — dish search omitted on sales report to avoid duplicate search inputs */}
       <div className="p-4 sm:p-6 print:hidden">
-        <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+        <NavbarCashier />
       </div>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
-        {/* Top Section: Breadcrumb, Title & Primary Actions */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200/80 shadow-xs print:hidden">
-          <div className="flex items-center gap-4">
+        {/* Page Header: Title, Period Controls & Actions */}
+        <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 pt-1 print:hidden">
+          <div className="flex items-start gap-3">
             <button
               type="button"
               onClick={() => navigate(-1)}
-              className="p-2.5 rounded-xl bg-slate-100 hover:bg-orange-50 text-slate-600 hover:text-orange-600 border border-slate-200/80 transition-all cursor-pointer group shrink-0"
-              title="Go Back"
-              aria-label="Back to Dashboard"
+              className="mt-0.5 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white hover:bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200/80 transition-colors duration-150 ease-out cursor-pointer shrink-0"
+              title="Back to POS terminal"
+              aria-label="Back to POS terminal"
             >
-              <svg className="w-5 h-5 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
               </svg>
             </button>
 
             <div>
-              <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 tracking-wide uppercase">
-                <span>Cashier Portal</span>
-                <span>/</span>
-                <span className="text-orange-600">Sales Management</span>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                <span>Cashier register</span>
+                <span className="text-slate-300">/</span>
+                <span className="text-slate-700">Shift settlement</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight mt-1">
-                Sales Report Cashier
+              <h1 className="text-2xl font-semibold text-slate-900 tracking-tight mt-0.5">
+                Shift sales &amp; register
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 font-normal mt-0.5">
-                Real-time database audit ledger, revenue analytics, and transaction records.
+                Counter cash, digital payments, and refund reconciliation for {activeTab.toLowerCase()}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Period Selector */}
+            <div className="inline-flex items-center gap-1 bg-slate-200/60 p-1 rounded-xl border border-slate-200/80">
+              {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => handleTabChange(tab)}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-[background-color,color,box-shadow] duration-150 ease-out cursor-pointer ${
+                    activeTab === tab
+                      ? 'bg-white text-slate-900 shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
             {isAdmin && (
               <button
                 type="button"
                 onClick={() => setIsAdminCreateOpen(true)}
-                className="inline-flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white font-semibold px-4 py-2 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 bg-orange-600 hover:bg-orange-700 text-white font-medium px-3.5 py-2 rounded-xl text-xs transition-colors duration-150 ease-out cursor-pointer"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
-                <span>New Transaction</span>
+                <span>New transaction</span>
               </button>
             )}
 
             <button
               type="button"
-              onClick={() => {
-                refreshData()
-              }}
-              className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold px-3.5 py-2 rounded-xl text-xs transition-colors cursor-pointer"
-              title="Refresh data"
+              onClick={refreshData}
+              className="inline-flex items-center gap-1.5 bg-white hover:bg-slate-100 text-slate-700 font-medium px-3.5 py-2 rounded-xl text-xs border border-slate-200/80 transition-colors duration-150 ease-out cursor-pointer"
+              title="Refresh shift ledger"
             >
-              <svg className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <svg className={`w-4 h-4 text-slate-500 ${isLoading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              <span>Refresh Orders</span>
+              <span>Refresh</span>
             </button>
-
-
           </div>
-        </div>
+        </header>
 
-        {/* Period Selector Tabs */}
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200/80 pb-3 print:hidden">
-          <div className="inline-flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 shadow-2xs">
-            {(['Today', 'This Week', 'This Month', 'This Year'] as TabType[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => handleTabChange(tab)}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${activeTab === tab
-                  ? 'bg-orange-500 text-white shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                  }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
-
-          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 font-medium">
-            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Database Aggregated</span>
-          </div>
-        </div>
-
-        {/* KPI Metrics Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:hidden">
-          {/* Total Revenue */}
+        {/* Asymmetric Shift Summary Strip */}
+        <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 print:hidden">
+          {/* Leading Metric: Gross Revenue + Proportional Payment Share Bar */}
           <div
             onClick={() => handlePaymentChange('All')}
-            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'All'
-              ? 'border-orange-500 ring-2 ring-orange-500/15'
-              : 'border-slate-200/80 hover:border-slate-300'
-              }`}
+            className={`lg:col-span-5 bg-white p-5 rounded-2xl border transition-[border-color,background-color] duration-150 ease-out cursor-pointer flex flex-col justify-between gap-4 ${
+              paymentFilter === 'All'
+                ? 'border-orange-500/80 bg-orange-50/15'
+                : 'border-slate-200/80 hover:border-slate-300'
+            }`}
           >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Revenue</span>
-              <span className="text-base sm:text-lg font-extrabold text-orange-600">
-                {summaryData.totalOrders.toLocaleString()}
-              </span>
+            <div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-600">Gross revenue</span>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">
+                  {summaryData.totalOrders.toLocaleString()} {summaryData.totalOrders === 1 ? 'order' : 'orders'}
+                  {summaryData.totalOrders > 0 && (
+                    <span className="text-slate-400">
+                      {' '}· Avg ₱{summaryData.averageOrderValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="text-3xl font-semibold text-slate-900 mt-2 tracking-tight tabular-nums">
+                ₱{summaryData.grossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-              ₱{summaryData.grossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 font-normal">Gross sales across all channels</p>
+
+            {/* Moment: Proportional Payment Share Bar */}
+            <div className="space-y-2">
+              <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden flex gap-0.5">
+                {grossTotal > 0 ? (
+                  <>
+                    {summaryData.breakdown.cash.total > 0 && (
+                      <div
+                        style={{ width: `${Math.max(4, (summaryData.breakdown.cash.total / grossTotal) * 100)}%` }}
+                        className="h-full bg-orange-500 transition-[width] duration-300 ease-out"
+                        title={`Cash: ${cashShare}%`}
+                      />
+                    )}
+                    {summaryData.breakdown.gcash.total > 0 && (
+                      <div
+                        style={{ width: `${Math.max(4, (summaryData.breakdown.gcash.total / grossTotal) * 100)}%` }}
+                        className="h-full bg-slate-700 transition-[width] duration-300 ease-out"
+                        title={`GCash: ${gcashShare}%`}
+                      />
+                    )}
+                    {summaryData.breakdown.hybrid.total > 0 && (
+                      <div
+                        style={{ width: `${Math.max(4, (summaryData.breakdown.hybrid.total / grossTotal) * 100)}%` }}
+                        className="h-full bg-slate-400 transition-[width] duration-300 ease-out"
+                        title={`Split & hybrid: ${hybridShare}%`}
+                      />
+                    )}
+                  </>
+                ) : (
+                  <div className="h-full w-full bg-slate-100" />
+                )}
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <span>Recognized sales across all channels</span>
+                <div className="flex items-center gap-3 font-mono text-[11px] tabular-nums">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                    {cashShare}%
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                    {gcashShare}%
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                    {hybridShare}%
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Cash */}
-          <div
-            onClick={() => handlePaymentChange('Cash')}
-            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Cash'
-              ? 'border-amber-500 ring-2 ring-amber-500/15'
-              : 'border-slate-200/80 hover:border-slate-300'
+          {/* Payment Rail Breakdown Ledger */}
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-slate-200/70 overflow-hidden">
+            {/* Cash */}
+            <div
+              onClick={() => handlePaymentChange('Cash')}
+              className={`p-5 transition-colors duration-150 ease-out cursor-pointer flex flex-col justify-between gap-3 ${
+                paymentFilter === 'Cash' ? 'bg-slate-100/80' : 'hover:bg-slate-50/80'
               }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-amber-700">Cash Volume</span>
-              <span className="text-base sm:text-lg font-extrabold text-amber-600">
-                {summaryData.breakdown.cash.count.toLocaleString()}
-              </span>
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                  Cash in till
+                </span>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">
+                  {summaryData.breakdown.cash.count.toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-medium text-slate-900 tracking-tight tabular-nums">
+                  ₱{summaryData.breakdown.cash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">Counter &amp; pick-up cash</p>
+              </div>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-              ₱{summaryData.breakdown.cash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 font-normal">Physical register payments</p>
-          </div>
 
-          {/* GCash */}
-          <div
-            onClick={() => handlePaymentChange('GCash')}
-            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'GCash'
-              ? 'border-blue-500 ring-2 ring-blue-500/15'
-              : 'border-slate-200/80 hover:border-slate-300'
+            {/* GCash */}
+            <div
+              onClick={() => handlePaymentChange('GCash')}
+              className={`p-5 transition-colors duration-150 ease-out cursor-pointer flex flex-col justify-between gap-3 ${
+                paymentFilter === 'GCash' ? 'bg-slate-100/80' : 'hover:bg-slate-50/80'
               }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-blue-600">GCash Volume</span>
-              <span className="text-base sm:text-lg font-extrabold text-blue-600">
-                {summaryData.breakdown.gcash.count.toLocaleString()}
-              </span>
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-700" />
+                  GCash
+                </span>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">
+                  {summaryData.breakdown.gcash.count.toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-medium text-slate-900 tracking-tight tabular-nums">
+                  ₱{summaryData.breakdown.gcash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">Verified digital transfers</p>
+              </div>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-              ₱{summaryData.breakdown.gcash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 font-normal">Digital wallet & online orders</p>
-          </div>
 
-          {/* Hybrid / Split */}
-          <div
-            onClick={() => handlePaymentChange('Hybrid')}
-            className={`bg-white p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${paymentFilter === 'Hybrid'
-              ? 'border-purple-500 ring-2 ring-purple-500/15'
-              : 'border-slate-200/80 hover:border-slate-300'
+            {/* Hybrid / Split */}
+            <div
+              onClick={() => handlePaymentChange('Hybrid')}
+              className={`p-5 transition-colors duration-150 ease-out cursor-pointer flex flex-col justify-between gap-3 ${
+                paymentFilter === 'Hybrid' ? 'bg-slate-100/80' : 'hover:bg-slate-50/80'
               }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-purple-700">Split & Hybrid</span>
-              <span className="text-base sm:text-lg font-extrabold text-purple-600">
-                {summaryData.breakdown.hybrid.count.toLocaleString()}
-              </span>
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                  Split &amp; hybrid
+                </span>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">
+                  {summaryData.breakdown.hybrid.count.toLocaleString()}
+                </span>
+              </div>
+              <div>
+                <div className="text-2xl font-medium text-slate-900 tracking-tight tabular-nums">
+                  ₱{summaryData.breakdown.hybrid.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">Combined cash &amp; wallet</p>
+              </div>
             </div>
-            <h3 className="text-2xl font-bold text-slate-900 mt-2 tracking-tight">
-              ₱{summaryData.breakdown.hybrid.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1 font-normal">Mixed payment methods</p>
           </div>
-        </div>
+        </section>
+
+        {/* Cancellations are the other half of the shift's money: an order that was paid for and
+            then cancelled is a debt against the till until a named person hands it back. */}
+        {summaryData.cancellations.count > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-5 print:hidden">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Cancellations &amp; money returned</h2>
+                <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
+                  {summaryData.cancellations.count} cancelled {summaryData.cancellations.count === 1 ? 'order' : 'orders'} this period — a
+                  paid cancellation closes once the money is back with the customer
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 mt-4">
+              <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-700">Money returned</span>
+                  <span className="font-mono text-xs font-medium text-slate-600 tabular-nums">
+                    {summaryData.cancellations.refundedCount.toLocaleString()}
+                  </span>
+                </div>
+                <div className="text-2xl font-medium text-slate-900 mt-2 tracking-tight tabular-nums">
+                  ₱{summaryData.cancellations.refundedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Paid back out by the cashier or assistant, each payout signed and traceable
+                </p>
+              </div>
+              <div
+                className={`rounded-xl border p-4 ${
+                  summaryData.cancellations.awaitingCount > 0
+                    ? 'border-amber-300/80 bg-amber-50/40'
+                    : 'border-slate-200/80 bg-slate-50/60'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-slate-700">Still owed</span>
+                  <span className={`font-mono text-xs font-medium tabular-nums ${summaryData.cancellations.awaitingCount > 0 ? 'text-amber-700' : 'text-slate-500'}`}>
+                    {summaryData.cancellations.awaitingCount.toLocaleString()}
+                  </span>
+                </div>
+                <div className="text-2xl font-medium text-slate-900 mt-2 tracking-tight tabular-nums">
+                  ₱{summaryData.cancellations.awaitingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  {summaryData.cancellations.awaitingCount > 0
+                    ? 'Cancelled but not refunded yet — stock stays reserved until settled'
+                    : 'Every cancelled order in this period has been settled with the customer'}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Main Content Area & Table */}
         <div id="print-area">
           {/* Table Container Card */}
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden print:shadow-none print:border print:rounded-none">
+          <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden print:shadow-none print:border print:rounded-none">
             {/* Filter Toolbar */}
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-4 print:hidden">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">Transaction Register</h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Audited ledger records with 10 rows per page
-                </p>
+            <div className="p-4 sm:p-5 border-b border-slate-200/70 flex flex-col lg:flex-row lg:items-center justify-between gap-4 print:hidden">
+              <div className="flex items-baseline gap-2.5">
+                <h2 className="text-base font-semibold text-slate-900">Transactions</h2>
+                <span className="font-mono text-xs text-slate-500 tabular-nums">
+                  {totalMatchingCount.toLocaleString()} {totalMatchingCount === 1 ? 'record' : 'records'}
+                </span>
               </div>
 
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 {/* Channel Filter */}
-                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                <div className="inline-flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/70 text-xs font-medium">
                   {[
-                    { label: 'All Channels', val: 'All' },
-                    { label: 'POS Walk-In', val: 'POS' },
-                    { label: 'Online Delivery', val: 'Online' },
+                    { label: 'All channels', val: 'All' },
+                    { label: 'POS walk-in', val: 'POS' },
+                    { label: 'Online delivery', val: 'Online' },
                   ].map((item) => (
                     <button
                       key={item.val}
                       type="button"
                       onClick={() => handleChannelChange(item.val)}
-                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${channelFilter === item.val
-                        ? 'bg-slate-900 text-white shadow-2xs'
-                        : 'text-slate-600 hover:bg-slate-200'
-                        }`}
+                      className={`px-3 py-1.5 rounded-lg transition-[background-color,color,box-shadow] duration-150 ease-out cursor-pointer ${
+                        channelFilter === item.val
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
                       {item.label}
                     </button>
@@ -914,16 +1084,17 @@ const SalesReportCashier: React.FC = () => {
                 </div>
 
                 {/* Payment Filter */}
-                <div className="inline-flex items-center gap-1 bg-slate-50 p-1 rounded-xl border border-slate-200 text-xs font-semibold">
+                <div className="inline-flex items-center gap-1 bg-slate-100/80 p-1 rounded-xl border border-slate-200/70 text-xs font-medium">
                   {['All', 'Cash', 'GCash', 'Hybrid'].map((pm) => (
                     <button
                       key={pm}
                       type="button"
                       onClick={() => handlePaymentChange(pm)}
-                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${paymentFilter === pm
-                        ? 'bg-orange-500 text-white shadow-2xs'
-                        : 'text-slate-600 hover:bg-slate-200'
-                        }`}
+                      className={`px-3 py-1.5 rounded-lg transition-[background-color,color,box-shadow] duration-150 ease-out cursor-pointer ${
+                        paymentFilter === pm
+                          ? 'bg-white text-slate-900 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
                       {pm}
                     </button>
@@ -939,14 +1110,14 @@ const SalesReportCashier: React.FC = () => {
                       setIsLoading(true)
                       setSearchQuery(e.target.value)
                     }}
-                    placeholder="Search order ID or customer..."
-                    className="w-48 sm:w-60 bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:border-orange-500"
+                    placeholder="Search order ID or customer"
+                    className="w-52 sm:w-64 bg-slate-50 border border-slate-200/80 rounded-xl pl-8 pr-3 py-1.5 text-xs font-normal text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-slate-400 transition-colors duration-150 ease-out"
                   />
                   <svg
-                    className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5"
+                    className="w-4 h-4 text-slate-400 absolute left-2.5 top-2"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="2"
+                    strokeWidth="1.5"
                     viewBox="0 0 24 24"
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -959,146 +1130,169 @@ const SalesReportCashier: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="bg-slate-50/75 text-[11px] font-semibold uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                    <th className="py-3 px-4">Order ID</th>
-                    <th className="py-3 px-4">Customer & Channel</th>
-                    <th className="py-3 px-4">Ordered Items</th>
-                    <th className="py-3 px-4">Date & Time</th>
-                    <th className="py-3 px-4">Payment</th>
-                    <th className="py-3 px-4 text-right">Total Amount</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center print:hidden">Action</th>
+                  <tr className="bg-slate-50/70 text-xs font-medium text-slate-500 border-b border-slate-200/80">
+                    <th className="py-3 px-4 font-medium">Order ID</th>
+                    <th className="py-3 px-4 font-medium">Customer</th>
+                    <th className="py-3 px-4 font-medium">Items</th>
+                    <th className="py-3 px-4 font-medium">Date &amp; time</th>
+                    <th className="py-3 px-4 font-medium">Payment</th>
+                    <th className="py-3 px-4 text-right font-medium">Total</th>
+                    <th className="py-3 px-4 text-center font-medium">Status</th>
+                    <th className="py-3 px-4 text-center font-medium print:hidden">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs font-normal text-slate-700">
                   {isLoading ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-12 text-slate-400">
-                        <div className="inline-flex items-center gap-2 text-orange-600 font-medium">
-                          <svg className="animate-spin h-4 w-4 text-orange-600" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <td colSpan={8} className="text-center py-12 text-slate-500">
+                        <div className="inline-flex items-center gap-2 text-slate-600 font-medium">
+                          <svg className="animate-spin h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
                           </svg>
-                          <span>Loading page {currentPage}...</span>
+                          <span className="tabular-nums">Loading page {currentPage}</span>
                         </div>
                       </td>
                     </tr>
                   ) : transactions.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-12 text-slate-400">
-                        <p className="font-semibold text-slate-600">No transactions found</p>
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          Transactions matching the selected period and filters will be displayed here.
+                        <p className="font-medium text-slate-700">No transactions for {activeTab.toLowerCase()}</p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          Orders matching your channel and payment filters will appear here
                         </p>
                       </td>
                     </tr>
                   ) : (
                     transactions.map((tx) => (
-                      <tr key={tx.id || tx.ref} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 font-mono font-semibold text-slate-900">
+                      <tr key={tx.id || tx.ref} className="hover:bg-slate-50/80 transition-colors duration-150 ease-out">
+                        <td className="py-3.5 px-4 font-mono font-medium text-slate-900 tabular-nums whitespace-nowrap">
                           {tx.ref || tx.id}
                         </td>
-                        <td className="py-3 px-4">
-                          <div className="font-semibold text-slate-800">{tx.customer || '—'}</div>
-                          <div className="text-[11px] text-slate-400">{tx.type}</div>
+                        <td className="py-3.5 px-4">
+                          <div className="font-medium text-slate-900">{tx.customer || '—'}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">{tx.type}</div>
                         </td>
-                        <td className="py-3 px-4 max-w-sm">
+                        <td className="py-3.5 px-4 max-w-sm">
                           <button
                             type="button"
                             onClick={() => setSelectedTransaction(tx)}
-                            className="text-left font-medium hover:underline cursor-pointer block max-w-sm text-xs text-slate-800"
-                            title="Click to view details"
+                            className="text-left cursor-pointer block max-w-sm text-xs text-slate-800 hover:text-orange-600 transition-colors duration-150 ease-out"
+                            title="View transaction details"
                           >
-                            {getOrderedItems(tx.items).map((item, idx) => {
-                              const match = item.match(/^(.*?)\s*x(\d+)$/i)
-                              if (match) {
+                            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                              {getOrderedItems(tx.items).map((item, idx) => {
+                                const match = item.match(/^(.*?)\s*x(\d+)$/i)
+                                if (match) {
+                                  return (
+                                    <span key={idx} className="inline-flex items-baseline gap-1">
+                                      <span className="font-mono text-xs text-slate-500 tabular-nums">{match[2]}×</span>
+                                      <span className="text-slate-800 font-medium">{match[1].trim()}</span>
+                                    </span>
+                                  )
+                                }
                                 return (
-                                  <span key={idx} className="inline-flex items-center gap-1.5 mr-2 mb-1 bg-orange-50 border border-orange-200/80 px-2 py-0.5 rounded-lg">
-                                    <span className="text-slate-800 font-semibold">{match[1].trim()}</span>
-                                    <span className="text-sm font-black text-orange-600">x{match[2]}</span>
+                                  <span key={idx} className="text-xs font-medium text-slate-800">
+                                    {item}
                                   </span>
                                 )
-                              }
-                              return (
-                                <span key={idx} className="mr-2 text-xs font-semibold text-slate-800">
-                                  {item}
-                                </span>
-                              )
-                            })}
+                              })}
+                            </div>
                           </button>
                         </td>
-                        <td className="py-3 px-4 text-slate-500 text-[11px]">
+                        <td className="py-3.5 px-4 text-slate-500 text-xs tabular-nums whitespace-nowrap">
                           {tx.dateTime}
                         </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                              (tx.paymentMethod || '').toLowerCase().includes('split')
-                              ? 'bg-purple-50 text-purple-700 border border-purple-200/60'
-                              : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                ? 'bg-blue-50 text-blue-700 border border-blue-200/60'
-                                : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                                  : 'bg-amber-50 text-amber-800 border border-amber-200/60'
-                              }`}
-                          >
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 border border-slate-200/70 text-xs font-medium">
                             <span
-                              className={`w-1.5 h-1.5 rounded-full ${(tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                (tx.paymentMethod || '').toLowerCase().includes('hybrid') ||
                                 (tx.paymentMethod || '').toLowerCase().includes('split')
-                                ? 'bg-purple-500'
-                                : (tx.paymentMethod || '').toLowerCase().includes('gcash')
-                                  ? 'bg-blue-500'
-                                  : (tx.paymentMethod || '').toLowerCase().includes('maya')
-                                    ? 'bg-emerald-500'
-                                    : 'bg-amber-500'
-                                }`}
-                            ></span>
+                                  ? 'bg-slate-400'
+                                  : (tx.paymentMethod || '').toLowerCase().includes('gcash') ||
+                                      (tx.paymentMethod || '').toLowerCase().includes('maya')
+                                    ? 'bg-slate-700'
+                                    : 'bg-orange-500'
+                              }`}
+                            />
                             {tx.paymentMethod || 'Cash'}
                           </span>
                           {((tx.paymentMethod || '').toLowerCase().includes('gcash') ||
-                            (tx.paymentMethod || '').toLowerCase().includes('hybrid')) && (tx.paymentReference || tx.referenceNumber) && (
-                            <span
-                              className="block font-mono text-[10px] text-blue-700 font-bold mt-0.5 truncate max-w-[130px]"
-                              title={`Ref: ${tx.paymentReference || tx.referenceNumber}`}
-                            >
-                              Ref: {tx.paymentReference || tx.referenceNumber}
-                            </span>
-                          )}
+                            (tx.paymentMethod || '').toLowerCase().includes('hybrid')) &&
+                            (tx.paymentReference || tx.referenceNumber) && (
+                              <span
+                                className="block font-mono text-[11px] text-slate-500 mt-1 truncate max-w-[140px] tabular-nums"
+                                title={`Ref: ${tx.paymentReference || tx.referenceNumber}`}
+                              >
+                                #{tx.paymentReference || tx.referenceNumber}
+                              </span>
+                            )}
                         </td>
-                        <td className="py-3 px-4 text-right font-semibold text-slate-900">
+                        <td className="py-3.5 px-4 text-right font-mono font-medium text-slate-900 tabular-nums whitespace-nowrap">
                           ₱{Number(tx.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
-                        <td className="py-3 px-4 text-center">
+                        <td className="py-3.5 px-4 text-center">
                           <div className="flex flex-col items-center gap-1">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200/60">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
+                                isCancelledOrder(tx.status)
+                                  ? 'bg-rose-50 text-rose-700 border border-rose-200/70'
+                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200/70'
+                              }`}
+                            >
                               {tx.status || 'Completed'}
                             </span>
+                            {/* A cancelled row says what became of the customer's money, not
+                                merely that the order ended. */}
+                            {isCancelledOrder(tx.status) && tx.refund && tx.refund.state !== 'NONE' && (
+                              tx.refund.state === 'COMPLETED' ? (
+                                <span
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200"
+                                  title={refundSummaryLine(tx.refund)}
+                                >
+                                  Refunded{refundActorLabel(tx.refund) ? ` · ${refundActorLabel(tx.refund)}` : ''}
+                                </span>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200 tabular-nums"
+                                  title="The customer has not been paid back yet"
+                                >
+                                  Owed ₱{tx.refund.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </span>
+                              )
+                            )}
                             {tx.deliveryProof && (
-                              <span
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-200 cursor-pointer hover:bg-blue-100"
-                                title="Proof of delivery attached (click to view)"
+                              <button
+                                type="button"
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer hover:bg-slate-200/70 transition-colors duration-150 ease-out"
+                                title="Proof of delivery attached"
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   setPreviewReceiptUrl(tx.deliveryProof || null)
                                 }}
                               >
-                                <span>📷</span> Proof
-                              </span>
+                                <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+                                </svg>
+                                <span>Proof</span>
+                              </button>
                             )}
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-center print:hidden">
+                        <td className="py-3.5 px-4 text-center print:hidden">
                           <button
                             type="button"
                             onClick={() => setSelectedTransaction(tx)}
-                            className="p-1.5 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-50 transition-colors cursor-pointer"
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors duration-150 ease-out cursor-pointer"
                             title={
                               tx.paymentReference || tx.referenceNumber
                                 ? `View details (Ref: ${tx.paymentReference || tx.referenceNumber})`
-                                : "View details"
+                                : 'View details'
                             }
                           >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                               <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                             </svg>
@@ -1112,10 +1306,10 @@ const SalesReportCashier: React.FC = () => {
             </div>
 
             {/* Pagination Footer */}
-            <div className="p-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
-              <div className="text-xs text-slate-500 font-medium">
-                Showing <span className="font-semibold text-slate-800">{startItem}–{endItem}</span> of{' '}
-                <span className="font-semibold text-slate-800">{totalMatchingCount.toLocaleString()}</span> orders
+            <div className="p-4 border-t border-slate-200/70 flex flex-col sm:flex-row items-center justify-between gap-4 print:hidden">
+              <div className="text-xs text-slate-500 tabular-nums">
+                Showing <span className="font-medium text-slate-800">{startItem}–{endItem}</span> of{' '}
+                <span className="font-medium text-slate-800">{totalMatchingCount.toLocaleString()}</span> orders
               </div>
 
               {totalPages > 1 && (
@@ -1125,9 +1319,9 @@ const SalesReportCashier: React.FC = () => {
                     type="button"
                     onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
                     disabled={currentPage === 1 || isLoading}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors duration-150 ease-out"
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
                     </svg>
                     <span>Prev</span>
@@ -1152,10 +1346,11 @@ const SalesReportCashier: React.FC = () => {
                         type="button"
                         onClick={() => handlePageChange(pageNum)}
                         disabled={isLoading}
-                        className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${isActive
-                          ? 'bg-orange-500 text-white shadow-2xs'
-                          : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/60'
-                          }`}
+                        className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-medium tabular-nums transition-colors duration-150 ease-out cursor-pointer ${
+                          isActive
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200/70'
+                        }`}
                       >
                         {pageNum}
                       </button>
@@ -1167,10 +1362,10 @@ const SalesReportCashier: React.FC = () => {
                     type="button"
                     onClick={() => handlePageChange(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage >= totalPages || isLoading}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-orange-500 hover:bg-orange-600 text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors duration-150 ease-out"
                   >
                     <span>Next</span>
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
@@ -1185,87 +1380,77 @@ const SalesReportCashier: React.FC = () => {
       {/* Transaction Details Modal */}
       {selectedTransaction && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 antialiased animate-in fade-in duration-100"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 antialiased"
           onClick={() => setSelectedTransaction(null)}
         >
           <div
-            className="w-full max-w-xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-200/90 transform-gpu flex flex-col max-h-[90vh]"
+            className="w-full max-w-xl bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200/90 flex flex-col max-h-[90vh]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 bg-slate-50/60">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-2xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-600 shrink-0">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200/70 bg-slate-50/50">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <h3 className="text-base font-semibold text-slate-900">Transaction details</h3>
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium ${
+                    selectedTransaction.status?.toUpperCase() === 'CANCELLED'
+                      ? 'bg-rose-50 text-rose-700 border border-rose-200/70'
+                      : 'bg-emerald-50 text-emerald-700 border border-emerald-200/70'
+                  }`}>
+                    {selectedTransaction.status || 'Completed'}
+                  </span>
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-slate-900">Transaction Details</h3>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      selectedTransaction.status?.toUpperCase() === 'CANCELLED'
-                        ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                        : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                    }`}>
-                      {selectedTransaction.status || 'Completed'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400 font-mono mt-0.5">
-                    ID: {selectedTransaction.ref || selectedTransaction.id}
-                  </p>
-                </div>
+                <p className="text-xs text-slate-500 font-mono tabular-nums mt-0.5">
+                  {selectedTransaction.ref || selectedTransaction.id}
+                </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => setSelectedTransaction(null)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors duration-150 ease-out cursor-pointer"
                 aria-label="Close"
               >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
-            {/* Modal Body with smooth scrolling */}
-            <div className="p-6 overflow-y-auto overscroll-contain will-change-scroll space-y-4">
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto overscroll-contain space-y-4">
               {/* Customer & Delivery Information */}
-              <div className="bg-slate-50/80 border border-slate-200/80 rounded-2xl p-4 text-xs space-y-3">
-                <div className="flex items-center gap-2 text-slate-500 font-bold uppercase tracking-wider text-[11px]">
-                  <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  <span>Customer & Delivery Details</span>
+              <div className="bg-slate-50/70 border border-slate-200/70 rounded-xl p-4 text-xs space-y-3">
+                <div className="text-xs font-medium text-slate-600">
+                  Customer &amp; fulfillment
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-0.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Customer Name</span>
-                    <span className="font-bold text-slate-900 mt-0.5 block text-sm">
+                    <span className="text-xs text-slate-500 block">Customer name</span>
+                    <span className="font-medium text-slate-900 mt-0.5 block text-sm">
                       {selectedTransaction.customer || (selectedTransaction as any).customerName || 'None recorded'}
                     </span>
                   </div>
 
                   <div>
-                    <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Contact Phone</span>
-                    <span className="font-semibold text-slate-800 mt-0.5 block">
+                    <span className="text-xs text-slate-500 block">Contact phone</span>
+                    <span className="font-medium text-slate-800 mt-0.5 block tabular-nums">
                       {selectedTransaction.customerPhone || 'None recorded'}
                     </span>
                   </div>
 
                   <div className="sm:col-span-2">
-                    <span className="text-[10px] font-semibold text-slate-400 block uppercase tracking-wider">Delivery / Customer Address</span>
-                    <span className="font-medium text-slate-800 mt-0.5 block leading-relaxed">
-                      {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : (selectedTransaction.type?.toLowerCase().includes('pick') ? 'Store Pick-Up Counter' : 'In-Store / On-Site'))}
+                    <span className="text-xs text-slate-500 block">Fulfillment location</span>
+                    <span className="font-normal text-slate-800 mt-0.5 block leading-relaxed">
+                      {selectedTransaction.customerAddress || (selectedTransaction.type?.toLowerCase().includes('delivery') ? 'No delivery address recorded' : (selectedTransaction.type?.toLowerCase().includes('pick') ? 'Store pick-up counter' : 'In-store counter'))}
                     </span>
                   </div>
 
                   {selectedTransaction.riderName && !selectedTransaction.type?.toLowerCase().includes('pick') && (
-                    <div className="sm:col-span-2 pt-1 border-t border-slate-200/60 flex items-center justify-between">
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">Assigned Delivery Rider</span>
-                      <span className="font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200 text-xs">
+                    <div className="sm:col-span-2 pt-2 border-t border-slate-200/60 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">Assigned rider</span>
+                      <span className="font-medium text-slate-800 bg-white px-2.5 py-0.5 rounded-md border border-slate-200/80 text-xs">
                         {selectedTransaction.riderName}
                       </span>
                     </div>
@@ -1274,18 +1459,18 @@ const SalesReportCashier: React.FC = () => {
               </div>
 
               {/* Transaction Metadata Card */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 bg-slate-50/80 border border-slate-200/80 rounded-2xl p-3.5 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50/70 border border-slate-200/70 rounded-xl p-4 text-xs">
                 <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Channel</span>
-                  <span className="font-bold text-slate-800 mt-0.5 block">{selectedTransaction.type}</span>
+                  <span className="text-xs text-slate-500 block">Channel</span>
+                  <span className="font-medium text-slate-900 mt-0.5 block">{selectedTransaction.type}</span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Payment Method</span>
-                  <span className="font-bold text-slate-800 mt-0.5 block">{selectedTransaction.paymentMethod || 'Cash'}</span>
+                  <span className="text-xs text-slate-500 block">Payment method</span>
+                  <span className="font-medium text-slate-900 mt-0.5 block">{selectedTransaction.paymentMethod || 'Cash'}</span>
                 </div>
                 <div className="col-span-2 sm:col-span-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block">Date & Time</span>
-                  <span className="font-medium text-slate-700 mt-0.5 block text-[11px]">{selectedTransaction.dateTime}</span>
+                  <span className="text-xs text-slate-500 block">Date &amp; time</span>
+                  <span className="font-normal text-slate-700 mt-0.5 block tabular-nums">{selectedTransaction.dateTime}</span>
                 </div>
               </div>
 
@@ -1293,26 +1478,19 @@ const SalesReportCashier: React.FC = () => {
               {((selectedTransaction.paymentMethod || '').toLowerCase().includes('gcash') ||
                 (selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid') ||
                 Boolean(selectedTransaction.paymentReference || selectedTransaction.referenceNumber)) && (
-                <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-3.5 flex flex-col gap-2.5 text-xs shadow-2xs">
+                <div className="rounded-xl border border-slate-200/80 bg-slate-50/70 p-4 flex flex-col gap-3 text-xs">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 block">
-                          {(selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid')
-                            ? 'Hybrid Payment Reference'
-                            : 'GCash Reference Number'}
+                    <div className="min-w-0">
+                      <span className="text-xs text-slate-500 block">
+                        {(selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid')
+                          ? 'Hybrid payment reference'
+                          : 'GCash reference number'}
+                      </span>
+                      {!isEditingRef ? (
+                        <span className="font-mono font-medium text-slate-900 text-sm mt-0.5 block truncate tabular-nums">
+                          {selectedTransaction.paymentReference || selectedTransaction.referenceNumber || 'None recorded'}
                         </span>
-                        {!isEditingRef ? (
-                          <span className="font-mono font-black text-blue-950 text-xs sm:text-sm tracking-wide block truncate">
-                            {selectedTransaction.paymentReference || selectedTransaction.referenceNumber || 'None recorded'}
-                          </span>
-                        ) : null}
-                      </div>
+                      ) : null}
                     </div>
 
                     {!isEditingRef && (
@@ -1326,19 +1504,19 @@ const SalesReportCashier: React.FC = () => {
                               setCopiedRef(true)
                               setTimeout(() => setCopiedRef(false), 2000)
                             }}
-                            className="px-2.5 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 hover:bg-blue-100 font-bold text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
-                            title="Copy Reference Number"
+                            className="px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 font-medium text-xs transition-colors duration-150 ease-out cursor-pointer flex items-center gap-1.5"
+                            title="Copy reference number"
                           >
                             {copiedRef ? (
                               <>
-                                <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <svg className="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                                 </svg>
-                                <span className="text-emerald-700">Copied!</span>
+                                <span className="text-emerald-700">Copied</span>
                               </>
                             ) : (
                               <>
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <svg className="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                                 </svg>
                                 <span>Copy</span>
@@ -1352,36 +1530,36 @@ const SalesReportCashier: React.FC = () => {
                             setNewRefInput(selectedTransaction.paymentReference || selectedTransaction.referenceNumber || '')
                             setIsEditingRef(true)
                           }}
-                          className="px-2.5 py-1.5 rounded-lg bg-blue-100/80 hover:bg-blue-200/80 border border-blue-300 text-blue-900 font-bold text-[11px] transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-medium text-xs transition-colors duration-150 ease-out cursor-pointer"
                         >
-                          {selectedTransaction.paymentReference || selectedTransaction.referenceNumber ? 'Edit' : 'Add Ref #'}
+                          {selectedTransaction.paymentReference || selectedTransaction.referenceNumber ? 'Edit' : 'Add ref'}
                         </button>
                       </div>
                     )}
                   </div>
 
                   {isEditingRef && (
-                    <div className="flex items-center gap-2 pt-1 border-t border-blue-200/80">
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-200/70">
                       <input
                         type="text"
                         value={newRefInput}
                         onChange={(e) => setNewRefInput(e.target.value)}
-                        placeholder="Enter GCash / Hybrid Ref #"
-                        className="flex-1 px-3 py-1.5 rounded-lg bg-white border border-blue-300 text-xs font-mono font-bold text-blue-950 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Enter reference number"
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-xs font-mono font-medium text-slate-900 focus:outline-none focus:border-slate-500"
                         autoFocus
                       />
                       <button
                         type="button"
                         onClick={handleSaveInlineRef}
                         disabled={isSavingRef}
-                        className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer shadow-2xs"
+                        className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs cursor-pointer transition-colors duration-150 ease-out"
                       >
-                        {isSavingRef ? 'Saving...' : 'Save'}
+                        {isSavingRef ? 'Saving…' : 'Save'}
                       </button>
                       <button
                         type="button"
                         onClick={() => setIsEditingRef(false)}
-                        className="px-2.5 py-1.5 rounded-lg bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold text-xs cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-200/80 hover:bg-slate-300/80 text-slate-700 font-medium text-xs cursor-pointer transition-colors duration-150 ease-out"
                       >
                         Cancel
                       </button>
@@ -1390,62 +1568,170 @@ const SalesReportCashier: React.FC = () => {
                 </div>
               )}
 
+              {/* Cancelled transaction: where the customer's money ended up. */}
+              {isCancelledOrder(selectedTransaction.status) && (() => {
+                const refund = selectedTransaction.refund ?? { state: 'NONE' as const, amount: 0 }
+                const settled = refund.state === 'COMPLETED'
+                const owed = refund.state === 'PENDING'
+                const actor = refundActorLabel(refund)
+                const peso = (n: number) =>
+                  `₱${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+                return (
+                  <div
+                    className={`rounded-xl border p-4 space-y-3 ${
+                      settled
+                        ? 'border-slate-200/80 bg-slate-50/70'
+                        : owed
+                          ? 'border-amber-300/80 bg-amber-50/40'
+                          : 'border-slate-200/80 bg-slate-50/70'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-slate-900">Cancelled transaction</span>
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                          settled
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/70'
+                            : owed
+                              ? 'bg-amber-100/80 text-amber-800 border border-amber-300/70'
+                              : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}
+                      >
+                        {settled ? 'Money returned' : owed ? 'Not returned yet' : 'Nothing owed'}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-600">{refundSummaryLine(refund)}</p>
+
+                    {refund.state !== 'NONE' && (
+                      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+                        <div>
+                          <dt className="text-slate-500">
+                            {settled ? 'Amount returned' : 'Amount owed'}
+                          </dt>
+                          <dd className="font-mono font-medium text-slate-900 mt-0.5 tabular-nums">{peso(refund.amount)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-500">Returned as</dt>
+                          <dd className="font-medium text-slate-800 mt-0.5">{refundMethodLabel(refund)}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-500">Handed back by</dt>
+                          <dd className="font-medium text-slate-800 mt-0.5">
+                            {actor || (settled ? 'Not recorded' : 'Nobody yet')}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-slate-500">
+                            {settled ? 'Returned on' : 'Cancelled on'}
+                          </dt>
+                          <dd className="font-medium text-slate-800 mt-0.5 tabular-nums">
+                            {(() => {
+                              const stamp = settled ? refund.at : selectedTransaction.cancelledAt
+                              if (!stamp) return '—'
+                              const d = new Date(stamp)
+                              return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+                            })()}
+                          </dd>
+                        </div>
+                      </dl>
+                    )}
+
+                    {refund.reference && (
+                      <div className="rounded-lg border border-slate-200/70 bg-white px-3 py-2">
+                        <span className="text-xs text-slate-500 block">
+                          Refund reference
+                        </span>
+                        <span className="font-mono text-xs font-medium text-slate-900 break-all tabular-nums">{refund.reference}</span>
+                      </div>
+                    )}
+
+                    {refund.receipt ? (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 bg-white px-3 py-2">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <img
+                            src={refund.receipt}
+                            alt="Proof the refund was sent"
+                            onClick={() => setPreviewReceiptUrl(refund.receipt || null)}
+                            className="h-11 w-11 shrink-0 cursor-pointer rounded-lg border border-slate-200 object-cover transition-opacity hover:opacity-85"
+                          />
+                          <div className="min-w-0">
+                            <span className="block text-xs font-medium text-slate-900">Refund proof</span>
+                            <p className="truncate text-xs text-slate-500">
+                              Screenshot of the payout to the customer
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReceiptUrl(refund.receipt || null)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-medium text-xs cursor-pointer shrink-0 transition-colors duration-150 ease-out"
+                        >
+                          View image
+                        </button>
+                      </div>
+                    ) : (
+                      refund.state !== 'NONE' && (
+                        <p className="text-xs text-slate-500">
+                          {(refund.method || '').toUpperCase() === 'CASH'
+                            ? 'Cash handed over the counter — the named cashier is the record'
+                            : owed
+                              ? 'No proof yet: nothing has been sent back'
+                              : 'No screenshot was attached to this payout'}
+                        </p>
+                      )
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Payment Proof Receipt Screenshot Card */}
               {selectedTransaction.paymentReceipt && (
-                <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-left">
+                <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-3.5 flex items-center justify-between gap-3 text-left">
                   <div className="flex items-center gap-3 min-w-0">
                     <img
                       src={selectedTransaction.paymentReceipt}
-                      alt="GCash Payment Proof"
+                      alt="Payment proof"
                       onClick={() => setPreviewReceiptUrl(selectedTransaction.paymentReceipt || null)}
-                      className="w-12 h-12 object-cover rounded-xl border border-emerald-300 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                      className="w-11 h-11 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
                     />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-emerald-950">Payment Proof Screenshot</span>
-                        <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white px-2 py-0.5 rounded-full">
-                          Attached
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-emerald-700/90 truncate">Customer submitted GCash confirmation screenshot</p>
+                      <span className="text-xs font-medium text-slate-900 block">Payment proof</span>
+                      <p className="text-xs text-slate-500 truncate">Customer digital payment confirmation</p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setPreviewReceiptUrl(selectedTransaction.paymentReceipt || null)}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-2xs shrink-0 transition-colors"
+                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-medium text-xs cursor-pointer shrink-0 transition-colors duration-150 ease-out"
                   >
-                    View Picture
+                    View image
                   </button>
                 </div>
               )}
 
               {/* Delivery Proof Photo Card */}
               {selectedTransaction.deliveryProof && (
-                <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-3.5 flex items-center justify-between gap-3 text-left">
+                <div className="bg-slate-50/70 border border-slate-200/80 rounded-xl p-3.5 flex items-center justify-between gap-3 text-left">
                   <div className="flex items-center gap-3 min-w-0">
                     <img
                       src={selectedTransaction.deliveryProof}
-                      alt="Proof of Delivery"
+                      alt="Proof of delivery"
                       onClick={() => setPreviewReceiptUrl(selectedTransaction.deliveryProof || null)}
-                      className="w-12 h-12 object-cover rounded-xl border border-blue-300 shadow-2xs cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+                      className="w-11 h-11 object-cover rounded-lg border border-slate-200 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
                     />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-blue-950">Proof of Delivery Photo</span>
-                        <span className="text-[10px] font-black uppercase tracking-wider bg-blue-600 text-white px-2 py-0.5 rounded-full">
-                          Verified
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-blue-700/90 truncate">Captured by rider upon order completion</p>
+                      <span className="text-xs font-medium text-slate-900 block">Proof of delivery</span>
+                      <p className="text-xs text-slate-500 truncate">Captured by rider upon completion</p>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setPreviewReceiptUrl(selectedTransaction.deliveryProof || null)}
-                    className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs cursor-pointer shadow-2xs shrink-0 transition-colors"
+                    className="px-3 py-1.5 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-medium text-xs cursor-pointer shrink-0 transition-colors duration-150 ease-out"
                   >
-                    View Picture
+                    View image
                   </button>
                 </div>
               )}
@@ -1453,39 +1739,39 @@ const SalesReportCashier: React.FC = () => {
               {/* Ordered Items List */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                    Ordered Items
+                  <span className="text-xs font-medium text-slate-600">
+                    Ordered items
                   </span>
-                  <span className="text-[11px] text-slate-400 font-medium">
-                    {(selectedTransaction.itemsList?.length || getOrderedItems(selectedTransaction.items).length)} item{((selectedTransaction.itemsList?.length || getOrderedItems(selectedTransaction.items).length) === 1 ? '' : 's')}
+                  <span className="font-mono text-xs text-slate-500 tabular-nums">
+                    {(selectedTransaction.itemsList?.length || getOrderedItems(selectedTransaction.items).length)} {((selectedTransaction.itemsList?.length || getOrderedItems(selectedTransaction.items).length) === 1 ? 'item' : 'items')}
                   </span>
                 </div>
 
-                <div className="space-y-2">
+                <div className="rounded-xl border border-slate-200/80 divide-y divide-slate-200/60 overflow-hidden bg-white">
                   {selectedTransaction.itemsList && selectedTransaction.itemsList.length > 0 ? (
                     selectedTransaction.itemsList.map((item, idx) => (
                       <div
                         key={`item-${idx}`}
-                        className="flex items-center justify-between gap-3 bg-slate-50 border border-slate-200/70 rounded-xl px-4 py-2.5 text-xs"
+                        className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs"
                       >
-                        <div className="min-w-0 flex-1">
-                          <span className="font-bold text-slate-800 text-sm block truncate">{item.name}</span>
-                          {item.unit_price !== undefined && (
-                            <span className="text-[11px] text-slate-500 block mt-0.5">
-                              ₱{Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <span className="text-xs font-bold text-orange-600 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg">
-                            Qty: {item.quantity}
+                        <div className="min-w-0 flex-1 flex items-baseline gap-2.5">
+                          <span className="font-mono text-xs text-slate-500 tabular-nums shrink-0">
+                            {item.quantity}×
                           </span>
-                          {item.subtotal !== undefined && (
-                            <span className="font-mono font-bold text-slate-900 text-sm min-w-[70px] text-right">
-                              ₱{Number(item.subtotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </span>
-                          )}
+                          <div className="min-w-0">
+                            <span className="font-medium text-slate-900 text-sm block truncate">{item.name}</span>
+                            {item.unit_price !== undefined && (
+                              <span className="text-xs text-slate-500 block tabular-nums">
+                                ₱{Number(item.unit_price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} each
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {item.subtotal !== undefined && (
+                          <span className="font-mono font-medium text-slate-900 text-sm tabular-nums shrink-0 text-right">
+                            ₱{Number(item.subtotal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        )}
                       </div>
                     ))
                   ) : (
@@ -1497,14 +1783,16 @@ const SalesReportCashier: React.FC = () => {
                       return (
                         <div
                           key={`${selectedTransaction.id}-item-${index}`}
-                          className="flex items-center justify-between gap-4 bg-slate-50 border border-slate-200/70 rounded-xl px-4 py-2.5 text-xs"
+                          className="flex items-center justify-between gap-4 px-4 py-2.5 text-xs"
                         >
-                          <span className="font-bold text-slate-800 text-sm">{itemName}</span>
-                          {quantity && (
-                            <span className="text-xs font-bold text-orange-600 bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-lg">
-                              Qty: {quantity}
-                            </span>
-                          )}
+                          <div className="flex items-baseline gap-2.5">
+                            {quantity && (
+                              <span className="font-mono text-xs text-slate-500 tabular-nums">
+                                {quantity}×
+                              </span>
+                            )}
+                            <span className="font-medium text-slate-900 text-sm">{itemName}</span>
+                          </div>
                         </div>
                       )
                     })
@@ -1513,10 +1801,10 @@ const SalesReportCashier: React.FC = () => {
               </div>
 
               {/* Financial Summary Breakdown */}
-              <div className="bg-orange-50/40 border border-orange-100 rounded-2xl p-4 space-y-2 text-xs">
+              <div className="bg-slate-50/80 border border-slate-200/80 rounded-xl p-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between text-slate-600">
-                  <span>Items Subtotal</span>
-                  <span className="font-mono font-medium">
+                  <span>Items subtotal</span>
+                  <span className="font-mono font-normal tabular-nums">
                     ₱{(selectedTransaction.subtotal !== undefined
                       ? Number(selectedTransaction.subtotal)
                       : Number(selectedTransaction.total || 0)
@@ -1525,71 +1813,48 @@ const SalesReportCashier: React.FC = () => {
                 </div>
 
                 <div className="flex items-center justify-between text-slate-600">
-                  <span>VAT / Tax (12%)</span>
-                  <span className="font-mono font-medium">
+                  <span>VAT (12%)</span>
+                  <span className="font-mono font-normal tabular-nums">
                     ₱{(selectedTransaction.tax !== undefined ? Number(selectedTransaction.tax) : 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
 
                 {(selectedTransaction.deliveryFee !== undefined && Number(selectedTransaction.deliveryFee) > 0) && (
                   <div className="flex items-center justify-between text-slate-600">
-                    <span>Delivery Fee</span>
-                    <span className="font-mono font-medium">
+                    <span>Delivery fee</span>
+                    <span className="font-mono font-normal tabular-nums">
                       ₱{Number(selectedTransaction.deliveryFee).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-orange-200/70 flex items-center justify-between">
-                  <span className="font-bold text-slate-900 text-sm">Order Total</span>
-                  <span className="text-lg font-bold text-orange-600 font-mono">
+                <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
+                  <span className="font-medium text-slate-900 text-sm">Order total</span>
+                  <span className="text-base font-semibold text-slate-900 font-mono tabular-nums">
                     ₱{Number(selectedTransaction.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
 
-                {((selectedTransaction.paymentMethod || '').toLowerCase().includes('gcash') ||
-                  (selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid') ||
-                  Boolean(selectedTransaction.paymentReference || selectedTransaction.referenceNumber)) && (
-                  <div className="flex justify-between items-center text-blue-900 pt-2 border-t border-slate-200/80 font-semibold">
-                    <span className="flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                      <span>
-                        {(selectedTransaction.paymentMethod || '').toLowerCase().includes('hybrid')
-                          ? 'Hybrid Payment Reference:'
-                          : 'GCash Reference Number:'}
-                      </span>
-                    </span>
-                    <span className="font-mono font-bold text-blue-950 text-xs">
-                      {selectedTransaction.paymentReference || selectedTransaction.referenceNumber || 'None recorded'}
-                    </span>
-                  </div>
-                )}
-
                 {selectedTransaction.riderCashReceived !== undefined && selectedTransaction.riderCashReceived !== null && (
-                  <div className="mt-3 pt-3 border-t border-dashed border-emerald-300 bg-emerald-50/70 -mx-4 -mb-4 p-4 rounded-b-2xl space-y-1.5">
-                    <div className="flex items-center justify-between text-xs font-bold text-emerald-950">
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                        <span>Rider Payment Received Upon Delivery:</span>
-                      </span>
-                      <span className="text-sm font-black text-emerald-700 font-mono">
+                  <div className="pt-2 border-t border-slate-200/70 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-medium text-slate-800">
+                      <span>Rider cash received on delivery</span>
+                      <span className="font-mono tabular-nums">
                         ₱{Number(selectedTransaction.riderCashReceived).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </span>
                     </div>
                     {Number(selectedTransaction.riderCashReceived) > Number(selectedTransaction.total || 0) && (
-                      <div className="flex items-center justify-between text-[11px] text-emerald-800/90 font-semibold pl-5">
-                        <span>Change Given to Customer:</span>
-                        <span className="font-mono text-emerald-950">
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span>Change given to customer</span>
+                        <span className="font-mono tabular-nums text-slate-700">
                           ₱{(Number(selectedTransaction.riderCashReceived) - Number(selectedTransaction.total || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     )}
                     {Number(selectedTransaction.riderCashReceived) < Number(selectedTransaction.total || 0) && (
-                      <div className="flex items-center justify-between text-[11px] text-amber-800 font-semibold pl-5">
-                        <span>Short Payment Balance:</span>
-                        <span className="font-mono text-amber-950">
+                      <div className="flex items-center justify-between text-xs text-amber-800">
+                        <span>Short payment balance</span>
+                        <span className="font-mono tabular-nums">
                           ₱{(Number(selectedTransaction.total || 0) - Number(selectedTransaction.riderCashReceived)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
@@ -1599,12 +1864,12 @@ const SalesReportCashier: React.FC = () => {
               </div>
             </div>
 
-            {/* Footer (Read-Only) */}
-            <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-200/70 bg-slate-50/50">
               <button
                 type="button"
                 onClick={() => setSelectedTransaction(null)}
-                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition-colors cursor-pointer text-center"
+                className="w-full py-2 bg-white hover:bg-slate-100 border border-slate-200/80 text-slate-700 font-medium rounded-xl text-xs transition-colors duration-150 ease-out cursor-pointer text-center"
               >
                 Close
               </button>
@@ -1616,36 +1881,39 @@ const SalesReportCashier: React.FC = () => {
       {/* Proof Screenshot Full View Modal */}
       {previewReceiptUrl && (
         <div
-          className="fixed inset-0 z-60 flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-150"
+          className="fixed inset-0 z-60 flex items-center justify-center bg-slate-900/70 p-4"
           onClick={() => setPreviewReceiptUrl(null)}
         >
           <div
-            className="relative max-w-xl max-h-[90vh] bg-white rounded-3xl p-4 shadow-2xl flex flex-col items-center gap-3 overflow-hidden"
+            className="relative max-w-xl max-h-[90vh] bg-white rounded-2xl p-4 shadow-xl border border-slate-200 flex flex-col items-center gap-3 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-full flex items-center justify-between pb-2 border-b border-slate-100">
-              <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+            <div className="w-full flex items-center justify-between pb-2 border-b border-slate-200/70">
+              <span className="text-xs font-medium text-slate-800">
                 {selectedTransaction?.deliveryProof === previewReceiptUrl
-                  ? 'Rider Proof of Delivery Photo'
-                  : 'Transaction Proof Screenshot'}
+                  ? 'Proof of delivery photo'
+                  : 'Transaction proof screenshot'}
               </span>
               <button
                 type="button"
                 onClick={() => setPreviewReceiptUrl(null)}
-                className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer font-bold"
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 cursor-pointer transition-colors duration-150 ease-out"
+                aria-label="Close image preview"
               >
-                ✕
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
             <img
               src={previewReceiptUrl}
-              alt="Payment Proof Full"
-              className="max-h-[72vh] w-auto object-contain rounded-2xl border border-slate-200 shadow-sm"
+              alt="Transaction proof"
+              className="max-h-[72vh] w-auto object-contain rounded-xl border border-slate-200"
             />
             <button
               type="button"
               onClick={() => setPreviewReceiptUrl(null)}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-xs rounded-xl transition-colors duration-150 ease-out cursor-pointer"
             >
               Close
             </button>

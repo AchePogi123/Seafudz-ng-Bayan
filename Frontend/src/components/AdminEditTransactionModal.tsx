@@ -203,7 +203,6 @@ export const AdminEditTransactionModal: React.FC<AdminEditTransactionModalProps>
                 <option value="Cash">Cash</option>
                 <option value="GCash">GCash</option>
                 <option value="Hybrid">Hybrid</option>
-                <option value="COD">COD</option>
               </select>
             </div>
           </div>

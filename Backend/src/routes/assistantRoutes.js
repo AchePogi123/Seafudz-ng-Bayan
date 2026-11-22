@@ -700,7 +700,11 @@ router.patch('/assistant/orders/:id/reject-receipt', optionalAuth, async (req, r
 // PATCH /api/assistant/orders/:id/resolve-out-of-stock - Resolve out-of-stock issue
 router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (req, res) => {
   const { id } = req.params;
-  const { resolution, refundReceipt, refundReference } = req.body;
+  const { resolution, refundReceipt, refundReference, processedByName, processedByRole } = req.body;
+
+  // Money going back out needs a name against it, the same as a cancellation refund does.
+  const actorName = String(req.user?.fullname || req.user?.name || processedByName || '').trim() || null;
+  const actorRole = String(req.user?.role || processedByRole || 'assistant').trim().toLowerCase() || null;
 
   if (!['REPLACE', 'FULL_REFUND'].includes(resolution)) {
     return res.status(400).json({ success: false, message: 'Invalid customer resolution.' });
@@ -765,17 +769,22 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
           const updRef = await client.query(
             `UPDATE refunds
              SET status = 'COMPLETED', refund_receipt = COALESCE($2, refund_receipt),
-                 reference_number = COALESCE($3, reference_number), completed_at = NOW()
+                 reference_number = COALESCE($3, reference_number),
+                 refund_method = COALESCE(refund_method, 'GCASH'),
+                 processed_by = COALESCE($4, processed_by),
+                 processed_by_role = COALESCE($5, processed_by_role),
+                 completed_at = NOW()
              WHERE order_id = $1 AND status = 'PENDING'
              RETURNING id`,
-            [id, refundReceipt || null, refundReference || null]
+            [id, refundReceipt || null, refundReference || null, actorName, actorRole]
           );
 
           if (updRef.rows.length === 0 && refundAmount > 0) {
             await client.query(
-              `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number, completed_at)
-               VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_FULL_REFUND', $3, $4, NOW())`,
-              [id, refundAmount, refundReceipt || null, refundReference || null]
+              `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number,
+                                    refund_method, processed_by, processed_by_role, completed_at)
+               VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_FULL_REFUND', $3, $4, 'GCASH', $5, $6, NOW())`,
+              [id, refundAmount, refundReceipt || null, refundReference || null, actorName, actorRole]
             );
           }
 
@@ -876,11 +885,14 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
              SET status = 'COMPLETED',
                  refund_receipt = COALESCE($2, refund_receipt),
                  reference_number = COALESCE($3, reference_number),
+                 refund_method = COALESCE(refund_method, 'GCASH'),
+                 processed_by = COALESCE($4, processed_by),
+                 processed_by_role = COALESCE($5, processed_by_role),
                  payment_id = COALESCE(payment_id, (SELECT id FROM payments WHERE order_id = $1 AND COALESCE(payment_type, 'INITIAL') = 'INITIAL' LIMIT 1)),
                  completed_at = NOW()
              WHERE order_id = $1 AND status = 'PENDING'
              RETURNING id, amount, refund_receipt`,
-            [id, refundReceipt || null, refundReference || null]
+            [id, refundReceipt || null, refundReference || null, actorName, actorRole]
           );
 
           if (refUpd.rows.length > 0) {
@@ -902,9 +914,10 @@ router.patch('/assistant/orders/:id/resolve-out-of-stock', optionalAuth, async (
               refundAmount = completedExcess;
               const payId = payRes.rows.find(p => ['INITIAL', null, undefined].includes(p.payment_type))?.id || payRes.rows[0]?.id || null;
               await client.query(
-                `INSERT INTO refunds (order_id, payment_id, amount, status, reason, refund_receipt, reference_number, completed_at)
-                 VALUES ($1, $2, $3, 'COMPLETED', 'OUT_OF_STOCK_REPLACEMENT_EXCESS', $4, $5, NOW())`,
-                [id, payId, completedExcess, refundReceipt || null, refundReference || null]
+                `INSERT INTO refunds (order_id, payment_id, amount, status, reason, refund_receipt, reference_number,
+                                      refund_method, processed_by, processed_by_role, completed_at)
+                 VALUES ($1, $2, $3, 'COMPLETED', 'OUT_OF_STOCK_REPLACEMENT_EXCESS', $4, $5, 'GCASH', $6, $7, NOW())`,
+                [id, payId, completedExcess, refundReceipt || null, refundReference || null, actorName, actorRole]
               );
               await client.query(
                 `UPDATE payments
@@ -1142,18 +1155,46 @@ router.patch('/assistant/orders/:id/verify-additional-payment', optionalAuth, as
 
 /**
  * PATCH /api/assistant/orders/:id/process-cancellation-refund
- * Assistant processes and completes the refund for a cancelled or cancel-requested order.
- * Either refundReceipt (screenshot photo) OR refundReference (manual typed string) MUST be provided.
+ * Records that the money for a cancelled / cancel-requested order has actually been handed back,
+ * and only then closes the order and puts its ingredients back on the shelf.
+ *
+ * Both desks use this one endpoint, because both can be the ones who pay out:
+ *  - GCASH (assistant): the money is transferred back, so a screenshot or a reference proves it.
+ *  - CASH (cashier at the POS): notes are counted out over the counter and there is nothing to
+ *    screenshot, so the proof is the named cashier confirming the hand-back (`cashHandedBack`).
+ *
+ * Either way the refund row records WHO returned it and in what form, so a cancelled transaction
+ * in the sales report can always be traced to the person accountable for the money.
  */
 router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { refundReceipt, refundReference } = req.body;
+    const { refundReceipt, refundReference, refundMethod, cashHandedBack, processedByName, processedByRole } = req.body;
 
     const cleanReceipt = String(refundReceipt || '').trim() || null;
     const cleanReference = String(refundReference || '').trim() || null;
 
-    if (!cleanReceipt && !cleanReference) {
+    // Who is accountable: the signed-in employee, else whoever the desk says it is.
+    const actorName = String(req.user?.fullname || req.user?.name || processedByName || '').trim() || null;
+    const actorRole = String(req.user?.role || processedByRole || '').trim().toLowerCase() || null;
+
+    const isCashRefund = String(refundMethod || '').toUpperCase() === 'CASH';
+    const cleanMethod = isCashRefund ? 'CASH' : (refundMethod ? String(refundMethod).toUpperCase() : 'GCASH');
+
+    if (isCashRefund) {
+      if (!cashHandedBack) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please confirm the cash was counted out and handed back to the customer before submitting.'
+        });
+      }
+      if (!actorName) {
+        return res.status(400).json({
+          success: false,
+          message: 'A cash refund has to be recorded under the name of the person who handed the money back.'
+        });
+      }
+    } else if (!cleanReceipt && !cleanReference) {
       return res.status(400).json({
         success: false,
         message: 'Please provide either a refund screenshot photo or a reference number before submitting.'
@@ -1214,23 +1255,27 @@ router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, 
         [id]
       );
 
-      // 4. Update or insert refund record in refunds table
+      // 4. Settle the refund, signed by whoever handed the money back
       const updRef = await client.query(
         `UPDATE refunds
          SET status = 'COMPLETED',
              refund_receipt = COALESCE($2, refund_receipt),
              reference_number = COALESCE($3, reference_number),
+             refund_method = COALESCE($4, refund_method),
+             processed_by = COALESCE($5, processed_by),
+             processed_by_role = COALESCE($6, processed_by_role),
              completed_at = NOW()
          WHERE order_id = $1 AND status = 'PENDING'
          RETURNING id`,
-        [id, cleanReceipt, cleanReference]
+        [id, cleanReceipt, cleanReference, cleanMethod, actorName, actorRole]
       );
 
       if (updRef.rows.length === 0) {
         await client.query(
-          `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number, completed_at)
-           VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_CANCELLATION_REFUND', $3, $4, NOW())`,
-          [id, orderTotal, cleanReceipt, cleanReference]
+          `INSERT INTO refunds (order_id, amount, status, reason, refund_receipt, reference_number,
+                                refund_method, processed_by, processed_by_role, completed_at)
+           VALUES ($1, $2, 'COMPLETED', 'CUSTOMER_CANCELLATION_REFUND', $3, $4, $5, $6, $7, NOW())`,
+          [id, orderTotal, cleanReceipt, cleanReference, cleanMethod, actorName, actorRole]
         );
       }
 
@@ -1243,8 +1288,13 @@ router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, 
         [id]
       );
 
-      // 6. Make sure the cancelled order's ingredients are back in stock (no-op if already returned)
-      await returnForOrder(client, id, { reason: `Order ${id} cancellation refunded` });
+      // 6. The money is back with the customer, so the transaction is finally closed and the food
+      //    it was holding returns to the shelf. This is the only point at which a paid-for
+      //    cancellation releases stock (no-op if it was already returned).
+      await returnForOrder(client, id, {
+        reason: `Order ${id} cancellation refunded`,
+        performedBy: actorName || actorRole || 'Staff',
+      });
 
       await client.query('COMMIT');
       broadcastInventoryChange();
@@ -1276,6 +1326,9 @@ router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, 
     activeOrderObj.customerResolutionStatus = 'COMPLETED';
     activeOrderObj.refundReceipt = cleanReceipt || activeOrderObj.refundReceipt;
     activeOrderObj.refundReference = cleanReference || activeOrderObj.refundReference;
+    activeOrderObj.refundMethod = cleanMethod;
+    activeOrderObj.refundedBy = actorName || activeOrderObj.refundedBy;
+    activeOrderObj.refundedByRole = actorRole || activeOrderObj.refundedByRole;
     if (finalPayments.length) activeOrderObj.payments = finalPayments;
     if (finalRefunds.length) activeOrderObj.refunds = finalRefunds;
     activeOrderObj.updated_at = new Date().toISOString();
@@ -1287,11 +1340,13 @@ router.patch('/assistant/orders/:id/process-cancellation-refund', optionalAuth, 
       type: 'ORDER_CANCELLED_REFUNDED',
     });
 
-    console.log(`[ASSISTANT] Order #${id} cancellation refund completed by assistant.`);
+    console.log(`[REFUND] Order #${id} refunded in ${cleanMethod} by ${actorName || 'unnamed staff'}${actorRole ? ` (${actorRole})` : ''}.`);
 
     return res.status(200).json({
       success: true,
-      message: `Order #${id} cancellation refund completed successfully!`,
+      message: cleanMethod === 'CASH'
+        ? `Order #${id} refunded in cash by ${actorName}. Stock has been returned to inventory.`
+        : `Order #${id} cancellation refund completed successfully!`,
       data: formatted
     });
   } catch (error) {

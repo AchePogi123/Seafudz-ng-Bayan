@@ -458,9 +458,11 @@ router.patch('/user-flow/orders/:id/out-of-stock-choice', optionalAuth, async (r
         dbPayments = payRes.rows;
         dbRefunds = refRes.rows;
 
-        const isCod = dbPayments.some(p => ['COD', 'CASH'].includes(String(p.payment_method).toUpperCase()))
-          || String(dbOrder.payment_method || '').toUpperCase().includes('COD');
-        payMethod = isCod ? 'COD' : (dbPayments[0]?.payment_method || dbOrder.payment_method || 'GCash');
+        // Cash is settled face to face, so the ledger's transfer arithmetic does not apply to it.
+        // (A legacy row still labelled COD was cash; COD itself is retired.)
+        const isCash = dbPayments.some(p => ['CASH', 'COD'].includes(String(p.payment_method).toUpperCase()))
+          || ['CASH', 'COD'].includes(String(dbOrder.payment_method || '').toUpperCase());
+        payMethod = isCash ? 'CASH' : (dbPayments[0]?.payment_method || dbOrder.payment_method || 'GCash');
 
         const targetTotal = resolution === 'REPLACE' ? projectedTotal : Number(dbOrder.total || 0);
         calculatedLedger = calculateFinancialLedger(dbPayments, dbRefunds, targetTotal, payMethod);
@@ -742,35 +744,69 @@ async function executeOrderCancellation(id, options = {}) {
   const currentStatus = orderInMemory?.status || dbOrder?.status || null;
   const normCurrent = normalizeFlowStatus(currentStatus);
 
-  const isCOD = String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('COD');
+  const paymentMethod = String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase();
 
-  const hasGcashPayment = !isCOD && !options.forceImmediateCancel && (
-    String(orderInMemory?.paymentMethod || dbOrder?.payment_method || '').toUpperCase().includes('GCASH')
+  // Has this customer's money already left their hands? If so, cancelling the order does not
+  // finish it: somebody still has to hand that money back, and the order stays open until they do.
+  //
+  // The payment METHOD cannot answer that — an online order is labelled GCash the moment it is
+  // placed, long before the customer has sent anything. Two things do:
+  //  - a settled payment row: cash taken at the counter is recorded as PAID on the spot, and a
+  //    verified transfer likewise;
+  //  - the receipt or reference the customer submitted with a transfer the assistant has not
+  //    verified yet — the money has left their wallet either way.
+  let hasSettledPayment = false;
+  let hasTransferProof = false;
+  try {
+    const { rows } = await query(
+      `SELECT
+         BOOL_OR(UPPER(COALESCE(status, '')) IN ('PAID', 'PARTIALLY_REFUNDED') OR paid_at IS NOT NULL) AS settled,
+         BOOL_OR(COALESCE(payment_receipt, '') <> '' OR COALESCE(reference_number, '') <> '') AS proof
+       FROM payments WHERE order_id = $1`,
+      [id]
+    );
+    hasSettledPayment = Boolean(rows[0]?.settled);
+    hasTransferProof = Boolean(rows[0]?.proof);
+  } catch (e) {
+    console.warn('Payments lookup note (cancellation):', e.message);
+  }
+
+  hasTransferProof = hasTransferProof
     || Boolean(orderInMemory?.paymentReceipt || dbOrder?.payment_receipt)
-    || Boolean(orderInMemory?.gcashAuthorized || dbOrder?.gcash_authorized)
-    || Boolean(orderInMemory?.referenceNumber || dbOrder?.payment_reference)
-  );
+    || Boolean(orderInMemory?.referenceNumber || dbOrder?.payment_reference);
+
+  // `forceImmediateCancel` is for staff voiding a ticket nobody paid for; it never waives a refund
+  // that is genuinely owed, so it only skips the wait when no money has actually been taken.
+  const owesRefund = (hasSettledPayment || hasTransferProof) && !options.forceImmediateCancel;
+  // Money goes back the way it came in. (A plain `includes('CASH')` would match 'GCASH' too, so
+  // the wallet methods are tested first and by name.)
+  const refundMethod = paymentMethod.includes('HYBRID') || paymentMethod.includes('SPLIT')
+    ? 'HYBRID'
+    : (paymentMethod.includes('GCASH') || paymentMethod.includes('MAYA') ? 'GCASH' : 'CASH');
 
   const orderTotal = parseFloat(dbOrder?.total || orderInMemory?.total || 0);
 
   if (normCurrent === 'CANCELLED') {
-    // If already cancelled but paid via GCash and has no completed refund, create pending refund for assistant
-    if (hasGcashPayment && !orderInMemory?.refundReceipt && !dbOrder?.refund_receipt && !orderInMemory?.refundReference) {
+    // Already cancelled but paid for and never refunded: the money is still owed, so raise the
+    // pending refund so it shows up on the assistant's and the cashier's desk.
+    if (owesRefund && !orderInMemory?.refundReceipt && !dbOrder?.refund_receipt && !orderInMemory?.refundReference) {
       try {
         await query(
-          `INSERT INTO refunds (order_id, amount, status, reason)
-           VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND')
+          `INSERT INTO refunds (order_id, amount, status, reason, refund_method)
+           VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND', $3)
            ON CONFLICT (order_id) WHERE status = 'PENDING'
-           DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason`,
-          [id, orderTotal]
+           DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason,
+                         refund_method = COALESCE(refunds.refund_method, EXCLUDED.refund_method)`,
+          [id, orderTotal, refundMethod]
         );
       } catch (refErr) {
         console.warn('Pending refund on cancelled order note:', refErr.message);
       }
     }
-    await releaseOrderStock(id, { reason: `Order ${id} cancelled` }); // no-op if already returned
+    // Held back while a refund is outstanding; paying it out is what puts the food back.
+    await releaseOrderStock(id, { reason: `Order ${id} cancelled`, requireRefundSettled: true });
     const activeOrderObj = orderInMemory || (dbOrder ? formatOrderResponse(dbOrder) : { id, status: 'CANCELLED' });
-    return { success: true, message: `Order ${id} is cancelled.`, order: activeOrderObj, requiresRefund: hasGcashPayment };
+    return { success: true, message: `Order ${id} is cancelled.`, order: activeOrderObj, requiresRefund: owesRefund };
   }
 
   const nonCancellableStatuses = ['PREPARING', 'COOKING', 'IN_PREPARATION', 'IN_PROCESS', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
@@ -782,8 +818,9 @@ async function executeOrderCancellation(id, options = {}) {
     };
   }
 
-  // If customer paid via GCash: request cancellation to assistant so they can process refund!
-  if (hasGcashPayment) {
+  // The customer's money is already in: the order goes to the assistant / cashier as a
+  // cancellation request and only becomes CANCELLED once they have actually refunded it.
+  if (owesRefund) {
     try {
       await query(
         `UPDATE orders
@@ -800,11 +837,12 @@ async function executeOrderCancellation(id, options = {}) {
 
     try {
       await query(
-        `INSERT INTO refunds (order_id, amount, status, reason)
-         VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND')
+        `INSERT INTO refunds (order_id, amount, status, reason, refund_method)
+         VALUES ($1, $2, 'PENDING', 'CUSTOMER_CANCELLATION_REFUND', $3)
          ON CONFLICT (order_id) WHERE status = 'PENDING'
-         DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason`,
-        [id, orderTotal]
+         DO UPDATE SET amount = EXCLUDED.amount, reason = EXCLUDED.reason,
+                       refund_method = COALESCE(refunds.refund_method, EXCLUDED.refund_method)`,
+        [id, orderTotal, refundMethod]
       );
     } catch (refErr) {
       console.warn('Insert pending cancellation refund note:', refErr.message);
@@ -820,8 +858,9 @@ async function executeOrderCancellation(id, options = {}) {
       );
     } catch (e) {}
 
-    // Customer asked to cancel: the kitchen ticket is cancelled, so give the stock back now
-    await releaseOrderStock(id, { reason: `Order ${id} cancellation requested` });
+    // The ingredients stay out of stock for now. The kitchen will not cook this ticket, but the
+    // transaction is not closed until the money is handed back, and food released against an
+    // unpaid-out cancellation could be sold twice. Paying the refund is what returns it.
 
     if (orderInMemory) {
       orderInMemory.status = 'CANCEL_REQUESTED';
@@ -849,7 +888,10 @@ async function executeOrderCancellation(id, options = {}) {
     return {
       success: true,
       requiresRefund: true,
-      message: `Cancellation request sent to the assistant. Your refund of ₱${orderTotal.toFixed(2)} will be processed shortly.`,
+      refundMethod,
+      message: refundMethod === 'CASH'
+        ? `Cancellation recorded. The cashier still has to hand back ₱${orderTotal.toFixed(2)} in cash before this order closes.`
+        : `Cancellation request sent to the assistant. Your refund of ₱${orderTotal.toFixed(2)} will be processed shortly.`,
       order: formattedResponse,
     };
   }
@@ -911,8 +953,9 @@ async function executeOrderCancellation(id, options = {}) {
     );
   } catch (e) {}
 
-  // Return the ingredients this order had taken from inventory
-  await releaseOrderStock(id, { reason: `Order ${id} cancelled` });
+  // Nothing was paid for this order, so the ingredients it was holding go straight back.
+  // (The guard is a no-op here, and only bites if a refund was raised by an earlier request.)
+  await releaseOrderStock(id, { reason: `Order ${id} cancelled`, requireRefundSettled: true });
 
   const activeOrderObj = inMemoryOrders.get(id) || orderInMemory || (dbOrder ? { ...formatOrderResponse(dbOrder), status: 'CANCELLED' } : { id, status: 'CANCELLED' });
   const formattedResponse = formatOrderResponse(activeOrderObj);

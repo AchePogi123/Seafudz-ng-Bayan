@@ -786,46 +786,40 @@ const AdminDashboard: React.FC = () => {
         }))
     }, [settledOrders, trendViewMode, timeRange])
 
-    // Payment Methods Distribution
+    /**
+     * Payment Methods Distribution.
+     *
+     * There are only two ways money arrives now: a wallet transfer, or cash taken face to face at
+     * the counter or on hand-over. Cash on Delivery was retired, so an online order with no wallet
+     * trail is not a third category — it is cash, counted with the rest of the cash.
+     */
     const paymentStats = useMemo(() => {
         let gcash = 0
-        let posCash = 0
-        let onlineCod = 0
+        let cash = 0
         let other = 0
 
         settledOrders.forEach((o) => {
             const pm = (o.paymentMethod || '').toLowerCase()
-            const isOnline = isOnlineOrder(o.type)
             const amt = Number(o.total || 0)
 
             if (pm.includes('gcash')) {
                 gcash += amt
             } else if (pm.includes('maya') || pm.includes('card') || pm.includes('split') || pm.includes('hybrid')) {
                 other += amt
-            } else if (isOnline) {
-                onlineCod += amt
             } else {
-                posCash += amt
+                cash += amt
             }
         })
 
-        const total = gcash + posCash + onlineCod + other || 1
+        const total = gcash + cash + other || 1
         const list = []
 
-        if (posCash > 0 || (gcash === 0 && onlineCod === 0 && other === 0)) {
+        if (cash > 0 || (gcash === 0 && other === 0)) {
             list.push({
-                name: 'Cash (POS)',
-                amount: posCash,
-                pct: Math.round((posCash / total) * 100),
+                name: 'Cash',
+                amount: cash,
+                pct: Math.round((cash / total) * 100),
                 dotClass: 'bg-amber-400',
-            })
-        }
-        if (onlineCod > 0) {
-            list.push({
-                name: 'COD',
-                amount: onlineCod,
-                pct: Math.round((onlineCod / total) * 100),
-                dotClass: 'bg-orange-500',
             })
         }
         list.push({

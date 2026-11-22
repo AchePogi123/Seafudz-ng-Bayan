@@ -8,7 +8,6 @@ import {
   Segmented,
   StockStatusBadge,
   TypeBadge,
-  formatPeso,
   formatQty,
 } from './ui'
 
@@ -38,13 +37,12 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
   onExportReport,
 }) => {
   const [activeReportSubTab, setActiveReportSubTab] = useState<
-    'CONSUMPTION' | 'PURCHASING' | 'WASTE' | 'VALUATION'
+    'CONSUMPTION' | 'PURCHASING' | 'WASTE' | 'REORDER'
   >('CONSUMPTION')
 
   const [dateHorizon, setDateHorizon] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'YEAR'>('MONTH')
   const [reportTypeFilter, setReportTypeFilter] = useState<'ALL' | InventoryItemType>('ALL')
 
-  // Financial Computations
   const foodItems = useMemo(
     () => ingredients.filter((i) => (i.itemType || 'FOOD') === 'FOOD'),
     [ingredients]
@@ -53,22 +51,6 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
     () => ingredients.filter((i) => i.itemType === 'PACKAGING'),
     [ingredients]
   )
-
-  const foodValuation = useMemo(
-    () => foodItems.reduce((sum, i) => sum + i.currentStock * i.costPerUnit, 0),
-    [foodItems]
-  )
-  const packagingValuation = useMemo(
-    () => packagingItems.reduce((sum, i) => sum + i.currentStock * i.costPerUnit, 0),
-    [packagingItems]
-  )
-  const totalValuation = foodValuation + packagingValuation
-  const selectedValuation =
-    reportTypeFilter === 'FOOD'
-      ? foodValuation
-      : reportTypeFilter === 'PACKAGING'
-      ? packagingValuation
-      : totalValuation
 
   const reportStart = useMemo(() => {
     const now = new Date()
@@ -205,33 +187,31 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
     })
   }, [transactions, reportStart, reportTypeFilter])
 
-  const totalWasteLoss = useMemo(() => {
-    return wasteTxs.reduce((sum, t) => {
-      const ing = ingredients.find((i) => i.id === t.ingredientId)
-      const cost = ing ? ing.costPerUnit : 0
-      return sum + Math.abs(t.quantityDelta) * cost
-    }, 0)
-  }, [wasteTxs, ingredients])
+  // Waste is counted, not valued: the stockroom holds no unit prices to price it with, and the
+  // items in a single group are measured in different units, so a summed quantity would be
+  // meaningless. What is honest and useful is how often it happened and to how many items.
+  const wasteItemsAffected = useMemo(
+    () => new Set(wasteTxs.map((t) => t.ingredientId)).size,
+    [wasteTxs]
+  )
 
   const wasteBreakdown = useMemo(() => {
     const totals = new Map<
       string,
-      { reason: string; itemType: InventoryItemType; count: number; loss: number }
+      { reason: string; itemType: InventoryItemType; count: number; items: Set<string> }
     >()
     wasteTxs.forEach((transaction) => {
       const reason = transaction.reason?.trim() || 'No reason specified'
       const itemType = transaction.itemType || 'FOOD'
       const key = `${itemType}:${reason}`
-      const current = totals.get(key) || { reason, itemType, count: 0, loss: 0 }
-      const ingredient = ingredients.find((item) => item.id === transaction.ingredientId)
+      const current = totals.get(key) || { reason, itemType, count: 0, items: new Set<string>() }
       current.count += 1
-      current.loss += Math.abs(transaction.quantityDelta) * (ingredient?.costPerUnit || 0)
+      current.items.add(transaction.ingredientId)
       totals.set(key, current)
     })
     return Array.from(totals.values()).sort((a, b) => b.count - a.count)
-  }, [wasteTxs, ingredients])
+  }, [wasteTxs])
 
-  // Procurement spend
   const activePOs = useMemo(() => {
     return purchaseOrders.filter((po) => po.status !== 'CANCELLED')
   }, [purchaseOrders])
@@ -262,7 +242,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
       <div className="inv-section-header">
         <div className="min-w-0">
           <h2 className="inv-section-title">Reports</h2>
-          <p className="inv-section-desc">Usage, purchasing, waste and stock value for {period}.</p>
+          <p className="inv-section-desc">Usage, purchasing, waste and reordering for {period}.</p>
         </div>
         <div className="inv-section-actions">
           <Button variant="secondary" icon="download" onClick={() => onExportReport('EXCEL')}>
@@ -283,7 +263,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
             { value: 'CONSUMPTION', label: 'Usage' },
             { value: 'PURCHASING', label: 'Purchasing' },
             { value: 'WASTE', label: 'Waste' },
-            { value: 'VALUATION', label: 'Stock value & reorder' },
+            { value: 'REORDER', label: 'Reorder list' },
           ]}
         />
         <div className="flex flex-wrap items-center gap-2">
@@ -298,7 +278,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
               { value: 'PACKAGING', label: 'Packaging' },
             ]}
           />
-          {activeReportSubTab !== 'VALUATION' && (
+          {activeReportSubTab !== 'REORDER' && (
             <select
               aria-label="Period"
               className="inv-select inv-select--sm w-auto"
@@ -408,19 +388,19 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
             <Metric
               label={
                 reportTypeFilter === 'PACKAGING'
-                  ? 'Packaging loss'
+                  ? 'Packaging write-offs'
                   : reportTypeFilter === 'FOOD'
-                  ? 'Food waste loss'
-                  : 'Waste and shrinkage loss'
+                  ? 'Food write-offs'
+                  : 'Waste and shrinkage entries'
               }
-              value={formatPeso(totalWasteLoss)}
-              note="Estimated from unit cost"
-              tone={totalWasteLoss > 0 ? 'danger' : undefined}
+              value={String(wasteTxs.length)}
+              note="Entries recorded in this period"
+              tone={wasteTxs.length > 0 ? 'danger' : undefined}
             />
             <Metric
-              label="Loss ratio"
-              value={selectedValuation > 0 ? `${((totalWasteLoss / selectedValuation) * 100).toFixed(1)}%` : '0.0%'}
-              note="Waste value vs. current stock value"
+              label="Items affected"
+              value={String(wasteItemsAffected)}
+              note="Distinct stockroom items written off"
             />
           </div>
           <Card>
@@ -435,7 +415,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
                       <th scope="col">Reason</th>
                       <th scope="col">Type</th>
                       <th scope="col" className="is-num">Entries</th>
-                      <th scope="col" className="is-num">Est. value</th>
+                      <th scope="col" className="is-num">Items</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -446,7 +426,7 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
                           <TypeBadge itemType={item.itemType} />
                         </td>
                         <td className="is-num">{item.count}</td>
-                        <td className="is-num font-semibold text-[var(--inv-text)]">{formatPeso(item.loss)}</td>
+                        <td className="is-num font-semibold text-[var(--inv-text)]">{item.items.size}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -457,13 +437,13 @@ export const InventoryReportsTab: React.FC<InventoryReportsTabProps> = ({
         </div>
       )}
 
-      {activeReportSubTab === 'VALUATION' && (
+      {activeReportSubTab === 'REORDER' && (
         <div className="space-y-5">
           <div className="inv-stats">
-            <Metric label="Total stock value" value={formatPeso(totalValuation)} note="Caloocan Flagship Hub" />
-            <Metric label="Food" value={formatPeso(foodValuation)} note={`${foodItems.length} items`} />
-            <Metric label="Packaging" value={formatPeso(packagingValuation)} note={`${packagingItems.length} items`} />
             <Metric label="To reorder" value={String(reorderItems.length)} note="At or below minimum" />
+            <Metric label="Items tracked" value={String(ingredients.length)} note="Caloocan Flagship Hub" />
+            <Metric label="Food" value={String(foodItems.length)} note="Stockroom items" />
+            <Metric label="Packaging" value={String(packagingItems.length)} note="Stockroom items" />
           </div>
           <Card>
             <CardHeader title="Reorder list" description="Lowest relative to minimum first" />

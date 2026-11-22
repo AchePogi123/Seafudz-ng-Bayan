@@ -90,7 +90,6 @@ export interface Ingredient {
   currentStock: number
   minStockLevel: number
   preferredRestockQty: number
-  costPerUnit: number
   supplierId?: string
   supplierName?: string
   storageNotes?: string
@@ -104,10 +103,25 @@ export interface RecipeIngredient {
   ingredientName: string
   portionQuantity: number
   unit: MeasurementUnit
-  estimatedCost: number
 }
 
 export type FulfillmentType = 'DINE_IN' | 'TAKEOUT' | 'DELIVERY' | 'ALL'
+
+/**
+ * The order types a packaging line can apply to, in the words the admin screens use.
+ *
+ * Shared by the Recipes (BOM) tab and the Add-dish form so a box labelled "Takeout & pickup" in
+ * one place cannot read as something else in the other.
+ */
+export const FULFILLMENT_OPTIONS: { label: string; value: FulfillmentType }[] = [
+  { label: 'Takeout & pickup', value: 'TAKEOUT' },
+  { label: 'Delivery', value: 'DELIVERY' },
+  { label: 'Takeout, delivery & pickup', value: 'ALL' },
+  { label: 'Dine-in (special)', value: 'DINE_IN' },
+]
+
+export const fulfillmentLabel = (value: FulfillmentType): string =>
+  FULFILLMENT_OPTIONS.find((f) => f.value === value)?.label ?? value
 export type PackagingScope = 'PER_ITEM' | 'SHARED_ORDER'
 
 export interface PackagingRequirement {
@@ -120,10 +134,18 @@ export interface PackagingRequirement {
   fulfillmentType: FulfillmentType // 'DINE_IN', 'TAKEOUT', 'DELIVERY', 'ALL'
   scope: PackagingScope // 'PER_ITEM' vs 'SHARED_ORDER'
   sharedCapacity?: number // e.g. 1 bag holds up to 3 items
-  estimatedCost: number
   notes?: string
 }
 
+/**
+ * A dish's bill of materials: what it is made of and how much of each, per serving.
+ *
+ * Deliberately carries no costing. The stockroom tracks quantities, not money — there is no
+ * purchasing spend, no per-unit prices maintained and no margin analysis — so recipe food cost,
+ * packaging cost and gross margin were dropped (migration 042) rather than shown as figures
+ * derived from an unmaintained number. `productPrice` is the dish's SELLING price, which the menu
+ * and the POS do need; it is not a cost.
+ */
 export interface ProductRecipe {
   productId: string
   productName: string
@@ -134,10 +156,6 @@ export interface ProductRecipe {
   ingredients: RecipeIngredient[] // Food ingredients
   packagingRequirements: PackagingRequirement[] // Packaging materials per fulfillment channel
   preparationInstructions?: string
-  totalFoodCost: number
-  totalPackagingCost: number
-  totalRawCost: number // Food + Packaging
-  grossMarginPercent: number
   isConfigured: boolean
   updatedAt: string
 }
@@ -226,7 +244,4 @@ export interface InventoryKPISummary {
   lowStockPackagingCount: number
   outOfStockCount: number
   pendingPurchasesCount: number
-  totalValuation: number
-  foodValuation: number
-  packagingValuation: number
 }

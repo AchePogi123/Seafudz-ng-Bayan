@@ -59,7 +59,7 @@ function findLegacyBrowserInventory() {
       ingredients.length !== baseline.size ||
       ingredients.some((i) => {
         const b = baseline.get(i.id)
-        return !b || b.currentStock !== i.currentStock || b.minStockLevel !== i.minStockLevel || b.costPerUnit !== i.costPerUnit || b.name !== i.name
+        return !b || b.currentStock !== i.currentStock || b.minStockLevel !== i.minStockLevel || b.name !== i.name
       }) ||
       loadStoredSuppliers().length !== ACTUAL_SUPPLIERS.length ||
       loadStoredRecipes().length !== ACTUAL_RECIPES.length ||

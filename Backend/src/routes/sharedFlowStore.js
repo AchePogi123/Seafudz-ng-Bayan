@@ -47,11 +47,55 @@ export function isRevenueRecognized(status) {
 export const REVENUE_STATUS_SQL = `UPPER(o.status) IN ('COMPLETED', 'DELIVERED', 'SERVED')`;
 
 /**
+ * Boils an order's refund rows down to the one thing a sales report has to answer about a
+ * cancelled transaction: did anybody actually give the money back, and who was it?
+ *
+ * A cancelled order with money taken is an open liability until someone pays it out, so the
+ * summary distinguishes three states the register has to be able to show apart:
+ *  - `NONE`      nothing was ever owed (the order was cancelled before it was paid for)
+ *  - `PENDING`   money is owed and still sitting in the till — nobody has returned it yet
+ *  - `COMPLETED` it was handed back, by the named person, in the recorded form, at that time
+ *
+ * The newest row wins, because an order is refunded once; the earlier rows are its history.
+ */
+export function summarizeRefunds(refunds = []) {
+  const rows = (Array.isArray(refunds) ? refunds : []).filter(Boolean);
+  const read = (r, snake, camel) => r[snake] ?? r[camel] ?? null;
+  const byNewest = (list) => list.slice().sort((a, b) => {
+    const ta = new Date(read(a, 'completed_at', 'completedAt') || read(a, 'created_at', 'createdAt') || 0).getTime();
+    const tb = new Date(read(b, 'completed_at', 'completedAt') || read(b, 'created_at', 'createdAt') || 0).getTime();
+    return tb - ta;
+  });
+
+  const completed = byNewest(rows.filter(r => String(r.status || '').toUpperCase() === 'COMPLETED'));
+  const pending = byNewest(rows.filter(r => String(r.status || '').toUpperCase() === 'PENDING'));
+  const sum = (list) => Math.round(list.reduce((t, r) => t + (parseFloat(r.amount) || 0), 0) * 100) / 100;
+
+  const settled = completed[0] || null;
+  const owed = pending[0] || null;
+
+  return {
+    refundStatus: settled ? 'COMPLETED' : (owed ? 'PENDING' : 'NONE'),
+    refundAmount: settled ? sum(completed) : (owed ? sum(pending) : 0),
+    refundedBy: settled ? read(settled, 'processed_by', 'processedBy') || undefined : undefined,
+    refundedByRole: settled ? read(settled, 'processed_by_role', 'processedByRole') || undefined : undefined,
+    refundMethod: (settled || owed)
+      ? read(settled || owed, 'refund_method', 'refundMethod') || undefined
+      : undefined,
+    refundedAt: settled ? read(settled, 'completed_at', 'completedAt') || undefined : undefined,
+    refundReason: (settled || owed) ? (settled || owed).reason || undefined : undefined,
+  };
+}
+
+/**
  * Single Authoritative Financial Ledger Calculation Engine
  */
 export function calculateFinancialLedger(payments = [], refunds = [], orderTotal = 0, paymentMethod = 'GCash') {
   const normMethod = (paymentMethod || 'GCash').toUpperCase();
-  const isCOD = normMethod === 'COD' || normMethod === 'CASH';
+  // Cash never passes through this ledger's balance arithmetic: it is counted out at the counter
+  // in one go, so there is no transfer to verify, no excess to wire back and no top-up to chase.
+  // (This used to be the COD test as well; COD is retired and cash is settled face to face.)
+  const isCashAtCounter = normMethod === 'CASH';
 
   // 1. Gross Confirmed Payments Received
   let grossConfirmedPaid = 0;
@@ -101,10 +145,10 @@ export function calculateFinancialLedger(payments = [], refunds = [], orderTotal
   let additionalRequired = 0;
   let financialStatus = 'FULLY_PAID';
 
-  if (isCOD) {
+  if (isCashAtCounter) {
     excessAmount = 0;
     additionalRequired = 0;
-    financialStatus = 'UNPAID_COD';
+    financialStatus = 'CASH_AT_COUNTER';
   } else if (grossConfirmedPaid === 0) {
     excessAmount = 0;
     additionalRequired = 0;
@@ -129,7 +173,7 @@ export function calculateFinancialLedger(payments = [], refunds = [], orderTotal
   }
 
   return {
-    isCOD,
+    isCashAtCounter,
     orderTotal: currentTotal,
     grossConfirmedPaid,
     completedRefunds,
@@ -212,6 +256,7 @@ export function formatOrderResponse(row) {
   }
 
   const ledger = calculateFinancialLedger(payments, refunds, effectiveTotal, paymentMethod);
+  const refundSummary = summarizeRefunds(refunds);
 
   const refundReceiptFromRefunds = refunds.slice().reverse().find(r => r.refund_receipt || r.refundReceipt)?.refund_receipt
     || refunds.slice().reverse().find(r => r.refund_receipt || r.refundReceipt)?.refundReceipt;
@@ -269,6 +314,15 @@ export function formatOrderResponse(row) {
     delivery_proof: row.delivery_proof || row.deliveryProof || undefined,
     refundReceipt: row.refund_receipt || row.refundReceipt || refundReceiptFromRefunds || undefined,
     refundReference: row.refund_reference || row.refundReference || refundReferenceFromRefunds || undefined,
+    // Who gave the money back, how, and when — what a cancelled transaction has to account for.
+    refundStatus: refundSummary.refundStatus,
+    refundAmount: refundSummary.refundAmount,
+    refundedBy: row.refunded_by || row.refundedBy || refundSummary.refundedBy,
+    refundedByRole: row.refunded_by_role || row.refundedByRole || refundSummary.refundedByRole,
+    refundMethod: row.refund_method || row.refundMethod || refundSummary.refundMethod,
+    refundedAt: row.refunded_at || row.refundedAt || refundSummary.refundedAt,
+    refundReason: refundSummary.refundReason,
+    cancelledAt: row.cancelled_at || row.cancelledAt || undefined,
     gcashAuthorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     gcash_authorized: Boolean(row.gcash_authorized || row.gcashAuthorized || normStatus === 'GCASH_AUTHORIZED'),
     receiptStatus: receiptStatus,

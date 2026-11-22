@@ -60,12 +60,14 @@ async function servingsFromMenu(id = PRODUCT) {
 test.before(async () => {
   if (!url) return;
   pool = new pg.Pool({ connectionString: url, max: 3 });
-  const [{ default: orderRoutes }, { default: userFlowRoutes }, { default: kitchenRoutes }, { default: menuRoutes }] =
+  const [{ default: orderRoutes }, { default: userFlowRoutes }, { default: kitchenRoutes }, { default: menuRoutes }, { default: assistantRoutes }] =
     await Promise.all([
       import('../routes/orderRoutes.js'),
       import('../routes/userFlowRoutes.js'),
       import('../routes/kitchenRoutes.js'),
       import('../routes/menuRoutes.js'),
+      // the refund payout lives here, and paying it is what closes a cancelled paid order
+      import('../routes/assistantRoutes.js'),
     ]);
   const app = express();
   app.use(express.json());
@@ -73,6 +75,7 @@ test.before(async () => {
   app.use('/api', orderRoutes);
   app.use('/api', kitchenRoutes);
   app.use('/api', userFlowRoutes);
+  app.use('/api', assistantRoutes);
   server = http.createServer(app);
   await new Promise((r) => server.listen(0, r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -86,7 +89,8 @@ test.after(async () => {
   }
   await pool.query(`DELETE FROM order_inventory_ledger WHERE order_id LIKE 'E2E-%'`);
   await pool.query(`DELETE FROM inventory_transactions WHERE order_id LIKE 'E2E-%'`);
-  for (const t of ['order_items', 'kitchen_orders', 'payments', 'deliveries']) {
+  // refunds reference both the order and its payment, so they go before either
+  for (const t of ['refunds', 'order_items', 'kitchen_orders', 'payments', 'deliveries']) {
     await pool.query(`DELETE FROM ${t} WHERE order_id LIKE 'E2E-%'`);
   }
   await pool.query(`DELETE FROM orders WHERE id LIKE 'E2E-%'`);
@@ -114,20 +118,39 @@ test('placing an order consumes stock and lowers the servings shown on the menu'
   assert.ok(servingsAfter < servingsBefore, `servings ${servingsBefore} -> ${servingsAfter}`);
 });
 
-test('cancelling before the kitchen starts gives everything back', { skip }, async () => {
+test('cancelling before the kitchen starts gives everything back once the money is returned', { skip }, async () => {
   const before = await stockMap();
   const placed = await api('POST', '/orders', posOrder('E2E-2', 1, 'DINE_IN'));
   assert.equal(placed.status, 201, JSON.stringify(placed.json));
   const mid = await stockMap();
   assert.ok([...before.values()].some((b) => mid.get(b.id).stock < b.stock));
 
+  // A counter ticket is paid for as it is rung up, so cancelling it leaves the customer's cash in
+  // the drawer: the order keeps holding its ingredients until a cashier hands that money back.
   const cancelled = await api('PATCH', '/user-flow/orders/E2E-2/cancel', { status: 'CANCELLED' });
   assert.equal(cancelled.status, 200, JSON.stringify(cancelled.json));
+  assert.equal(cancelled.json.requiresRefund, true);
+  const held = await stockMap();
+  for (const [id, v] of mid) assert.ok(Math.abs(held.get(id).stock - v.stock) < 1e-6, `${id} still held`);
+
+  const refunded = await api('PATCH', '/assistant/orders/E2E-2/process-cancellation-refund', {
+    refundMethod: 'CASH',
+    cashHandedBack: true,
+    processedByName: 'Cashier Test',
+    processedByRole: 'cashier',
+  });
+  assert.equal(refunded.status, 200, JSON.stringify(refunded.json));
   const after = await stockMap();
   for (const [id, v] of before) assert.ok(Math.abs(after.get(id).stock - v.stock) < 1e-6, `${id} restored`);
 
-  // cancelling again must not add stock twice
+  // cancelling or refunding again must not add stock twice
   await api('PATCH', '/user-flow/orders/E2E-2/cancel', { status: 'CANCELLED' });
+  await api('PATCH', '/assistant/orders/E2E-2/process-cancellation-refund', {
+    refundMethod: 'CASH',
+    cashHandedBack: true,
+    processedByName: 'Cashier Test',
+    processedByRole: 'cashier',
+  });
   const again = await stockMap();
   for (const [id, v] of before) assert.ok(Math.abs(again.get(id).stock - v.stock) < 1e-6);
 });

@@ -14,7 +14,6 @@ import {
   TypeBadge,
   cx,
   formatDate,
-  formatPeso,
   formatQty,
   movementLabel,
   type IconName,
@@ -44,8 +43,6 @@ export const InventoryDashboardTab: React.FC<InventoryDashboardTabProps> = ({
   const summary = useMemo(() => {
     const food = ingredients.filter((i) => (i.itemType || 'FOOD') === 'FOOD')
     const pkg = ingredients.filter((i) => i.itemType === 'PACKAGING')
-    const foodValuation = food.reduce((sum, i) => sum + i.currentStock * i.costPerUnit, 0)
-    const packagingValuation = pkg.reduce((sum, i) => sum + i.currentStock * i.costPerUnit, 0)
     return {
       total: ingredients.length,
       food: food.length,
@@ -54,9 +51,6 @@ export const InventoryDashboardTab: React.FC<InventoryDashboardTabProps> = ({
       low: ingredients.filter((i) => i.status === 'LOW_STOCK').length,
       out: ingredients.filter((i) => i.status === 'OUT_OF_STOCK').length,
       pendingPOs: purchaseOrders.filter((po) => po.status === 'PENDING').length,
-      foodValuation,
-      packagingValuation,
-      totalValuation: foodValuation + packagingValuation,
     }
   }, [ingredients, purchaseOrders])
 
@@ -307,18 +301,20 @@ export const InventoryDashboardTab: React.FC<InventoryDashboardTabProps> = ({
               ) : (
                 <p className="text-sm text-[var(--inv-text-3)]">No items tracked yet.</p>
               )}
+              {/* The stockroom counts things, it does not value them, so the split here is by
+                  what an item IS rather than what it would be worth. */}
               <dl className="space-y-1.5 border-t border-[var(--inv-border)] pt-4 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <dt className="text-[var(--inv-text-3)]">Stock value</dt>
-                  <dd className="font-semibold text-[var(--inv-text)]">{formatPeso(summary.totalValuation, 0)}</dd>
+                  <dt className="text-[var(--inv-text-3)]">Items tracked</dt>
+                  <dd className="font-semibold text-[var(--inv-text)]">{summary.total}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-[var(--inv-text-3)]">Food</dt>
-                  <dd className="text-[var(--inv-text-2)]">{formatPeso(summary.foodValuation, 0)}</dd>
+                  <dd className="text-[var(--inv-text-2)]">{summary.food}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-[var(--inv-text-3)]">Packaging</dt>
-                  <dd className="text-[var(--inv-text-2)]">{formatPeso(summary.packagingValuation, 0)}</dd>
+                  <dd className="text-[var(--inv-text-2)]">{summary.packaging}</dd>
                 </div>
               </dl>
             </div>

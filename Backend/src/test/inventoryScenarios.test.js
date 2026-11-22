@@ -190,6 +190,30 @@ async function paidOnlineOrder(id, lines, fulfillmentType = 'DELIVERY') {
 }
 
 const cancel = (id) => api('PATCH', `/user-flow/orders/${id}/cancel`, { status: 'CANCELLED' });
+
+/**
+ * Hands the customer's money back, which is what actually closes a paid-for cancellation.
+ *
+ * Cancelling an order that has been paid for does not release its ingredients: the money is still
+ * in the drawer (or still in the restaurant's GCash account) and the transaction stays open until
+ * a named member of staff returns it. This is that payout, and the stock comes back with it.
+ */
+const refund = (id, { method = 'CASH', by = 'Cashier Test' } = {}) =>
+  api('PATCH', `/assistant/orders/${id}/process-cancellation-refund`, {
+    refundMethod: method,
+    cashHandedBack: method === 'CASH' ? true : undefined,
+    refundReference: method === 'CASH' ? 'drawer slip' : 'GC-REFUND-TEST',
+    processedByName: by,
+    processedByRole: 'cashier',
+  });
+
+/** Cancel a paid order and settle it in one step, for tests about the stock rather than the money. */
+async function cancelAndRefund(id, opts) {
+  const cancelled = await cancel(id);
+  const settled = await refund(id, opts);
+  return { cancelled, settled };
+}
+
 const kitchenStatus = (id, status) => api('PATCH', `/kitchen/orders/${id}/status`, { status });
 
 /** Walks an order through the kitchen to served / delivered. */
@@ -388,9 +412,19 @@ test('scenario 3: cancelling an order restores exactly what it took', { skip }, 
   assert.equal((await posOrder(id, [['alacarte', 2], ['bowl', 1]], 'TAKE_OUT')).status, 201);
   await assertStock(before, { shrimp: -600, garlic: -20, butter: -200, tray: -3, bag: -1 }, 'after order');
 
+  // The ticket was paid for at the counter, so cancelling it leaves the customer's cash in the
+  // drawer: the order stays open and keeps holding its ingredients until that money goes back.
   const res = await cancel(id);
   assert.equal(res.status, 200, JSON.stringify(res.json));
-  await assertStock(before, {}, 'after cancel');
+  assert.equal(res.json.requiresRefund, true, 'a paid ticket owes the customer money');
+  await assertStock(before, { shrimp: -600, garlic: -20, butter: -200, tray: -3, bag: -1 }, 'stock held while the refund is owed');
+  assert.equal(await orderStatus(id), 'CANCEL_REQUESTED');
+  assert.ok((await ledger(id)).every((r) => r.state === 'RESERVED'), 'nothing released yet');
+
+  // The cashier counts the cash out: now the transaction is closed and the food comes back.
+  const settled = await refund(id);
+  assert.equal(settled.status, 200, JSON.stringify(settled.json));
+  await assertStock(before, {}, 'after the money is returned');
   assert.deepEqual(await servings('bowl'), servingsBefore);
   assert.equal(await orderStatus(id), 'CANCELLED');
 
@@ -411,6 +445,9 @@ test('scenario 4: cancelling twice, or from several screens at once, restores st
   assert.equal((await posOrder(a, [['alacarte', 2]], 'TAKE_OUT')).status, 201);
   assert.equal((await cancel(a)).status, 200);
   assert.equal((await cancel(a)).status, 200);
+  // Paying the refund twice must not return the food twice either.
+  assert.equal((await refund(a)).status, 200);
+  assert.equal((await refund(a)).status, 200);
   await assertStock(before, {}, 'after cancelling twice');
   assert.equal((await movements(a)).filter((t) => t.type === 'ORDER_RETURN').length, 5, 'shrimp, garlic, butter, tray, bag: once each');
 
@@ -427,6 +464,7 @@ test('scenario 4: cancelling twice, or from several screens at once, restores st
     api('PATCH', `/orders/${b}/status`, { status: 'CANCELLED' }),
     api('DELETE', `/kitchen/orders/${b}`),
   ]);
+  await refund(b);
   await assertStock(before, {}, 'after concurrent cancels');
   assert.equal(await orderStatus(b), 'CANCELLED');
   const rows = await ledger(b);
@@ -503,6 +541,7 @@ test('scenario 7: quantities scale the deduction and the cancellation gives the 
   assert.equal((await servings('bowl')).TAKE_OUT, 16); // 4950 / 300
 
   assert.equal((await cancel(id)).status, 200);
+  assert.equal((await refund(id)).status, 200);
   await assertStock(before, {}, 'after cancel');
   assert.equal((await servings('alacarte')).TAKE_OUT, 40);
 });
@@ -529,7 +568,7 @@ test('scenario 8: restocking brings sold-out dishes back', { skip }, async () =>
   const po = await api('POST', '/inventory/purchase-orders', {
     supplierId: rows[0].id,
     notes: 'ZZT-SCENARIO',
-    items: [{ ingredientId: ING.shrimp.id, ingredientName: ING.shrimp.name, itemType: 'FOOD', orderedQuantity: 2000, unit: 'g', unitCost: 0.4 }],
+    items: [{ ingredientId: ING.shrimp.id, ingredientName: ING.shrimp.name, itemType: 'FOOD', orderedQuantity: 2000, unit: 'g' }],
   });
   assert.equal(po.status, 201, JSON.stringify(po.json));
   const shrimpBefore = (await stocks()).shrimp;
@@ -656,6 +695,7 @@ test('editing an order swaps its stock exactly, and an edit that cannot be cover
 
   await setStock('shrimp', afterEdit.shrimp);
   assert.equal((await cancel(id)).status, 200);
+  assert.equal((await refund(id)).status, 200, 'the money has to go back before the food does');
   await assertStock(before, {}, 'after cancelling the edited order');
 });
 
@@ -785,8 +825,10 @@ test('re-using the id of a finished order still deducts the new order', { skip }
   assert.equal((await posOrder(id, [['rice', 2]], 'DINE_IN')).status, 201);
   await assertStock(before, { rice: -600 }, 'after the id was used again');
 
-  // the new order has not reached the kitchen: cancelling it returns its rice (the first one stays used)
+  // the new order has not reached the kitchen: cancelling and refunding it returns its rice
+  // (the first one stays used)
   assert.equal((await cancel(id)).status, 200);
+  assert.equal((await refund(id)).status, 200);
   await assertStock(before, { rice: -200 }, 'after cancelling the second order');
 });
 
@@ -882,7 +924,10 @@ test('a GCash order takes its ingredients when the customer sends the reference,
   assert.equal((await api('PATCH', `/assistant/orders/${id}/verify-receipt`, {})).status, 200);
   await assertStock(before, used, 'approving the proof does not deduct twice');
 
+  // Cancelling a paid order owes the customer a GCash reversal; the stock comes back with it.
   assert.equal((await cancel(id)).status, 200);
+  await assertStock(before, used, 'stock held until the transfer is reversed');
+  assert.equal((await refund(id, { method: 'GCASH', by: 'Assistant Test' })).status, 200);
   await assertStock(before, {}, 'after cancelling the paid order');
 });
 
@@ -900,6 +945,7 @@ test('a pay-in-store pick-up takes its ingredients when the counter confirms it'
   await assertStock(before, used, 'confirming twice does not deduct twice');
 
   assert.equal((await cancel(id)).status, 200);
+  assert.equal((await refund(id)).status, 200, 'the counter has to hand the money back');
   await assertStock(before, {}, 'after cancelling the confirmed pick-up');
 });
 
@@ -949,6 +995,7 @@ test('out-of-stock replacement: the removed dish is returned, the new one deduct
   await assertStock(before, { shrimp: -950, garlic: -5, butter: -300, tray: -3, bag: -1, seal: -1 }, 'after replacement');
 
   assert.equal((await cancel(id)).status, 200);
+  assert.equal((await refund(id, { method: 'GCASH', by: 'Assistant Test' })).status, 200);
   await assertStock(before, {}, 'after cancelling the replaced order');
 });
 
@@ -960,13 +1007,13 @@ test('stock kept in kg / L with recipes in g / ml is deducted and restored exact
   assert.equal((await posOrder(first, [['lemonade', 1]])).status, 201);
   await assertStock(before, { juice: -0.0225 }, 'after one lemonade');
   assert.equal((await movements(first))[0].delta, -0.0225);
-  assert.equal((await cancel(first)).status, 200);
+  assert.equal((await cancelAndRefund(first)).settled.status, 200);
   await assertStock(before, {}, 'after cancelling it');
 
   for (let i = 0; i < 3; i += 1) {
     const id = nextId('UNIT');
     assert.equal((await posOrder(id, [['lemonade', 1]])).status, 201);
-    assert.equal((await cancel(id)).status, 200);
+    assert.equal((await cancelAndRefund(id)).settled.status, 200);
   }
   await assertStock(before, {}, 'after three order + cancel cycles');
 
@@ -988,6 +1035,7 @@ test('every stock change has a movement record and the history always adds up to
   const b = nextId('LOG');
   assert.equal((await onlineOrder(b, [['bowl', 1], ['lemonade', 2]], 'DELIVERY')).status, 201);
   assert.equal((await cancel(a)).status, 200);
+  assert.equal((await refund(a)).status, 200, 'the paid ticket is refunded, which returns its stock');
   assert.equal((await kitchenStatus(b, 'PREPARING')).status, 200);
   assert.equal((await api('PATCH', `/orders/${b}/status`, { status: 'CANCELLED' })).status, 200);
 
@@ -1038,7 +1086,7 @@ test('receiving a purchase order only adds stock for lines that are on that orde
   const po = await api('POST', '/inventory/purchase-orders', {
     supplierId: rows[0].id,
     notes: 'ZZT-SCENARIO',
-    items: [{ ingredientId: ING.shrimp.id, ingredientName: ING.shrimp.name, itemType: 'FOOD', orderedQuantity: 1000, unit: 'g', unitCost: 0.4 }],
+    items: [{ ingredientId: ING.shrimp.id, ingredientName: ING.shrimp.name, itemType: 'FOOD', orderedQuantity: 1000, unit: 'g' }],
   });
   assert.equal(po.status, 201, JSON.stringify(po.json));
   const line = po.json.data.items[0];

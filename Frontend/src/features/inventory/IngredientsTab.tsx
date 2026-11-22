@@ -10,7 +10,9 @@ import type {
   TransactionType,
 } from './inventoryTypes'
 import { FOOD_CATEGORIES, PACKAGING_CATEGORIES, MEASUREMENT_UNITS } from './inventoryTypes'
+import { getStandardFullStock } from './actualInventoryData'
 import {
+  fromBaseUnit,
   toBaseUnit,
   unitsConvert as doUnitsConvert,
   unitsMismatch as doUnitsMismatch,
@@ -38,7 +40,6 @@ import {
   cx,
   fieldAria,
   formatDate,
-  formatPeso,
   formatQty,
   movementLabel,
 } from './ui'
@@ -152,7 +153,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   const [formCurrentStock, setFormCurrentStock] = useState<number | ''>('')
   const [formMinStock, setFormMinStock] = useState<number | ''>('')
   const [formReorderQty, setFormReorderQty] = useState<number | ''>('')
-  const [formCost, setFormCost] = useState<number | ''>('')
   const [formSupplierId, setFormSupplierId] = useState<string>('')
   const [formStorageNotes, setFormStorageNotes] = useState('')
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -257,7 +257,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     setFormCurrentStock('')
     setFormMinStock('')
     setFormReorderQty('')
-    setFormCost('')
     setFormSupplierId('')
     setFormStorageNotes('')
     setFormErrors({})
@@ -280,7 +279,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     setFormCurrentStock(item.currentStock)
     setFormMinStock(item.minStockLevel)
     setFormReorderQty(item.preferredRestockQty)
-    setFormCost(item.costPerUnit || '')
     setFormSupplierId(item.supplierId || '')
     setFormStorageNotes(item.storageNotes || '')
     setFormErrors({})
@@ -319,7 +317,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     else if (Number(formMinStock) < 0) errors.minStock = 'Minimum level cannot be negative.'
     if (formReorderQty === '') errors.reorderQty = 'Enter how much you usually reorder.'
     else if (Number(formReorderQty) <= 0) errors.reorderQty = 'Reorder quantity must be more than 0.'
-    if (formCost !== '' && Number(formCost) < 0) errors.cost = 'Cost cannot be negative.'
     return errors
   }
 
@@ -327,7 +324,7 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   useEffect(() => {
     if (formTouched) setFormErrors(computeFormErrors())
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formTouched, formName, formCurrentStock, formMinStock, formReorderQty, formCost, formItemType])
+  }, [formTouched, formName, formCurrentStock, formMinStock, formReorderQty, formItemType])
 
   const handleSaveIngredient = (e: React.FormEvent) => {
     e.preventDefault()
@@ -358,7 +355,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
         currentStock: updatedStock,
         minStockLevel: minLevel,
         preferredRestockQty: Number(formReorderQty) || 0,
-        costPerUnit: Number(formCost) || 0,
         supplierId: formSupplierId || undefined,
         supplierName: selectedSupplier ? selectedSupplier.name : undefined,
         storageNotes: formStorageNotes.trim() || undefined,
@@ -375,7 +371,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
         currentStock: Number(formCurrentStock) || 0,
         minStockLevel: Number(formMinStock) || 0,
         preferredRestockQty: Number(formReorderQty) || 0,
-        costPerUnit: Number(formCost) || 0,
         supplierId: formSupplierId || undefined,
         supplierName: selectedSupplier ? selectedSupplier.name : undefined,
         storageNotes: formStorageNotes.trim() || undefined,
@@ -386,18 +381,55 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
   }
 
   /* ---------------------------------------------- Stock movement handlers */
+  const defaultPurchaseUnit = (item: Ingredient): string => {
+    const fullBase = getStandardFullStock(item)
+    if (item.baseUnit === 'g' && fullBase >= 1000) return 'kg'
+    return item.baseUnit
+  }
+
+  const getRecommendedRestockBaseQty = (item: Ingredient): number => {
+    const fullBase = getStandardFullStock(item)
+    const shortfall = Math.round((fullBase - item.currentStock) * 1000) / 1000
+    return shortfall > 0 ? shortfall : fullBase
+  }
+
+  const handleQuickRestockItem = (item: Ingredient) => {
+    const fullBase = getStandardFullStock(item)
+    const deltaBase = getRecommendedRestockBaseQty(item)
+    const unit = defaultPurchaseUnit(item)
+    const qtyInUnit = fromBaseUnit(deltaBase, unit, item.baseUnit)
+    const conversionNote = doUnitsConvert(unit, item.baseUnit)
+      ? ` (${formatQty(qtyInUnit)} ${unit} converted to ${formatQty(deltaBase)} ${item.baseUnit})`
+      : ''
+    const sellerNote = item.supplierName ? ` from ${item.supplierName}` : ''
+    const targetNote =
+      item.currentStock < fullBase
+        ? `Quick restock to standard full stock (${formatQty(fullBase)} ${item.baseUnit})`
+        : `Quick restock (+${formatQty(deltaBase)} ${item.baseUnit})`
+    const reasonText = `${targetNote}: Purchased ${formatQty(qtyInUnit)} ${unit}${conversionNote}${sellerNote} • Date: ${today()}`
+
+    onAdjustStock(item.id, deltaBase, reasonText, {
+      seller: item.supplierName || undefined,
+      purchaseDate: today(),
+      movementType: 'STOCK_RECEIVED',
+    })
+  }
+
   const handleOpenStockModal = (item?: Ingredient, mode: 'PURCHASE' | 'DEDUCT' = 'PURCHASE') => {
     const targetItem = item || (ingredients.length > 0 ? ingredients[0] : null)
     if (targetItem) {
+      const unit = defaultPurchaseUnit(targetItem)
+      const recBase = getRecommendedRestockBaseQty(targetItem)
       setSelectedStockItemId(targetItem.id)
-      setPurchaseUnit(targetItem.baseUnit === 'g' ? 'kg' : targetItem.baseUnit)
+      setPurchaseUnit(unit)
+      setPurchaseQty(mode === 'PURCHASE' ? fromBaseUnit(recBase, unit, targetItem.baseUnit) : '')
       setSellerMarket(targetItem.supplierName || '')
     } else {
       setSelectedStockItemId('')
       setPurchaseUnit('kg')
+      setPurchaseQty('')
       setSellerMarket('')
     }
-    setPurchaseQty('')
     setDeductQty('')
     setPurchaseDate(today())
     setStockModalMode(mode)
@@ -411,6 +443,71 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
     () => ingredients.find((i) => i.id === selectedStockItemId) || null,
     [ingredients, selectedStockItemId]
   )
+
+  const quickRestockPresets = useMemo(() => {
+    if (!selectedStockItem) return []
+    const baseUnit = selectedStockItem.baseUnit
+    const fullBase = getStandardFullStock(selectedStockItem)
+    const reorderBase =
+      selectedStockItem.preferredRestockQty > 0 ? selectedStockItem.preferredRestockQty : fullBase
+    const shortfallBase = Math.max(0, Math.round((fullBase - selectedStockItem.currentStock) * 1000) / 1000)
+    const isDiscrete = !['g', 'kg', 'ml', 'L'].includes(baseUnit)
+    const halfBase = isDiscrete
+      ? Math.max(1, Math.round(fullBase / 2))
+      : Math.round((fullBase / 2) * 1000) / 1000
+    const doubleBase = fullBase * 2
+
+    const presetUnit =
+      purchaseUnit && !doUnitsMismatch(purchaseUnit, baseUnit)
+        ? purchaseUnit
+        : defaultPurchaseUnit(selectedStockItem)
+
+    const items: Array<{ id: string; label: string; baseQty: number; unitQty: number; unit: string; hint: string }> = []
+    const seen = new Set<number>()
+
+    const pushPreset = (id: string, label: string, baseQty: number, hint: string) => {
+      if (!(baseQty > 0) || seen.has(baseQty)) return
+      seen.add(baseQty)
+      items.push({
+        id,
+        label,
+        baseQty,
+        unitQty: fromBaseUnit(baseQty, presetUnit, baseUnit),
+        unit: presetUnit,
+        hint,
+      })
+    }
+
+    if (shortfallBase > 0 && shortfallBase < fullBase) {
+      pushPreset(
+        'fill-full',
+        'Fill to full',
+        shortfallBase,
+        `Tops up balance to ${formatQty(fullBase)} ${baseUnit}`
+      )
+    }
+
+    pushPreset(
+      'full-stock',
+      shortfallBase === fullBase ? 'Full stock' : '+Full stock',
+      fullBase,
+      `Standard full stock (${formatQty(fullBase)} ${baseUnit})`
+    )
+
+    if (reorderBase !== fullBase) {
+      pushPreset(
+        'reorder-qty',
+        '+Reorder qty',
+        reorderBase,
+        `Standard reorder batch (${formatQty(reorderBase)} ${baseUnit})`
+      )
+    }
+
+    pushPreset('half-full', '+½ full', halfBase, `Half of standard full stock`)
+    pushPreset('double-full', '+2× full', doubleBase, `Double standard full stock`)
+
+    return items
+  }, [selectedStockItem, purchaseUnit])
 
   const purchaseDelta =
     selectedStockItem && Number(purchaseQty) > 0
@@ -734,7 +831,15 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                             items={[
                               { label: 'View details', icon: 'eye', onSelect: () => setDetailId(item.id) },
                               { label: 'Edit item', icon: 'edit', onSelect: () => handleOpenEditModal(item) },
-                              { label: 'Restock', icon: 'restock', onSelect: () => handleOpenStockModal(item, 'PURCHASE') },
+                              {
+                                label:
+                                  item.currentStock < getStandardFullStock(item)
+                                    ? `Quick restock to full (+${formatQty(getRecommendedRestockBaseQty(item))} ${item.baseUnit})`
+                                    : `Quick restock (+${formatQty(getRecommendedRestockBaseQty(item))} ${item.baseUnit})`,
+                                icon: 'restock',
+                                onSelect: () => handleQuickRestockItem(item),
+                              },
+                              { label: 'Restock…', icon: 'restock', onSelect: () => handleOpenStockModal(item, 'PURCHASE') },
                               { label: 'Record usage or loss', icon: 'usage', onSelect: () => handleOpenStockModal(item, 'DEDUCT') },
                               {
                                 label: 'Delete item',
@@ -817,15 +922,20 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                 />
               </div>
               <p className="mt-2 text-[13px] text-[var(--inv-text-3)]">
-                Minimum {formatQty(detailItem.minStockLevel)} {detailItem.baseUnit}
-                {detailItem.status !== 'IN_STOCK' && (
-                  <>
-                    {' '}
-                    · suggested reorder {formatQty(detailItem.preferredRestockQty)} {detailItem.baseUnit}
-                  </>
-                )}
+                Minimum {formatQty(detailItem.minStockLevel)} {detailItem.baseUnit} · Standard full stock{' '}
+                {formatQty(getStandardFullStock(detailItem))} {detailItem.baseUnit}
               </p>
-              <div className="mt-4 flex gap-2">
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon="restock"
+                  onClick={() => handleQuickRestockItem(detailItem)}
+                >
+                  {detailItem.currentStock < getStandardFullStock(detailItem)
+                    ? `Quick restock to full (+${formatQty(getRecommendedRestockBaseQty(detailItem))} ${detailItem.baseUnit})`
+                    : `Quick restock (+${formatQty(getRecommendedRestockBaseQty(detailItem))} ${detailItem.baseUnit})`}
+                </Button>
                 <Button size="sm" variant="secondary" icon="usage" onClick={() => handleOpenStockModal(detailItem, 'DEDUCT')}>
                   Record usage
                 </Button>
@@ -842,18 +952,16 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                 <dd>{detailItem.baseUnit}</dd>
               </div>
               <div>
+                <dt>Standard full stock</dt>
+                <dd>
+                  {formatQty(getStandardFullStock(detailItem))} {detailItem.baseUnit}
+                </dd>
+              </div>
+              <div>
                 <dt>Reorder quantity</dt>
                 <dd>
                   {formatQty(detailItem.preferredRestockQty)} {detailItem.baseUnit}
                 </dd>
-              </div>
-              <div>
-                <dt>Unit cost</dt>
-                <dd>{detailItem.costPerUnit ? formatPeso(detailItem.costPerUnit) : '—'}</dd>
-              </div>
-              <div>
-                <dt>Stock value</dt>
-                <dd>{formatPeso(detailItem.currentStock * (detailItem.costPerUnit || 0))}</dd>
               </div>
               <div>
                 <dt>Supplier</dt>
@@ -1076,28 +1184,6 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
               </div>
             </Field>
           </div>
-          <Field
-            label="Unit cost"
-            htmlFor="ing-cost"
-            optional
-            error={formErrors.cost}
-            hint={`Price per ${formUnit}. Used for stock value, recipe cost and waste reports.`}
-          >
-            <div className="inv-input-group">
-              <span className="inv-input-prefix">₱</span>
-              <input
-                {...fieldAria('ing-cost', formErrors.cost, true)}
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="any"
-                className="inv-input has-prefix"
-                placeholder="0.00"
-                value={formCost}
-                onChange={(e) => setFormCost(e.target.value === '' ? '' : Number(e.target.value))}
-              />
-            </div>
-          </Field>
         </div>
 
         <div className="inv-form-section space-y-4">
@@ -1180,8 +1266,13 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                 setSelectedStockItemId(newId)
                 const found = ingredients.find((i) => i.id === newId)
                 if (found) {
-                  setPurchaseUnit(found.baseUnit === 'g' ? 'kg' : found.baseUnit)
-                  if (!sellerMarket && found.supplierName) setSellerMarket(found.supplierName)
+                  const unit = defaultPurchaseUnit(found)
+                  setPurchaseUnit(unit)
+                  if (stockModalMode === 'PURCHASE') {
+                    const recBase = getRecommendedRestockBaseQty(found)
+                    setPurchaseQty(fromBaseUnit(recBase, unit, found.baseUnit))
+                  }
+                  if (found.supplierName) setSellerMarket(found.supplierName)
                 }
               }}
             >
@@ -1210,19 +1301,79 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
           </Field>
 
           {selectedStockItem && (
-            <div className="flex items-center justify-between gap-3 rounded-lg bg-[var(--inv-surface-2)] px-3.5 py-2.5 text-sm">
-              <span className="text-[var(--inv-text-3)]">On hand now</span>
-              <span className="flex items-center gap-2">
-                <b className="font-semibold text-[var(--inv-text)]">
-                  {formatQty(selectedStockItem.currentStock)} {selectedStockItem.baseUnit}
-                </b>
-                <StockStatusBadge status={selectedStockItem.status} />
-              </span>
+            <div className="rounded-lg bg-[var(--inv-surface-2)] px-3.5 py-2.5 text-sm space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[var(--inv-text-3)]">On hand now</span>
+                <span className="flex items-center gap-2">
+                  <b className="font-semibold text-[var(--inv-text)]">
+                    {formatQty(selectedStockItem.currentStock)} {selectedStockItem.baseUnit}
+                  </b>
+                  <StockStatusBadge status={selectedStockItem.status} />
+                </span>
+              </div>
+              {stockModalMode === 'PURCHASE' && (
+                <div className="flex items-center justify-between gap-3 border-t border-[var(--inv-border)] pt-2 text-[13px]">
+                  <span className="text-[var(--inv-text-3)]">Standard full stock</span>
+                  <span className="text-[var(--inv-text-2)]">
+                    <b className="font-semibold text-[var(--inv-text)]">
+                      {formatQty(getStandardFullStock(selectedStockItem))} {selectedStockItem.baseUnit}
+                    </b>
+                    {selectedStockItem.baseUnit === 'g' && getStandardFullStock(selectedStockItem) >= 1000 && (
+                      <span className="text-[var(--inv-text-3)]">
+                        {' '}({formatQty(getStandardFullStock(selectedStockItem) / 1000)} kg)
+                      </span>
+                    )}
+                    {selectedStockItem.currentStock < getStandardFullStock(selectedStockItem) && (
+                      <span className="text-[var(--inv-text-3)]">
+                        {' '}· needs {formatQty(Math.round((getStandardFullStock(selectedStockItem) - selectedStockItem.currentStock) * 1000) / 1000)} {selectedStockItem.baseUnit}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
           {stockModalMode === 'PURCHASE' ? (
             <>
+              {selectedStockItem && quickRestockPresets.length > 0 && (
+                <div className="inv-field">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inv-label">Quick restock</span>
+                    <span className="text-[12px] text-[var(--inv-text-3)]">
+                      Click to set quantity
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick restock presets">
+                    {quickRestockPresets.map((preset) => {
+                      const isSelected =
+                        purchaseUnit === preset.unit &&
+                        purchaseQty !== '' &&
+                        Math.abs(Number(purchaseQty) - preset.unitQty) < 0.0001
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          className="inv-chip"
+                          aria-pressed={isSelected}
+                          title={preset.hint}
+                          onClick={() => {
+                            setPurchaseUnit(preset.unit)
+                            setPurchaseQty(preset.unitQty)
+                            setStockErrors((prev) => ({ ...prev, purchaseQty: '', purchaseUnit: '' }))
+                          }}
+                        >
+                          <span>{preset.label}</span>
+                          <span className="font-semibold">
+                            {formatQty(preset.unitQty)} {preset.unit}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="inv-grid-2">
                 <Field label="Quantity bought" htmlFor="stk-purchaseQty" required error={stockErrors.purchaseQty}>
                   <input
@@ -1242,7 +1393,20 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                     {...fieldAria('stk-purchaseUnit', stockErrors.purchaseUnit)}
                     className="inv-select"
                     value={purchaseUnit}
-                    onChange={(e) => setPurchaseUnit(e.target.value)}
+                    onChange={(e) => {
+                      const nextUnit = e.target.value
+                      if (
+                        selectedStockItem &&
+                        purchaseQty !== '' &&
+                        Number(purchaseQty) > 0 &&
+                        !doUnitsMismatch(purchaseUnit, selectedStockItem.baseUnit) &&
+                        !doUnitsMismatch(nextUnit, selectedStockItem.baseUnit)
+                      ) {
+                        const baseVal = toBaseUnit(Number(purchaseQty), purchaseUnit, selectedStockItem.baseUnit)
+                        setPurchaseQty(fromBaseUnit(baseVal, nextUnit, selectedStockItem.baseUnit))
+                      }
+                      setPurchaseUnit(nextUnit)
+                    }}
                   >
                     {selectedStockItem && !PURCHASE_UNITS.some((u) => u.value === selectedStockItem.baseUnit) && (
                       <option value={selectedStockItem.baseUnit}>{selectedStockItem.baseUnit}</option>

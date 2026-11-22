@@ -16,6 +16,8 @@ import { AdminCreateTransactionModal } from '../components/AdminCreateTransactio
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { PosModifyOrderModal } from '../components/PosModifyOrderModal'
 import { CancelConfirmModal } from '../components/CancelConfirmModal'
+import { CashRefundModal } from '../components/CashRefundModal'
+import { readRefundAccountability, refundActorLabel } from '../utils/refundAccountability'
 import { NoticeModal } from '../components/NoticeModal'
 import { useProductImages } from '../utils/useProductImages'
 import { PosIcon, type PosIconName } from '../components/PosIcon'
@@ -192,6 +194,11 @@ export const POS: React.FC = () => {
   const [modifyingPosOrder, setModifyingPosOrder] = useState<any | null>(null)
   const [orderToCancel, setOrderToCancel] = useState<any | null>(null)
   const [isCancellingOrder, setIsCancellingOrder] = useState(false)
+  // A cancelled POS ticket was paid for in cash at the counter, so cancelling it leaves money in
+  // the drawer that belongs to the customer. This is the order waiting for that hand-back.
+  const [orderToRefund, setOrderToRefund] = useState<any | null>(null)
+  const [isRefundingOrder, setIsRefundingOrder] = useState(false)
+  const [refundError, setRefundError] = useState<string | null>(null)
   const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null)
 
   const handleDeletePosOrder = async (orderId: string) => {
@@ -483,7 +490,13 @@ export const POS: React.FC = () => {
   const handleConfirmCancel = async () => {
     if (!orderToCancel) return
     const orderId = orderToCancel.id || orderToCancel.ref
+    const cancelledOrder = orderToCancel
     setIsCancellingOrder(true)
+
+    // A counter ticket was paid for the moment it was rung up, so cancelling it does not finish
+    // it: the backend holds it open (and keeps its ingredients reserved) until the cash is handed
+    // back. `requiresRefund` is how it says so.
+    let requiresRefund = false
 
     try {
       const res = await fetch(`${API_BASE_URL}/user-flow/orders/${orderId}/cancel`, {
@@ -500,6 +513,7 @@ export const POS: React.FC = () => {
         setOrderToCancel(null)
         return
       }
+      requiresRefund = Boolean(resData?.requiresRefund)
     } catch {}
 
     try {
@@ -507,7 +521,9 @@ export const POS: React.FC = () => {
       if (stored) {
         const parsed = JSON.parse(stored)
         const updated = parsed.map((o: any) =>
-          o.id === orderId || o.ref === orderId ? { ...o, status: 'CANCELLED' } : o
+          o.id === orderId || o.ref === orderId
+            ? { ...o, status: requiresRefund ? 'CANCEL_REQUESTED' : 'CANCELLED' }
+            : o
         )
         localStorage.setItem('seafudz_orders', JSON.stringify(updated))
       }
@@ -515,9 +531,78 @@ export const POS: React.FC = () => {
     } catch {}
 
     fetchPosOrders()
-    setPosNotification(`POS Order #${orderId} has been cancelled successfully.`)
     setIsCancellingOrder(false)
     setOrderToCancel(null)
+
+    if (requiresRefund) {
+      // Straight into the hand-back, so the drawer is squared away in the same breath.
+      setRefundError(null)
+      setOrderToRefund(cancelledOrder)
+      setPosNotification(`POS Order #${orderId} cancelled — hand the customer's cash back to close it.`)
+    } else {
+      setPosNotification(`POS Order #${orderId} has been cancelled successfully.`)
+    }
+  }
+
+  /**
+   * Action: Cashier records that the customer's cash went back over the counter.
+   *
+   * This is the point the transaction actually closes: the order becomes CANCELLED, the payout is
+   * written to the refunds ledger under this cashier's name (so the sales report can show who
+   * returned the money), and only now do the order's ingredients go back into inventory.
+   */
+  const handleConfirmCashRefund = async ({ note }: { note?: string }) => {
+    if (!orderToRefund) return
+    const orderId = orderToRefund.id || orderToRefund.ref
+    const staffName = currentUser?.fullname || currentUser?.username
+    if (!staffName) {
+      setRefundError('No signed-in staff name found. Please sign in again before recording a cash refund.')
+      return
+    }
+
+    setIsRefundingOrder(true)
+    setRefundError(null)
+
+    try {
+      const headers = await getAuthHeaders()
+      const res = await fetch(`${API_BASE_URL}/assistant/orders/${orderId}/process-cancellation-refund`, {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({
+          refundMethod: 'CASH',
+          cashHandedBack: true,
+          refundReference: note,
+          processedByName: staffName,
+          processedByRole: currentUser?.role?.toLowerCase() || 'cashier',
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setRefundError(data?.message || 'Could not record the cash refund. Please try again.')
+        setIsRefundingOrder(false)
+        return
+      }
+
+      try {
+        const stored = localStorage.getItem('seafudz_orders')
+        if (stored) {
+          const parsed = JSON.parse(stored)
+          const updated = parsed.map((o: any) =>
+            o.id === orderId || o.ref === orderId ? { ...o, status: 'CANCELLED' } : o
+          )
+          localStorage.setItem('seafudz_orders', JSON.stringify(updated))
+        }
+        notifyOrderSync()
+      } catch {}
+
+      setOrderToRefund(null)
+      fetchPosOrders()
+      setPosNotification(`Cash returned for Order #${orderId}. Recorded under ${staffName} and the stock is back in inventory.`)
+    } catch {
+      setRefundError('Could not reach the server. Please try again.')
+    } finally {
+      setIsRefundingOrder(false)
+    }
   }
 
   // Action: Cashier marks a ready on-site order as completed/served (ONLY enabled when kitchen marks it ready)
@@ -853,7 +938,7 @@ export const POS: React.FC = () => {
           : posStatusFilter === 'completed'
           ? ['COMPLETED', 'SERVED', 'DELIVERED'].includes(s)
           : posStatusFilter === 'cancelled'
-          ? ['CANCELLED', 'KITCHEN_REJECTED'].includes(s)
+          ? ['CANCELLED', 'CANCEL_REQUESTED', 'KITCHEN_REJECTED'].includes(s)
           : true
 
       if (!matchesFilter) return false
@@ -1499,7 +1584,11 @@ export const POS: React.FC = () => {
 
                 {paginatedPosOrders.map((ord, idx) => {
                   const s = (ord.status || '').toUpperCase()
-                  const isCancelled = s === 'CANCELLED' || s === 'KITCHEN_REJECTED'
+                  const isCancelled = s === 'CANCELLED' || s === 'CANCEL_REQUESTED' || s === 'KITCHEN_REJECTED'
+                  // A cancelled ticket that was paid for owes the customer money until a cashier
+                  // hands it back, and the order's ingredients stay reserved until they do.
+                  const refund = readRefundAccountability(ord)
+                  const owesCash = isCancelled && (refund.state === 'PENDING' || s === 'CANCEL_REQUESTED')
                   const isCompleted = ['COMPLETED', 'SERVED', 'DELIVERED'].includes(s)
                   const isReady = ['READY', 'PREPARED', 'READY TO SERVE'].includes(s)
                   const isCooking = ['PREPARING', 'COOKING', 'IN_PROCESS'].includes(s)
@@ -1527,7 +1616,9 @@ export const POS: React.FC = () => {
                               </span>
                               <span
                                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
-                                  isCancelled
+                                  owesCash
+                                    ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                    : isCancelled
                                     ? 'bg-neutral-100 text-neutral-600 border-neutral-300'
                                     : isCompleted
                                     ? 'bg-neutral-100 text-neutral-700 border-neutral-300'
@@ -1542,7 +1633,9 @@ export const POS: React.FC = () => {
                                     takes the pill's own colour. "Ready" no longer pulses — a counter
                                     full of blinking badges is noise, and the tone already says it. */}
                                 <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-                                {isCancelled ? 'Cancelled' : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In kitchen'}
+                                {isCancelled
+                                  ? (owesCash ? 'Cancelled · cash owed' : 'Cancelled')
+                                  : isCompleted ? 'Completed' : isReady ? 'Ready' : isCooking ? 'Cooking' : 'In kitchen'}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-semibold text-neutral-500">
@@ -1652,11 +1745,34 @@ export const POS: React.FC = () => {
                           ) : null}
 
                           {isCancelled && (
-                            <div className="text-left xl:text-right text-xs font-bold text-neutral-400 py-0.5">
-                              <span className="bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-500 text-[11px]">
-                                Order Cancelled
-                              </span>
-                            </div>
+                            owesCash ? (
+                              <div className="flex flex-col items-start xl:items-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRefundError(null)
+                                    setOrderToRefund(ord)
+                                  }}
+                                  className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3.5 py-1.5 rounded-xl text-xs transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                                >
+                                  <PosIcon name="cash" className="h-3.5 w-3.5" /> Return cash
+                                </button>
+                                <span className="text-[11px] font-semibold text-amber-700">
+                                  ₱{(refund.amount || orderTotalNum).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} still owed · stock held
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="text-left xl:text-right text-xs font-bold text-neutral-400 py-0.5">
+                                <span className="bg-neutral-100 px-2.5 py-1 rounded-lg border border-neutral-200 text-neutral-500 text-[11px]">
+                                  Order Cancelled
+                                </span>
+                                {refund.state === 'COMPLETED' && (
+                                  <span className="block mt-1 text-[11px] font-semibold text-emerald-700">
+                                    Cash returned{refundActorLabel(refund) ? ` · ${refundActorLabel(refund)}` : ''}
+                                  </span>
+                                )}
+                              </div>
+                            )
                           )}
 
                           {isCompleted && (
@@ -2329,6 +2445,29 @@ export const POS: React.FC = () => {
         onClose={() => setOrderToCancel(null)}
         onConfirm={handleConfirmCancel}
         isCancelling={isCancellingOrder}
+      />
+
+      {/* CASH HAND-BACK MODAL — what actually closes a paid-for cancellation */}
+      <CashRefundModal
+        isOpen={Boolean(orderToRefund)}
+        orderId={orderToRefund ? (orderToRefund.ref || orderToRefund.id) : null}
+        orderType={orderToRefund?.type || 'On-Site Order'}
+        amount={(() => {
+          if (!orderToRefund) return 0
+          const owed = readRefundAccountability(orderToRefund).amount
+          if (owed > 0) return owed
+          const t = orderToRefund.total
+          return typeof t === 'number' ? t : parseFloat(String(t || 0).replace(/[^0-9.-]+/g, '')) || 0
+        })()}
+        staffName={currentUser?.fullname || currentUser?.username}
+        staffRole={currentUser?.role?.toLowerCase() || 'cashier'}
+        isSubmitting={isRefundingOrder}
+        error={refundError}
+        onClose={() => {
+          setOrderToRefund(null)
+          setRefundError(null)
+        }}
+        onConfirm={handleConfirmCashRefund}
       />
 
       {/* Proof of Delivery Image Preview Modal */}

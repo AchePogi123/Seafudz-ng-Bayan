@@ -5,6 +5,14 @@ import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { subscribeOrderSync } from '../utils/orderSync'
 import { countsAsSale } from '../utils/salesRecognition'
+import {
+    isCancelledOrder,
+    readRefundAccountability,
+    refundActorLabel,
+    refundMethodLabel,
+    refundSummaryLine,
+    type RefundAccountability,
+} from '../utils/refundAccountability'
 import { AdminCreateTransactionModal } from '../components/AdminCreateTransactionModal'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { AdminBackupModal } from '../components/AdminBackupModal'
@@ -116,6 +124,9 @@ export interface LiveTransaction {
   deliveryFee?: number
   riderCashReceived?: number
   riderName?: string
+  /** Where this transaction's money stands if it was cancelled: see `refundAccountability`. */
+  refund?: RefundAccountability
+  cancelledAt?: string
 }
 
 interface SummaryData {
@@ -129,7 +140,18 @@ interface SummaryData {
         gcash: { total: number; count: number }
         maya: { total: number; count: number }
         hybrid: { total: number; count: number }
-        cod: { total: number; count: number }
+    }
+    /**
+     * Cancelled orders are not revenue, but a cancelled order that was paid for is money the
+     * restaurant is holding until somebody hands it back, so the register accounts for both
+     * halves: what was returned, and what is still owed.
+     */
+    cancellations: {
+        count: number
+        refundedCount: number
+        refundedAmount: number
+        awaitingCount: number
+        awaitingAmount: number
     }
 }
 
@@ -288,8 +310,8 @@ const SalesReportAdmin: React.FC = () => {
             gcash: { total: 0, count: 0 },
             maya: { total: 0, count: 0 },
             hybrid: { total: 0, count: 0 },
-            cod: { total: 0, count: 0 },
         },
+        cancellations: { count: 0, refundedCount: 0, refundedAmount: 0, awaitingCount: 0, awaitingAmount: 0 },
     })
 
     // Admin CRUD Modal states
@@ -340,8 +362,8 @@ const SalesReportAdmin: React.FC = () => {
                 gcash: { total: 0, count: 0 },
                 maya: { total: 0, count: 0 },
                 hybrid: { total: 0, count: 0 },
-                cod: { total: 0, count: 0 },
             },
+            cancellations: { count: 0, refundedCount: 0, refundedAmount: 0, awaitingCount: 0, awaitingAmount: 0 },
         })
     }
 
@@ -444,6 +466,8 @@ const SalesReportAdmin: React.FC = () => {
                 (dbO.deliveries && Array.isArray(dbO.deliveries) && dbO.deliveries.find((d: any) => d.delivery_proof || d.deliveryProof)?.deliveryProof)
             ),
             status: dbO.status || 'Completed',
+            refund: readRefundAccountability(dbO),
+            cancelledAt: readString(dbO.cancelled_at, dbO.cancelledAt),
         }
     }, [])
 
@@ -494,8 +518,8 @@ const SalesReportAdmin: React.FC = () => {
                 if (json.success && json.data) {
                     const d = json.data
                     const b = d.breakdown || {}
-                    const cashTotal = Number(b.cash?.total || 0) + Number(b.cod?.total || 0)
-                    const cashCount = Number(b.cash?.count || 0) + Number(b.cod?.count || 0)
+                    const cashTotal = Number(b.cash?.total || 0)
+                    const cashCount = Number(b.cash?.count || 0)
                     const gcashTotal = Number(b.gcash?.total || 0) + Number(b.maya?.total || 0)
                     const gcashCount = Number(b.gcash?.count || 0) + Number(b.maya?.count || 0)
                     const hybridTotal = Number(b.hybrid?.total || 0)
@@ -512,7 +536,13 @@ const SalesReportAdmin: React.FC = () => {
                             gcash: { total: gcashTotal, count: gcashCount },
                             maya: { total: Number(b.maya?.total || 0), count: Number(b.maya?.count || 0) },
                             hybrid: { total: hybridTotal, count: hybridCount },
-                            cod: { total: Number(b.cod?.total || 0), count: Number(b.cod?.count || 0) },
+                        },
+                        cancellations: {
+                            count: Number(d.cancellations?.count || 0),
+                            refundedCount: Number(d.cancellations?.refundedCount || 0),
+                            refundedAmount: Number(d.cancellations?.refundedAmount || 0),
+                            awaitingCount: Number(d.cancellations?.awaitingRefundCount || 0),
+                            awaitingAmount: Number(d.cancellations?.awaitingRefundAmount || 0),
                         },
                     })
                     return
@@ -572,13 +602,27 @@ const SalesReportAdmin: React.FC = () => {
                 gcash: { total: 0, count: 0 },
                 maya: { total: 0, count: 0 },
                 hybrid: { total: 0, count: 0 },
-                cod: { total: 0, count: 0 },
             }
 
             let grossRevenue = 0
             let validOrdersCount = 0
+            const cancellations = { count: 0, refundedCount: 0, refundedAmount: 0, awaitingCount: 0, awaitingAmount: 0 }
 
             orders.forEach((order: any) => {
+                // A cancelled order is not income, but it is not nothing either: if it was paid
+                // for, the money is owed until a named member of staff hands it back.
+                if (isCancelledOrder(order.status ?? order.orderStatus ?? order.order_status)) {
+                    const refund = readRefundAccountability(order)
+                    cancellations.count += 1
+                    if (refund.state === 'COMPLETED') {
+                        cancellations.refundedCount += 1
+                        cancellations.refundedAmount += refund.amount
+                    } else if (refund.state === 'PENDING') {
+                        cancellations.awaitingCount += 1
+                        cancellations.awaitingAmount += refund.amount
+                    }
+                }
+
                 // Only finished transactions are income. Orders still moving through the
                 // flow are work in progress, and cancelled / rejected ones never sold.
                 if (!countsAsSale(order)) return
@@ -607,12 +651,9 @@ const SalesReportAdmin: React.FC = () => {
                 } else if (payment.includes('gcash') || payment.includes('online') || payment.includes('card') || payment.includes('maya')) {
                     breakdown.gcash.total += total
                     breakdown.gcash.count += 1
-                } else if (payment.includes('cod')) {
-                    breakdown.cod.total += total
-                    breakdown.cod.count += 1
-                    breakdown.cash.total += total
-                    breakdown.cash.count += 1
                 } else {
+                    // A legacy row still labelled COD was cash that arrived at the door.
+
                     breakdown.cash.total += total
                     breakdown.cash.count += 1
                 }
@@ -625,6 +666,11 @@ const SalesReportAdmin: React.FC = () => {
                 vatCollected: 0,
                 averageOrderValue: validOrdersCount > 0 ? grossRevenue / validOrdersCount : 0,
                 breakdown,
+                cancellations: {
+                    ...cancellations,
+                    refundedAmount: Math.round(cancellations.refundedAmount * 100) / 100,
+                    awaitingAmount: Math.round(cancellations.awaitingAmount * 100) / 100,
+                },
             })
         } catch (err) {
             console.warn('Failed to calculate sales summary:', err)
@@ -707,6 +753,8 @@ const SalesReportAdmin: React.FC = () => {
                                     riderName: o.riderName || o.rider_name || undefined,
                                     paymentReceipt: readString(o.paymentReceipt, o.payment_receipt) || undefined,
                                     deliveryProof: readString(o.deliveryProof, o.delivery_proof) || undefined,
+                                    refund: readRefundAccountability(o),
+                                    cancelledAt: readString(o.cancelled_at, o.cancelledAt),
                                 }
                                 orderMap.set(tx.id, tx)
                             }
@@ -742,6 +790,9 @@ const SalesReportAdmin: React.FC = () => {
                                 referenceNumber: dbO.referenceNumber || existing?.referenceNumber || dbO.paymentReference || existing?.paymentReference,
                                 paymentReceipt: dbO.paymentReceipt || existing?.paymentReceipt,
                                 deliveryProof: dbO.deliveryProof || existing?.deliveryProof,
+                                // The ledger's own view of the payout wins over a cached copy.
+                                refund: dbO.refund?.state !== 'NONE' ? dbO.refund : (existing?.refund ?? dbO.refund),
+                                cancelledAt: dbO.cancelledAt || existing?.cancelledAt,
                             })
                         }
                     })
@@ -850,7 +901,7 @@ const SalesReportAdmin: React.FC = () => {
             label: 'Cash',
             value: summaryData.breakdown.cash.total,
             count: summaryData.breakdown.cash.count,
-            note: 'Register and COD',
+            note: 'Counter and pick-up cash',
         },
         {
             key: 'GCash',
@@ -952,6 +1003,56 @@ const SalesReportAdmin: React.FC = () => {
                         </button>
                     ))}
                 </div>
+
+                {/* Cancellations are the other half of the day's money: an order that was paid for
+                    and then cancelled is a debt until a named person hands the cash or the
+                    transfer back, and that is exactly what the register has to be able to prove. */}
+                {summaryData.cancellations.count > 0 && (
+                    <Card className="print:hidden">
+                        <CardHeader
+                            title="Cancellations &amp; money returned"
+                            description={`${summaryData.cancellations.count} cancelled ${summaryData.cancellations.count === 1 ? 'order' : 'orders'} ${activePeriodLabel.toLowerCase()} — a paid-for cancellation is only closed once staff have returned the money`}
+                        />
+                        <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2">
+                            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-3.5">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[13px] font-semibold text-emerald-900">Money returned</span>
+                                    <Badge tone="success" dot>
+                                        {summaryData.cancellations.refundedCount.toLocaleString()} settled
+                                    </Badge>
+                                </div>
+                                <div className="mt-1 text-2xl font-bold tracking-tight text-emerald-950">
+                                    {peso(summaryData.cancellations.refundedAmount)}
+                                </div>
+                                <p className="mt-0.5 text-[13px] text-emerald-800/80">
+                                    Paid back out by the assistant or the cashier, each payout signed and traceable.
+                                </p>
+                            </div>
+                            <div
+                                className={`rounded-2xl border p-3.5 ${
+                                    summaryData.cancellations.awaitingCount > 0
+                                        ? 'border-amber-300 bg-amber-50/70'
+                                        : 'border-neutral-200 bg-neutral-50/70'
+                                }`}
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[13px] font-semibold text-neutral-800">Still owed</span>
+                                    <Badge tone={summaryData.cancellations.awaitingCount > 0 ? 'warning' : 'neutral'} dot>
+                                        {summaryData.cancellations.awaitingCount.toLocaleString()} waiting
+                                    </Badge>
+                                </div>
+                                <div className="mt-1 text-2xl font-bold tracking-tight text-neutral-900">
+                                    {peso(summaryData.cancellations.awaitingAmount)}
+                                </div>
+                                <p className="mt-0.5 text-[13px] text-neutral-500">
+                                    {summaryData.cancellations.awaitingCount > 0
+                                        ? 'Cancelled but not refunded yet. The stock stays reserved until the money is handed back.'
+                                        : 'Every cancelled order in this period has been settled with the customer.'}
+                                </p>
+                            </div>
+                        </div>
+                    </Card>
+                )}
 
                 <div id="print-area">
                     {/* Print Only Header */}
@@ -1099,6 +1200,21 @@ const SalesReportAdmin: React.FC = () => {
                                                         <Badge tone={statusTone(tx.status)} dot>
                                                             {statusLabel(tx.status)}
                                                         </Badge>
+                                                        {/* A cancelled row says what became of the
+                                                            customer's money, not just that it ended. */}
+                                                        {isCancelledOrder(tx.status) && tx.refund && tx.refund.state !== 'NONE' && (
+                                                            <div className="mt-1">
+                                                                {tx.refund.state === 'COMPLETED' ? (
+                                                                    <Badge tone="success" title={refundSummaryLine(tx.refund)}>
+                                                                        Refunded{refundActorLabel(tx.refund) ? ` · ${refundActorLabel(tx.refund)}` : ''}
+                                                                    </Badge>
+                                                                ) : (
+                                                                    <Badge tone="warning" title="The customer has not been paid back yet.">
+                                                                        Refund owed {peso(tx.refund.amount)}
+                                                                    </Badge>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </td>
                                                     <td className="is-actions print:hidden">
                                                         <div className="flex items-center justify-end gap-1">
@@ -1324,6 +1440,122 @@ const SalesReportAdmin: React.FC = () => {
                                     )}
                                 </div>
                             )}
+
+                            {/* Cancelled transaction: where the customer's money ended up.
+                                A cancellation is not finished when the order is marked cancelled —
+                                it is finished when somebody has handed the money back, so this card
+                                names that person, the form it went back in, and their proof. */}
+                            {isCancelledOrder(selectedTransaction.status) && (() => {
+                                const refund = selectedTransaction.refund ?? { state: 'NONE' as const, amount: 0 }
+                                const settled = refund.state === 'COMPLETED'
+                                const owed = refund.state === 'PENDING'
+                                const actor = refundActorLabel(refund)
+                                const tone = settled
+                                    ? 'border-emerald-200 bg-emerald-50/70'
+                                    : owed
+                                        ? 'border-amber-300 bg-amber-50/70'
+                                        : 'border-neutral-200 bg-neutral-50/70'
+
+                                return (
+                                    <div className={`rounded-2xl border p-3.5 space-y-2.5 ${tone}`}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="text-xs font-bold text-neutral-900">Cancelled transaction</span>
+                                            <Badge tone={settled ? 'success' : owed ? 'warning' : 'neutral'} dot>
+                                                {settled ? 'Money returned' : owed ? 'Money not returned yet' : 'Nothing was owed'}
+                                            </Badge>
+                                        </div>
+
+                                        <p className="text-[13px] font-medium text-neutral-700">
+                                            {refundSummaryLine(refund)}
+                                        </p>
+
+                                        {refund.state !== 'NONE' && (
+                                            <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[13px]">
+                                                <div>
+                                                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                                                        {settled ? 'Amount returned' : 'Amount owed'}
+                                                    </dt>
+                                                    <dd className="font-bold text-neutral-900">{peso(refund.amount)}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                                                        Returned as
+                                                    </dt>
+                                                    <dd className="font-semibold text-neutral-800">{refundMethodLabel(refund)}</dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                                                        Handed back by
+                                                    </dt>
+                                                    <dd className="font-semibold text-neutral-800">
+                                                        {actor || (settled ? 'Not recorded' : 'Nobody yet')}
+                                                    </dd>
+                                                </div>
+                                                <div>
+                                                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                                                        {settled ? 'Returned on' : 'Cancelled on'}
+                                                    </dt>
+                                                    <dd className="font-semibold text-neutral-800">
+                                                        {(() => {
+                                                            const stamp = settled ? refund.at : selectedTransaction.cancelledAt
+                                                            if (!stamp) return '—'
+                                                            const d = new Date(stamp)
+                                                            return isNaN(d.getTime()) ? '—' : d.toLocaleString()
+                                                        })()}
+                                                    </dd>
+                                                </div>
+                                            </dl>
+                                        )}
+
+                                        {refund.reference && (
+                                            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2">
+                                                <span className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 block">
+                                                    Refund reference
+                                                </span>
+                                                <span className="font-mono text-xs font-bold text-neutral-900 break-all">
+                                                    {refund.reference}
+                                                </span>
+                                            </div>
+                                        )}
+
+                                        {refund.receipt ? (
+                                            <div className="flex items-center justify-between gap-3 rounded-xl border border-white/70 bg-white/80 px-3 py-2">
+                                                <div className="flex min-w-0 items-center gap-3">
+                                                    <img
+                                                        src={refund.receipt}
+                                                        alt="Proof the refund was sent"
+                                                        onClick={() => setPreviewReceiptUrl(refund.receipt || null)}
+                                                        className="h-12 w-12 shrink-0 cursor-pointer rounded-xl border border-neutral-300 object-cover shadow-2xs transition-opacity hover:opacity-85"
+                                                    />
+                                                    <div className="min-w-0">
+                                                        <span className="block text-xs font-bold text-neutral-900">Refund proof</span>
+                                                        <p className="truncate text-[11px] text-neutral-500">
+                                                            Screenshot of the money going back to the customer
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <Button
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    onClick={() => setPreviewReceiptUrl(refund.receipt || null)}
+                                                >
+                                                    View picture
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            refund.state !== 'NONE' && (
+                                                <p className="text-[11px] font-medium text-neutral-500">
+                                                    {(refund.method || '').toUpperCase() === 'CASH'
+                                                        ? 'Cash handed over the counter, so there is no screenshot — the named cashier is the record.'
+                                                        : owed
+                                                            ? 'No proof yet: nothing has been sent back.'
+                                                            : 'No screenshot was attached to this payout.'}
+                                                </p>
+                                            )
+                                        )}
+                                    </div>
+                                )
+                            })()}
 
                             {/* Payment Proof Receipt Screenshot Card */}
                             {selectedTransaction.paymentReceipt && (

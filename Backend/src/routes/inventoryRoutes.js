@@ -41,7 +41,6 @@ const mapIngredient = (r) => ({
   currentStock: num(r.current_stock),
   minStockLevel: num(r.min_stock_level),
   preferredRestockQty: num(r.preferred_restock_qty),
-  costPerUnit: num(r.cost_per_unit),
   supplierId: r.supplier_id || undefined,
   supplierName: r.supplier_name || undefined,
   storageNotes: r.storage_notes || undefined,
@@ -124,7 +123,6 @@ function buildRecipes(recipeRows, ingRows, pkgRows) {
       ingredientName: r.ingredient_name,
       portionQuantity: num(r.portion_quantity),
       unit: r.unit,
-      estimatedCost: num(r.estimated_cost),
     });
     ings.set(r.product_id, list);
   }
@@ -141,7 +139,6 @@ function buildRecipes(recipeRows, ingRows, pkgRows) {
       fulfillmentType: r.fulfillment_type,
       scope: r.scope,
       sharedCapacity: r.shared_capacity ? num(r.shared_capacity) : undefined,
-      estimatedCost: num(r.estimated_cost),
       notes: r.notes || undefined,
     });
     pkgs.set(r.product_id, list);
@@ -155,10 +152,6 @@ function buildRecipes(recipeRows, ingRows, pkgRows) {
     ingredients: ings.get(r.product_id) || [],
     packagingRequirements: pkgs.get(r.product_id) || [],
     preparationInstructions: r.preparation_instructions || undefined,
-    totalFoodCost: num(r.total_food_cost),
-    totalPackagingCost: num(r.total_packaging_cost),
-    totalRawCost: num(r.total_raw_cost),
-    grossMarginPercent: num(r.gross_margin_percent),
     isConfigured: Boolean(r.is_configured),
     updatedAt: iso(r.updated_at),
   }));
@@ -280,7 +273,6 @@ function validateIngredientBody(b) {
     ['currentStock', 'Stock'],
     ['minStockLevel', 'Minimum level'],
     ['preferredRestockQty', 'Reorder quantity'],
-    ['costPerUnit', 'Unit cost'],
   ]) {
     if (b[key] !== undefined && b[key] !== null && num(b[key], NaN) < 0) {
       throw new HttpError(400, `${label} cannot be negative.`, 'VALIDATION');
@@ -347,11 +339,11 @@ router.post('/inventory/ingredients', ...guard, wrap(async (req, res) => {
     const { rows } = await client.query(
       `INSERT INTO inventory_ingredients
          (id, name, sku, item_type, category, base_unit, current_stock, min_stock_level, preferred_restock_qty,
-          cost_per_unit, supplier_id, supplier_name, storage_notes, status, last_restocked_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+          supplier_id, supplier_name, storage_notes, status, last_restocked_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
       [
         id, name, b.sku || null, b.itemType, b.category || 'Other', b.baseUnit, stock, min,
-        num(b.preferredRestockQty), num(b.costPerUnit), b.supplierId || null, b.supplierName || null,
+        num(b.preferredRestockQty), b.supplierId || null, b.supplierName || null,
         b.storageNotes || null, stockStatus(stock, min), stock > 0 ? new Date() : null,
       ]
     );
@@ -392,11 +384,11 @@ router.put('/inventory/ingredients/:id', ...guard, wrap(async (req, res) => {
     await client.query(
       `UPDATE inventory_ingredients SET
          name=$2, item_type=$3, category=$4, base_unit=$5, min_stock_level=$6, preferred_restock_qty=$7,
-         cost_per_unit=$8, supplier_id=$9, supplier_name=$10, storage_notes=$11, updated_at=NOW()
+         supplier_id=$8, supplier_name=$9, storage_notes=$10, updated_at=NOW()
        WHERE id=$1`,
       [
         current.id, name, b.itemType, b.category || current.category, b.baseUnit, min, num(b.preferredRestockQty),
-        num(b.costPerUnit), b.supplierId || null, b.supplierName || null, b.storageNotes || null,
+        b.supplierId || null, b.supplierName || null, b.storageNotes || null,
       ]
     );
     // Changing the counted stock is recorded as a correction so history always adds up
@@ -554,7 +546,6 @@ router.put('/inventory/recipes/:productId', ...guard, wrap(async (req, res) => {
     if (prev) {
       if (prev.unit !== i.unit) throw new HttpError(400, `"${i.ingredientName}" is listed twice with different units.`, 'VALIDATION');
       prev.portionQuantity += portion;
-      prev.estimatedCost = num(prev.estimatedCost) + num(i.estimatedCost);
     } else {
       merged.set(i.ingredientId, { ...i, portionQuantity: portion });
     }
@@ -564,36 +555,34 @@ router.put('/inventory/recipes/:productId', ...guard, wrap(async (req, res) => {
     await client.query(
       `INSERT INTO product_recipes
          (product_id, product_name, product_category, product_price, yield_servings, preparation_instructions,
-          total_food_cost, total_packaging_cost, total_raw_cost, gross_margin_percent, is_configured, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE,NOW())
+          is_configured, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,TRUE,NOW())
        ON CONFLICT (product_id) DO UPDATE SET
          product_name=EXCLUDED.product_name, product_category=EXCLUDED.product_category, product_price=EXCLUDED.product_price,
          yield_servings=EXCLUDED.yield_servings, preparation_instructions=EXCLUDED.preparation_instructions,
-         total_food_cost=EXCLUDED.total_food_cost, total_packaging_cost=EXCLUDED.total_packaging_cost,
-         total_raw_cost=EXCLUDED.total_raw_cost, gross_margin_percent=EXCLUDED.gross_margin_percent,
          is_configured=TRUE, updated_at=NOW()`,
       [productId, b.productName || productId, b.productCategory || null, num(b.productPrice), Math.max(1, num(b.yieldServings, 1)),
-       b.preparationInstructions || null, num(b.totalFoodCost), num(b.totalPackagingCost), num(b.totalRawCost), num(b.grossMarginPercent)]
+       b.preparationInstructions || null]
     );
     await client.query(`DELETE FROM recipe_ingredients WHERE product_id = $1`, [productId]);
     await client.query(`DELETE FROM recipe_packaging WHERE product_id = $1`, [productId]);
     for (const i of merged.values()) {
       await client.query(
-        `INSERT INTO recipe_ingredients (product_id, ingredient_id, ingredient_name, portion_quantity, unit, estimated_cost)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [productId, i.ingredientId, i.ingredientName || i.ingredientId, i.portionQuantity, i.unit, num(i.estimatedCost)]
+        `INSERT INTO recipe_ingredients (product_id, ingredient_id, ingredient_name, portion_quantity, unit)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [productId, i.ingredientId, i.ingredientName || i.ingredientId, i.portionQuantity, i.unit]
       );
     }
     for (const p of b.packagingRequirements || []) {
       if (!p.packagingId) throw new HttpError(400, 'Choose a packaging item on every packaging line.', 'VALIDATION');
       await client.query(
         `INSERT INTO recipe_packaging
-           (id, product_id, packaging_id, packaging_name, category, quantity, unit, fulfillment_type, scope, shared_capacity, estimated_cost, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+           (id, product_id, packaging_id, packaging_name, category, quantity, unit, fulfillment_type, scope, shared_capacity, notes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           String(p.id || shortId('prq')).slice(0, 50), productId, p.packagingId, p.packagingName || p.packagingId,
           p.category || null, num(p.quantity, 1), p.unit, p.fulfillmentType || 'TAKEOUT', p.scope || 'PER_ITEM',
-          p.scope === 'SHARED_ORDER' ? Math.max(1, num(p.sharedCapacity, 1)) : null, num(p.estimatedCost), p.notes || null,
+          p.scope === 'SHARED_ORDER' ? Math.max(1, num(p.sharedCapacity, 1)) : null, p.notes || null,
         ]
       );
     }
@@ -772,15 +761,15 @@ router.post('/inventory/replace-all', ...guard, wrap(async (req, res) => {
     for (const i of b.ingredients) {
       await client.query(
         `INSERT INTO inventory_ingredients (id, name, sku, item_type, category, base_unit, current_stock, min_stock_level,
-           preferred_restock_qty, cost_per_unit, supplier_id, supplier_name, storage_notes, status, last_restocked_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           preferred_restock_qty, supplier_id, supplier_name, storage_notes, status, last_restocked_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, sku=EXCLUDED.sku, item_type=EXCLUDED.item_type, category=EXCLUDED.category,
            base_unit=EXCLUDED.base_unit, current_stock=EXCLUDED.current_stock, min_stock_level=EXCLUDED.min_stock_level,
-           preferred_restock_qty=EXCLUDED.preferred_restock_qty, cost_per_unit=EXCLUDED.cost_per_unit, supplier_id=EXCLUDED.supplier_id,
+           preferred_restock_qty=EXCLUDED.preferred_restock_qty, supplier_id=EXCLUDED.supplier_id,
            supplier_name=EXCLUDED.supplier_name, storage_notes=EXCLUDED.storage_notes, status=EXCLUDED.status,
            last_restocked_at=EXCLUDED.last_restocked_at, updated_at=NOW()`,
         [i.id, i.name, i.sku || null, i.itemType || 'FOOD', i.category, i.baseUnit, num(i.currentStock), num(i.minStockLevel),
-         num(i.preferredRestockQty), num(i.costPerUnit),
+         num(i.preferredRestockQty),
          b.suppliers.some((s) => s.id === i.supplierId) ? i.supplierId : null, i.supplierName || null, i.storageNotes || null,
          stockStatus(num(i.currentStock), num(i.minStockLevel)), i.lastRestockedAt || null]
       );
@@ -790,27 +779,27 @@ router.post('/inventory/replace-all', ...guard, wrap(async (req, res) => {
       if (!r.ingredients?.length || !r.ingredients.every((x) => ids.has(x.ingredientId))) continue; // skip recipes pointing at missing items
       await client.query(
         `INSERT INTO product_recipes (product_id, product_name, product_category, product_price, yield_servings, preparation_instructions,
-           total_food_cost, total_packaging_cost, total_raw_cost, gross_margin_percent, is_configured)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+           is_configured)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [r.productId, r.productName, r.productCategory || null, num(r.productPrice), num(r.yieldServings, 1), r.preparationInstructions || null,
-         num(r.totalFoodCost), num(r.totalPackagingCost), num(r.totalRawCost), num(r.grossMarginPercent), r.isConfigured !== false]
+         r.isConfigured !== false]
       );
       const seen = new Set();
       for (const x of r.ingredients) {
         if (seen.has(x.ingredientId)) continue;
         seen.add(x.ingredientId);
         await client.query(
-          `INSERT INTO recipe_ingredients (product_id, ingredient_id, ingredient_name, portion_quantity, unit, estimated_cost) VALUES ($1,$2,$3,$4,$5,$6)`,
-          [r.productId, x.ingredientId, x.ingredientName, num(x.portionQuantity), x.unit, num(x.estimatedCost)]
+          `INSERT INTO recipe_ingredients (product_id, ingredient_id, ingredient_name, portion_quantity, unit) VALUES ($1,$2,$3,$4,$5)`,
+          [r.productId, x.ingredientId, x.ingredientName, num(x.portionQuantity), x.unit]
         );
       }
       for (const p of r.packagingRequirements || []) {
         if (!ids.has(p.packagingId)) continue;
         await client.query(
-          `INSERT INTO recipe_packaging (id, product_id, packaging_id, packaging_name, category, quantity, unit, fulfillment_type, scope, shared_capacity, estimated_cost, notes)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          `INSERT INTO recipe_packaging (id, product_id, packaging_id, packaging_name, category, quantity, unit, fulfillment_type, scope, shared_capacity, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
           [String(p.id || shortId('prq')).slice(0, 50), r.productId, p.packagingId, p.packagingName, p.category || null, num(p.quantity, 1), p.unit,
-           p.fulfillmentType || 'TAKEOUT', p.scope || 'PER_ITEM', p.scope === 'SHARED_ORDER' ? num(p.sharedCapacity, 1) : null, num(p.estimatedCost), p.notes || null]
+           p.fulfillmentType || 'TAKEOUT', p.scope || 'PER_ITEM', p.scope === 'SHARED_ORDER' ? num(p.sharedCapacity, 1) : null, p.notes || null]
         );
       }
     }

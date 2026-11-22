@@ -4,6 +4,7 @@ import { API_BASE_URL } from '../utils/api'
 import { getActiveUser } from '../cryptography/cryptoSession'
 import { AdminEditTransactionModal } from '../components/AdminEditTransactionModal'
 import { StaffIcon } from '../components/PosIcon'
+import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { fetchRoadDistances } from '../utils/locationServices'
 import {
@@ -12,7 +13,39 @@ import {
   METRO_MANILA_LOCATIONS,
   SEAFUDZ_FLAGSHIP_STORE,
   type DeliveryJob,
+  type DeliveryOrderItem,
 } from '../utils/riderDispatchAlgorithms'
+
+const CATALOG_PRICE_BY_ID = new Map<string, number>(
+  CLIENT_MENU_ITEMS.map((m) => [m.id.toLowerCase(), Number(m.price) || 0])
+)
+const CATALOG_PRICE_BY_NAME = new Map<string, number>(
+  CLIENT_MENU_ITEMS.map((m) => [m.name.trim().toLowerCase(), Number(m.price) || 0])
+)
+
+function resolveItemUnitPrice(item: DeliveryOrderItem, order?: DeliveryJob): number {
+  const direct = Number(item.price ?? item.unit_price ?? item.unitPrice ?? 0)
+  if (Number.isFinite(direct) && direct > 0) return direct
+
+  const qty = Math.max(1, Number(item.quantity) || 1)
+  const sub = Number(item.subtotal ?? 0)
+  if (Number.isFinite(sub) && sub > 0) return Math.round((sub / qty) * 100) / 100
+
+  const byId =
+    (item.productId && CATALOG_PRICE_BY_ID.get(String(item.productId).toLowerCase())) ||
+    (item.id && CATALOG_PRICE_BY_ID.get(String(item.id).toLowerCase()))
+  if (byId && byId > 0) return byId
+
+  const byName = CATALOG_PRICE_BY_NAME.get((item.name || '').trim().toLowerCase())
+  if (byName && byName > 0) return byName
+
+  if (order && order.items.length === 1 && Number(order.total) > 0) {
+    const fee = Number(order.deliveryFee) || 0
+    const net = Math.max(0, Number(order.total) - fee)
+    return Math.round(((net > 0 ? net : Number(order.total)) / qty) * 100) / 100
+  }
+  return 0
+}
 
 function compressImageToBase64(file: File, maxDim = 1200, quality = 0.82): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -395,6 +428,12 @@ export const RideRoleDemo: React.FC = () => {
   const [deliveryProofError, setDeliveryProofError] = useState<string | null>(null)
   const [isProcessingDeliveryProof, setIsProcessingDeliveryProof] = useState<boolean>(false)
   const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null)
+  const [expandedItemLists, setExpandedItemLists] = useState<Record<string, boolean>>({})
+
+  const MAX_VISIBLE_ITEMS = 5
+  const toggleItemListExpanded = (listKey: string) => {
+    setExpandedItemLists((prev) => ({ ...prev, [listKey]: !prev[listKey] }))
+  }
 
   useEffect(() => {
     setDeliveryProofImage(null)
@@ -692,20 +731,28 @@ export const RideRoleDemo: React.FC = () => {
                 return
               }
 
-              let items: Array<{ name: string; quantity: number }> = []
+              let items: DeliveryOrderItem[] = []
               if (Array.isArray(o.items) && o.items.length > 0) {
                 items = o.items
                   .filter((i: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(i.item_status || i.itemStatus || '').toUpperCase()))
                   .map((i: any) => ({
+                    id: i.id || i.product_id || i.productId,
+                    productId: i.product_id || i.productId || i.id,
                     name: i.name || i.product_name_snapshot || i.item?.name || 'Seafood Dish',
                     quantity: Number(i.quantity || 1),
+                    price: Number(i.price ?? i.unit_price ?? i.unitPrice ?? i.item?.price ?? 0) || undefined,
+                    subtotal: Number(i.subtotal ?? 0) || undefined,
                   }))
               } else if (Array.isArray(o.cartItems) && o.cartItems.length > 0) {
                 items = o.cartItems
                   .filter((ci: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(ci.item_status || ci.itemStatus || '').toUpperCase()))
                   .map((ci: any) => ({
+                    id: ci.item?.id || ci.id || ci.product_id,
+                    productId: ci.product_id || ci.item?.id || ci.id,
                     name: ci.item?.name || ci.name || ci.product_name_snapshot || 'Seafood Dish',
                     quantity: Number(ci.quantity || 1),
+                    price: Number(ci.price ?? ci.unit_price ?? ci.unitPrice ?? ci.item?.price ?? 0) || undefined,
+                    subtotal: Number(ci.subtotal ?? 0) || undefined,
                   }))
               } else if (typeof o.items === 'string' && o.items.trim()) {
                 items = o.items.split(',').map((part: string) => {
@@ -1207,9 +1254,13 @@ export const RideRoleDemo: React.FC = () => {
     return (
       bundledDeliveries.find((b) =>
         b.orders.some((o) => o.id === customerDetailsOrder.id || o.ref === customerDetailsOrder.ref)
-      ) || null
+      ) ||
+      pastBundles.find((b) =>
+        b.orders.some((o) => o.id === customerDetailsOrder.id || o.ref === customerDetailsOrder.ref)
+      ) ||
+      null
     )
-  }, [customerDetailsOrder, bundledDeliveries])
+  }, [customerDetailsOrder, bundledDeliveries, pastBundles])
 
 
   /**
@@ -1469,14 +1520,69 @@ export const RideRoleDemo: React.FC = () => {
 
                     {/* What is in the bag. A bundle is just a stop with more lines. */}
                     <div className="divide-y divide-neutral-100 border-t border-neutral-100 px-4">
-                      {shown.map((ord) => (
-                        <div key={ord.id} className="flex items-baseline justify-between gap-4 py-2.5 text-[13px]">
-                          <span className="min-w-0 truncate text-neutral-700">
-                            {ord.items.map((i) => `${i.quantity}× ${i.name}`).join(', ') || 'Package'}
-                          </span>
-                          <span className="shrink-0 font-mono text-[11px] tabular-nums text-neutral-400">{ord.ref}</span>
-                        </div>
-                      ))}
+                      {shown.map((ord) => {
+                        const expandedUnits = ord.items.flatMap((i, itemIdx) => {
+                          const qty = Math.max(1, Number(i.quantity) || 1)
+                          const unitPrice = resolveItemUnitPrice(i, ord)
+                          return Array.from({ length: qty }, (_, unitIdx) => ({
+                            key: `${i.name}-${itemIdx}-${unitIdx}`,
+                            name: i.name,
+                            unitPrice,
+                          }))
+                        })
+                        const listKey = `card:${ord.id}`
+                        const isListExpanded = Boolean(expandedItemLists[listKey])
+                        const hasOverflow = expandedUnits.length > MAX_VISIBLE_ITEMS
+                        const visibleUnits =
+                          hasOverflow && !isListExpanded
+                            ? expandedUnits.slice(0, MAX_VISIBLE_ITEMS)
+                            : expandedUnits
+                        const hiddenUnitsCount = expandedUnits.length - MAX_VISIBLE_ITEMS
+
+                        return (
+                          <div key={ord.id} className="py-2.5 text-[13px] space-y-1.5">
+                            <div className="flex items-center justify-between gap-4">
+                              <span className="font-mono text-[11px] tabular-nums text-neutral-400">{ord.ref}</span>
+                              {bundle.isBundle && (
+                                <span className="text-xs font-medium tabular-nums text-neutral-500">{peso(ord.total)}</span>
+                              )}
+                            </div>
+                            <ul className="space-y-1">
+                              {visibleUnits.map((u) => (
+                                <li key={u.key} className="flex items-baseline justify-between gap-4">
+                                  <span className="min-w-0 truncate text-neutral-700">
+                                    <span className="tabular-nums text-neutral-500">1×</span>{' '}
+                                    <span className="font-medium text-neutral-800">{u.name}</span>
+                                  </span>
+                                  {u.unitPrice > 0 && (
+                                    <span className="shrink-0 text-xs font-medium tabular-nums text-neutral-800">
+                                      {peso(u.unitPrice)}
+                                    </span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                            {hasOverflow && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  toggleItemListExpanded(listKey)
+                                }}
+                                className="inline-flex cursor-pointer items-center gap-1 pt-0.5 text-xs font-medium text-neutral-500 transition-colors hover:text-neutral-900"
+                              >
+                                {isListExpanded ? (
+                                  <span>Show less</span>
+                                ) : (
+                                  <span>
+                                    … See more (+{hiddenUnitsCount} more {hiddenUnitsCount === 1 ? 'item' : 'items'})
+                                  </span>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
                       {hidden > 0 && (
                         <p className="py-2.5 text-[13px] text-neutral-500">
                           and {hidden} more {hidden === 1 ? 'package' : 'packages'}
@@ -1639,9 +1745,14 @@ export const RideRoleDemo: React.FC = () => {
 
                 {/* What to carry */}
                 <section className="overflow-hidden rounded-2xl border border-neutral-200">
-                  <h3 className="border-b border-neutral-100 px-4 py-3 text-sm font-bold text-neutral-900">
-                    {activeBundle.isBundle ? `${activeBundle.orders.length} packages` : 'Package'}
-                  </h3>
+                  <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+                    <h3 className="text-sm font-bold text-neutral-900">
+                      {activeBundle.isBundle ? `${activeBundle.orders.length} packages` : 'Package'}
+                    </h3>
+                    <span className="text-[11px] font-medium text-neutral-500">
+                      Unit price &amp; total
+                    </span>
+                  </div>
                   <div className="divide-y divide-neutral-100">
                     {activeBundle.orders.map((ord, idx) => {
                       const ordLabel =
@@ -1652,6 +1763,34 @@ export const RideRoleDemo: React.FC = () => {
                           : ord.status === 'Out for Delivery'
                             ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                             : 'bg-amber-50 text-amber-800 border-amber-200'
+
+                      const expandedUnits = ord.items.flatMap((item, itemIdx) => {
+                        const qty = Math.max(1, Number(item.quantity) || 1)
+                        const unitPrice = resolveItemUnitPrice(item, ord)
+                        return Array.from({ length: qty }, (_, unitIdx) => ({
+                          key: `${item.name}-${itemIdx}-${unitIdx}`,
+                          name: item.name,
+                          unitPrice,
+                        }))
+                      })
+                      const modalListKey = `modal:${ord.id}`
+                      const isModalListExpanded = Boolean(expandedItemLists[modalListKey])
+                      const hasModalOverflow = expandedUnits.length > MAX_VISIBLE_ITEMS
+                      const visibleModalUnits =
+                        hasModalOverflow && !isModalListExpanded
+                          ? expandedUnits.slice(0, MAX_VISIBLE_ITEMS)
+                          : expandedUnits
+                      const hiddenModalUnitsCount = expandedUnits.length - MAX_VISIBLE_ITEMS
+
+                      const computedItemsSubtotal = Math.round(
+                        expandedUnits.reduce((sum, u) => sum + u.unitPrice, 0) * 100
+                      ) / 100
+                      const ordDeliveryFee = Number(ord.deliveryFee ?? 0)
+                      const itemsSubtotal =
+                        computedItemsSubtotal > 0
+                          ? computedItemsSubtotal
+                          : Math.max(0, Number(ord.total || 0) - ordDeliveryFee)
+
                       return (
                         <div key={ord.id} className="px-4 py-3">
                           <div className="flex items-center justify-between gap-3">
@@ -1663,16 +1802,58 @@ export const RideRoleDemo: React.FC = () => {
                               {ordLabel}
                             </span>
                           </div>
-                          <ul className="mt-2 space-y-1">
-                            {ord.items.map((item, itemIdx) => (
-                              <li key={`${item.name}-${itemIdx}`} className="flex items-baseline justify-between gap-4 text-[13px]">
-                                <span className="min-w-0 text-neutral-700">
-                                  <span className="tabular-nums text-neutral-500">{item.quantity}×</span> {item.name}
+
+                          <ul className="mt-2.5 divide-y divide-neutral-100 border-t border-neutral-100">
+                            {visibleModalUnits.map((unitItem) => (
+                              <li
+                                key={unitItem.key}
+                                className="flex items-baseline justify-between gap-4 py-2 text-[13px]"
+                              >
+                                <span className="min-w-0 font-medium text-neutral-800">
+                                  <span className="tabular-nums text-neutral-500">1×</span> {unitItem.name}
                                 </span>
+                                {unitItem.unitPrice > 0 && (
+                                  <span className="shrink-0 font-medium tabular-nums text-neutral-900">
+                                    {peso(unitItem.unitPrice)}
+                                  </span>
+                                )}
                               </li>
                             ))}
                           </ul>
-                          <p className="mt-2 text-[13px] tabular-nums text-neutral-500">{peso(ord.total)} · paid online</p>
+                          {hasModalOverflow && (
+                            <button
+                              type="button"
+                              onClick={() => toggleItemListExpanded(modalListKey)}
+                              className="mt-1 inline-flex cursor-pointer items-center gap-1 py-1 text-xs font-medium text-neutral-500 transition-colors hover:text-neutral-900"
+                            >
+                              {isModalListExpanded ? (
+                                <span>Show less</span>
+                              ) : (
+                                <span>
+                                  … See more (+{hiddenModalUnitsCount} more {hiddenModalUnitsCount === 1 ? 'item' : 'items'})
+                                </span>
+                              )}
+                            </button>
+                          )}
+
+                          {activeBundle.isBundle && (
+                            <div className="mt-1 space-y-1 border-t border-neutral-100 pt-2 text-xs text-neutral-500">
+                              <div className="flex items-baseline justify-between gap-4">
+                                <span>Items subtotal</span>
+                                <span className="tabular-nums text-neutral-700">{peso(itemsSubtotal)}</span>
+                              </div>
+                              {ordDeliveryFee > 0 && (
+                                <div className="flex items-baseline justify-between gap-4">
+                                  <span>Delivery fee</span>
+                                  <span className="tabular-nums text-neutral-700">{peso(ordDeliveryFee)}</span>
+                                </div>
+                              )}
+                              <div className="flex items-baseline justify-between gap-4 font-medium text-neutral-800">
+                                <span>Package total · paid online</span>
+                                <span className="tabular-nums">{peso(ord.total)}</span>
+                              </div>
+                            </div>
+                          )}
 
                           {/*
                             No delete here. Destroying an order from a delivery screen removes the
@@ -1695,12 +1876,39 @@ export const RideRoleDemo: React.FC = () => {
                       )
                     })}
                   </div>
-                  <div className="flex items-baseline justify-between gap-4 border-t border-neutral-100 px-4 py-3">
-                    <span className="text-[13px] text-neutral-500">Order value, already paid</span>
-                    <span className="text-sm font-semibold tabular-nums text-neutral-900">
-                      {peso(activeBundle.totalCombinedAmount)}
-                    </span>
-                  </div>
+                  {(() => {
+                    const combinedItemsSubtotal = Math.round(
+                      activeBundle.orders.reduce((sum, ord) => {
+                        const ordItemsSum = ord.items.reduce((acc, item) => {
+                          const qty = Math.max(1, Number(item.quantity) || 1)
+                          const unitPrice = resolveItemUnitPrice(item, ord)
+                          return acc + (unitPrice > 0 ? unitPrice * qty : Number(item.subtotal || 0))
+                        }, 0)
+                        return sum + (ordItemsSum > 0 ? ordItemsSum : Math.max(0, Number(ord.total || 0) - Number(ord.deliveryFee || 0)))
+                      }, 0) * 100
+                    ) / 100
+
+                    return (
+                      <div className="space-y-1.5 border-t border-neutral-100 bg-neutral-50/60 px-4 py-3">
+                        <div className="flex items-baseline justify-between gap-4 text-xs text-neutral-500">
+                          <span>Items subtotal</span>
+                          <span className="tabular-nums text-neutral-700">{peso(combinedItemsSubtotal)}</span>
+                        </div>
+                        {activeBundle.totalDeliveryFee > 0 && (
+                          <div className="flex items-baseline justify-between gap-4 text-xs text-neutral-500">
+                            <span>Delivery fee</span>
+                            <span className="tabular-nums text-neutral-700">{peso(activeBundle.totalDeliveryFee)}</span>
+                          </div>
+                        )}
+                        <div className="flex items-baseline justify-between gap-4 border-t border-neutral-200/70 pt-1.5">
+                          <span className="text-[13px] font-medium text-neutral-700">Total (paid online)</span>
+                          <span className="text-sm font-semibold tabular-nums text-neutral-900">
+                            {peso(activeBundle.totalCombinedAmount)}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </section>
 
                 {/* The photo is the one thing the rider must produce, so it sits in the flow. */}

@@ -13,9 +13,18 @@ import { useProductImages, setCachedProductImage } from '../../utils/useProductI
 import { useMenuAvailability } from '../../utils/menuAvailability'
 import { API_BASE_URL, getAuthHeaders } from '../../utils/api'
 import { notifyProductCatalogSync, subscribeProductCatalogSync } from '../../utils/orderSync'
-import type { Ingredient, IngredientCategory, MeasurementUnit, ProductRecipe, RecipeIngredient } from './inventoryTypes'
+import type {
+  FulfillmentType,
+  Ingredient,
+  IngredientCategory,
+  MeasurementUnit,
+  PackagingRequirement,
+  PackagingScope,
+  ProductRecipe,
+  RecipeIngredient,
+} from './inventoryTypes'
 import { SearchableSelect } from './SearchableSelect'
-import { FOOD_CATEGORIES, MEASUREMENT_UNITS } from './inventoryTypes'
+import { FOOD_CATEGORIES, FULFILLMENT_OPTIONS, MEASUREMENT_UNITS } from './inventoryTypes'
 import InventoryConfirmModal from './InventoryConfirmModal'
 import type { ToastMessage } from './InventoryToast'
 import {
@@ -71,18 +80,32 @@ const createRecipeLine = (): RecipeLineDraft => ({
 })
 
 /**
- * Cost of one portion. Stock is costed in the item's own base unit, so a portion measured in a
- * sibling unit (g against kg, ml against L) is converted before it is priced.
+ * A packaging line on the Add-dish form: the box, cup or bag a serving leaves the counter in.
+ *
+ * Optional, unlike the recipe — a dine-in-only dish is carried on a plate the stockroom does not
+ * track. When it IS set, it is what takes the container out of stock on every order, so the same
+ * three questions the Recipes tab asks are asked here: which item, how many, and when does it
+ * apply (order type, and whether it is one per dish or one shared by the whole order).
  */
-function portionCost(ingredient: Ingredient, quantity: number, unit: MeasurementUnit): number {
-  const perUnit = Number(ingredient.costPerUnit) || 0
-  let qtyInBaseUnit = quantity
-  if (ingredient.baseUnit === 'kg' && unit === 'g') qtyInBaseUnit = quantity / 1000
-  else if (ingredient.baseUnit === 'g' && unit === 'kg') qtyInBaseUnit = quantity * 1000
-  else if (ingredient.baseUnit === 'L' && unit === 'ml') qtyInBaseUnit = quantity / 1000
-  else if (ingredient.baseUnit === 'ml' && unit === 'L') qtyInBaseUnit = quantity * 1000
-  return Math.round(perUnit * qtyInBaseUnit * 100) / 100
+interface PackagingLineDraft {
+  lineId: string
+  packagingId: string
+  quantity: string
+  fulfillmentType: FulfillmentType
+  scope: PackagingScope
+  /** How many dishes one of these holds, when it is shared across the order. */
+  sharedCapacity: string
 }
+
+let packagingLineSeq = 0
+const createPackagingLine = (): PackagingLineDraft => ({
+  lineId: `pl-${Date.now()}-${packagingLineSeq++}`,
+  packagingId: '',
+  quantity: '1',
+  fulfillmentType: 'TAKEOUT',
+  scope: 'PER_ITEM',
+  sharedCapacity: '3',
+})
 
 export interface MenuCatalogTabProps {
   /** Live stockroom catalog — a new dish picks its recipe lines from these items. */
@@ -170,6 +193,10 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   const [recipeLines, setRecipeLines] = useState<RecipeLineDraft[]>([createRecipeLine()])
   const [recipeError, setRecipeError] = useState('')
 
+  // Packaging (optional): starts empty, so a dish that needs none says so by having none
+  const [packagingLines, setPackagingLines] = useState<PackagingLineDraft[]>([])
+  const [packagingError, setPackagingError] = useState('')
+
   // Register a missing ingredient without losing the half-filled dish form
   const [isQuickIngredientOpen, setIsQuickIngredientOpen] = useState(false)
   const [quickIngredientLineId, setQuickIngredientLineId] = useState<string | null>(null)
@@ -178,8 +205,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   const [quickUnit, setQuickUnit] = useState<MeasurementUnit>('g')
   const [quickStock, setQuickStock] = useState<number | string>('')
   const [quickMinStock, setQuickMinStock] = useState<number | string>('')
-  const [quickCost, setQuickCost] = useState<number | string>('')
-  const [quickErrors, setQuickErrors] = useState<{ name?: string; cost?: string }>({})
+  const [quickErrors, setQuickErrors] = useState<{ name?: string }>({})
   const [quickError, setQuickError] = useState('')
   const [isSavingQuickIngredient, setIsSavingQuickIngredient] = useState(false)
 
@@ -194,6 +220,11 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     [ingredients]
   )
   const hasStockroomItems = foodIngredients.length > 0
+
+  const packagingItems = useMemo(
+    () => ingredients.filter((item) => item.itemType === 'PACKAGING').sort((a, b) => a.name.localeCompare(b.name)),
+    [ingredients]
+  )
 
   const configuredRecipeIds = useMemo(
     () => new Set(recipes.filter((r) => r.isConfigured).map((r) => r.productId)),
@@ -547,6 +578,8 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     setProductFormError('')
     setRecipeLines([createRecipeLine()])
     setRecipeError('')
+    setPackagingLines([])
+    setPackagingError('')
     closeQuickIngredient()
     clearNewProductImage()
   }
@@ -587,6 +620,22 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     setRecipeLines((prev) => (prev.length <= 1 ? [createRecipeLine()] : prev.filter((line) => line.lineId !== lineId)))
   }
 
+  const updatePackagingLine = (lineId: string, patch: Partial<PackagingLineDraft>) => {
+    setPackagingError('')
+    setPackagingLines((prev) => prev.map((line) => (line.lineId === lineId ? { ...line, ...patch } : line)))
+  }
+
+  const addPackagingLine = () => {
+    setPackagingError('')
+    setPackagingLines((prev) => [...prev, createPackagingLine()])
+  }
+
+  /** Unlike an ingredient line, removing the last packaging line leaves none — that is valid. */
+  const removePackagingLine = (lineId: string) => {
+    setPackagingError('')
+    setPackagingLines((prev) => prev.filter((line) => line.lineId !== lineId))
+  }
+
   const openQuickIngredient = (lineId: string | null) => {
     setQuickIngredientLineId(lineId)
     setQuickName('')
@@ -594,7 +643,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     setQuickUnit('g')
     setQuickStock('')
     setQuickMinStock('')
-    setQuickCost('')
     setQuickErrors({})
     setQuickError('')
     setIsQuickIngredientOpen(true)
@@ -603,13 +651,11 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   const handleCreateQuickIngredient = async (event: React.FormEvent) => {
     event.preventDefault()
     const name = quickName.trim()
-    const cost = Number(quickCost)
 
-    const errors: { name?: string; cost?: string } = {}
+    const errors: { name?: string } = {}
     if (!name) errors.name = 'Give the ingredient a name.'
     else if (foodIngredients.some((item) => item.name.trim().toLowerCase() === name.toLowerCase()))
       errors.name = `${name} is already in the stockroom — pick it from the list instead.`
-    if (!Number.isFinite(cost) || cost < 0) errors.cost = 'Enter a cost, or 0 if you do not track it yet.'
     setQuickErrors(errors)
     if (Object.keys(errors).length > 0) return
 
@@ -624,7 +670,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
         currentStock: Number(quickStock) || 0,
         minStockLevel: Number(quickMinStock) || 0,
         preferredRestockQty: 0,
-        costPerUnit: cost,
       })
       if (!created) {
         setQuickError('Could not save the ingredient. Please try again.')
@@ -651,14 +696,19 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     }
   }
 
+  /** Lines that actually name an ingredient — what the footer reports back to the user. */
+  const recipeLineCount = useMemo(
+    () => recipeLines.filter((line) => line.ingredientId && Number(line.quantity) > 0).length,
+    [recipeLines]
+  )
+
   /** Validated recipe lines, or an error message naming what is still missing. */
-  const buildRecipeDraft = (): { lines: RecipeIngredient[]; totalFoodCost: number } | { error: string } => {
+  const buildRecipeDraft = (): { lines: RecipeIngredient[] } | { error: string } => {
     const filled = recipeLines.filter((line) => line.ingredientId || line.quantity.trim())
     if (filled.length === 0) return { error: 'A dish needs at least one ingredient before it can go on the menu.' }
 
     const seen = new Set<string>()
     const lines: RecipeIngredient[] = []
-    let totalFoodCost = 0
 
     for (const line of filled) {
       const ingredient = foodIngredients.find((item) => item.id === line.ingredientId)
@@ -670,35 +720,63 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
       if (seen.has(ingredient.id)) return { error: `${ingredient.name} is listed twice. Combine it into one line.` }
       seen.add(ingredient.id)
 
-      const estimatedCost = portionCost(ingredient, quantity, line.unit)
-      totalFoodCost += estimatedCost
       lines.push({
         ingredientId: ingredient.id,
         ingredientName: ingredient.name,
         portionQuantity: quantity,
         unit: line.unit,
-        estimatedCost,
       })
     }
 
-    return { lines, totalFoodCost: Math.round(totalFoodCost * 100) / 100 }
+    return { lines }
   }
 
-  const recipeCostPreview = useMemo(() => {
-    let total = 0
-    recipeLines.forEach((line) => {
-      const ingredient = foodIngredients.find((item) => item.id === line.ingredientId)
-      const quantity = Number(line.quantity)
-      if (ingredient && Number.isFinite(quantity) && quantity > 0) total += portionCost(ingredient, quantity, line.unit)
-    })
-    return Math.round(total * 100) / 100
-  }, [recipeLines, foodIngredients])
+  /**
+   * Validated packaging lines, or an error naming what is wrong. An empty list is a valid answer:
+   * the dish simply takes no container out of stock.
+   *
+   * The same item may appear more than once legitimately — a box per dish AND a bag per order, or
+   * a tray for takeout and nothing for dine-in — so only a repeat of the same item on the same
+   * order type AND scope is a mistake. That is the database's own unique key for a packaging line.
+   */
+  const buildPackagingDraft = (): { lines: PackagingRequirement[] } | { error: string } => {
+    const filled = packagingLines.filter((line) => line.packagingId || line.quantity.trim())
+    const lines: PackagingRequirement[] = []
+    const seen = new Set<string>()
 
-  const newPriceValue = Number(newProductPrice)
-  const previewMargin =
-    Number.isFinite(newPriceValue) && newPriceValue > 0 && recipeCostPreview > 0
-      ? Math.round(((newPriceValue - recipeCostPreview) / newPriceValue) * 100)
-      : null
+    for (const line of filled) {
+      const item = packagingItems.find((p) => p.id === line.packagingId)
+      if (!item) return { error: 'Choose a packaging item on every line, or remove the empty line.' }
+
+      const quantity = Number(line.quantity)
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return { error: `Enter how many ${item.name} one serving uses.` }
+      }
+
+      const key = `${item.id}:${line.fulfillmentType}:${line.scope}`
+      if (seen.has(key)) {
+        return { error: `${item.name} is listed twice for the same order type. Combine it into one line.` }
+      }
+      seen.add(key)
+
+      const capacity = Math.max(1, Math.round(Number(line.sharedCapacity) || 1))
+      lines.push({
+        // `recipe_packaging.id` is a primary key across ALL dishes, so it cannot be derived from
+        // the packaging item alone — two dishes using the same box the same way would collide.
+        id: `prq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        packagingId: item.id,
+        packagingName: item.name,
+        category: item.category as PackagingRequirement['category'],
+        quantity,
+        unit: item.baseUnit,
+        fulfillmentType: line.fulfillmentType,
+        scope: line.scope,
+        ...(line.scope === 'SHARED_ORDER' ? { sharedCapacity: capacity } : {}),
+      })
+    }
+
+    return { lines }
+  }
 
   const handleCreateProduct = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -722,9 +800,16 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
       return
     }
 
+    const packagingDraft = buildPackagingDraft()
+    if ('error' in packagingDraft) {
+      setPackagingError(packagingDraft.error)
+      return
+    }
+
     setIsSavingProduct(true)
     setProductFormError('')
     setRecipeError('')
+    setPackagingError('')
     try {
       const response = await fetch(`${API_BASE_URL}/menu`, {
         method: 'POST',
@@ -765,7 +850,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
       // follow-up rather than failing the whole creation.
       let recipeSaved = false
       if (createdProduct?.id) {
-        const totalRawCost = draft.totalFoodCost
         recipeSaved =
           (await onSaveRecipe({
             productId: String(createdProduct.id),
@@ -774,12 +858,8 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
             productPrice: price,
             yieldServings: 1,
             ingredients: draft.lines,
-            packagingRequirements: [],
+            packagingRequirements: packagingDraft.lines,
             preparationInstructions: newProductDescription.trim() || undefined,
-            totalFoodCost: draft.totalFoodCost,
-            totalPackagingCost: 0,
-            totalRawCost,
-            grossMarginPercent: price > 0 ? Math.round(((price - totalRawCost) / price) * 10000) / 100 : 0,
             isConfigured: true,
             updatedAt: new Date().toISOString(),
           })) !== false
@@ -1364,10 +1444,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
                   <span />
                 </div>
                 {recipeLines.map((line, index) => {
-                  const picked = foodIngredients.find((item) => item.id === line.ingredientId)
-                  const quantity = Number(line.quantity)
-                  const lineCost =
-                    picked && Number.isFinite(quantity) && quantity > 0 ? portionCost(picked, quantity, line.unit) : null
                   return (
                     <div
                       key={line.lineId}
@@ -1430,9 +1506,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
                           onClick={() => removeRecipeLine(line.lineId)}
                         />
                       </div>
-                      {lineCost !== null && (
-                        <p className="inv-line-meta">Costs {formatPeso(lineCost)} a serving</p>
-                      )}
                     </div>
                   )
                 })}
@@ -1443,9 +1516,8 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
                   Add ingredient
                 </Button>
                 <p className="text-[13px] text-[var(--inv-text-3)]">
-                  Ingredient cost{' '}
-                  <b className="font-semibold tabular-nums text-[var(--inv-text)]">{formatPeso(recipeCostPreview)}</b>
-                  {previewMargin !== null && <> · margin {previewMargin}%</>}
+                  <b className="font-semibold tabular-nums text-[var(--inv-text)]">{recipeLineCount}</b>{' '}
+                  {recipeLineCount === 1 ? 'ingredient' : 'ingredients'} per serving
                 </p>
               </div>
             </>
@@ -1455,6 +1527,172 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
             <p className="inv-field-error mt-3" role="alert">
               <Icon name="alertCircle" className="h-3.5 w-3.5 shrink-0" />
               {recipeError}
+            </p>
+          )}
+        </div>
+
+        {/* Packaging — what the dish leaves the counter in. Optional, because a dine-in dish is
+            carried on a plate the stockroom does not track; when it is set, every order takes the
+            container out of stock the same way it takes the ingredients. */}
+        <div className="inv-form-section">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-[var(--inv-text)]">
+                Packaging <span className="inv-optional">Optional</span>
+              </p>
+              <p className="inv-hint mt-1">
+                The box, cup or bag a serving goes out in. Leave empty for a dine-in-only dish.
+              </p>
+            </div>
+            {packagingItems.length > 0 && (
+              <Button size="sm" variant="ghost" icon="plus" onClick={addPackagingLine}>
+                Add packaging
+              </Button>
+            )}
+          </div>
+
+          {packagingItems.length === 0 ? (
+            <Notice tone="info">
+              <p className="font-semibold">No packaging in the stockroom yet.</p>
+              <p className="mt-0.5 text-sm">
+                Add boxes, cups or bags under Items first, then they can be attached to a dish.
+              </p>
+              <div className="mt-3">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    handleCloseAddProduct()
+                    onNavigateTab('ingredients')
+                  }}
+                >
+                  Go to Items
+                </Button>
+              </div>
+            </Notice>
+          ) : packagingLines.length === 0 ? (
+            <p className="text-[13px] text-[var(--inv-text-3)]">
+              No packaging attached — this dish takes nothing but its ingredients out of stock.
+            </p>
+          ) : (
+            <div className="inv-lines">
+              <div className="inv-line-head grid-cols-[minmax(0,1fr)_96px_minmax(0,160px)_minmax(0,140px)_36px]">
+                <span>Packaging</span>
+                <span>Per serving</span>
+                <span>Used for</span>
+                <span>Rule</span>
+                <span />
+              </div>
+              {packagingLines.map((line, index) => {
+                const picked = packagingItems.find((item) => item.id === line.packagingId)
+                return (
+                  <div
+                    key={line.lineId}
+                    className="inv-line grid-cols-[minmax(0,1fr)_36px] sm:grid-cols-[minmax(0,1fr)_96px_minmax(0,160px)_minmax(0,140px)_36px]"
+                  >
+                    <label className="col-span-2 sm:col-span-1">
+                      <span className="inv-line-label">Packaging</span>
+                      <SearchableSelect
+                        ariaLabel={`Packaging ${index + 1}`}
+                        value={line.packagingId}
+                        onChange={(next) => updatePackagingLine(line.lineId, { packagingId: next })}
+                        placeholder="Choose packaging"
+                        searchPlaceholder="Search boxes, cups and bags…"
+                        options={packagingItems.map((item) => ({
+                          value: item.id,
+                          label: item.name,
+                          hint: `${formatQty(item.currentStock)} ${item.baseUnit}`,
+                        }))}
+                      />
+                    </label>
+                    <label>
+                      <span className="inv-line-label">Per serving</span>
+                      <div className="inv-input-group">
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="any"
+                          className="inv-input inv-input--sm"
+                          aria-label={`Amount per serving for packaging ${index + 1}`}
+                          placeholder="1"
+                          value={line.quantity}
+                          onChange={(event) => updatePackagingLine(line.lineId, { quantity: event.target.value })}
+                        />
+                        {picked && <span className="inv-input-suffix">{picked.baseUnit}</span>}
+                      </div>
+                    </label>
+                    <label>
+                      <span className="inv-line-label">Used for</span>
+                      <select
+                        className="inv-select inv-select--sm"
+                        aria-label={`Order types for packaging ${index + 1}`}
+                        value={line.fulfillmentType}
+                        onChange={(event) =>
+                          updatePackagingLine(line.lineId, {
+                            fulfillmentType: event.target.value as FulfillmentType,
+                          })
+                        }
+                      >
+                        {FULFILLMENT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span className="inv-line-label">Rule</span>
+                      <select
+                        className="inv-select inv-select--sm"
+                        aria-label={`Rule for packaging ${index + 1}`}
+                        value={line.scope}
+                        onChange={(event) =>
+                          updatePackagingLine(line.lineId, { scope: event.target.value as PackagingScope })
+                        }
+                      >
+                        <option value="PER_ITEM">Per dish</option>
+                        <option value="SHARED_ORDER">Shared per order</option>
+                      </select>
+                    </label>
+                    <div className="flex items-end justify-end self-end sm:items-center sm:self-center">
+                      <IconButton
+                        icon="trash"
+                        tone="danger"
+                        label={`Remove packaging ${index + 1}`}
+                        onClick={() => removePackagingLine(line.lineId)}
+                      />
+                    </div>
+                    {line.scope === 'SHARED_ORDER' && (
+                      <div className="inv-line-meta">
+                        <label htmlFor={`pkg-cap-${line.lineId}`}>
+                          1 {picked ? picked.baseUnit : 'pc'} holds up to
+                        </label>
+                        <input
+                          id={`pkg-cap-${line.lineId}`}
+                          type="number"
+                          inputMode="numeric"
+                          min="1"
+                          step="1"
+                          className="inv-input inv-input--sm w-20"
+                          value={line.sharedCapacity}
+                          onChange={(event) =>
+                            updatePackagingLine(line.lineId, { sharedCapacity: event.target.value })
+                          }
+                        />
+                        <span>dishes</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {packagingError && (
+            <p className="inv-field-error mt-3" role="alert">
+              <Icon name="alertCircle" className="h-3.5 w-3.5 shrink-0" />
+              {packagingError}
             </p>
           )}
         </div>
@@ -1608,22 +1846,6 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
 
           {quickError && <Notice tone="danger">{quickError}</Notice>}
 
-          <Field label={`Cost per ${quickUnit}`} htmlFor="quick-cost" required error={quickErrors.cost}>
-            <div className="inv-input-group">
-              <span className="inv-input-prefix" aria-hidden="true">₱</span>
-              <input
-                {...fieldAria('quick-cost', quickErrors.cost)}
-                type="number"
-                inputMode="decimal"
-                min="0"
-                step="0.01"
-                className="inv-input has-prefix"
-                placeholder="0.00"
-                value={quickCost}
-                onChange={(event) => setQuickCost(event.target.value)}
-              />
-            </div>
-          </Field>
         </div>
       </Modal>
 

@@ -132,12 +132,14 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       GROUP BY LOWER(COALESCE(NULLIF(p.payment_method, ''), NULLIF(o.payment_method, ''), 'cash'))
     `;
     const paymentRes = await query(paymentSql, dateParams);
+    // Cash on Delivery is retired: an online order is prepaid by GCash and a counter ticket is
+    // paid in cash, so there is no third way money arrives and no COD column to report.
+    // A legacy row still labelled COD was cash that came in at the door, so it is counted as cash.
     const breakdown = {
       cash: { total: 0, count: 0 },
       gcash: { total: 0, count: 0 },
       maya: { total: 0, count: 0 },
       hybrid: { total: 0, count: 0 },
-      cod: { total: 0, count: 0 }
     };
     paymentRes.rows.forEach((r) => {
       const m = r.method;
@@ -150,16 +152,44 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
       } else if (m.includes('maya')) {
         breakdown.maya.total += r.total;
         breakdown.maya.count += r.count;
-      } else if (m.includes('cod')) {
-        breakdown.cod.total += r.total;
-        breakdown.cod.count += r.count;
-        breakdown.cash.total += r.total;
-        breakdown.cash.count += r.count;
       } else {
         breakdown.cash.total += r.total;
         breakdown.cash.count += r.count;
       }
     });
+
+    // Cancelled transactions are not revenue, but a cancelled order that was paid for is money the
+    // restaurant is holding on somebody else's behalf until a named member of staff hands it back.
+    // The report has to be able to show both halves: what was returned, and what is still owed.
+    const cancellationSql = `
+      SELECT
+        COUNT(*)::int AS "count",
+        COALESCE(SUM(o.total), 0)::float AS "value",
+        COUNT(CASE WHEN UPPER(COALESCE(r.status, '')) = 'COMPLETED' THEN 1 END)::int AS "refundedCount",
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(r.status, '')) = 'COMPLETED' THEN r.amount ELSE 0 END), 0)::float AS "refundedAmount",
+        COUNT(CASE WHEN UPPER(COALESCE(r.status, '')) = 'PENDING' THEN 1 END)::int AS "awaitingRefundCount",
+        COALESCE(SUM(CASE WHEN UPPER(COALESCE(r.status, '')) = 'PENDING' THEN r.amount ELSE 0 END), 0)::float AS "awaitingRefundAmount"
+      FROM orders o
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, status, amount
+        FROM refunds
+        ORDER BY order_id,
+                 CASE UPPER(status) WHEN 'COMPLETED' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,
+                 COALESCE(completed_at, created_at) DESC
+      ) r ON o.id = r.order_id
+      WHERE UPPER(o.status) IN ('CANCELLED', 'CANCEL_REQUESTED', 'KITCHEN_REJECTED') ${dateFilter}
+    `;
+    let cancellations = {
+      count: 0, value: 0,
+      refundedCount: 0, refundedAmount: 0,
+      awaitingRefundCount: 0, awaitingRefundAmount: 0,
+    };
+    try {
+      const cancelRes = await query(cancellationSql, dateParams);
+      cancellations = cancelRes.rows[0] || cancellations;
+    } catch (e) {
+      console.warn('Cancellation refund summary note:', e.message);
+    }
 
     const topDishesSql = `
       SELECT oi.product_name_snapshot AS name, 
@@ -214,12 +244,12 @@ router.get('/sales/summary', requireAuth, requireRole(['admin', 'cashier']), asy
         deliveryRevenue,
         uniqueCustomers: summary.uniqueCustomers || 0,
         breakdown,
+        cancellations,
         paymentMethods: {
           CASH: breakdown.cash.total,
           GCASH: breakdown.gcash.total,
           MAYA: breakdown.maya.total,
           HYBRID: breakdown.hybrid.total,
-          COD: breakdown.cod.total,
         },
         topDishes: topDishesRes.rows,
         categoryBreakdown: categoriesRes.rows,
@@ -251,7 +281,17 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
              COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS "deliveryProof",
              COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS delivery_proof,
              o.total AS "totalAmount",
-             o.status AS "status"
+             o.status AS "status",
+             o.cancelled_at AS "cancelledAt",
+             r.status AS "refundStatus",
+             r.amount AS "refundAmount",
+             r.refund_receipt AS "refundReceipt",
+             r.reference_number AS "refundReference",
+             r.refund_method AS "refundMethod",
+             r.processed_by AS "refundedBy",
+             r.processed_by_role AS "refundedByRole",
+             r.completed_at AS "refundedAt",
+             r.reason AS "refundReason"
       FROM orders o
       LEFT JOIN (
         SELECT DISTINCT ON (order_id) order_id, payment_method, reference_number, payment_receipt
@@ -263,6 +303,14 @@ router.get('/sales/transactions', requireAuth, requireRole(['admin', 'cashier'])
         FROM deliveries
         ORDER BY order_id, created_at DESC
       ) d ON o.id = d.order_id
+      LEFT JOIN (
+        SELECT DISTINCT ON (order_id) order_id, status, amount, refund_receipt, reference_number,
+               refund_method, processed_by, processed_by_role, completed_at, reason
+        FROM refunds
+        ORDER BY order_id,
+                 CASE UPPER(status) WHEN 'COMPLETED' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,
+                 COALESCE(completed_at, created_at) DESC
+      ) r ON o.id = r.order_id
       ORDER BY o.created_at DESC
     `;
     const { rows } = await query(sql);

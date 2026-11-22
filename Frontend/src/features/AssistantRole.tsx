@@ -455,6 +455,10 @@ export const AssistantRole: React.FC = () => {
         body: JSON.stringify({
           refundReceipt: cancellationRefundProof || undefined,
           refundReference: manualCancellationRef.trim() || undefined,
+          // Who sent the money back, so the sales report can name them against this cancellation.
+          refundMethod: 'GCASH',
+          processedByName: currentUser?.fullname || currentUser?.username,
+          processedByRole: currentUser?.role?.toLowerCase() || 'assistant',
         }),
       })
 
@@ -1001,6 +1005,8 @@ export const AssistantRole: React.FC = () => {
           resolution,
           refundReceipt: selectedOrder.refundReceipt || null,
           refundReference: finalRefundReference || null,
+          processedByName: currentUser?.fullname || currentUser?.username,
+          processedByRole: currentUser?.role?.toLowerCase() || 'assistant',
         }),
       })
       const result = await res.json().catch(() => ({}))

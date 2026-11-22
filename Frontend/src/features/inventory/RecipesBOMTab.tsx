@@ -9,7 +9,7 @@ import type {
   PackagingScope,
   PackagingCategory,
 } from './inventoryTypes'
-import { MEASUREMENT_UNITS } from './inventoryTypes'
+import { MEASUREMENT_UNITS, FULFILLMENT_OPTIONS, fulfillmentLabel } from './inventoryTypes'
 import { type MenuItem } from '../../components/MenuCard'
 import { useProductImages } from '../../utils/useProductImages'
 import InventoryConfirmModal from './InventoryConfirmModal'
@@ -123,13 +123,7 @@ export function computeRecipeServingEstimate(
   }
 }
 
-const FULFILLMENT_OPTIONS: { label: string; value: FulfillmentType }[] = [
-  { label: 'Takeout & pickup', value: 'TAKEOUT' },
-  { label: 'Delivery', value: 'DELIVERY' },
-  { label: 'Takeout, delivery & pickup', value: 'ALL' },
-  { label: 'Dine-in (special)', value: 'DINE_IN' },
-]
-const channelLabel = (v: FulfillmentType) => FULFILLMENT_OPTIONS.find((f) => f.value === v)?.label ?? v
+const channelLabel = fulfillmentLabel
 
 export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
   ingredients,
@@ -263,7 +257,6 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
                 ingredientName: defaultFood.name,
                 portionQuantity: 100,
                 unit: defaultFood.baseUnit,
-                estimatedCost: defaultFood.costPerUnit ? defaultFood.costPerUnit * 100 : 0,
               },
             ]
           : []
@@ -287,7 +280,6 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         ingredientName: defaultIng?.name || 'Raw Ingredient',
         portionQuantity: 50,
         unit: defaultIng?.baseUnit || 'g',
-        estimatedCost: defaultIng?.costPerUnit ? defaultIng.costPerUnit * 50 : 0,
       },
     ])
   }
@@ -310,12 +302,8 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         row.ingredientId = String(value)
         row.ingredientName = ing ? ing.name : 'Unknown Ingredient'
         row.unit = ing ? ing.baseUnit : 'g'
-        row.estimatedCost = ing ? ing.costPerUnit * row.portionQuantity : 0
       } else if (field === 'portionQuantity') {
-        const qty = Math.max(0, Number(value) || 0)
-        row.portionQuantity = qty
-        const ing = ingredients.find((i) => i.id === row.ingredientId)
-        row.estimatedCost = ing ? ing.costPerUnit * qty : 0
+        row.portionQuantity = Math.max(0, Number(value) || 0)
       } else if (field === 'unit') {
         row.unit = value as MeasurementUnit
       }
@@ -338,7 +326,6 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
       fulfillmentType: 'TAKEOUT',
       scope: 'PER_ITEM',
       sharedCapacity: 1,
-      estimatedCost: defaultPkg?.costPerUnit || 0,
     }
     setDraftPackaging((prev) => [...prev, newReq])
   }
@@ -362,16 +349,8 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         row.packagingName = pkg ? pkg.name : 'Packaging Material'
         row.category = (pkg?.category as PackagingCategory) || 'Trays, Bowls & Containers'
         row.unit = pkg ? pkg.baseUnit : 'pcs'
-        const costPerUnit = pkg ? pkg.costPerUnit : 0
-        const divisor = row.scope === 'SHARED_ORDER' && row.sharedCapacity ? row.sharedCapacity : 1
-        row.estimatedCost = (costPerUnit * row.quantity) / Math.max(1, divisor)
       } else if (field === 'quantity') {
-        const qty = Math.max(0.1, Number(value) || 1)
-        row.quantity = qty
-        const pkg = ingredients.find((i) => i.id === row.packagingId)
-        const costPerUnit = pkg ? pkg.costPerUnit : 0
-        const divisor = row.scope === 'SHARED_ORDER' && row.sharedCapacity ? row.sharedCapacity : 1
-        row.estimatedCost = (costPerUnit * qty) / Math.max(1, divisor)
+        row.quantity = Math.max(0.1, Number(value) || 1)
       } else if (field === 'fulfillmentType') {
         row.fulfillmentType = value as FulfillmentType
       } else if (field === 'scope') {
@@ -379,16 +358,8 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
         if (value === 'SHARED_ORDER' && !row.sharedCapacity) {
           row.sharedCapacity = 3 // default capacity e.g. 1 bag holds up to 3 items
         }
-        const pkg = ingredients.find((i) => i.id === row.packagingId)
-        const costPerUnit = pkg ? pkg.costPerUnit : 0
-        const divisor = value === 'SHARED_ORDER' && row.sharedCapacity ? row.sharedCapacity : 1
-        row.estimatedCost = (costPerUnit * row.quantity) / Math.max(1, divisor)
       } else if (field === 'sharedCapacity') {
-        const cap = Math.max(1, Number(value) || 1)
-        row.sharedCapacity = cap
-        const pkg = ingredients.find((i) => i.id === row.packagingId)
-        const costPerUnit = pkg ? pkg.costPerUnit : 0
-        row.estimatedCost = (costPerUnit * row.quantity) / cap
+        row.sharedCapacity = Math.max(1, Number(value) || 1)
       } else if (field === 'unit') {
         row.unit = value as MeasurementUnit
       } else if (field === 'notes') {
@@ -400,24 +371,8 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
     })
   }
 
-  // --- Financial Calculations ---
-  const draftTotalFoodCost = useMemo(() => {
-    return draftIngredients.reduce((sum, ing) => sum + (ing.estimatedCost || 0), 0)
-  }, [draftIngredients])
-
-  const draftTotalPackagingCost = useMemo(() => {
-    return draftPackaging.reduce((sum, pkg) => sum + (pkg.estimatedCost || 0), 0)
-  }, [draftPackaging])
-
-  const draftTotalRawCost = useMemo(() => {
-    return draftTotalFoodCost + draftTotalPackagingCost
-  }, [draftTotalFoodCost, draftTotalPackagingCost])
-
-  const draftMargin = useMemo(() => {
-    if (!activeProduct || activeProduct.price <= 0) return 0
-    const profit = activeProduct.price - draftTotalRawCost
-    return Math.max(0, Math.round((profit / activeProduct.price) * 100))
-  }, [activeProduct, draftTotalRawCost])
+  // A recipe says what a dish is made of and how much of it, nothing more: the stockroom holds no
+  // unit prices, so there is no food cost, packaging cost or margin to work out here.
 
   // Save recipe
   const handleSaveRecipe = () => {
@@ -449,10 +404,6 @@ export const RecipesBOMTab: React.FC<RecipesBOMTabProps> = ({
       ingredients: draftIngredients,
       packagingRequirements: draftPackaging,
       preparationInstructions: draftInstructions.trim(),
-      totalFoodCost: draftTotalFoodCost,
-      totalPackagingCost: draftTotalPackagingCost,
-      totalRawCost: draftTotalRawCost,
-      grossMarginPercent: draftMargin,
       isConfigured: true,
       updatedAt: new Date().toISOString(),
     }

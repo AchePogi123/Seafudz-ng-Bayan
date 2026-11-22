@@ -23,6 +23,11 @@ export function toBaseUnit(qty: number, fromUnit: string, baseUnit: string): num
   return (qty * from.factor) / to.factor
 }
 
+/** Converts a quantity expressed in `baseUnit` into `targetUnit` where the two units are related. */
+export function fromBaseUnit(baseQty: number, targetUnit: string, baseUnit: string): number {
+  return Math.round(toBaseUnit(baseQty, baseUnit, targetUnit) * 10000) / 10000
+}
+
 /** True when the two units are related but not identical, so a quantity changes on conversion. */
 export function unitsConvert(fromUnit: string, baseUnit: string): boolean {
   if (fromUnit === baseUnit) return false

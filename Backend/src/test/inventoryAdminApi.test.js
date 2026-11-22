@@ -60,11 +60,10 @@ test('state returns catalog, recipes and suppliers in the shapes the screen expe
 });
 
 test('create, restock, use, and delete an item; duplicates and overdraw are refused', { skip }, async () => {
-  const body = { name: 'ZZ Test Salt', itemType: 'FOOD', category: 'Seasonings & Sauces', baseUnit: 'g', currentStock: 100, minStockLevel: 20, preferredRestockQty: 500, costPerUnit: 0.5 };
+  const body = { name: 'ZZ Test Salt', itemType: 'FOOD', category: 'Seasonings & Sauces', baseUnit: 'g', currentStock: 100, minStockLevel: 20, preferredRestockQty: 500 };
   const created = await api('POST', '/inventory/ingredients', body);
   assert.equal(created.status, 201, JSON.stringify(created.json));
   const id = created.json.data.ingredient.id;
-  assert.equal(created.json.data.ingredient.costPerUnit, 0.5);
   assert.ok(created.json.data.transaction, 'opening stock is logged');
 
   assert.equal((await api('POST', '/inventory/ingredients', body)).status, 409, 'duplicate name');
@@ -93,13 +92,13 @@ test('an item used in a recipe cannot be deleted', { skip }, async () => {
 test('purchase order: create, receive part then the rest, stock and history follow', { skip }, async () => {
   const sup = await api('POST', '/inventory/suppliers', { name: 'ZZ Test Supplier', contactPerson: 'T', contactNumber: '0917', address: 'x', categoriesSupplied: [], leadTimeDays: 2, status: 'ACTIVE' });
   assert.equal(sup.status, 201);
-  const ing = await api('POST', '/inventory/ingredients', { name: 'ZZ Test Pepper', itemType: 'FOOD', category: 'Seasonings & Sauces', baseUnit: 'g', currentStock: 0, minStockLevel: 10, preferredRestockQty: 100, costPerUnit: 1 });
+  const ing = await api('POST', '/inventory/ingredients', { name: 'ZZ Test Pepper', itemType: 'FOOD', category: 'Seasonings & Sauces', baseUnit: 'g', currentStock: 0, minStockLevel: 10, preferredRestockQty: 100 });
   const ingId = ing.json.data.ingredient.id;
 
   const po = await api('POST', '/inventory/purchase-orders', {
     supplierId: sup.json.data.id,
     notes: 'ADMIN-API-TEST',
-    items: [{ ingredientId: ingId, ingredientName: 'ZZ Test Pepper', itemType: 'FOOD', category: 'Seasonings & Sauces', orderedQuantity: 100, unit: 'g', unitCost: 1 }],
+    items: [{ ingredientId: ingId, ingredientName: 'ZZ Test Pepper', itemType: 'FOOD', category: 'Seasonings & Sauces', orderedQuantity: 100, unit: 'g' }],
   });
   assert.equal(po.status, 201, JSON.stringify(po.json));
   assert.match(po.json.data.poNumber, /^PO-\d{4}-\d{3}$/);

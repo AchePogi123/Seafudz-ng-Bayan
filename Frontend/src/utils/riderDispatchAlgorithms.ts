@@ -4,6 +4,17 @@ export interface GeoCoordinate {
   label?: string
 }
 
+export interface DeliveryOrderItem {
+  id?: string
+  productId?: string
+  name: string
+  quantity: number
+  price?: number
+  unit_price?: number
+  unitPrice?: number
+  subtotal?: number
+}
+
 export interface DeliveryJob {
   id: string
   ref: string
@@ -13,7 +24,7 @@ export interface DeliveryJob {
   customer: string
   phone: string
   address: string
-  items: Array<{ name: string; quantity: number }>
+  items: DeliveryOrderItem[]
   total: number
   deliveryFee?: number | null
   status: 'Ready' | 'Out for Delivery' | 'Completed' | 'Preparing' | string

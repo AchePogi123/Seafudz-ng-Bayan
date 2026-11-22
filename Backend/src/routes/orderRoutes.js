@@ -147,6 +147,19 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
              COALESCE(NULLIF(o.delivery_proof, ''), NULLIF(d.delivery_proof, '')) AS "deliveryProof",
              COALESCE(o.rider_cash_received, d.rider_cash_received) AS rider_cash_received,
              p_pay.status AS payment_status,
+             o.cancelled_at,
+             -- A cancelled order that was paid for is only finished once somebody has handed the
+             -- money back, so the register carries that payout alongside the sale: its state, who
+             -- returned it, in what form, when, and the proof they recorded.
+             r_ref.status AS refund_status,
+             r_ref.amount AS refund_amount,
+             r_ref.refund_receipt,
+             r_ref.reference_number AS refund_reference,
+             r_ref.refund_method,
+             r_ref.processed_by AS refunded_by,
+             r_ref.processed_by_role AS refunded_by_role,
+             r_ref.completed_at AS refunded_at,
+             r_ref.reason AS refund_reason,
              COUNT(*) OVER() AS full_count,
              COALESCE(
                json_agg(
@@ -180,6 +193,16 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
         FROM payments
         ORDER BY order_id, created_at DESC
       ) p_pay ON o.id = p_pay.order_id
+      LEFT JOIN (
+        -- A settled refund outranks one still waiting to be paid: an order is refunded once, and
+        -- the rows before that are its history, not its current state.
+        SELECT DISTINCT ON (order_id) order_id, status, amount, refund_receipt, reference_number,
+               refund_method, processed_by, processed_by_role, completed_at, reason
+        FROM refunds
+        ORDER BY order_id,
+                 CASE UPPER(status) WHEN 'COMPLETED' THEN 0 WHEN 'PENDING' THEN 1 ELSE 2 END,
+                 COALESCE(completed_at, created_at) DESC
+      ) r_ref ON o.id = r_ref.order_id
       WHERE 1=1
     `;
     const params = [];
@@ -236,7 +259,7 @@ router.get('/orders', requireAuth, requireRole(['admin', 'cashier', 'assistant',
       }
     }
 
-    sql += ` GROUP BY o.id, o.fulfillment_type, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt ORDER BY o.created_at DESC`;
+    sql += ` GROUP BY o.id, o.fulfillment_type, o.customer_name, c.fullname, c.phone, c.delivery_address, d.delivery_address, d.status, d.rider_id, d.rider_cash_received, d.delivery_proof, r_emp.fullname, t.name, p_pay.payment_method, p_pay.status, p_pay.reference_number, p_pay.payment_receipt, r_ref.status, r_ref.amount, r_ref.refund_receipt, r_ref.reference_number, r_ref.refund_method, r_ref.processed_by, r_ref.processed_by_role, r_ref.completed_at, r_ref.reason ORDER BY o.created_at DESC`;
 
     const limitNum = limit ? Math.min(Math.max(1, parseInt(limit, 10) || 50), 300) : 50;
     let offsetNum = offset ? parseInt(offset, 10) : 0;

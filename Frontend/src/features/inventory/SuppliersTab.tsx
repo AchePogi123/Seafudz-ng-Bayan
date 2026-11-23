@@ -17,6 +17,8 @@ import {
   Segmented,
   Toolbar,
   fieldAria,
+  formatLeadTime,
+  leadTimeEditUnit,
 } from './ui'
 
 interface SuppliersTabProps {
@@ -24,6 +26,8 @@ interface SuppliersTabProps {
   onAddSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt'>) => void
   onEditSupplier: (supplier: Supplier) => void
   onDeleteSupplier: (id: string) => void
+  /** Open the Purchasing tab narrowed to one supplier's orders. */
+  onViewPurchaseOrders?: (supplierId: string) => void
 }
 
 const PAGE_SIZE = 10
@@ -33,6 +37,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   onAddSupplier,
   onEditSupplier,
   onDeleteSupplier,
+  onViewPurchaseOrders,
 }) => {
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('')
@@ -51,7 +56,8 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
   const [email, setEmail] = useState('')
   const [address, setAddress] = useState('')
   const [selectedCategories, setSelectedCategories] = useState<IngredientCategory[]>([])
-  const [leadTimeDays, setLeadTimeDays] = useState<number | ''>(2)
+  const [leadTimeValue, setLeadTimeValue] = useState<number | ''>(2)
+  const [leadTimeUnit, setLeadTimeUnit] = useState<'hours' | 'days'>('days')
   const [notes, setNotes] = useState('')
   const [status, setStatus] = useState<'ACTIVE' | 'INACTIVE'>('ACTIVE')
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -83,7 +89,8 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
     setEmail('')
     setAddress('')
     setSelectedCategories([])
-    setLeadTimeDays(2)
+    setLeadTimeValue(2)
+    setLeadTimeUnit('days')
     setNotes('')
     setStatus('ACTIVE')
     setFormErrors({})
@@ -102,7 +109,9 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
     setEmail(s.email)
     setAddress(s.address)
     setSelectedCategories(s.categoriesSupplied || [])
-    setLeadTimeDays(s.leadTimeDays || 2)
+    const unit = leadTimeEditUnit(s.leadTimeHours)
+    setLeadTimeUnit(unit)
+    setLeadTimeValue(unit === 'days' ? (s.leadTimeHours || 48) / 24 : s.leadTimeHours || 1)
     setNotes(s.notes || '')
     setStatus(s.status)
     setFormErrors({})
@@ -114,6 +123,13 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
     )
   }
 
+  /** The typed value in the stored unit; an empty box falls back to a day. */
+  const leadTimeAsHours = () => {
+    const entered = Number(leadTimeValue)
+    if (!(entered > 0)) return 24
+    return Math.max(1, Math.round(leadTimeUnit === 'days' ? entered * 24 : entered))
+  }
+
   const validateForm = () => {
     const errors: Record<string, string> = {}
     if (!name.trim()) errors.name = 'Enter the supplier or company name.'
@@ -123,7 +139,8 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
       errors.contactNumber = 'Use digits only, e.g. 0917 123 4567.'
     if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
       errors.email = 'Enter a valid email address, or leave it empty.'
-    if (leadTimeDays !== '' && Number(leadTimeDays) < 1) errors.leadTime = 'Lead time must be at least 1 day.'
+    if (leadTimeValue !== '' && Number(leadTimeValue) < 1)
+      errors.leadTime = `Lead time must be at least 1 ${leadTimeUnit === 'days' ? 'day' : 'hour'}.`
     if (!address.trim()) errors.address = 'Enter the business or warehouse address.'
     setFormErrors(errors)
     const first = Object.keys(errors)[0]
@@ -144,7 +161,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
         email: email.trim(),
         address: address.trim(),
         categoriesSupplied: selectedCategories,
-        leadTimeDays: Number(leadTimeDays) || 1,
+        leadTimeHours: leadTimeAsHours(),
         notes: notes.trim(),
         status,
       })
@@ -157,7 +174,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
         email: email.trim(),
         address: address.trim(),
         categoriesSupplied: selectedCategories,
-        leadTimeDays: Number(leadTimeDays) || 1,
+        leadTimeHours: leadTimeAsHours(),
         notes: notes.trim(),
         status,
       })
@@ -260,7 +277,18 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                 {paginatedSuppliers.map((s) => (
                   <tr key={s.id}>
                     <td className="max-w-[300px]">
-                      <button type="button" className="inv-row-link block max-w-full truncate" onClick={() => handleOpenEditModal(s)}>
+                      <button
+                        type="button"
+                        className="inv-row-link block max-w-full truncate"
+                        title={
+                          onViewPurchaseOrders
+                            ? `View purchase orders from ${s.name}`
+                            : `Edit ${s.name}`
+                        }
+                        onClick={() =>
+                          onViewPurchaseOrders ? onViewPurchaseOrders(s.id) : handleOpenEditModal(s)
+                        }
+                      >
                         {s.name}
                       </button>
                       <div className="inv-cell-secondary truncate" title={s.address}>
@@ -295,7 +323,7 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                       </div>
                     </td>
                     <td className="is-num hidden sm:table-cell">
-                      {s.leadTimeDays ? `${s.leadTimeDays} ${s.leadTimeDays === 1 ? 'day' : 'days'}` : '1–2 days'}
+                      {s.leadTimeHours ? formatLeadTime(s.leadTimeHours) : '1–2 days'}
                     </td>
                     <td>
                       <Badge tone={s.status === 'ACTIVE' ? 'success' : 'neutral'} dot>
@@ -306,6 +334,15 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
                       <RowMenu
                         label={`Actions for ${s.name}`}
                         items={[
+                          ...(onViewPurchaseOrders
+                            ? [
+                                {
+                                  label: 'View purchase orders',
+                                  icon: 'cart' as const,
+                                  onSelect: () => onViewPurchaseOrders(s.id),
+                                },
+                              ]
+                            : []),
                           { label: 'Edit supplier', icon: 'edit', onSelect: () => handleOpenEditModal(s) },
                           {
                             label: s.status === 'ACTIVE' ? 'Mark inactive' : 'Mark active',
@@ -454,19 +491,37 @@ export const SuppliersTab: React.FC<SuppliersTabProps> = ({
             </div>
           </div>
           <div className="inv-grid-2">
-            <Field label="Lead time" htmlFor="sup-leadTime" error={formErrors.leadTime} hint="Days from order to delivery.">
+            <Field
+              label="Lead time"
+              htmlFor="sup-leadTime"
+              error={formErrors.leadTime}
+              hint={
+                leadTimeValue === '' || !(Number(leadTimeValue) > 0)
+                  ? 'From order to delivery. Use hours for same-day vendors.'
+                  : `From order to delivery — ${formatLeadTime(leadTimeAsHours())}.`
+              }
+            >
               <div className="inv-input-group">
                 <input
                   {...fieldAria('sup-leadTime', formErrors.leadTime, true)}
                   type="number"
                   inputMode="numeric"
                   min="1"
-                  className="inv-input"
-                  placeholder="2"
-                  value={leadTimeDays}
-                  onChange={(e) => setLeadTimeDays(e.target.value === '' ? '' : Number(e.target.value))}
+                  step="1"
+                  className="inv-input has-unit"
+                  placeholder={leadTimeUnit === 'days' ? '2' : '10'}
+                  value={leadTimeValue}
+                  onChange={(e) => setLeadTimeValue(e.target.value === '' ? '' : Number(e.target.value))}
                 />
-                <span className="inv-input-suffix">days</span>
+                <select
+                  aria-label="Lead time unit"
+                  className="inv-input-suffix"
+                  value={leadTimeUnit}
+                  onChange={(e) => setLeadTimeUnit(e.target.value as 'hours' | 'days')}
+                >
+                  <option value="hours">hours</option>
+                  <option value="days">days</option>
+                </select>
               </div>
             </Field>
             <Field label="Status" htmlFor="sup-status">

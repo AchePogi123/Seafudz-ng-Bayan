@@ -89,6 +89,43 @@ test('an item used in a recipe cannot be deleted', { skip }, async () => {
   assert.equal(r.json.error, 'IN_USE');
 });
 
+test('supplier lead time: sub-day values survive the round trip, legacy days still land', { skip }, async () => {
+  // A vendor that delivers in 10 hours could not be recorded while the column held whole days
+  const fast = await api('POST', '/inventory/suppliers', {
+    name: 'ZZ Ten Hour Vendor', contactPerson: 'T', contactNumber: '0917', address: 'x',
+    categoriesSupplied: [], leadTimeHours: 10, status: 'ACTIVE',
+  });
+  assert.equal(fast.status, 201, JSON.stringify(fast.json));
+  assert.equal(fast.json.data.leadTimeHours, 10);
+
+  // Editing keeps the hours rather than rounding them back up to a day
+  const edited = await api('PUT', `/inventory/suppliers/${fast.json.data.id}`, {
+    ...fast.json.data, leadTimeHours: 36,
+  });
+  assert.equal(edited.status, 200, JSON.stringify(edited.json));
+  assert.equal(edited.json.data.leadTimeHours, 36);
+
+  // A caller still sending the old field is read as days
+  const legacy = await api('POST', '/inventory/suppliers', {
+    name: 'ZZ Legacy Days Vendor', contactPerson: 'T', contactNumber: '0917', address: 'x',
+    categoriesSupplied: [], leadTimeDays: 2, status: 'ACTIVE',
+  });
+  assert.equal(legacy.status, 201, JSON.stringify(legacy.json));
+  assert.equal(legacy.json.data.leadTimeHours, 48);
+
+  // Nothing may be stored below an hour
+  const floored = await api('POST', '/inventory/suppliers', {
+    name: 'ZZ Zero Vendor', contactPerson: 'T', contactNumber: '0917', address: 'x',
+    categoriesSupplied: [], leadTimeHours: 0, status: 'ACTIVE',
+  });
+  assert.equal(floored.status, 201, JSON.stringify(floored.json));
+  assert.equal(floored.json.data.leadTimeHours, 1);
+
+  for (const id of [fast.json.data.id, legacy.json.data.id, floored.json.data.id]) {
+    await api('DELETE', `/inventory/suppliers/${id}`);
+  }
+});
+
 test('purchase order: create, receive part then the rest, stock and history follow', { skip }, async () => {
   const sup = await api('POST', '/inventory/suppliers', { name: 'ZZ Test Supplier', contactPerson: 'T', contactNumber: '0917', address: 'x', categoriesSupplied: [], leadTimeDays: 2, status: 'ACTIVE' });
   assert.equal(sup.status, 201);

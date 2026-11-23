@@ -685,20 +685,29 @@ export const AccMan: React.FC = () => {
     const userRole = (activeUser?.role || 'customer').toLowerCase()
     const isEmployee = userRole !== 'customer'
 
+    const accountSubtitle =
+        activeSection === 'security'
+            ? 'Account Management · Password'
+            : activeSection === 'notifications'
+              ? 'Account Management · Notifications'
+              : activeSection === 'orders'
+                ? 'Account Management · Order History'
+                : 'Account Management · Profile'
+
     const renderNavbar = () => {
         switch (userRole) {
             case 'admin':
-                return <NavbarAdmin />
+                return <NavbarAdmin subtitle={accountSubtitle} />
             case 'assistant':
-                return <NavbarAssistant />
+                return <NavbarAssistant subtitle={accountSubtitle} />
             case 'cashier':
-                return <NavbarCashier />
+                return <NavbarCashier subtitle={accountSubtitle} />
             case 'kitchen':
-                return <NavbarKitchen />
+                return <NavbarKitchen subtitle={accountSubtitle} />
             case 'rider':
-                return <NavbarRider />
+                return <NavbarRider subtitle={accountSubtitle} />
             default:
-                return <NavbarCustomer />
+                return <NavbarCustomer subtitle={accountSubtitle} />
         }
     }
 
@@ -1011,8 +1020,8 @@ export const AccMan: React.FC = () => {
     }
 
     return (
-        <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
-            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
+        <div className={`inv-scope min-h-screen pb-16 antialiased ${userRole === 'admin' ? 'pl-72 print:pl-0' : ''}`} style={{ background: 'var(--inv-bg)' }}>
+            <div className="sticky top-0 z-40 print:hidden">
                 {renderNavbar()}
             </div>
 

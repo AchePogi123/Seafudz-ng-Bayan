@@ -335,6 +335,26 @@ export const formatDate = (iso: string, withTime = false) =>
     minute: withTime ? '2-digit' : undefined,
   })
 
+/**
+ * Supplier lead time is stored in hours so same-day vendors ("delivers in 10 hours")
+ * can be recorded honestly. Whole days still read as days.
+ */
+export const formatLeadTime = (hours: number | undefined | null) => {
+  const total = Math.max(0, Math.round(Number(hours) || 0))
+  if (total === 0) return '—'
+  if (total < 24) return `${total} ${total === 1 ? 'hour' : 'hours'}`
+  const days = Math.floor(total / 24)
+  const rest = total % 24
+  const dayPart = `${days} ${days === 1 ? 'day' : 'days'}`
+  return rest === 0 ? dayPart : `${dayPart} ${rest} ${rest === 1 ? 'hour' : 'hours'}`
+}
+
+/** The unit a stored lead time reads most naturally in, for editing. */
+export const leadTimeEditUnit = (hours: number | undefined | null): 'hours' | 'days' => {
+  const total = Math.max(0, Math.round(Number(hours) || 0))
+  return total >= 24 && total % 24 === 0 ? 'days' : 'hours'
+}
+
 /* ------------------------------------------------------------ Stock meter */
 
 export const StockMeter: React.FC<{

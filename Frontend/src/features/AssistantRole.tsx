@@ -1212,7 +1212,7 @@ export const AssistantRole: React.FC = () => {
 
   return (
     <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
-      <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6">
+      <div className="print:hidden">
         <NavbarAssistant />
       </div>
 

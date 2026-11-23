@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import type {
   PurchaseOrder,
   PurchaseOrderItem,
@@ -12,6 +12,7 @@ import type {
 import { MEASUREMENT_UNITS } from './inventoryTypes'
 import { describeConversion, toBaseUnit, unitsMismatch } from './unitConversion'
 import InventoryConfirmModal from './InventoryConfirmModal'
+import { SearchableSelect } from './SearchableSelect'
 import {
   Badge,
   Button,
@@ -30,6 +31,7 @@ import {
   TypeBadge,
   fieldAria,
   formatDate,
+  formatLeadTime,
   formatQty,
   type BadgeTone,
 } from './ui'
@@ -49,6 +51,10 @@ interface PurchasesReceivingTabProps {
   purchaseOrders: PurchaseOrder[]
   suppliers: Supplier[]
   ingredients: Ingredient[]
+  /** Arriving from the Suppliers tab: show only this vendor's orders. */
+  initialSupplierId?: string
+  /** Keep ?supplier= in step with the picker, so the filtered board stays linkable. */
+  onSupplierFilterChange?: (supplierId?: string) => void
   onCreatePO: (po: Omit<PurchaseOrder, 'id' | 'createdAt'>) => void
   onReceiveStock: (
     poId: string,
@@ -70,6 +76,8 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
   purchaseOrders,
   suppliers,
   ingredients,
+  initialSupplierId,
+  onSupplierFilterChange,
   onCreatePO,
   onReceiveStock,
   onCancelPO,
@@ -78,7 +86,24 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'ALL' | PurchaseOrderStatus>('ALL')
   const [typeFilter, setTypeFilter] = useState<'ALL' | InventoryItemType>('ALL')
+  const [supplierFilter, setSupplierFilter] = useState<string>(initialSupplierId || 'ALL')
   const [currentPage, setCurrentPage] = useState(1)
+
+  // A supplier link from the Suppliers tab narrows the board to that vendor
+  useEffect(() => {
+    setSupplierFilter(initialSupplierId || 'ALL')
+    setCurrentPage(1)
+  }, [initialSupplierId])
+
+  // A ?supplier= pointing at a deleted vendor must not hide every order
+  const filteredSupplier = suppliers.find((sup) => sup.id === supplierFilter)
+  const activeSupplier = filteredSupplier ? supplierFilter : 'ALL'
+  const applySupplierFilter = (supplierId: string) => {
+    setSupplierFilter(supplierId)
+    setCurrentPage(1)
+    onSupplierFilterChange?.(supplierId === 'ALL' ? undefined : supplierId)
+  }
+  const clearSupplierFilter = () => applySupplierFilter('ALL')
 
   // Modal States
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
@@ -103,6 +128,8 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     }>
   >([])
   const [poFormErrors, setPoFormErrors] = useState<Record<string, string>>({})
+  /** Lines dropped by the last supplier change, so the re-scoping is never silent. */
+  const [droppedLineCount, setDroppedLineCount] = useState(0)
 
   // Receive Stock Form State
   const [receiveItemInputs, setReceiveItemInputs] = useState<
@@ -118,14 +145,55 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
   const [receiveNotes, setReceiveNotes] = useState('')
   const [receiveError, setReceiveError] = useState('')
 
-  // Separate Food vs Packaging in the catalog
-  const foodIngredients = useMemo(
-    () => ingredients.filter((i) => (i.itemType || 'FOOD') === 'FOOD'),
-    [ingredients]
+  /**
+   * What a given supplier is allowed to be ordered from.
+   *
+   * A supplier already records the kinds of goods it sells, so choosing the supplier is what
+   * decides the line pickers' contents: the seafood vendor offers seafood, and ordering trays
+   * from them is not a mistake worth letting anyone make.
+   *
+   * A supplier with no categories on file is treated as unrestricted rather than unusable — an
+   * untagged vendor should not silently block every order placed with it.
+   */
+  const itemsForSupplier = (supplierId: string): Ingredient[] => {
+    const supplier = suppliers.find((s) => s.id === supplierId)
+    if (!supplier) return []
+    const allowed = new Set<IngredientCategory>(supplier.categoriesSupplied || [])
+    if (allowed.size === 0) return ingredients
+    return ingredients.filter((ing) => allowed.has(ing.category))
+  }
+
+  const selectedSupplier = useMemo(
+    () => suppliers.find((s) => s.id === poSupplierId) || null,
+    [suppliers, poSupplierId]
   )
-  const packagingIngredients = useMemo(
-    () => ingredients.filter((i) => i.itemType === 'PACKAGING'),
-    [ingredients]
+  const supplierItems = useMemo(
+    () => itemsForSupplier(poSupplierId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ingredients, suppliers, poSupplierId]
+  )
+
+  // Separate Food vs Packaging within what this supplier carries
+  const itemSelectOptions = useMemo(
+    () => [
+      ...supplierItems
+        .filter((i) => (i.itemType || 'FOOD') === 'FOOD')
+        .map((ing) => ({
+          value: ing.id,
+          label: ing.name,
+          group: 'Food',
+          hint: `${formatQty(ing.currentStock)} ${ing.baseUnit}`,
+        })),
+      ...supplierItems
+        .filter((i) => i.itemType === 'PACKAGING')
+        .map((pkg) => ({
+          value: pkg.id,
+          label: pkg.name,
+          group: 'Packaging',
+          hint: `${formatQty(pkg.currentStock)} ${pkg.baseUnit}`,
+        })),
+    ],
+    [supplierItems]
   )
 
   // Filtered POs
@@ -139,23 +207,30 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
       const matchesType =
         typeFilter === 'ALL' ||
         po.items.some((it) => (it.itemType || 'FOOD') === typeFilter)
+      const matchesSupplier = activeSupplier === 'ALL' || po.supplierId === activeSupplier
 
-      return matchesSearch && matchesStatus && matchesType
+      return matchesSearch && matchesStatus && matchesType && matchesSupplier
     })
-  }, [purchaseOrders, searchQuery, statusFilter, typeFilter])
+  }, [purchaseOrders, searchQuery, statusFilter, typeFilter, activeSupplier])
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredPOs.length / PAGE_SIZE))
   const page = Math.min(currentPage, totalPages)
   const paginatedPOs = filteredPOs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  const countBy = (st: PurchaseOrderStatus) => purchaseOrders.filter((p) => p.status === st).length
+  const scopedPOs = useMemo(
+    () => (activeSupplier === 'ALL' ? purchaseOrders : purchaseOrders.filter((p) => p.supplierId === activeSupplier)),
+    [purchaseOrders, activeSupplier]
+  )
+  const countBy = (st: PurchaseOrderStatus) => scopedPOs.filter((p) => p.status === st).length
 
   // Reset Create PO Form
   const resetCreatePOForm = () => {
-    setPoSupplierId(suppliers[0]?.id || '')
+    const supplierId = filteredSupplier?.id || suppliers[0]?.id || ''
+    setPoSupplierId(supplierId)
     setPoExpectedDate('')
     setPoNotes('')
-    const defaultIng = ingredients[0]
+    setDroppedLineCount(0)
+    const defaultIng = itemsForSupplier(supplierId)[0]
     if (defaultIng) {
       setPoItems([
         {
@@ -179,9 +254,22 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     setIsCreateModalOpen(true)
   }
 
+  /**
+   * Switching supplier re-scopes the order. Lines the new supplier cannot fill are dropped
+   * rather than left to fail at submit, and the count is surfaced so the change is visible.
+   */
+  const handleSupplierChange = (supplierId: string) => {
+    const allowedIds = new Set(itemsForSupplier(supplierId).map((i) => i.id))
+    const kept = poItems.filter((line) => allowedIds.has(line.ingredientId))
+    setPoSupplierId(supplierId)
+    setDroppedLineCount(poItems.length - kept.length)
+    setPoItems(kept)
+    setPoFormErrors({})
+  }
+
   // Add Item Line in Create PO
   const handleAddLineItem = () => {
-    const defaultIng = ingredients[0]
+    const defaultIng = supplierItems[0]
     const itemType = defaultIng?.itemType || 'FOOD'
     setPoItems((prev) => [
       ...prev,
@@ -239,6 +327,8 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     if (poItems.length === 0) errors.lines = 'Add at least one item to order.'
     else if (poItems.some((it) => !it.ingredientId)) errors.lines = 'Choose an item on every line, or remove empty lines.'
     else if (poItems.some((it) => !(it.orderedQuantity > 0))) errors.lines = 'Every line needs a quantity greater than 0.'
+    else if (poItems.some((it) => !supplierItems.some((ing) => ing.id === it.ingredientId)))
+      errors.lines = `${selectedSupplier?.name || 'This supplier'} does not supply every item on this order. Remove the ones they cannot fill.`
     else if (poItems.some((it) => unitsMismatch(it.unit, it.baseUnit)))
       errors.lines = 'A line is ordered in a unit that cannot be converted into how that item is stocked. Pick a matching unit.'
     if (poExpectedDate && poExpectedDate < new Date().toISOString().split('T')[0])
@@ -338,7 +428,11 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
     <div className="space-y-5">
       <SectionHeader
         title="Purchasing"
-        description="Order from suppliers and receive deliveries into stock."
+        description={
+          filteredSupplier
+            ? `Orders placed with ${filteredSupplier.name}, and deliveries received from them.`
+            : 'Order from suppliers and receive deliveries into stock.'
+        }
         actions={
           <Button
             variant="primary"
@@ -351,6 +445,25 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
           </Button>
         }
       />
+
+      {filteredSupplier && (
+        <Notice tone="info">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <span>
+              Showing orders from <strong>{filteredSupplier.name}</strong> ·{' '}
+              {scopedPOs.length === 0
+                ? 'no orders yet'
+                : `${scopedPOs.length} ${scopedPOs.length === 1 ? 'order' : 'orders'} on record`}
+              {filteredSupplier.leadTimeHours ? ` · ${formatLeadTime(filteredSupplier.leadTimeHours)} lead time` : ''}
+              {filteredSupplier.contactPerson ? ` · ${filteredSupplier.contactPerson}` : ''}
+              {filteredSupplier.contactNumber ? ` · ${filteredSupplier.contactNumber}` : ''}
+            </span>
+            <Button variant="ghost" size="sm" icon="close" onClick={clearSupplierFilter}>
+              Show all suppliers
+            </Button>
+          </div>
+        </Notice>
+      )}
 
       <Card className="overflow-hidden">
         <Toolbar>
@@ -371,12 +484,26 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
               setCurrentPage(1)
             }}
             options={[
-              { value: 'ALL', label: 'All', count: purchaseOrders.length },
+              { value: 'ALL', label: 'All', count: scopedPOs.length },
               { value: 'PENDING', label: 'Pending', count: countBy('PENDING') },
               { value: 'PARTIALLY_RECEIVED', label: 'Partial', count: countBy('PARTIALLY_RECEIVED') },
               { value: 'FULLY_RECEIVED', label: 'Received', count: countBy('FULLY_RECEIVED') },
             ]}
           />
+          <select
+            aria-label="Supplier"
+            className="inv-select w-full sm:w-auto"
+            value={activeSupplier}
+            onChange={(e) => applySupplierFilter(e.target.value)}
+          >
+            <option value="ALL">All suppliers</option>
+            {suppliers.map((sup) => (
+              <option key={sup.id} value={sup.id}>
+                {sup.name}
+                {sup.status === 'INACTIVE' ? ' (inactive)' : ''}
+              </option>
+            ))}
+          </select>
           <select
             aria-label="Item type"
             className="inv-select w-full sm:w-auto"
@@ -411,6 +538,24 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                 )
               }
             />
+          ) : filteredSupplier && scopedPOs.length === 0 ? (
+            <EmptyState
+              icon="cart"
+              title={`No orders from ${filteredSupplier.name} yet`}
+              description="Nothing has been ordered from this supplier. Create the first purchase order, or go back to every supplier's orders."
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  {ingredients.length > 0 && (
+                    <Button variant="primary" icon="plus" onClick={handleOpenCreateModal}>
+                      New purchase order
+                    </Button>
+                  )}
+                  <Button variant="secondary" onClick={clearSupplierFilter}>
+                    Show all suppliers
+                  </Button>
+                </div>
+              }
+            />
           ) : (
             <EmptyState
               icon="search"
@@ -423,6 +568,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                     setSearchQuery('')
                     setStatusFilter('ALL')
                     setTypeFilter('ALL')
+                    clearSupplierFilter()
                   }}
                 >
                   Clear filters
@@ -540,7 +686,7 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                 {...fieldAria('po-supplier', poFormErrors.supplier)}
                 className="inv-select"
                 value={poSupplierId}
-                onChange={(e) => setPoSupplierId(e.target.value)}
+                onChange={(e) => handleSupplierChange(e.target.value)}
               >
                 <option value="">Choose a supplier</option>
                 {suppliers.map((s) => (
@@ -574,10 +720,37 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
               <p className="inv-label">
                 Items to order<span className="inv-required" aria-hidden="true">*</span>
               </p>
-              <Button size="sm" variant="ghost" icon="plus" onClick={handleAddLineItem}>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="plus"
+                onClick={handleAddLineItem}
+                disabled={supplierItems.length === 0}
+              >
                 Add line
               </Button>
             </div>
+
+            {/* The supplier decides what can go on the order, so say so where the choosing happens. */}
+            {selectedSupplier && (selectedSupplier.categoriesSupplied?.length ?? 0) > 0 && (
+              <p className="mb-2 flex flex-wrap items-center gap-1.5 text-[13px] text-[var(--inv-text-3)]">
+                <span>{selectedSupplier.name} supplies</span>
+                {selectedSupplier.categoriesSupplied.map((cat) => (
+                  <Badge key={cat} tone="neutral">
+                    {cat}
+                  </Badge>
+                ))}
+              </p>
+            )}
+            {droppedLineCount > 0 && (
+              <div className="mb-3">
+                <Notice tone="warning">
+                  {droppedLineCount === 1 ? '1 line was removed' : `${droppedLineCount} lines were removed`} because{' '}
+                  {selectedSupplier?.name || 'this supplier'} does not supply{' '}
+                  {droppedLineCount === 1 ? 'that item' : 'those items'}.
+                </Notice>
+              </div>
+            )}
             {poFormErrors.lines && (
               <div className="mb-3">
                 <Notice tone="danger">{poFormErrors.lines}</Notice>
@@ -587,11 +760,26 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
               <EmptyState
                 compact
                 icon="cart"
-                title="No items on this order"
+                title={
+                  !selectedSupplier
+                    ? 'Choose a supplier first'
+                    : supplierItems.length === 0
+                      ? `Nothing in the stockroom matches what ${selectedSupplier.name} supplies`
+                      : 'No items on this order'
+                }
+                description={
+                  !selectedSupplier
+                    ? 'The supplier decides which items this order can contain.'
+                    : supplierItems.length === 0
+                      ? 'Add an item in one of their categories, or widen what this supplier supplies.'
+                      : undefined
+                }
                 action={
-                  <Button size="sm" variant="secondary" icon="plus" onClick={handleAddLineItem}>
-                    Add line
-                  </Button>
+                  supplierItems.length > 0 ? (
+                    <Button size="sm" variant="secondary" icon="plus" onClick={handleAddLineItem}>
+                      Add line
+                    </Button>
+                  ) : undefined
                 }
               />
             ) : (
@@ -606,31 +794,15 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
                   <div key={idx} className={`inv-line grid-cols-2 ${lineCols}`}>
                     <label className="col-span-2 sm:col-span-1">
                       <span className="inv-line-label">Item</span>
-                      <select
-                        className="inv-select inv-select--sm"
+                      <SearchableSelect
+                        ariaLabel={`Item ${idx + 1}`}
                         value={item.ingredientId}
-                        onChange={(e) => handleItemLineChange(idx, 'ingredientId', e.target.value)}
-                      >
-                        <option value="">Choose an item</option>
-                        {foodIngredients.length > 0 && (
-                          <optgroup label="Food">
-                            {foodIngredients.map((ing) => (
-                              <option key={ing.id} value={ing.id}>
-                                {ing.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {packagingIngredients.length > 0 && (
-                          <optgroup label="Packaging">
-                            {packagingIngredients.map((pkg) => (
-                              <option key={pkg.id} value={pkg.id}>
-                                {pkg.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </select>
+                        onChange={(next) => handleItemLineChange(idx, 'ingredientId', next)}
+                        placeholder="Choose an item"
+                        searchPlaceholder="Search items…"
+                        options={itemSelectOptions}
+                        disabled={!selectedSupplier}
+                      />
                     </label>
                     <label>
                       <span className="inv-line-label">Quantity</span>

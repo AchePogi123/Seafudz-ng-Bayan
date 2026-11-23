@@ -1185,6 +1185,30 @@ button.inv-input-suffix:focus-visible {
   color: var(--inv-text);
 }
 
+/* Unit picker riding in the suffix slot, so "10 hours" and "2 days"
+   share one control instead of needing two fields. */
+select.inv-input-suffix {
+  display: block;
+  pointer-events: auto;
+  cursor: pointer;
+  border: 0;
+  border-left: 1px solid var(--inv-border);
+  padding: 0 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--inv-text-2);
+  background: var(--inv-surface-2);
+  transition: color 0.15s, background-color 0.15s;
+}
+select.inv-input-suffix:hover { color: var(--inv-text); background: #f2f4f7; }
+select.inv-input-suffix:focus-visible {
+  outline: none;
+  box-shadow: var(--inv-focus);
+  color: var(--inv-text);
+}
+.inv-input-group .inv-input.has-unit { padding-right: 92px; }
+
 /* =====================================================================
    Assistant workspace — queue list and the verification bench.
    ===================================================================== */
@@ -1401,6 +1425,10 @@ button.inv-input-suffix:focus-visible {
 /* ------------------------------------------------------------- Ticket */
 
 .kds-ticket {
+  /* A ticket keeps its own height. Without this it is a flex item whose
+     `overflow: hidden` resolves its automatic minimum size to 0, so a full
+     lane shrinks every card and each one slices off its own items. */
+  flex-shrink: 0;
   border: 1px solid var(--inv-border);
   border-radius: var(--inv-radius);
   background: var(--inv-surface);
@@ -1594,6 +1622,15 @@ button.inv-input-suffix:focus-visible {
   padding: 4px;
   list-style: none;
 }
+.inv-ssel-group {
+  padding: 8px 8px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--inv-text-3);
+  pointer-events: none;
+}
+.inv-ssel-group:first-child { padding-top: 4px; }
 .inv-ssel-option {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;

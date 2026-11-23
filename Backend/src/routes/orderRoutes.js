@@ -538,8 +538,9 @@ router.post('/orders', requireAuth, requireRole(['admin', 'cashier']), async (re
         itemSubtotal,
         itemNotes,
       ]);
+      const orderItemId = insertedItem.rows[0]?.id ?? null;
       reservableItems.push({
-        orderItemId: insertedItem.rows[0]?.id ?? null,
+        orderItemId,
         product_id: productId,
         name: snapshotItemName,
         quantity: itemQuantity,
@@ -926,7 +927,13 @@ router.put('/orders/:id', requireAuth, requireRole(['admin', 'cashier']), async 
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
             [id, prodId, itemName, qty, price, qty * price]
           );
-          reservable.push({ orderItemId: ins.rows[0]?.id ?? null, product_id: prodId, name: itemName, quantity: qty });
+          const editedItemId = ins.rows[0]?.id ?? null;
+          reservable.push({
+            orderItemId: editedItemId,
+            product_id: prodId,
+            name: itemName,
+            quantity: qty,
+          });
         }
         if (!alreadyServed) await reserveForOrder(client, id, reservable, editFulfillment, { performedBy: 'POS' });
       } else {
@@ -1420,8 +1427,8 @@ export async function handleCreateCustomerFlowOrder(req, res) {
         }
 
         const existingItems = await client.query(
-          `SELECT id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes
-           FROM order_items WHERE order_id = $1 ORDER BY id`,
+          `SELECT oi.id, oi.product_id, oi.product_name_snapshot, oi.unit_price, oi.quantity, oi.item_status, oi.notes
+             FROM order_items oi WHERE oi.order_id = $1 ORDER BY oi.id`,
           [orderId]
         );
         if (existingItems.rows.length > 0) {
@@ -1434,7 +1441,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
                RETURNING id, product_id, product_name_snapshot, unit_price, quantity, item_status, notes`,
               [orderId, item.product_id, item.name, item.price, item.quantity, item.subtotal, item.specialNote || null]
             );
-            persistedItems.push(rows[0]);
+            persistedItems.push({ ...rows[0] });
           }
         }
 

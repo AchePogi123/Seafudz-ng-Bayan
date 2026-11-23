@@ -1409,10 +1409,25 @@ export const POS: React.FC = () => {
     setLastOrderDetails(null)
   }
 
+  const posSubtitle =
+    activeSubModule === 'processing_orders'
+      ? 'POS · On-Site Orders'
+      : activeSubModule === 'online_receipts'
+        ? 'POS · Online Receipts'
+        : activeSubModule === 'store_pickups'
+          ? 'POS · Store Pick-Ups'
+          : 'Point of Sale Terminal'
+
   return (
     <div className="min-h-screen bg-[#f8f6f4] p-3 sm:p-4 lg:p-4 transition-all duration-300 pb-24 lg:pb-6 font-sans">
       <div className="w-full flex flex-col gap-4 sm:gap-6">
-        <NavbarCashier searchQuery={searchQuery} setSearchQuery={setSearchQuery} />
+        <div className="-mx-3 -mt-3 sm:-mx-4 sm:-mt-4 lg:-mx-4 lg:-mt-4 print:hidden">
+          <NavbarCashier
+            subtitle={posSubtitle}
+            searchQuery={activeSubModule === 'new_order' ? searchQuery : undefined}
+            setSearchQuery={activeSubModule === 'new_order' ? setSearchQuery : undefined}
+          />
+        </div>
 
         {/* POS Sub-Module Switcher Bar */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between bg-white p-2 rounded-2xl border border-neutral-200/80 shadow-2xs gap-2">

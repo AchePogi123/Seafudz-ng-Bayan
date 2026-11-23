@@ -164,6 +164,8 @@ export const AdminInventoryManagement: React.FC = () => {
   /** ?item= / ?q= single out one stock item on the Items tab (used by recipe links) */
   const itemParam = searchParams.get('item') || undefined
   const queryParam = searchParams.get('q') || undefined
+  /** ?supplier= narrows Purchasing to one vendor (used by the Suppliers list) */
+  const supplierParam = searchParams.get('supplier') || undefined
 
   // Snap to the canonical tab when the URL carries an unknown ?tab= value
   useEffect(() => {
@@ -493,8 +495,8 @@ export const AdminInventoryManagement: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f7f9] text-slate-800 pb-16 font-sans">
-      <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-5 print:hidden">
+    <div className="min-h-screen bg-[#f6f7f9] pl-72 text-slate-800 pb-16 font-sans print:pl-0">
+      <div className="print:hidden">
         <NavbarAdmin />
       </div>
 
@@ -677,6 +679,7 @@ export const AdminInventoryManagement: React.FC = () => {
             {loadState === 'ready' && currentTab === 'suppliers' && (
               <SuppliersTab
                 suppliers={suppliers}
+                onViewPurchaseOrders={(supplierId) => handleTabChange('purchases', { supplier: supplierId })}
                 onAddSupplier={handleAddSupplier}
                 onEditSupplier={handleEditSupplier}
                 onDeleteSupplier={handleDeleteSupplier}
@@ -688,6 +691,10 @@ export const AdminInventoryManagement: React.FC = () => {
                 purchaseOrders={purchaseOrders}
                 suppliers={suppliers}
                 ingredients={ingredients}
+                initialSupplierId={supplierParam}
+                onSupplierFilterChange={(supplierId) =>
+                  handleTabChange('purchases', supplierId ? { supplier: supplierId } : undefined)
+                }
                 onCreatePO={handleCreatePO}
                 onReceiveStock={handleReceiveStock}
                 onCancelPO={handleCancelPO}

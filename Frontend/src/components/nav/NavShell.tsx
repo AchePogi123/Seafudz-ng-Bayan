@@ -180,8 +180,8 @@ export const NavShell: React.FC<NavShellProps> = ({ role, subtitle, children, si
   return (
     <>
       <header
-        className={`relative z-40 flex rounded-2xl border border-slate-200/70 bg-white/85 p-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_28px_-16px_rgba(15,23,42,0.22)] backdrop-blur-xl sm:p-3 ${
-          singleRow
+        className={`relative z-40 flex w-full rounded-none border-x-0 border-t-0 border-b border-slate-200/70 bg-white/85 px-5 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.04),0_10px_28px_-16px_rgba(15,23,42,0.22)] backdrop-blur-xl sm:px-7 sm:py-3 lg:px-10 ${
+          singleRow || !children
             ? 'flex-row items-center justify-between gap-3'
             : 'flex-col items-stretch justify-between gap-3 md:flex-row md:items-center'
         }`}
@@ -207,7 +207,9 @@ export const NavShell: React.FC<NavShellProps> = ({ role, subtitle, children, si
         {(children || identity) && (
           <div
             className={`flex min-w-0 items-center gap-2.5 sm:gap-3 ${
-              singleRow ? 'shrink-0' : 'w-full flex-col items-stretch justify-end sm:w-auto sm:flex-row sm:items-center'
+              singleRow || !children
+                ? 'shrink-0'
+                : 'w-full flex-col items-stretch justify-end sm:w-auto sm:flex-row sm:items-center'
             }`}
           >
             {children}

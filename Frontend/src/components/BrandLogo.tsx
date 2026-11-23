@@ -68,21 +68,25 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
           Sea<span className="text-orange-600 group-hover:text-orange-500 transition-colors">fudz</span>
         </span>
 
-        {/* Minimalist Aesthetic "ng Bayan" Accent with Matching Curved Swoosh */}
+        {/* "ng Bayan", underlined by a gentle two-crest wave: a low, even swell
+            rather than a plain arc, so the seafood brand reads in the mark
+            itself without the line ever becoming a squiggle. */}
         <span
           className={`relative inline-block font-extrabold uppercase tracking-wider text-orange-600 transition-colors ${badgeSizes[size]}`}
         >
           <span className="text-orange-400 font-normal lowercase italic text-[0.9em] mr-0.5">ng</span> Bayan
           <svg
-            className="absolute -bottom-1 left-0 w-full h-1.5 text-orange-400 opacity-90 group-hover:opacity-100 transition-opacity pointer-events-none"
-            viewBox="0 0 70 8"
+            className="absolute -bottom-1.5 left-0 w-full h-2 text-orange-400 opacity-90 group-hover:opacity-100 transition-opacity pointer-events-none"
+            viewBox="0 0 72 7"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
           >
+            {/* Two full crests across the word. Every join is a mirrored
+                control point, so the curvature never breaks. */}
             <path
-              d="M2 5.5C20 2.5 45 2.5 68 5"
+              d="M2 3.5C6.25 1.6 14.75 1.6 19 3.5S31.75 5.4 36 3.5S48.75 1.6 53 3.5S65.75 5.4 70 3.5"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="1.6"
               strokeLinecap="round"
             />
           </svg>

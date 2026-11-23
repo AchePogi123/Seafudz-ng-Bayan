@@ -2,13 +2,24 @@ import React from 'react'
 import { useLocation } from 'react-router-dom'
 import NavShell from './nav/NavShell'
 
-export const NavbarRider: React.FC = () => {
+export interface NavbarRiderProps {
+    subtitle?: string
+}
+
+export const NavbarRider: React.FC<NavbarRiderProps> = ({ subtitle }) => {
     const location = useLocation()
+
+    const getCurrentPageName = () => {
+        if (subtitle) return subtitle
+        if (location.pathname === '/rider') return 'Rider Dispatch & Tracking'
+        if (location.pathname === '/account') return 'Account Management'
+        return 'Delivery Dispatch'
+    }
 
     return (
         <NavShell
             role="rider"
-            subtitle={location.pathname === '/rider' ? 'Rider Dispatch & Tracking' : 'Delivery Dispatch'}
+            subtitle={getCurrentPageName()}
         />
     )
 }

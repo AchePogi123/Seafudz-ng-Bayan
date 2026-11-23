@@ -850,9 +850,9 @@ const AdminDashboard: React.FC = () => {
     ]
 
     return (
-        <div className="min-h-screen bg-slate-50 text-slate-800 pb-16">
-            {/* Navbar */}
-            <div className="px-4 sm:px-6 lg:px-10 pt-4 sm:pt-5 print:hidden">
+        <div className="min-h-screen bg-slate-50 pl-72 text-slate-800 pb-16 print:pl-0">
+            {/* Persistent Admin Sidebar */}
+            <div className="print:hidden">
                 <NavbarAdmin />
             </div>
 

@@ -400,12 +400,14 @@ export async function reserveForOrder(client, orderId, rawItems, fulfillmentInpu
     if (existing.rows.length > 0) return { reserved: false, reason: 'ALREADY_RESERVED' };
   }
 
-  const items = toOrderItems(rawItems);
+  const rawOrderItems = toOrderItems(rawItems);
   const fulfillment = normalizeFulfillment(fulfillmentInput);
   // Adding dishes to an order: the dishes it already holds matter for shared packaging
-  const { heldItems, heldShared } = opts.append
+  const { heldItems: rawHeldItems, heldShared } = opts.append
     ? await loadOrderHoldings(client, orderId)
     : { heldItems: [], heldShared: new Map() };
+  const items = rawOrderItems;
+  const heldItems = rawHeldItems;
   const { recipes, resolve } = await loadRecipesForItems(client, [...items, ...heldItems]);
   const resolvedItems = items
     .map((it) => ({ ...it, productId: resolve(it) }))

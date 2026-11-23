@@ -77,7 +77,8 @@ router.get('/user-flow/orders', async (req, res) => {
                      'name', oi.product_name_snapshot,
                      'quantity', oi.quantity,
                      'price', oi.unit_price,
-                      'item_status', oi.item_status)
+                     'notes', oi.notes,
+                     'item_status', oi.item_status)
                  ) FILTER (WHERE oi.id IS NOT NULL), '[]'
                ) AS items,
                COALESCE(

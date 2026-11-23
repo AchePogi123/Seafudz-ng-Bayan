@@ -18,6 +18,7 @@ import {
   unitsMismatch as doUnitsMismatch,
 } from './unitConversion'
 import InventoryConfirmModal from './InventoryConfirmModal'
+import { SearchableSelect } from './SearchableSelect'
 import {
   Badge,
   Button,
@@ -1257,12 +1258,32 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
           />
 
           <Field label="Item" htmlFor="stk-item" required error={stockErrors.item}>
-            <select
-              {...fieldAria('stk-item', stockErrors.item)}
-              className="inv-select"
+            <SearchableSelect
+              id="stk-item"
+              size="md"
+              ariaLabel="Item"
               value={selectedStockItemId}
-              onChange={(e) => {
-                const newId = e.target.value
+              placeholder="Choose an item"
+              searchPlaceholder="Search items…"
+              options={[
+                ...ingredients
+                  .filter((i) => (i.itemType || 'FOOD') === 'FOOD')
+                  .map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    group: 'Food',
+                    hint: `${formatQty(item.currentStock)} ${item.baseUnit}`,
+                  })),
+                ...ingredients
+                  .filter((i) => i.itemType === 'PACKAGING')
+                  .map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    group: 'Packaging',
+                    hint: `${formatQty(item.currentStock)} ${item.baseUnit}`,
+                  })),
+              ]}
+              onChange={(newId) => {
                 setSelectedStockItemId(newId)
                 const found = ingredients.find((i) => i.id === newId)
                 if (found) {
@@ -1275,29 +1296,7 @@ export const IngredientsTab: React.FC<IngredientsTabProps> = ({
                   if (found.supplierName) setSellerMarket(found.supplierName)
                 }
               }}
-            >
-              <option value="" disabled>
-                Choose an item
-              </option>
-              <optgroup label="Food">
-                {ingredients
-                  .filter((i) => (i.itemType || 'FOOD') === 'FOOD')
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-              </optgroup>
-              <optgroup label="Packaging">
-                {ingredients
-                  .filter((i) => i.itemType === 'PACKAGING')
-                  .map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-              </optgroup>
-            </select>
+            />
           </Field>
 
           {selectedStockItem && (

@@ -756,7 +756,7 @@ const SalesReportCashier: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-16 antialiased">
       {/* Navigation Header — dish search omitted on sales report to avoid duplicate search inputs */}
-      <div className="p-4 sm:p-6 print:hidden">
+      <div className="mb-6 print:hidden">
         <NavbarCashier />
       </div>
 

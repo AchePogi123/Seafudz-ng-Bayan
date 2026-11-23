@@ -7,11 +7,14 @@ export interface SearchableOption {
   label: string
   /** Shown under the label, e.g. a category or current stock. */
   hint?: string
+  /** Optional section header when grouping items (e.g. "Food", "Packaging"). */
+  group?: string
   /** Pinned to the bottom and never filtered out, for actions like "not in the stockroom yet". */
   pinned?: boolean
 }
 
 interface SearchableSelectProps {
+  id?: string
   value: string
   onChange: (value: string) => void
   options: SearchableOption[]
@@ -20,6 +23,7 @@ interface SearchableSelectProps {
   searchPlaceholder?: string
   ariaLabel: string
   disabled?: boolean
+  size?: 'sm' | 'md'
   className?: string
 }
 
@@ -31,6 +35,7 @@ interface SearchableSelectProps {
  * `inv-select` it replaces, and it falls back to the same keyboard handling.
  */
 export const SearchableSelect: React.FC<SearchableSelectProps> = ({
+  id,
   value,
   onChange,
   options,
@@ -38,6 +43,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   searchPlaceholder = 'Search…',
   ariaLabel,
   disabled = false,
+  size = 'sm',
   className,
 }) => {
   const [open, setOpen] = useState(false)
@@ -99,7 +105,10 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
     const results = options.filter((o) => !o.pinned)
     if (!q) return results
     return results.filter(
-      (o) => o.label.toLowerCase().includes(q) || (o.hint ? o.hint.toLowerCase().includes(q) : false)
+      (o) =>
+        o.label.toLowerCase().includes(q) ||
+        (o.hint ? o.hint.toLowerCase().includes(q) : false) ||
+        (o.group ? o.group.toLowerCase().includes(q) : false)
     )
   }, [options, query])
 
@@ -143,7 +152,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   // Keep the highlighted row in view while arrowing through a long list.
   useEffect(() => {
     if (!open || !listRef.current) return
-    const node = listRef.current.children[activeIndex] as HTMLElement | undefined
+    const node = listRef.current.querySelector<HTMLElement>(`[data-opt-idx="${activeIndex}"]`)
     node?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex, open])
 
@@ -185,8 +194,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   return (
     <div ref={rootRef} className={`inv-ssel ${className || ''}`}>
       <button
+        id={id}
         type="button"
-        className="inv-select inv-select--sm inv-ssel-trigger"
+        className={`inv-select ${size === 'sm' ? 'inv-select--sm ' : ''}inv-ssel-trigger`}
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -241,30 +251,39 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
             {visible.length === 0 ? (
               <div className="inv-ssel-empty">
                 <p className="inv-ssel-empty-title">No match for “{query}”</p>
-                <p className="inv-ssel-empty-note">Check the spelling, or add it below.</p>
+                <p className="inv-ssel-empty-note">Check the spelling or try a different search term.</p>
               </div>
             ) : (
               <ul className="inv-ssel-list" role="listbox" aria-label={ariaLabel} ref={listRef}>
                 {visible.map((option, index) => {
                   const isSelected = option.value === value
+                  const prevGroup = index > 0 ? visible[index - 1]?.group : undefined
+                  const showGroup = Boolean(option.group && option.group !== prevGroup)
                   return (
-                    <li
-                      key={option.value || `blank-${index}`}
-                      role="option"
-                      aria-selected={isSelected}
-                      className={`inv-ssel-option${index === activeIndex ? ' is-active' : ''}${
-                        isSelected ? ' is-selected' : ''
-                      }`}
-                      onMouseEnter={() => setActiveIndex(index)}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => commit(option)}
-                    >
-                      <span className="inv-ssel-check" aria-hidden="true">
-                        {isSelected && <Icon name="check" className="h-3.5 w-3.5" />}
-                      </span>
-                      <span className="inv-ssel-label">{option.label}</span>
-                      {option.hint && <span className="inv-ssel-hint">{option.hint}</span>}
-                    </li>
+                    <React.Fragment key={option.value || `blank-${index}`}>
+                      {showGroup && (
+                        <li className="inv-ssel-group" role="presentation" aria-hidden="true">
+                          {option.group}
+                        </li>
+                      )}
+                      <li
+                        data-opt-idx={index}
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`inv-ssel-option${index === activeIndex ? ' is-active' : ''}${
+                          isSelected ? ' is-selected' : ''
+                        }`}
+                        onMouseEnter={() => setActiveIndex(index)}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => commit(option)}
+                      >
+                        <span className="inv-ssel-check" aria-hidden="true">
+                          {isSelected && <Icon name="check" className="h-3.5 w-3.5" />}
+                        </span>
+                        <span className="inv-ssel-label">{option.label}</span>
+                        {option.hint && <span className="inv-ssel-hint">{option.hint}</span>}
+                      </li>
+                    </React.Fragment>
                   )
                 })}
               </ul>

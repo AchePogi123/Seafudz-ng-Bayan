@@ -78,8 +78,8 @@ export const AdminCustomerView: React.FC = () => {
     )
 
     return (
-        <div className="min-h-screen bg-slate-50/50 pb-16 font-sans text-slate-900 transition-all duration-300">
-            <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 print:hidden">
+        <div className="min-h-screen bg-slate-50/50 pl-72 pb-16 font-sans text-slate-900 transition-all duration-300 print:pl-0">
+            <div className="print:hidden">
                 <NavbarAdmin />
             </div>
 

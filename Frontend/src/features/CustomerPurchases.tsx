@@ -511,7 +511,7 @@ export const CustomerPurchases: React.FC = () => {
         (negative inset plus the same background), so cards scroll beneath an opaque band rather
         than showing through the gap above a translucent header.
       */}
-      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-6 bg-[#f8f6f4] px-4 pb-3 pt-4 lg:-mx-6 lg:-mt-6 lg:px-6 lg:pt-6">
+      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-6 lg:-mx-6 lg:-mt-6">
         <NavbarCustomer />
       </div>
 

@@ -10,6 +10,7 @@ export interface NavbarCustomerProps {
   onOpenCart?: () => void
   isCartBumping?: boolean
   cartButtonRef?: React.RefObject<HTMLButtonElement | null>
+  subtitle?: string
 }
 
 export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
@@ -18,6 +19,7 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
   onOpenCart,
   isCartBumping = false,
   cartButtonRef,
+  subtitle,
 }) => {
   const [isScrolled, setIsScrolled] = useState(() => typeof window !== 'undefined' && window.scrollY > 60)
   const location = useLocation()
@@ -110,7 +112,13 @@ export const NavbarCustomer: React.FC<NavbarCustomerProps> = ({
   }, [location.pathname])
 
   const getCurrentPageName = () => {
-    if (location.pathname === '/customer') return 'Online Customer Menu'
+    if (subtitle) return subtitle
+    if (location.pathname === '/customer') {
+      const tab = new URLSearchParams(location.search).get('tab')
+      if (tab === 'billing') return 'Checkout & Billing'
+      if (tab === 'tracking') return 'Live Order Tracking'
+      return 'Online Customer Menu'
+    }
     if (location.pathname === '/customer/purchases' || location.pathname === '/purchases') return 'Your Purchases'
     if (location.pathname === '/account') return 'Account Management'
     return 'Customer Portal'

@@ -40,20 +40,66 @@ export const HeroBoat: React.FC<HeroBoatProps> = ({ className = '', onClick }) =
         fill="none"
         aria-hidden="true"
       >
-        <ellipse cx="160" cy="181" rx="104" ry="9" fill="#7D3300" fillOpacity=".24" />
+        {/* Warm horizon sun disk behind the banca */}
+        <circle cx="160" cy="126" r="70" fill="#FFF7ED" fillOpacity=".12" />
+        <circle cx="160" cy="126" r="48" fill="#FFF7ED" fillOpacity=".15" />
+
         <g className="hero-boat-motion">
-          <path d="M86 119 39 103M234 119l47-16" stroke="#F5D49F" strokeWidth="6" strokeLinecap="round" />
-          <path d="M16 101q24 15 48 0l-7 12q-18 9-35 0Z" fill="#16495A" />
-          <path d="M256 101q24 15 48 0l-6 12q-18 9-35 0Z" fill="#16495A" />
-          <path d="M71 119h178l-29 43q-60 22-120 0Z" fill="#16394B" />
-          <path d="M86 147h148l-14 21q-60 18-120 0Z" fill="#0B6975" />
-          <path d="M75 116h170l10 14H65Z" fill="#F2B967" />
-          <path d="M119 75h82l19 41H100Z" fill="#FFF3D9" />
-          <path d="M111 74h94l-8 12h-78Z" fill="#16495A" />
-          <path d="M126 90h24v19h-24Zm34 0h24v19h-24Z" fill="#0D5968" />
-          <path d="M155 50v26" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
-          <path d="M145 51h21" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
-          <path d="M75 133h170" stroke="#FF6900" strokeWidth="4" strokeLinecap="round" />
+          {/* Curved outrigger booms (katig) arching down from the hull to the water surface */}
+          <path
+            d="M84 142 C 66 142 52 152 38 164 M236 142 C 254 142 268 152 282 164"
+            stroke="#F5D49F"
+            strokeWidth="5.5"
+            strokeLinecap="round"
+          />
+          <path
+            d="M84 141 C 66 141 52 151 38 163 M236 141 C 254 141 268 151 282 163"
+            stroke="#FFF3D9"
+            strokeOpacity=".6"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+          />
+
+          {/* Outrigger floats resting on the waterline */}
+          <path d="M14 162q24 11 48 0l-6 10q-18 7-36 0Z" fill="#16495A" />
+          <path d="M258 162q24 11 48 0l-6 10q-18 7-36 0Z" fill="#16495A" />
+
+          {/* Main hull positioned in the water plane */}
+          <path d="M71 137h178l-29 43q-60 22-120 0Z" fill="#16394B" />
+          <path d="M86 165h148l-14 21q-60 18-120 0Z" fill="#0B6975" />
+
+          {/* Gunwale deck */}
+          <path d="M75 134h170l10 14H65Z" fill="#F2B967" />
+          <path d="M76 135h168" stroke="#FFF3D9" strokeOpacity=".65" strokeWidth="2" strokeLinecap="round" />
+
+          {/* Cabin house & roof */}
+          <path d="M119 93h82l19 41H100Z" fill="#FFF3D9" />
+          <path d="M111 92h94l-8 12h-78Z" fill="#16495A" />
+          <path d="M113 93h90" stroke="#F5D49F" strokeOpacity=".45" strokeWidth="1.5" strokeLinecap="round" />
+
+          {/* Cabin windows with subtle glass reflection */}
+          <path d="M126 108h24v19h-24Zm34 0h24v19h-24Z" fill="#0D5968" />
+          <path d="M129 111h7l-5 13h-2Zm34 0h7l-5 13h-2Z" fill="#FFF3D9" fillOpacity=".18" />
+
+          {/* Mast, crossbar & fluttering coastal pennant */}
+          <path d="M155 66v27" stroke="#F5D49F" strokeWidth="4" strokeLinecap="round" />
+          <path d="M145 70h21" stroke="#F5D49F" strokeWidth="3.5" strokeLinecap="round" />
+          <path className="hero-boat-pennant" d="M157 65l15 4-15 4Z" fill="#FF6900" />
+
+          {/* Signature orange hull stripe */}
+          <path d="M75 151h170" stroke="#FF6900" strokeWidth="4" strokeLinecap="round" />
+
+          {/* Buoyant waterline foam & contact ripples hugging the submerged hull and outriggers */}
+          <g className="hero-boat-waterline" stroke="#FFF7ED" strokeLinecap="round">
+            <path d="M78 176 Q 118 184 160 180 T 242 176" strokeOpacity=".78" strokeWidth="2.4" />
+            <path d="M14 170 Q 38 175 62 170 M258 170 Q 282 175 306 170" strokeOpacity=".65" strokeWidth="2" />
+          </g>
+        </g>
+
+        {/* Minimal water wake reflection beneath the hull */}
+        <g className="hero-boat-waves" stroke="#FFF7ED" strokeLinecap="round">
+          <path d="M62 190q24-4 48 0t48 0 48 0 48 0" strokeOpacity=".52" strokeWidth="1.9" />
+          <path d="M90 201q18-3 36 0t36 0 36 0 36 0" strokeOpacity=".34" strokeWidth="1.5" />
         </g>
 
         {isBoatSceneActive && (

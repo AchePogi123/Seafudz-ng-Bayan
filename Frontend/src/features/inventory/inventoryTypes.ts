@@ -168,7 +168,8 @@ export interface Supplier {
   email: string
   address: string
   categoriesSupplied: IngredientCategory[]
-  leadTimeDays: number
+  /** Hours from order to delivery — hours, so same-day vendors are representable. */
+  leadTimeHours: number
   notes?: string
   status: 'ACTIVE' | 'INACTIVE'
   createdAt: string

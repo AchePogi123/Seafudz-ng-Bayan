@@ -49,6 +49,12 @@ const mapIngredient = (r) => ({
   updatedAt: iso(r.updated_at),
 });
 
+/** Lead time arrives in hours; a legacy client sending days is still honoured. */
+const leadTimeHours = (b) => {
+  const hours = b.leadTimeHours != null ? num(b.leadTimeHours, 24) : num(b.leadTimeDays, 1) * 24;
+  return Math.max(1, Math.round(hours));
+};
+
 const mapSupplier = (r) => ({
   id: r.id,
   name: r.name,
@@ -57,7 +63,7 @@ const mapSupplier = (r) => ({
   email: r.email || '',
   address: r.address || '',
   categoriesSupplied: r.categories_supplied || [],
-  leadTimeDays: num(r.lead_time_days, 1),
+  leadTimeHours: num(r.lead_time_hours, 24),
   notes: r.notes || undefined,
   status: r.status,
   createdAt: iso(r.created_at),
@@ -499,10 +505,10 @@ router.post('/inventory/suppliers', ...guard, wrap(async (req, res) => {
   const name = validateSupplier(b);
   const { rows } = await withTransaction((client) =>
     client.query(
-      `INSERT INTO inventory_suppliers (id, name, contact_person, contact_number, email, address, categories_supplied, lead_time_days, notes, status)
+      `INSERT INTO inventory_suppliers (id, name, contact_person, contact_number, email, address, categories_supplied, lead_time_hours, notes, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [shortId('sup'), name, b.contactPerson || null, b.contactNumber || null, b.email || null, b.address || null,
-       b.categoriesSupplied || [], Math.max(1, num(b.leadTimeDays, 1)), b.notes || null, b.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE']
+       b.categoriesSupplied || [], leadTimeHours(b), b.notes || null, b.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE']
     )
   );
   res.status(201).json({ success: true, data: mapSupplier(rows[0]) });
@@ -514,9 +520,9 @@ router.put('/inventory/suppliers/:id', ...guard, wrap(async (req, res) => {
   const { rows } = await withTransaction((client) =>
     client.query(
       `UPDATE inventory_suppliers SET name=$2, contact_person=$3, contact_number=$4, email=$5, address=$6,
-         categories_supplied=$7, lead_time_days=$8, notes=$9, status=$10 WHERE id=$1 RETURNING *`,
+         categories_supplied=$7, lead_time_hours=$8, notes=$9, status=$10 WHERE id=$1 RETURNING *`,
       [req.params.id, name, b.contactPerson || null, b.contactNumber || null, b.email || null, b.address || null,
-       b.categoriesSupplied || [], Math.max(1, num(b.leadTimeDays, 1)), b.notes || null, b.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE']
+       b.categoriesSupplied || [], leadTimeHours(b), b.notes || null, b.status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE']
     )
   );
   if (rows.length === 0) throw new HttpError(404, 'Supplier not found.', 'NOT_FOUND');
@@ -746,13 +752,13 @@ router.post('/inventory/replace-all', ...guard, wrap(async (req, res) => {
     await client.query(`DELETE FROM inventory_suppliers WHERE NOT (id = ANY($1::text[]))`, [supplierIds]);
     for (const s of b.suppliers) {
       await client.query(
-        `INSERT INTO inventory_suppliers (id, name, contact_person, contact_number, email, address, categories_supplied, lead_time_days, notes, status)
+        `INSERT INTO inventory_suppliers (id, name, contact_person, contact_number, email, address, categories_supplied, lead_time_hours, notes, status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name, contact_person=EXCLUDED.contact_person, contact_number=EXCLUDED.contact_number,
            email=EXCLUDED.email, address=EXCLUDED.address, categories_supplied=EXCLUDED.categories_supplied,
-           lead_time_days=EXCLUDED.lead_time_days, notes=EXCLUDED.notes, status=EXCLUDED.status`,
+           lead_time_hours=EXCLUDED.lead_time_hours, notes=EXCLUDED.notes, status=EXCLUDED.status`,
         [s.id, s.name, s.contactPerson || null, s.contactNumber || null, s.email || null, s.address || null,
-         s.categoriesSupplied || [], num(s.leadTimeDays, 1), s.notes || null, s.status || 'ACTIVE']
+         s.categoriesSupplied || [], leadTimeHours(s), s.notes || null, s.status || 'ACTIVE']
       );
     }
     // Items are upserted (not deleted) so their stock history survives a baseline reload

@@ -128,8 +128,21 @@ button, input, select, textarea {
 
 .hero-boat-motion {
   transform-box: fill-box;
+  transform-origin: 50% 78%;
+  will-change: transform;
+  animation: boat-float 3.6s linear infinite;
+}
+
+.hero-boat-waterline {
+  transform-box: fill-box;
   transform-origin: center;
-  animation: boat-float 3.2s ease-in-out infinite;
+  animation: boat-waterline-pulse 3.6s ease-in-out infinite;
+}
+
+.hero-boat-pennant {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: boat-pennant-flutter 1.8s ease-in-out infinite alternate;
 }
 
 .hero-boat-waves path {
@@ -248,12 +261,43 @@ button, input, select, textarea {
   }
 }
 
+/* Physical wave-riding buoyancy: pitch leads heave by 90° (orbital wave motion)
+   so the bow climbs the rising wave face, crests, and tips gently into the trough. */
 @keyframes boat-float {
-  0%, 100% {
-    transform: translateY(0) rotate(0);
+  0% {
+    transform: translate3d(-2px, 5px, 0) rotate(-0.5deg);
+  }
+  25% {
+    transform: translate3d(2.5px, 0px, 0) rotate(-3deg);
   }
   50% {
-    transform: translateY(-5px) rotate(-1deg);
+    transform: translate3d(1px, -6px, 0) rotate(0.4deg);
+  }
+  75% {
+    transform: translate3d(-2.5px, -0.5px, 0) rotate(2.8deg);
+  }
+  100% {
+    transform: translate3d(-2px, 5px, 0) rotate(-0.5deg);
+  }
+}
+
+@keyframes boat-waterline-pulse {
+  0%, 100% {
+    opacity: 0.95;
+    transform: scaleX(1.04);
+  }
+  50% {
+    opacity: 0.62;
+    transform: scaleX(0.95);
+  }
+}
+
+@keyframes boat-pennant-flutter {
+  0% {
+    transform: rotate(-4deg) scaleX(0.94);
+  }
+  100% {
+    transform: rotate(5deg) scaleX(1.05);
   }
 }
 
@@ -295,8 +339,6 @@ button, input, select, textarea {
   .login-card,
   .login-hero-from-left,
   .login-hero-from-right,
-  .hero-boat-motion,
-  .hero-boat-waves path,
   .hero-bird,
   .hero-fish,
   .login-form-content {
@@ -381,50 +423,84 @@ button, input, select, textarea {
   animation: welcome-wave-2 8s ease-in-out infinite reverse;
 }
 
-/* Stylized Drawn Ocean Waves Animations (Hand-Drawn Vector Wave Pattern - Smooth & Silky) */
-@keyframes drawn-waves-far {
+/* Stylized Drawn Ocean Waves Animations (Gentle, Smooth, Minimal Coastal Swells) */
+@keyframes drawn-waves-glide-left {
   0% {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   100% {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
-@keyframes drawn-waves-mid {
+@keyframes drawn-waves-glide-right {
   0% {
-    transform: translateX(0) translateY(0);
-  }
-  50% {
-    transform: translateX(-25%) translateY(-1.8px);
+    transform: translate3d(-50%, 0, 0);
   }
   100% {
-    transform: translateX(-50%) translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
-@keyframes drawn-waves-near {
+@keyframes drawn-waves-breathe-far {
   0% {
-    transform: translateX(0) translateY(0);
-  }
-  50% {
-    transform: translateX(-25%) translateY(1.8px);
+    transform: translate3d(0, -2.5px, 0) scaleY(0.96);
   }
   100% {
-    transform: translateX(-50%) translateY(0);
+    transform: translate3d(0, 2.5px, 0) scaleY(1.05);
   }
+}
+
+@keyframes drawn-waves-breathe-mid {
+  0% {
+    transform: translate3d(0, 3px, 0) scaleY(1.06);
+  }
+  100% {
+    transform: translate3d(0, -3px, 0) scaleY(0.94);
+  }
+}
+
+@keyframes drawn-waves-breathe-near {
+  0% {
+    transform: translate3d(0, -3.5px, 0) scaleY(1.07);
+  }
+  100% {
+    transform: translate3d(0, 3px, 0) scaleY(0.95);
+  }
+}
+
+.drawn-waves-track {
+  will-change: transform;
 }
 
 .animate-drawn-waves-far {
-  animation: drawn-waves-far 32s linear infinite;
+  animation: drawn-waves-glide-left 18s linear infinite;
 }
 
 .animate-drawn-waves-mid {
-  animation: drawn-waves-mid 22s ease-in-out infinite;
+  animation: drawn-waves-glide-right 13.5s linear infinite;
 }
 
 .animate-drawn-waves-near {
-  animation: drawn-waves-near 16s ease-in-out infinite;
+  animation: drawn-waves-glide-left 9.5s linear infinite;
+}
+
+.drawn-waves-swell-far {
+  transform-origin: bottom center;
+  will-change: transform;
+  animation: drawn-waves-breathe-far 4.6s ease-in-out infinite alternate;
+}
+
+.drawn-waves-swell-mid {
+  transform-origin: bottom center;
+  will-change: transform;
+  animation: drawn-waves-breathe-mid 3.6s ease-in-out infinite alternate;
+}
+
+.drawn-waves-swell-near {
+  transform-origin: bottom center;
+  will-change: transform;
+  animation: drawn-waves-breathe-near 1.8s ease-in-out infinite alternate;
 }
 
 /* Island Palm Tree Sway Animation */
@@ -535,14 +611,6 @@ button, input, select, textarea {
 @media (prefers-reduced-motion: reduce) {
   .menu-view {
     animation: none;
-  }
-
-  .menu-view *,
-  .menu-view *::before,
-  .menu-view *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
   }
 }
 
@@ -802,3 +870,4 @@ textarea {
     transform: scaleX(1);
   }
 }
+

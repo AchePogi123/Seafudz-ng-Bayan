@@ -5,15 +5,23 @@ import NavShell, { NavSearch } from './nav/NavShell'
 interface NavbarAssistantProps {
     searchQuery?: string
     setSearchQuery?: (query: string) => void
+    subtitle?: string
 }
 
-export const NavbarAssistant: React.FC<NavbarAssistantProps> = ({ searchQuery, setSearchQuery }) => {
+export const NavbarAssistant: React.FC<NavbarAssistantProps> = ({ searchQuery, setSearchQuery, subtitle }) => {
     const location = useLocation()
+
+    const getCurrentPageName = () => {
+        if (subtitle) return subtitle
+        if (location.pathname === '/assistant') return 'Assistant Order Management'
+        if (location.pathname === '/account') return 'Account Management'
+        return 'Assistant Panel'
+    }
 
     return (
         <NavShell
             role="assistant"
-            subtitle={location.pathname === '/assistant' ? 'Assistant Order Management' : 'Assistant Panel'}
+            subtitle={getCurrentPageName()}
         >
             {searchQuery !== undefined && setSearchQuery !== undefined && (
                 <NavSearch

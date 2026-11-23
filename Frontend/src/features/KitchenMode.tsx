@@ -820,7 +820,7 @@ export const KitchenMode: React.FC = () => {
 
   return (
     <div className="inv-scope kds min-h-screen pb-6" style={{ background: 'var(--inv-bg)' }}>
-      <div className="px-3 sm:px-4 lg:px-6 pt-3 sm:pt-4">
+      <div className="print:hidden">
         <NavbarKitchen />
       </div>
 

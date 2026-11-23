@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react'
 import type { StockTransaction, TransactionType, Ingredient, InventoryItemType } from './inventoryTypes'
+import { SearchableSelect } from './SearchableSelect'
 import {
   Badge,
   Button,
@@ -372,32 +373,29 @@ export const StockHistoryTab: React.FC<StockHistoryTabProps> = ({
       >
         <div className="space-y-5">
           <Field label="Item" htmlFor="mv-item" required error={manualErrors.item}>
-            <select
-              {...fieldAria('mv-item', manualErrors.item)}
-              className="inv-select"
+            <SearchableSelect
+              id="mv-item"
+              size="md"
+              ariaLabel="Item"
               value={manualIngredientId}
-              onChange={(e) => setManualIngredientId(e.target.value)}
-            >
-              <option value="">Choose an item</option>
-              {foodIngredients.length > 0 && (
-                <optgroup label="Food">
-                  {foodIngredients.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name} — {formatQty(i.currentStock)} {i.baseUnit}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {packagingIngredients.length > 0 && (
-                <optgroup label="Packaging">
-                  {packagingIngredients.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name} — {formatQty(i.currentStock)} {i.baseUnit}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
+              onChange={setManualIngredientId}
+              placeholder="Choose an item"
+              searchPlaceholder="Search items…"
+              options={[
+                ...foodIngredients.map((i) => ({
+                  value: i.id,
+                  label: i.name,
+                  group: 'Food',
+                  hint: `${formatQty(i.currentStock)} ${i.baseUnit}`,
+                })),
+                ...packagingIngredients.map((i) => ({
+                  value: i.id,
+                  label: i.name,
+                  group: 'Packaging',
+                  hint: `${formatQty(i.currentStock)} ${i.baseUnit}`,
+                })),
+              ]}
+            />
           </Field>
 
           <Field

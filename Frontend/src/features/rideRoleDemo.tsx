@@ -1303,7 +1303,7 @@ export const RideRoleDemo: React.FC = () => {
         The bar travels with the rider down a long list of stops and carries the page ground
         with it, so stop rows pass beneath an opaque band rather than through the gap above it.
       */}
-      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-5 bg-[#f8f6f4] px-4 pb-3 pt-4 lg:-mx-6 lg:-mt-6 lg:px-6 lg:pt-6">
+      <div className="sticky top-0 z-50 -mx-4 -mt-4 mb-5 lg:-mx-6 lg:-mt-6">
         <NavbarRider />
       </div>
 

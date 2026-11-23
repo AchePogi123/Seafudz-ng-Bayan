@@ -554,7 +554,11 @@ export const OnlineCustomer: React.FC = () => {
     const location = useLocation()
     const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
     const currentUser = getActiveUser()
-    const userProfileName = currentUser?.fullname || currentUser?.username || 'Guest'
+    const rawProfileName = (currentUser?.fullname || currentUser?.username || 'Guest').trim()
+    const userProfileName =
+        rawProfileName === rawProfileName.toLowerCase()
+            ? rawProfileName.replace(/\b\w/g, (ch) => ch.toUpperCase())
+            : rawProfileName
 
     // Restrict employee accounts from customer online ordering
     useEffect(() => {
@@ -967,9 +971,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         const imagesById = new Map(menuItems.map((item) => [item.id, item]))
         return storedCartItems.map((cartItem) => {
             const latest = imagesById.get(cartItem.item.id)
-            return latest
-                ? { ...cartItem, item: { ...cartItem.item, image: latest.image, bundledImage: latest.bundledImage } }
-                : cartItem
+            if (!latest) return cartItem
+            return {
+                ...cartItem,
+                item: {
+                    ...cartItem.item,
+                    image: latest.image,
+                    bundledImage: latest.bundledImage,
+                },
+            }
         })
     }, [menuItems, storedCartItems])
     const unavailableCartItems = useMemo(
@@ -1080,6 +1090,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             setFlyingItems((prev) => prev.filter((item) => item.id !== newItem.id))
         }, 700)
     }
+    // Only one dish's ingredient panel is open at a time, so a long cart stays readable
     const [editingNoteItemId, setEditingNoteItemId] = useState<string | null>(null)
     const [tempNote, setTempNote] = useState('')
 
@@ -2571,102 +2582,80 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     return (
         <div className="min-h-screen bg-[#f8f6f4] p-4 lg:p-6 transition-all duration-300">
             <div className="w-full flex flex-col gap-6">
-                {/* Integrated Customer Navbar */}
-                <NavbarCustomer
-                    cartItemCount={cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
-                    cartTotal={total}
-                    onOpenCart={() => setIsCartDrawerOpen(true)}
-                    isCartBumping={isCartBumping}
-                    cartButtonRef={cartIconRef}
-                />
+                {/* Integrated Customer Navbar — Flush at top edge across all customer submodules */}
+                <div className="-mx-4 -mt-4 lg:-mx-6 lg:-mt-6">
+                    <NavbarCustomer
+                        cartItemCount={cartItems.reduce((acc, ci) => acc + ci.quantity, 0)}
+                        cartTotal={total}
+                        onOpenCart={() => setIsCartDrawerOpen(true)}
+                        isCartBumping={isCartBumping}
+                        cartButtonRef={cartIconRef}
+                        subtitle={
+                            activeTab === 'billing'
+                                ? 'Checkout & Billing'
+                                : activeTab === 'tracking'
+                                  ? 'Live Order Tracking'
+                                  : 'Online Customer Menu'
+                        }
+                    />
+                </div>
 
                 {/* VIEW 1: MENU / BROWSE */}
                 {activeTab === 'menu' && (
                     <div className="menu-view flex w-full flex-col gap-5">
-                        {/*
-                          Replacement mode is the one thing on this screen that is waiting on the
-                          customer, so it leads and it follows them down the menu.
-                        */}
-                        {replacementTargetItem && (
-                            <div className="sticky top-2 z-40 rounded-2xl shadow-lg shadow-neutral-900/5">
-                                <Notice
-                                    tone="warning"
-                                    title={`Choose a replacement for ${replacementTargetItem.name || replacementTargetItem.product_name_snapshot}`}
-                                    action={
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setReplacementTargetItem(null)
-                                                setActiveTab('tracking')
-                                            }}
-                                            className="w-full cursor-pointer rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-50 sm:w-auto"
-                                        >
-                                            Cancel and return to order
-                                        </button>
-                                    }
-                                >
-                                    Pick any available dish below and we will swap it in. You paid
-                                    {' '}
-                                    <span className="font-semibold tabular-nums">
-                                        ₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </span>
-                                    {' '}for it — we settle any difference with you.
-                                </Notice>
-                            </div>
-                        )}
+                        {/* Welcome Banner Card — Stuck Flush to Top Header and Bottom Category Nav */}
+                        <div className="relative -mx-4 -mt-6 flex items-center justify-between overflow-hidden border-b border-white/25 bg-gradient-to-r from-amber-500 via-orange-500 to-orange-600 px-5 pt-5 pb-8 text-white shadow-[0_10px_28px_-12px_rgba(234,88,12,0.38)] sm:px-7 sm:pt-6 sm:pb-10 lg:-mx-6 lg:px-10 lg:pt-7 lg:pb-11">
+                            {/* Architectural horizon sun rings & golden-hour atmospheric glow */}
+                            <div className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 rounded-full border border-white/15 lg:h-96 lg:w-96" />
+                            <div className="pointer-events-none absolute right-6 -top-8 h-52 w-52 rounded-full border border-white/10 lg:right-12 lg:h-68 lg:w-68" />
+                            <div className="pointer-events-none absolute right-2 top-1/2 h-48 w-48 -translate-y-1/2 rounded-full bg-amber-200/25 blur-2xl sm:right-8 lg:right-10 lg:h-68 lg:w-68" />
+                            <div className="pointer-events-none absolute -top-14 left-1/4 h-44 w-64 rounded-full bg-amber-300/20 blur-2xl lg:h-56 lg:w-80" />
+                            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-orange-950/25 via-orange-900/10 to-transparent lg:h-24" />
 
-                        {/*
-                          One order at a time. While an order is in progress the menu stays open to
-                          browse, but nothing can be added to the cart — the replacement flow above
-                          takes priority when it is running, so this steps aside for it.
-                        */}
-                        {hasOngoingOrder && !replacementTargetItem && (
-                            <Notice
-                                tone="brand"
-                                title="You have an order in progress"
-                                action={
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab('tracking')}
-                                        className="w-full cursor-pointer rounded-xl bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 sm:w-auto"
-                                    >
-                                        Track my order
-                                    </button>
-                                }
+                            {/* Distant coastal horizon clouds & gulls bridging the middle seascape */}
+                            <svg
+                                className="pointer-events-none absolute inset-0 h-full w-full opacity-35"
+                                viewBox="0 0 1200 220"
+                                preserveAspectRatio="none"
+                                fill="none"
+                                aria-hidden="true"
                             >
-                                Order{ongoingOrderId ? <strong className="font-semibold"> #{ongoingOrderId}</strong> : null} is still
-                                {' '}{describeOrderStatus(normalizeStatus(ongoingOrder?.status), { isPickup: String(ongoingOrder?.fulfillmentType || (ongoingOrder as any)?.fulfillment_type || ongoingOrder?.type || '').toUpperCase().includes('PICKUP') }).label.toLowerCase()}.
-                                {' '}You can look through the menu, but a new order can only be placed once this one has been delivered or picked up.
-                            </Notice>
-                        )}
+                                <path d="M520 54c18-10 42-10 58 0 14-6 32-5 44 4H492c6-6 17-8 28-4Z" fill="#FFF7ED" fillOpacity="0.22" />
+                                <path d="M740 38c14-8 34-8 46 0 11-5 25-4 35 3H718c5-5 13-6 22-3Z" fill="#FFF7ED" fillOpacity="0.18" />
+                                <path d="M655 64q6-7 12 0 6-7 12 0" stroke="#FFF7ED" strokeOpacity="0.55" strokeWidth="1.8" strokeLinecap="round" />
+                                <path d="M686 52q5-5 10 0 5-5 10 0" stroke="#FFF7ED" strokeOpacity="0.45" strokeWidth="1.5" strokeLinecap="round" />
+                            </svg>
 
-                        {/* Welcome Banner Card with Animated Boat */}
-                        <div className="relative flex items-center justify-between overflow-hidden rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 p-5 text-white shadow-lg shadow-orange-500/20 sm:p-7 lg:p-8">
-                            <div className="relative z-10 max-w-[62%] space-y-2 sm:max-w-[70%] lg:max-w-[72%] lg:space-y-3">
-                                <h2 className="text-xl font-black leading-tight tracking-tight text-white drop-shadow-xs sm:text-2xl md:text-3xl lg:text-4xl">
+                            {/* Left End: Coastal Eyebrow, Bold Greeting & Framed Signature Quote */}
+                            <div className="relative z-20 max-w-[66%] space-y-2.5 sm:max-w-[68%] lg:max-w-[64%] lg:space-y-3">
+                                <div className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-amber-50 ring-1 ring-inset ring-white/25 backdrop-blur-xs">
+                                    <svg className="h-3.5 w-3.5 text-amber-100" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                        <path d="M3 15c2.4-1.4 3.8-4 6.6-4 2.8 0 3.8 2.5 6.4 2.5 1.4 0 2.7-.6 4-1.6-.4 4.4-4 7.6-8.4 7.6-3.8 0-7.1-1.7-8.6-4.5Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                    <span>Coastal Kitchen · Fresh Catch Daily</span>
+                                </div>
+
+                                <h2 className="text-xl font-black leading-tight tracking-tight text-white [text-shadow:0_2px_12px_rgba(124,45,18,0.26)] sm:text-2xl md:text-3xl lg:text-[38px]">
                                     Welcome, {userProfileName}!
                                 </h2>
-                                <p className="max-w-xl text-xs font-medium italic leading-relaxed text-amber-50/95 sm:text-sm lg:text-base">
-                                    “Fresh catch crafted with authentic coastal passion —<br />
+
+                                <p className="max-w-xl border-l-2 border-amber-100/65 pl-3 text-xs font-medium italic leading-relaxed text-amber-50 [text-shadow:0_1px_3px_rgba(124,45,18,0.3)] sm:pl-3.5 sm:text-sm lg:text-[15px]">
+                                    “Fresh catch crafted with authentic coastal passion —<br className="hidden sm:inline" />{' '}
                                     bringing the true taste of the ocean to Seafudz ng Bayan.”
                                 </p>
                             </div>
 
-                            {/* Animated Boat Scene on the right */}
-                            <div className="relative z-10 -mr-1 flex h-24 w-32 shrink-0 items-center justify-center sm:mr-2 sm:h-32 sm:w-44 md:h-38 md:w-52 lg:h-48 lg:w-64">
+                            {/* Right End: Animated Banca Scene nestled physically inside the wave layers */}
+                            <div className="relative z-10 -mr-2 -mb-6 flex h-28 w-36 shrink-0 items-end justify-end self-end sm:-mr-1 sm:-mb-8 sm:h-36 sm:w-48 md:h-42 md:w-56 lg:mr-0 lg:-mb-9 lg:h-48 lg:w-68">
                                 <HeroBoat className="h-full w-full" />
                             </div>
 
-                            {/* Decorative Background Elements */}
-                            <div className="pointer-events-none absolute -bottom-8 -right-8 h-44 w-44 rounded-full bg-white/10 blur-sm lg:h-60 lg:w-60" />
-                            <div className="pointer-events-none absolute -top-10 right-1/4 h-36 w-36 rounded-full bg-white/10 blur-xl lg:h-48 lg:w-48" />
-
-                            {/* Stylized Hand-Drawn Animated Ocean Waves */}
-                            <DrawnWaves className="absolute inset-x-0 bottom-0 z-0 h-14 text-amber-50 sm:h-18 md:h-20 lg:h-24" />
+                            {/* Edge-to-Edge Multi-Layered Rolling Coastal Ocean Waves (layers z-4, z-6 behind boat, z-12 lapping in front) */}
+                            <DrawnWaves className="absolute inset-x-0 bottom-0 h-16 text-amber-50/95 sm:h-20 md:h-22 lg:h-26" />
                         </div>
 
-                        {/* Filter and search stay with the customer as the menu scrolls past. */}
-                        <div className="sticky top-2 z-30 rounded-2xl border border-neutral-200 bg-white/95 px-2.5 py-2.5 shadow-sm shadow-neutral-900/5 backdrop-blur-sm">
+                        {/* Filter and search bar stuck directly to the bottom of the welcome banner */}
+                        <div className="sticky top-0 z-30 -mx-4 -mt-5 border-b border-neutral-200 bg-white/95 px-5 py-2.5 shadow-sm shadow-neutral-900/5 backdrop-blur-sm sm:px-7 lg:-mx-6 lg:px-10">
                             <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
                                 <div className="flex min-w-0 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                                     {categories.map((cat) => {
@@ -2721,6 +2710,63 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 </div>
                             </div>
                         </div>
+
+                        {/*
+                          Replacement mode is the one thing on this screen that is waiting on the
+                          customer, so it leads the menu content and follows them down the menu.
+                        */}
+                        {replacementTargetItem && (
+                            <div className="sticky top-16 z-40 rounded-2xl shadow-lg shadow-neutral-900/5">
+                                <Notice
+                                    tone="warning"
+                                    title={`Choose a replacement for ${replacementTargetItem.name || replacementTargetItem.product_name_snapshot}`}
+                                    action={
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setReplacementTargetItem(null)
+                                                setActiveTab('tracking')
+                                            }}
+                                            className="w-full cursor-pointer rounded-xl border border-amber-300 bg-white px-4 py-2 text-xs font-semibold text-amber-900 transition-colors hover:bg-amber-50 sm:w-auto"
+                                        >
+                                            Cancel and return to order
+                                        </button>
+                                    }
+                                >
+                                    Pick any available dish below and we will swap it in. You paid
+                                    {' '}
+                                    <span className="font-semibold tabular-nums">
+                                        ₱{((replacementTargetItem.price || replacementTargetItem.unit_price || 0) * (replacementTargetItem.quantity || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    {' '}for it — we settle any difference with you.
+                                </Notice>
+                            </div>
+                        )}
+
+                        {/*
+                          One order at a time. While an order is in progress the menu stays open to
+                          browse, but nothing can be added to the cart — the replacement flow above
+                          takes priority when it is running, so this steps aside for it.
+                        */}
+                        {hasOngoingOrder && !replacementTargetItem && (
+                            <Notice
+                                tone="brand"
+                                title="You have an order in progress"
+                                action={
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('tracking')}
+                                        className="w-full cursor-pointer rounded-xl bg-neutral-900 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-neutral-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 sm:w-auto"
+                                    >
+                                        Track my order
+                                    </button>
+                                }
+                            >
+                                Order{ongoingOrderId ? <strong className="font-semibold"> #{ongoingOrderId}</strong> : null} is still
+                                {' '}{describeOrderStatus(normalizeStatus(ongoingOrder?.status), { isPickup: String(ongoingOrder?.fulfillmentType || (ongoingOrder as any)?.fulfillment_type || ongoingOrder?.type || '').toUpperCase().includes('PICKUP') }).label.toLowerCase()}.
+                                {' '}You can look through the menu, but a new order can only be placed once this one has been delivered or picked up.
+                            </Notice>
+                        )}
 
                         {/* Per-category rows, or the search result set when the customer is looking for one dish */}
                         <div id="menu-display-area" className="flex flex-col gap-9 pt-1">

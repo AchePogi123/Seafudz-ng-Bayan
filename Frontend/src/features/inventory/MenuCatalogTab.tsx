@@ -1,8 +1,10 @@
 /**
- * Menu — the dish catalog, as a tab of the inventory hub.
+ * Menu & Recipes — the dish catalog and the recipes that tie it to stock, in one tab.
  *
- * Counts and stock health live on Overview, so this tab is only the catalog itself: find a dish,
- * change its price or availability, and keep every dish linked to stock through a recipe.
+ * Recipes used to be a tab of their own, which meant two lists of the same dishes: one to price a
+ * dish and one to say what it is made of. There is one list now — a dish's recipe opens from its
+ * own row — and the stock shortfalls that stop those dishes being cooked are shown here too,
+ * with the restock on the warning itself.
  */
 import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { ProductImage } from '../../components/ProductImage'
@@ -26,6 +28,8 @@ import type {
 import { SearchableSelect } from './SearchableSelect'
 import { FOOD_CATEGORIES, FULFILLMENT_OPTIONS, MEASUREMENT_UNITS } from './inventoryTypes'
 import InventoryConfirmModal from './InventoryConfirmModal'
+import { computeRecipeServingEstimate, servingsTone } from './recipeYield'
+import RecipeSheet from './RecipeSheet'
 import type { ToastMessage } from './InventoryToast'
 import {
   Badge,
@@ -53,9 +57,12 @@ import {
 type ViewMode = 'table' | 'grid'
 type StockFilter = 'all' | 'in_stock' | 'out_of_stock'
 type PriceFilter = 'all' | 'custom' | 'standard'
+type RecipeFilter = 'all' | 'linked' | 'unlinked'
 type SortOption = 'default' | 'name_asc' | 'name_desc' | 'price_asc' | 'price_desc'
 
 const PAGE_SIZE = 12
+/** How many no-recipe dishes the warning names before it has to be expanded. */
+const UNLINKED_PREVIEW = 4
 const VIEW_MODE_KEY = 'sfb_menu_view_mode'
 const DISH_CATEGORIES = CLIENT_CATEGORIES.filter((category) => category !== 'All Menu')
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -84,7 +91,7 @@ const createRecipeLine = (): RecipeLineDraft => ({
  *
  * Optional, unlike the recipe — a dine-in-only dish is carried on a plate the stockroom does not
  * track. When it IS set, it is what takes the container out of stock on every order, so the same
- * three questions the Recipes tab asks are asked here: which item, how many, and when does it
+ * three questions a dish's recipe asks are asked here: which item, how many, and when does it
  * apply (order type, and whether it is one per dish or one shared by the whole order).
  */
 interface PackagingLineDraft {
@@ -114,12 +121,14 @@ export interface MenuCatalogTabProps {
   recipes: ProductRecipe[]
   /** Saves the recipe for a dish; resolves false when the server rejected it. */
   onSaveRecipe: (recipe: ProductRecipe) => Promise<boolean> | boolean
+  /** Clears a dish's recipe, from the recipe sheet. */
+  onDeleteRecipe: (productId: string) => void
   /** Registers a brand-new stockroom item without leaving the Add dish form. */
   onCreateIngredient: (
     item: Omit<Ingredient, 'id' | 'updatedAt' | 'status'>
   ) => Promise<Ingredient | null> | Ingredient | null
-  /** Jumps to another inventory tab (Items, Recipes, …). */
-  onNavigateTab: (tabId: string) => void
+  /** Jumps to another inventory tab (Items, Purchasing, …), optionally singling out a row. */
+  onNavigateTab: (tabId: string, params?: Record<string, string>) => void
   /** Raises a toast in the inventory shell, so this tab speaks with the module's voice. */
   onNotify: (toast: Omit<ToastMessage, 'id'>) => void
   /** Tells the inventory shell the product catalog changed, so its state reloads. */
@@ -130,6 +139,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   ingredients,
   recipes,
   onSaveRecipe,
+  onDeleteRecipe,
   onCreateIngredient,
   onNavigateTab,
   onNotify,
@@ -149,6 +159,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('All Menu')
   const [stockFilter, setStockFilter] = useState<StockFilter>('all')
   const [priceFilter, setPriceFilter] = useState<PriceFilter>('all')
+  const [recipeFilter, setRecipeFilter] = useState<RecipeFilter>('all')
   const [sortBy, setSortBy] = useState<SortOption>('default')
   const [page, setPage] = useState(1)
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set())
@@ -156,6 +167,13 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
 
   const [inlineEditingId, setInlineEditingId] = useState<string | null>(null)
   const [inlinePriceInput, setInlinePriceInput] = useState('')
+
+  /* ------------------------------------------------------------ Recipe sheet */
+
+  // The dish whose recipe is open, and whether it opened straight into the editor
+  const [recipeSheetItem, setRecipeSheetItem] = useState<MenuItem | null>(null)
+  const [recipeSheetMode, setRecipeSheetMode] = useState<'view' | 'edit'>('view')
+  const [showAllUnlinked, setShowAllUnlinked] = useState(false)
 
   /* -------------------------------------------------------------- Edit a dish */
 
@@ -214,7 +232,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
 
   /* ------------------------------------------------------------------ Derived */
 
-  // Only food items are portioned into a dish; packaging is configured on the Recipes tab.
+  // Only food items are portioned into a dish; packaging is a section of its own below.
   const foodIngredients = useMemo(
     () => ingredients.filter((item) => item.itemType === 'FOOD').sort((a, b) => a.name.localeCompare(b.name)),
     [ingredients]
@@ -230,6 +248,19 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     () => new Set(recipes.filter((r) => r.isConfigured).map((r) => r.productId)),
     [recipes]
   )
+
+  /** Dish id → how many servings current stock still covers, for the dishes that have a recipe. */
+  const servingsByProduct = useMemo(() => {
+    const map: Record<string, number> = {}
+    recipes.forEach((recipe) => {
+      if (recipe.isConfigured && recipe.ingredients?.length) {
+        map[recipe.productId] = computeRecipeServingEstimate(recipe.ingredients, ingredients).totalEstimatedServings
+      }
+    })
+    return map
+  }, [recipes, ingredients])
+
+  const recipeForProduct = (productId: string) => recipes.find((r) => r.productId === productId)
 
   const categoryCounts = useMemo(() => {
     const counts: Record<string, number> = { 'All Menu': menuItems.length }
@@ -265,7 +296,11 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
       const matchesPrice =
         priceFilter === 'all' || (priceFilter === 'custom' && isCustom) || (priceFilter === 'standard' && !isCustom)
 
-      return matchesSearch && matchesCategory && matchesStock && matchesPrice
+      const linked = configuredRecipeIds.has(item.id)
+      const matchesRecipe =
+        recipeFilter === 'all' || (recipeFilter === 'linked' && linked) || (recipeFilter === 'unlinked' && !linked)
+
+      return matchesSearch && matchesCategory && matchesStock && matchesPrice && matchesRecipe
     })
 
     if (sortBy === 'name_asc') result.sort((a, b) => a.name.localeCompare(b.name))
@@ -274,7 +309,18 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     else if (sortBy === 'price_desc') result.sort((a, b) => getEffectivePrice(b.id, b.price) - getEffectivePrice(a.id, a.price))
 
     return result
-  }, [menuItems, searchQuery, selectedCategory, stockFilter, priceFilter, sortBy, isAvailable, getEffectivePrice])
+  }, [
+    menuItems,
+    searchQuery,
+    selectedCategory,
+    stockFilter,
+    priceFilter,
+    recipeFilter,
+    sortBy,
+    isAvailable,
+    getEffectivePrice,
+    configuredRecipeIds,
+  ])
 
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -283,13 +329,19 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
   const visibleIds = visibleProducts.map((item) => item.id)
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedItemIds.has(id))
 
-  const unlinkedCount = useMemo(
-    () => menuItems.filter((item) => !configuredRecipeIds.has(item.id)).length,
+  /** Dishes with no recipe: orderable on the menu and the POS while stock can never sell them out. */
+  const unlinkedDishes = useMemo(
+    () => menuItems.filter((item) => !configuredRecipeIds.has(item.id)),
     [menuItems, configuredRecipeIds]
   )
+  const unlinkedCount = unlinkedDishes.length
 
   const hasActiveFilters =
-    Boolean(searchQuery) || selectedCategory !== 'All Menu' || stockFilter !== 'all' || priceFilter !== 'all'
+    Boolean(searchQuery) ||
+    selectedCategory !== 'All Menu' ||
+    stockFilter !== 'all' ||
+    priceFilter !== 'all' ||
+    recipeFilter !== 'all'
 
   /* ------------------------------------------------------------------ Effects */
 
@@ -323,6 +375,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
       setSelectedCategory('All Menu')
       setStockFilter('all')
       setPriceFilter('all')
+      setRecipeFilter('all')
     })
 
   const handleManualRefresh = async () => {
@@ -891,7 +944,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
           : {
               type: 'error',
               title: `${name} was added, but its recipe did not save`,
-              description: 'Set it up on the Recipes tab, or the dish can never run out of stock.',
+              description: 'Open its recipe from its row to set it up, or the dish can never run out of stock.',
             }
       )
     } catch (error) {
@@ -931,6 +984,25 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     }
   }
 
+  /* ------------------------------------------------------------ Recipe sheet */
+
+  const openRecipe = (item: MenuItem, mode: 'view' | 'edit' = 'view') => {
+    setRecipeSheetMode(mode)
+    setRecipeSheetItem(item)
+  }
+
+  /**
+   * Leaves for the Items tab with one stock item already singled out, so a cook reading a recipe
+   * can go straight from "out of stock" to restocking it.
+   */
+  const openStockItem = (stockItemId: string | undefined, name: string) => {
+    const match =
+      (stockItemId && ingredients.find((i) => i.id === stockItemId)) ||
+      ingredients.find((i) => i.name.toLowerCase() === name.toLowerCase())
+    setRecipeSheetItem(null)
+    onNavigateTab('ingredients', match ? { item: match.id } : { q: name })
+  }
+
   /* ------------------------------------------------------------------- Render */
 
   const rowMenuItems = (item: MenuItem) => [
@@ -942,7 +1014,7 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     {
       label: configuredRecipeIds.has(item.id) ? 'Open recipe' : 'Set up recipe',
       icon: 'book' as const,
-      onSelect: () => onNavigateTab('recipes'),
+      onSelect: () => openRecipe(item, configuredRecipeIds.has(item.id) ? 'view' : 'edit'),
     },
     {
       label: 'Remove from menu',
@@ -1019,27 +1091,54 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
     )
   }
 
-  const recipeCell = (item: MenuItem) =>
-    configuredRecipeIds.has(item.id) ? (
-      <Badge tone="success" dot>
-        Linked
-      </Badge>
-    ) : (
+  /**
+   * The recipe, as one cell: how many servings stock still covers, or that there is no recipe at
+   * all. Either way it opens the recipe — the row is the only way into it now that Recipes is not
+   * a tab of its own.
+   */
+  const recipeCell = (item: MenuItem) => {
+    if (!configuredRecipeIds.has(item.id)) {
+      return (
+        <button
+          type="button"
+          onClick={() => openRecipe(item, 'edit')}
+          className="inv-link"
+          title="Stock reaches a dish through its recipe. Without one it can never run out."
+        >
+          Set up recipe
+        </button>
+      )
+    }
+    const servings = servingsByProduct[item.id]
+    return (
       <button
         type="button"
-        onClick={() => onNavigateTab('recipes')}
-        className="inv-link"
-        title="Stock reaches a dish through its recipe. Without one it can never run out."
+        onClick={() => openRecipe(item, 'view')}
+        className="inv-recipe-cell"
+        title={
+          servings === undefined
+            ? 'Open the recipe'
+            : `About ${servings} ${servings === 1 ? 'serving' : 'servings'} can be made from current stock`
+        }
       >
-        Not linked
+        {servings === undefined ? (
+          <Badge tone="success" dot>
+            Linked
+          </Badge>
+        ) : (
+          <Badge tone={servingsTone(servings)} dot>
+            {servings} srv
+          </Badge>
+        )}
       </button>
     )
+  }
 
   return (
     <div className="space-y-5">
       <SectionHeader
-        title="Menu"
-        description="Dishes on the customer menu and the POS — price, availability, and the recipe that ties each one to stock."
+        title="Menu & Recipes"
+        description="Dishes on the customer menu and the POS — price, availability, and the recipe that ties each one to stock. Open a dish's recipe from its row."
         actions={
           <>
             <Button variant="secondary" icon="refresh" loading={isRefreshing} onClick={() => void handleManualRefresh()}>
@@ -1052,15 +1151,46 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
         }
       />
 
+      {/* Dishes with no recipe, named rather than counted: a count alone leaves the admin hunting
+          the list for them, so each one is listed with the button that sets its recipe up. */}
       {unlinkedCount > 0 && (
         <Notice tone="warning">
           <p className="font-semibold">
             {unlinkedCount} {unlinkedCount === 1 ? 'dish has' : 'dishes have'} no recipe.
           </p>
           <p className="mt-0.5 text-sm">
-            Stock reaches a dish only through its recipe, so {unlinkedCount === 1 ? 'it stays' : 'they stay'} orderable
-            whatever the stockroom holds. Rows marked <b>Not linked</b> below still need one.
+            Stock reaches a dish only through its recipe, so {unlinkedCount === 1 ? 'it' : 'they'} can never run out:{' '}
+            {unlinkedCount === 1 ? 'it stays' : 'they stay'} orderable on the customer menu and the POS whatever the
+            stockroom holds.
           </p>
+
+          <ul className="inv-norecipe-list">
+            {(showAllUnlinked ? unlinkedDishes : unlinkedDishes.slice(0, UNLINKED_PREVIEW)).map((item) => (
+              <li key={item.id} className="inv-norecipe-row">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <ProductImage src={item.image} fallbackSrc={item.bundledImage} alt="" className="inv-thumb" />
+                  <div className="min-w-0">
+                    <p className="inv-cell-primary truncate">{item.name}</p>
+                    <p className="inv-cell-secondary truncate">{item.category || 'Uncategorised'}</p>
+                  </div>
+                </div>
+                <Button size="sm" variant="primary" icon="book" onClick={() => openRecipe(item, 'edit')}>
+                  Set up recipe
+                </Button>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {unlinkedCount > UNLINKED_PREVIEW && (
+              <Button size="sm" variant="secondary" onClick={() => setShowAllUnlinked((prev) => !prev)}>
+                {showAllUnlinked ? 'Show fewer' : `Show ${unlinkedCount - UNLINKED_PREVIEW} more`}
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => applyFilter(() => setRecipeFilter('unlinked'))}>
+              Show only these in the list
+            </Button>
+          </div>
         </Notice>
       )}
 
@@ -1124,6 +1254,17 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
                   { value: 'all', label: 'Any' },
                   { value: 'standard', label: 'Catalog' },
                   { value: 'custom', label: 'Overridden' },
+                ]}
+              />
+              <FilterSelect<RecipeFilter>
+                label="Recipe"
+                value={recipeFilter}
+                neutralValue="all"
+                onChange={(value) => applyFilter(() => setRecipeFilter(value))}
+                options={[
+                  { value: 'all', label: 'Any' },
+                  { value: 'linked', label: 'Has a recipe', count: menuItems.length - unlinkedCount },
+                  { value: 'unlinked', label: 'No recipe', count: unlinkedCount },
                 ]}
               />
               <FilterSelect<SortOption>
@@ -2011,12 +2152,29 @@ export const MenuCatalogTab: React.FC<MenuCatalogTabProps> = ({
         )}
       </Modal>
 
+      {/* --------------------------------------------------------- Recipe sheet */}
+
+      {/* Keyed on the dish, so the sheet is a fresh draft of that dish's recipe every time. */}
+      {recipeSheetItem && (
+        <RecipeSheet
+          key={recipeSheetItem.id}
+          product={recipeSheetItem}
+          recipe={recipeForProduct(recipeSheetItem.id)}
+          ingredients={ingredients}
+          initialMode={recipeSheetMode}
+          onClose={() => setRecipeSheetItem(null)}
+          onSaveRecipe={onSaveRecipe}
+          onDeleteRecipe={onDeleteRecipe}
+          onOpenStockItem={openStockItem}
+        />
+      )}
+
       <InventoryConfirmModal
         isOpen={Boolean(itemToDelete)}
         title="Remove this dish?"
         message={
           itemToDelete
-            ? `${itemToDelete.name} comes off the customer menu and the POS. Past orders keep it, and its recipe stays on the Recipes tab.`
+            ? `${itemToDelete.name} comes off the customer menu and the POS. Past orders keep it, and its recipe is kept too.`
             : ''
         }
         confirmText="Remove dish"

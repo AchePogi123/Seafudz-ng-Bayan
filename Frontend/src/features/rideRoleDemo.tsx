@@ -47,6 +47,37 @@ function resolveItemUnitPrice(item: DeliveryOrderItem, order?: DeliveryJob): num
   return 0
 }
 
+function consolidateOrderItems(ord: DeliveryJob): Array<{
+  key: string
+  name: string
+  quantity: number
+  unitPrice: number
+  lineTotal: number
+}> {
+  const map = new Map<string, { key: string; name: string; quantity: number; unitPrice: number }>()
+  ord.items.forEach((item, idx) => {
+    const name = (item.name || 'Seafood Dish').trim()
+    const qty = Math.max(1, Number(item.quantity) || 1)
+    const unitPrice = resolveItemUnitPrice(item, ord)
+    const groupKey = `${(item.productId || item.id || name).toString().toLowerCase()}::${unitPrice}`
+    const existing = map.get(groupKey)
+    if (existing) {
+      existing.quantity += qty
+    } else {
+      map.set(groupKey, {
+        key: `${name}-${idx}`,
+        name,
+        quantity: qty,
+        unitPrice,
+      })
+    }
+  })
+  return Array.from(map.values()).map((entry) => ({
+    ...entry,
+    lineTotal: Math.round(entry.unitPrice * entry.quantity * 100) / 100,
+  }))
+}
+
 function compressImageToBase64(file: File, maxDim = 1200, quality = 0.82): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -1521,23 +1552,15 @@ export const RideRoleDemo: React.FC = () => {
                     {/* What is in the bag. A bundle is just a stop with more lines. */}
                     <div className="divide-y divide-neutral-100 border-t border-neutral-100 px-4">
                       {shown.map((ord) => {
-                        const expandedUnits = ord.items.flatMap((i, itemIdx) => {
-                          const qty = Math.max(1, Number(i.quantity) || 1)
-                          const unitPrice = resolveItemUnitPrice(i, ord)
-                          return Array.from({ length: qty }, (_, unitIdx) => ({
-                            key: `${i.name}-${itemIdx}-${unitIdx}`,
-                            name: i.name,
-                            unitPrice,
-                          }))
-                        })
+                        const groupedItems = consolidateOrderItems(ord)
                         const listKey = `card:${ord.id}`
                         const isListExpanded = Boolean(expandedItemLists[listKey])
-                        const hasOverflow = expandedUnits.length > MAX_VISIBLE_ITEMS
+                        const hasOverflow = groupedItems.length > MAX_VISIBLE_ITEMS
                         const visibleUnits =
                           hasOverflow && !isListExpanded
-                            ? expandedUnits.slice(0, MAX_VISIBLE_ITEMS)
-                            : expandedUnits
-                        const hiddenUnitsCount = expandedUnits.length - MAX_VISIBLE_ITEMS
+                            ? groupedItems.slice(0, MAX_VISIBLE_ITEMS)
+                            : groupedItems
+                        const hiddenUnitsCount = groupedItems.length - MAX_VISIBLE_ITEMS
 
                         return (
                           <div key={ord.id} className="py-2.5 text-[13px] space-y-1.5">
@@ -1551,12 +1574,12 @@ export const RideRoleDemo: React.FC = () => {
                               {visibleUnits.map((u) => (
                                 <li key={u.key} className="flex items-baseline justify-between gap-4">
                                   <span className="min-w-0 truncate text-neutral-700">
-                                    <span className="tabular-nums text-neutral-500">1×</span>{' '}
-                                    <span className="font-medium text-neutral-800">{u.name}</span>
+                                    <span className="font-medium text-neutral-800">{u.name}</span>{' '}
+                                    <span className="font-semibold tabular-nums text-neutral-500">x{u.quantity}</span>
                                   </span>
-                                  {u.unitPrice > 0 && (
+                                  {u.lineTotal > 0 && (
                                     <span className="shrink-0 text-xs font-medium tabular-nums text-neutral-800">
-                                      {peso(u.unitPrice)}
+                                      {peso(u.lineTotal)}
                                     </span>
                                   )}
                                 </li>
@@ -1764,26 +1787,18 @@ export const RideRoleDemo: React.FC = () => {
                             ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                             : 'bg-amber-50 text-amber-800 border-amber-200'
 
-                      const expandedUnits = ord.items.flatMap((item, itemIdx) => {
-                        const qty = Math.max(1, Number(item.quantity) || 1)
-                        const unitPrice = resolveItemUnitPrice(item, ord)
-                        return Array.from({ length: qty }, (_, unitIdx) => ({
-                          key: `${item.name}-${itemIdx}-${unitIdx}`,
-                          name: item.name,
-                          unitPrice,
-                        }))
-                      })
+                      const groupedItems = consolidateOrderItems(ord)
                       const modalListKey = `modal:${ord.id}`
                       const isModalListExpanded = Boolean(expandedItemLists[modalListKey])
-                      const hasModalOverflow = expandedUnits.length > MAX_VISIBLE_ITEMS
+                      const hasModalOverflow = groupedItems.length > MAX_VISIBLE_ITEMS
                       const visibleModalUnits =
                         hasModalOverflow && !isModalListExpanded
-                          ? expandedUnits.slice(0, MAX_VISIBLE_ITEMS)
-                          : expandedUnits
-                      const hiddenModalUnitsCount = expandedUnits.length - MAX_VISIBLE_ITEMS
+                          ? groupedItems.slice(0, MAX_VISIBLE_ITEMS)
+                          : groupedItems
+                      const hiddenModalUnitsCount = groupedItems.length - MAX_VISIBLE_ITEMS
 
                       const computedItemsSubtotal = Math.round(
-                        expandedUnits.reduce((sum, u) => sum + u.unitPrice, 0) * 100
+                        groupedItems.reduce((sum, u) => sum + u.lineTotal, 0) * 100
                       ) / 100
                       const ordDeliveryFee = Number(ord.deliveryFee ?? 0)
                       const itemsSubtotal =
@@ -1810,11 +1825,12 @@ export const RideRoleDemo: React.FC = () => {
                                 className="flex items-baseline justify-between gap-4 py-2 text-[13px]"
                               >
                                 <span className="min-w-0 font-medium text-neutral-800">
-                                  <span className="tabular-nums text-neutral-500">1×</span> {unitItem.name}
+                                  {unitItem.name}{' '}
+                                  <span className="font-semibold tabular-nums text-neutral-500">x{unitItem.quantity}</span>
                                 </span>
-                                {unitItem.unitPrice > 0 && (
+                                {unitItem.lineTotal > 0 && (
                                   <span className="shrink-0 font-medium tabular-nums text-neutral-900">
-                                    {peso(unitItem.unitPrice)}
+                                    {peso(unitItem.lineTotal)}
                                   </span>
                                 )}
                               </li>

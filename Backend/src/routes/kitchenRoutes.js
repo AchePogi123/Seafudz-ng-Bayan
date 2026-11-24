@@ -89,6 +89,10 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
           status: normStatus,
           order_status: normStatus,
           notes: order.notes || existing.notes || '',
+          // Carried through so the kitchen can tell two tickets belong to one customer. Without
+          // it a memory-only ticket is identity-less, and the display name is no substitute: it
+          // falls back to the literal 'Customer' below, which would group unrelated people.
+          customer_id: order.customer_id || order.customerId || existing.customer_id || null,
           customer_name: order.customer_name || order.customer || order.customerName || existing.customer_name || 'Customer',
           customer_phone: order.customer_phone || order.phone || existing.customer_phone || '',
           customer: order.customer || order.customer_name || order.customerName || existing.customer_name || 'Customer',

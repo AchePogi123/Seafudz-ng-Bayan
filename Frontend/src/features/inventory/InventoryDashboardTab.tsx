@@ -333,7 +333,7 @@ export const InventoryDashboardTab: React.FC<InventoryDashboardTabProps> = ({
                     onClick: onOpenCreatePO,
                     meta: summary.pendingPOs > 0 ? `${summary.pendingPOs} pending` : undefined,
                   },
-                  { label: 'Recipes', icon: 'book', onClick: () => onNavigateTab('recipes') },
+                  { label: 'Menu and recipes', icon: 'book', onClick: () => onNavigateTab('menu') },
                   { label: 'Stock history', icon: 'history', onClick: () => onNavigateTab('history') },
                 ] as Array<{ label: string; icon: IconName; onClick: () => void; meta?: string }>
               ).map((a) => (

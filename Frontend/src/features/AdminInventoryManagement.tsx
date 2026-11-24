@@ -31,7 +31,6 @@ import './inventory/admin-inventory.css'
 const InventoryDashboardTab = lazy(() => import('./inventory/InventoryDashboardTab'))
 const MenuCatalogTab = lazy(() => import('./inventory/MenuCatalogTab'))
 const IngredientsTab = lazy(() => import('./inventory/IngredientsTab'))
-const RecipesBOMTab = lazy(() => import('./inventory/RecipesBOMTab'))
 const SuppliersTab = lazy(() => import('./inventory/SuppliersTab'))
 const PurchasesReceivingTab = lazy(() => import('./inventory/PurchasesReceivingTab'))
 const StockHistoryTab = lazy(() => import('./inventory/StockHistoryTab'))
@@ -39,9 +38,8 @@ const InventoryReportsTab = lazy(() => import('./inventory/InventoryReportsTab')
 
 const INVENTORY_TABS = [
   { id: 'dashboard', label: 'Overview' },
-  { id: 'menu', label: 'Menu Management' },
+  { id: 'menu', label: 'Menu & Recipes' },
   { id: 'ingredients', label: 'Items' },
-  { id: 'recipes', label: 'Recipes' },
   { id: 'suppliers', label: 'Suppliers' },
   { id: 'purchases', label: 'Purchasing' },
   { id: 'history', label: 'Stock History' },
@@ -76,10 +74,12 @@ export const AdminInventoryManagement: React.FC = () => {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Active Tab: dashboard, ingredients, recipes, suppliers, purchases, history, reports
+  // Active Tab: dashboard, menu, ingredients, suppliers, purchases, history, reports
   const requestedTab = searchParams.get('tab')
-  const currentTab: InventoryTabId = INVENTORY_TABS.some((t) => t.id === requestedTab)
-    ? (requestedTab as InventoryTabId)
+  // Recipes folded into Menu & Recipes, so links and bookmarks to the old tab land there
+  const normalizedTab = requestedTab === 'recipes' ? 'menu' : requestedTab
+  const currentTab: InventoryTabId = INVENTORY_TABS.some((t) => t.id === normalizedTab)
+    ? (normalizedTab as InventoryTabId)
     : 'dashboard'
 
   // Inventory lives on the server so every screen (customer, POS, kitchen) sees the same stock
@@ -495,7 +495,7 @@ export const AdminInventoryManagement: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-[#f6f7f9] pl-72 text-slate-800 pb-16 font-sans print:pl-0">
+    <div className="min-h-screen bg-[#f6f7f9] text-slate-800 pb-16 font-sans">
       <div className="print:hidden">
         <NavbarAdmin />
       </div>
@@ -582,7 +582,9 @@ export const AdminInventoryManagement: React.FC = () => {
             </div>
           )}
 
-          {unlinkedProducts.length > 0 && loadState === 'ready' && (
+          {/* The Menu & Recipes tab carries this warning itself, with the dishes in the list right
+              below it, so the shell only raises it on the other tabs. */}
+          {unlinkedProducts.length > 0 && loadState === 'ready' && currentTab !== 'menu' && (
             <div className="mb-5">
               <Notice tone="warning">
                 <p className="font-semibold">
@@ -592,16 +594,16 @@ export const AdminInventoryManagement: React.FC = () => {
                 <p className="mt-0.5 text-sm">
                   Stock only reaches a dish through its recipe, so {unlinkedProducts.length === 1 ? 'this one' : 'these'} can
                   never run out: {unlinkedProducts.length === 1 ? 'it stays' : 'they stay'} orderable on the customer menu and
-                  the POS no matter what is in the stockroom. Give {unlinkedProducts.length === 1 ? 'it' : 'each'} a recipe on
-                  the Recipes tab to link {unlinkedProducts.length === 1 ? 'it' : 'them'} to stock.
+                  the POS no matter what is in the stockroom. Open {unlinkedProducts.length === 1 ? 'its' : 'each'} recipe from
+                  the dish's row on Menu &amp; Recipes to link {unlinkedProducts.length === 1 ? 'it' : 'them'} to stock.
                 </p>
                 <p className="mt-2 text-sm font-semibold">
                   {unlinkedProducts.slice(0, 8).map((p) => p.productName).join(', ')}
                   {unlinkedProducts.length > 8 ? ` and ${unlinkedProducts.length - 8} more` : ''}
                 </p>
                 <div className="mt-3">
-                  <Button size="sm" variant="secondary" onClick={() => handleTabChange('recipes')}>
-                    Go to Recipes
+                  <Button size="sm" variant="secondary" onClick={() => handleTabChange('menu')}>
+                    Go to Menu &amp; Recipes
                   </Button>
                 </div>
               </Notice>
@@ -644,6 +646,7 @@ export const AdminInventoryManagement: React.FC = () => {
                 ingredients={ingredients}
                 recipes={recipes}
                 onSaveRecipe={handleSaveRecipe}
+                onDeleteRecipe={handleDeleteRecipe}
                 onCreateIngredient={handleAddIngredient}
                 onNavigateTab={handleTabChange}
                 onNotify={addToast}
@@ -663,16 +666,6 @@ export const AdminInventoryManagement: React.FC = () => {
                 onEditIngredient={handleEditIngredient}
                 onDeleteIngredient={handleDeleteIngredient}
                 onAdjustStock={handleAdjustStock}
-              />
-            )}
-
-            {loadState === 'ready' && currentTab === 'recipes' && (
-              <RecipesBOMTab
-                ingredients={ingredients}
-                recipes={recipes}
-                onSaveRecipe={handleSaveRecipe}
-                onDeleteRecipe={handleDeleteRecipe}
-                onNavigateTab={handleTabChange}
               />
             )}
 

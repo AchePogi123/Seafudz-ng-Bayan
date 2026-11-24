@@ -163,18 +163,34 @@ export const SETTLED_ORDER_STATUSES = ['COMPLETED', 'DELIVERED', 'SERVED', 'CANC
 const STALE_LOCAL_ORDER_GRACE_MS = 10 * 60 * 1000
 
 /**
- * Whether an order still occupies the customer's one order slot. A customer may only have one
- * order on the go, so while this returns true for any of their orders, a new one cannot be started.
+ * The normalized statuses of an order that is still UNSETTLED, and so holds the customer back
+ * from placing another one.
  *
- * A cancellation request frees the slot: by then the kitchen ticket is cancelled and the stock
- * returned, so the order will never arrive — only the refund is outstanding, and waiting on the
- * assistant for that should not keep the customer out of the store.
+ * `normalizeStatus` collapses every pre-confirmation status — GCASH_AUTHORIZED (placed, unpaid),
+ * RECEIPT_SUBMITTED (paid, waiting on the assistant), RECEIPT_REJECTED — into 'PENDING', so that
+ * one entry covers the whole "not yet verified" stretch. OUT_OF_STOCK is here because the kitchen
+ * is stalled on the customer's replacement choice.
  *
- * Mirrors `ORDER_SLOT_FREED_STATUSES` in `Backend/src/routes/orderRoutes.js`.
+ * Mirrors `STATUSES_BLOCKING_NEW_ORDER` in `Backend/src/routes/orderRoutes.js`.
+ */
+const BLOCKING_NORMALIZED_STATUSES = [
+    'PENDING',
+    'OUT_OF_STOCK',
+    'FLAGGED',
+    'AWAITING_KITCHEN_APPROVAL',
+    'KITCHEN_REJECTED',
+]
+
+/**
+ * Whether an order still holds the customer back from ordering again.
+ *
+ * A customer is blocked only while an order is unsettled: placed but not paid for, or paid but
+ * not yet verified by the assistant. Once the assistant verifies the GCash receipt the order is
+ * CONFIRMED, the money is in, and the customer may order again — with no limit on how many
+ * confirmed orders they have cooking at once.
  */
 export function blocksNewOrder(rawStatus?: string): boolean {
-    const norm = normalizeStatus(rawStatus)
-    return !SETTLED_ORDER_STATUSES.includes(norm) && norm !== 'CANCEL_REQUESTED'
+    return BLOCKING_NORMALIZED_STATUSES.includes(normalizeStatus(rawStatus))
 }
 
 export function normalizeStatus(rawStatus?: string): string {
@@ -683,18 +699,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [activeOrder])
 
     /**
-     * A customer may only have one order on the go. `customerOrders` is the list synced from the
-     * server, and `activeOrder` is checked alongside it so the lock is in place the moment an
-     * order is placed, before the next sync lands.
+     * A customer may only have one UNSETTLED order: one placed but not yet paid for and verified
+     * by the assistant. `customerOrders` is the list synced from the server, and `activeOrder` is
+     * checked alongside it so the lock is in place the moment an order is placed, before the next
+     * sync lands. Confirmed orders are not counted here, however many of them there are.
      */
-    const ongoingOrder = useMemo(() => {
+    const unsettledOrder = useMemo(() => {
         const blocking = activeOrders.find((o: any) => blocksNewOrder(o.status))
         if (blocking) return blocking
         if (activeOrder && blocksNewOrder(activeOrder.status)) return activeOrder
         return null
     }, [activeOrders, activeOrder])
-    const hasOngoingOrder = Boolean(ongoingOrder)
-    const ongoingOrderId = ongoingOrder ? String(ongoingOrder.id || (ongoingOrder as any).ref || '') : ''
+    const hasUnsettledOrder = Boolean(unsettledOrder)
+    const unsettledOrderId = unsettledOrder ? String(unsettledOrder.id || (unsettledOrder as any).ref || '') : ''
 
     // Select a specific order transaction to track
     const handleSelectActiveOrder = (order: any) => {
@@ -1498,19 +1515,19 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
     }, [activeOrder?.status])
 
     /**
-     * Turns the customer back to the order already in progress. Used everywhere a second order
-     * could be started: adding to the cart, opening checkout, and submitting it.
+     * Turns the customer back to the order that still needs settling. Used everywhere a second
+     * order could be started: adding to the cart, opening checkout, and submitting it.
      */
-    const blockForOngoingOrder = (lead: string) => {
-        alert(`${lead}\n\nYour order${ongoingOrderId ? ` #${ongoingOrderId}` : ''} is still in progress. You can place a new order once it has been delivered or picked up.`)
+    const blockForUnsettledOrder = (lead: string) => {
+        alert(`${lead}\n\nYour order${unsettledOrderId ? ` #${unsettledOrderId}` : ''} still needs to be paid for and verified. You can place a new order once the assistant has confirmed it.`)
         setIsCartDrawerOpen(false)
         setActiveTab('tracking')
     }
 
     const handleProceedToCheckout = () => {
         if (hasUnavailableCartItems || hasDeletedCartItems) return
-        if (hasOngoingOrder) {
-            blockForOngoingOrder('You already have an ongoing order, so you cannot check out a new one yet.')
+        if (hasUnsettledOrder) {
+            blockForUnsettledOrder('You have an unpaid order, so you cannot check out a new one yet.')
             return
         }
         const currentUser = getActiveUser()
@@ -1901,8 +1918,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleAddToCart = (item: MenuItem, e?: React.MouseEvent) => {
         if (!isAvailable(item.id)) return
-        if (hasOngoingOrder) {
-            blockForOngoingOrder('You can browse the menu, but you cannot start a new order yet.')
+        if (hasUnsettledOrder) {
+            blockForUnsettledOrder('You can browse the menu, but you cannot start a new order until your unpaid one is settled.')
             return
         }
         const inCart = cartItems.find((ci) => ci.item.id === item.id)?.quantity ?? 0
@@ -1998,8 +2015,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handleInitiateOrder = (e: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
-        if (hasOngoingOrder) {
-            blockForOngoingOrder('You already have an ongoing order, so this one cannot be submitted yet.')
+        if (hasUnsettledOrder) {
+            blockForUnsettledOrder('You have an unpaid order, so this one cannot be submitted yet.')
             return
         }
         if (hasUnavailableCartItems) {
@@ -2049,8 +2066,8 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
     const handlePlaceOrder = async (e?: React.FormEvent) => {
         if (e && e.preventDefault) e.preventDefault()
-        if (hasOngoingOrder) {
-            blockForOngoingOrder('You already have an ongoing order, so this one cannot be submitted yet.')
+        if (hasUnsettledOrder) {
+            blockForUnsettledOrder('You have an unpaid order, so this one cannot be submitted yet.')
             setIsConfirmOrderModalOpen(false)
             return
         }
@@ -2171,10 +2188,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             })
             const responseData: any = await res.json().catch(() => ({}))
             if (!res.ok || responseData.success === false) {
-                // The server is the authority on the one-ongoing-order rule: it catches the case
+                // The server is the authority on the one-unsettled-order rule: it catches the case
                 // where the order was placed on another device, or this screen's list is stale.
                 if (responseData.error === 'ACTIVE_ORDER_EXISTS') {
-                    alert(responseData.message || 'You already have an ongoing order. Please wait until it is delivered or picked up before placing another one.')
+                    alert(responseData.message || 'You have an order that still needs to be paid for and verified. Please settle that one before placing another.')
                     setIsConfirmOrderModalOpen(false)
                     setIsVerificationModalOpen(false)
                     setIsCartDrawerOpen(false)
@@ -2744,14 +2761,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                         )}
 
                         {/*
-                          One order at a time. While an order is in progress the menu stays open to
-                          browse, but nothing can be added to the cart — the replacement flow above
-                          takes priority when it is running, so this steps aside for it.
+                          One unsettled order at a time. While an order still needs paying for or
+                          verifying the menu stays open to browse, but nothing can be added to the
+                          cart — the replacement flow above takes priority when it is running, so
+                          this steps aside for it. A confirmed order shows nothing here.
                         */}
-                        {hasOngoingOrder && !replacementTargetItem && (
+                        {hasUnsettledOrder && !replacementTargetItem && (
                             <Notice
                                 tone="brand"
-                                title="You have an order in progress"
+                                title="You have an order still to be settled"
                                 action={
                                     <button
                                         type="button"
@@ -2762,9 +2780,9 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     </button>
                                 }
                             >
-                                Order{ongoingOrderId ? <strong className="font-semibold"> #{ongoingOrderId}</strong> : null} is still
-                                {' '}{describeOrderStatus(normalizeStatus(ongoingOrder?.status), { isPickup: String(ongoingOrder?.fulfillmentType || (ongoingOrder as any)?.fulfillment_type || ongoingOrder?.type || '').toUpperCase().includes('PICKUP') }).label.toLowerCase()}.
-                                {' '}You can look through the menu, but a new order can only be placed once this one has been delivered or picked up.
+                                Order{unsettledOrderId ? <strong className="font-semibold"> #{unsettledOrderId}</strong> : null} is still
+                                {' '}{describeOrderStatus(normalizeStatus(unsettledOrder?.status), { isPickup: String(unsettledOrder?.fulfillmentType || (unsettledOrder as any)?.fulfillment_type || unsettledOrder?.type || '').toUpperCase().includes('PICKUP') }).label.toLowerCase()}.
+                                {' '}You can look through the menu, but a new order can only be placed once this one has been paid for and confirmed by our assistant.
                             </Notice>
                         )}
 
@@ -3089,13 +3107,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                 <div className="flex items-center gap-3 pt-3 border-t border-neutral-100">
                                     <button
                                         type="submit"
-                                        disabled={isSubmittingOrder || hasOngoingOrder || (fulfillmentType === 'DELIVERY' && (!selectedBarangayId || !streetAddress.trim())) || hasUnavailableCartItems || hasDeletedCartItems}
+                                        disabled={isSubmittingOrder || hasUnsettledOrder || (fulfillmentType === 'DELIVERY' && (!selectedBarangayId || !streetAddress.trim())) || hasUnavailableCartItems || hasDeletedCartItems}
                                         className="w-full md:w-auto bg-orange-500 hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold px-8 py-3 rounded-xl shadow-md shadow-orange-500/10 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
                                         {isSubmittingOrder
                                             ? 'Submitting Order...'
-                                            : hasOngoingOrder
-                                                ? 'Finish Your Current Order First'
+                                            : hasUnsettledOrder
+                                                ? 'Settle Your Unpaid Order First'
                                                 : (fulfillmentType === 'DELIVERY' && !selectedBarangayId)
                                                     ? 'Select Your Delivery Area'
                                                     : (fulfillmentType === 'DELIVERY' && !streetAddress.trim())
@@ -4388,10 +4406,13 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                         {/* Info & Quantity */}
                                                         <div className="flex-1 min-w-0">
                                                             <div className="flex items-start justify-between gap-2">
-                                                                <div className="min-w-0">
+                                                                <div className="min-w-0 flex items-baseline gap-1.5">
                                                                     <p className="font-bold text-neutral-800 text-sm sm:text-base leading-snug truncate">
                                                                         {ci.item.name}
                                                                     </p>
+                                                                    <span className="text-xs sm:text-sm font-extrabold text-orange-600 shrink-0 tabular-nums">
+                                                                        × {ci.quantity}
+                                                                    </span>
                                                                 </div>
                                                                 <button
                                                                     type="button"
@@ -4410,21 +4431,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                                 </span>
                                                             )}
                                                             {renderCartStockNote(ci.item.id, isAvailable(ci.item.id))}
-                                                            <div className="flex items-end justify-between gap-2 mt-2">
-                                                                <div className="min-w-0">
-                                                                    {/* One row per unit ordered, then the sum, so the customer
-                                                                        can read the receipt rather than trust a single figure. */}
-                                                                    <div className="space-y-px">
-                                                                        {Array.from({ length: ci.quantity }, (_, i) => (
-                                                                            <p key={i} className="text-[11px] font-medium text-neutral-500 leading-tight tabular-nums">
-                                                                                ₱{unitPriceOf(ci).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                            </p>
-                                                                        ))}
-                                                                    </div>
-                                                                    <p className="mt-1 border-t border-neutral-200 pt-1 text-sm sm:text-base text-orange-600 font-extrabold leading-tight tabular-nums">
-                                                                        ₱{(unitPriceOf(ci) * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                                    </p>
-                                                                </div>
+                                                            <div className="flex items-center justify-between gap-2 mt-2">
+                                                                <p className="text-sm sm:text-base text-orange-600 font-extrabold leading-tight tabular-nums">
+                                                                    ₱{(unitPriceOf(ci) * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                                </p>
                                                                 <CartQuantityControl
                                                                     quantity={ci.quantity}
                                                                     onIncrement={() => handleIncrement(ci.item.id)}
@@ -4504,10 +4514,16 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                             {cartItems.length > 0 && (
                                 <div className="border-t border-neutral-100 p-4 sm:p-5 bg-neutral-50/70 space-y-3.5 shrink-0">
                                     <div className="space-y-1.5">
-                                        <div className="flex justify-between text-xs text-neutral-500">
-                                            <span>Order Subtotal</span>
-                                            <span className="font-semibold text-neutral-800">₱{cartOrderSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                        </div>
+                                        {cartItems.map((ci) => (
+                                            <div key={ci.item.id} className="flex justify-between items-baseline gap-2 text-xs text-neutral-500 tabular-nums">
+                                                <span className="truncate">
+                                                    {cartItems.length === 1 ? 'Unit Price' : `Unit Price (${ci.item.name})`}
+                                                </span>
+                                                <span className="font-semibold text-neutral-800 shrink-0">
+                                                    ₱{unitPriceOf(ci).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </span>
+                                            </div>
+                                        ))}
                                         <div className="flex justify-between text-xs text-neutral-400">
                                             <span>Delivery Fee</span>
                                             <span className="text-neutral-500 italic">Calculated in billing</span>
@@ -4526,10 +4542,10 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             setIsCartDrawerOpen(false)
                                             handleProceedToCheckout()
                                         }}
-                                        disabled={hasUnavailableCartItems || hasDeletedCartItems || cartItems.length === 0 || hasOngoingOrder}
+                                        disabled={hasUnavailableCartItems || hasDeletedCartItems || cartItems.length === 0 || hasUnsettledOrder}
                                         className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-orange-500/20 hover:shadow-orange-500/30 transition-all duration-200 text-sm flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                        <span>{hasOngoingOrder ? 'Finish Your Current Order First' : 'Proceed to Checkout'}</span>
+                                        <span>{hasUnsettledOrder ? 'Settle Your Unpaid Order First' : 'Proceed to Checkout'}</span>
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                                         </svg>
@@ -4544,106 +4560,123 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             {/* AUTHORIZED GCASH PAYMENT POPUP MODAL (Pops up when assistant authorizes) */}
             {isVerificationModalOpen && activeOrder && !['CONFIRMED', 'PENDING_PREPARATION', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED'].includes(normalizeStatus(activeOrder.status)) && !isVerificationModalDismissed(activeOrder.id) && !isVerificationModalDismissed((activeOrder as any).ref) && (
                 <div
-                    className="fixed inset-0 z-50 bg-slate-900/70 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
+                    className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4 animate-in fade-in duration-200 overflow-y-auto"
                     onClick={(e) => {
                         if (e.target === e.currentTarget) {
                             dismissVerificationModal()
                         }
                     }}
                 >
-                    <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-neutral-200 text-neutral-800 space-y-6 relative my-8 animate-in zoom-in-95 duration-200">
-                        {/* Close button */}
-                        <button
-                            onClick={dismissVerificationModal}
-                            className="absolute top-4 right-4 w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 text-neutral-500 font-bold flex items-center justify-center text-sm cursor-pointer transition-colors"
-                        >
-                            ✕
-                        </button>
-
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="gcash-payment-modal-title"
+                        className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-neutral-200 text-neutral-900 space-y-5 relative my-8 animate-in zoom-in-95 duration-200"
+                    >
                         {/* Modal Header */}
-                        <div className="text-center space-y-1">
-                            <div className="w-14 h-14 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto text-2xl font-black shadow-md shadow-orange-500/20">
-                                
+                        <div className="flex items-start justify-between gap-4 border-b border-neutral-100 pb-4">
+                            <div className="min-w-0 space-y-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <h3 id="gcash-payment-modal-title" className="font-bold text-neutral-900 text-lg tracking-tight">
+                                        {activeOrder.status === 'RECEIPT_REJECTED'
+                                            ? 'Upload a new GCash receipt'
+                                            : activeOrder.status === 'RECEIPT_SUBMITTED'
+                                              ? 'Payment receipt submitted'
+                                              : 'Send your GCash payment'}
+                                    </h3>
+                                    {activeOrder.status === 'RECEIPT_REJECTED' ? (
+                                        <StatusPill tone="critical">Action needed</StatusPill>
+                                    ) : activeOrder.status === 'RECEIPT_SUBMITTED' ? (
+                                        <StatusPill tone="brand">Under review</StatusPill>
+                                    ) : (
+                                        <StatusPill tone="positive">Authorised</StatusPill>
+                                    )}
+                                </div>
+                                <p className="text-xs text-neutral-500 font-mono break-all">
+                                    Order #{activeOrder.id}
+                                </p>
                             </div>
-                            <h3 className="font-extrabold text-neutral-900 text-xl tracking-tight pt-2">
-                                Order #{activeOrder.id} Submitted
-                            </h3>
-                            <p className="text-xs font-semibold text-neutral-500">
-                                Your order is currently waiting for staff verification.
-                            </p>
+
+                            <button
+                                type="button"
+                                onClick={dismissVerificationModal}
+                                aria-label="Close payment dialog"
+                                className="shrink-0 w-8 h-8 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 flex items-center justify-center cursor-pointer transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
                         </div>
 
-                        {/* GCASH VERIFICATION & PAYMENT POPUP MODAL */}
+                        {/* GCASH VERIFICATION & PAYMENT DETAILS */}
                         {activeOrder.paymentMethod === 'GCash' && (
-                            <div className="space-y-4 text-left animate-in zoom-in-95 duration-200">
-                                <div className="bg-emerald-50 border border-emerald-300 rounded-2xl p-3 text-center animate-in fade-in duration-300">
-                                    <span className="text-xs font-black text-emerald-950 flex items-center justify-center gap-1.5">
-                                        GCash Payment Authorized by Assistant!
-                                    </span>
-                                </div>
+                            <div className="space-y-4 text-left">
+                                <p className="text-xs text-neutral-600 leading-relaxed">
+                                    {activeOrder.status === 'RECEIPT_SUBMITTED'
+                                        ? 'Your screenshot is with our assistant for verification. Once confirmed, your order goes straight to the kitchen.'
+                                        : 'Transfer the exact total below to our official GCash account, then attach a screenshot of your confirmation.'}
+                                </p>
 
-                                {/* Store GCash Account Details Box */}
-                                <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xs font-extrabold text-blue-900 uppercase tracking-wider">Store GCash Account</span>
-                                        <span className="text-[10px] font-black bg-blue-600 text-white px-2 py-0.5 rounded-full">Official Account</span>
+                                {/* Store GCash Account Details — hairline-divided rows, no nested boxes */}
+                                <dl className="divide-y divide-neutral-200/70 rounded-xl border border-neutral-200 bg-neutral-50/70 px-4">
+                                    <div className="flex items-baseline justify-between gap-4 py-2.5">
+                                        <dt className="text-xs text-neutral-500 shrink-0">Account name</dt>
+                                        <dd className="text-xs font-semibold text-neutral-900 text-right">SEAFUDZ RESTAURANT PH</dd>
                                     </div>
-                                    <div className="space-y-1 text-xs text-blue-950">
-                                        <p><span className="text-blue-700 font-medium">Account Name:</span> <strong className="font-black text-sm text-neutral-900">SEAFUDZ RESTAURANT PH</strong></p>
-                                        <p><span className="text-blue-700 font-medium">GCash Number:</span> <strong className="font-black text-base text-blue-700 tracking-wider">0917-888-7323</strong></p>
-                                        <p><span className="text-blue-700 font-medium">Amount to Pay:</span> <strong className="font-black text-base text-orange-600">₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></p>
+                                    <div className="flex items-baseline justify-between gap-4 py-2.5">
+                                        <dt className="text-xs text-neutral-500 shrink-0">GCash number</dt>
+                                        <dd className="text-sm font-semibold font-mono tabular-nums text-neutral-900 text-right">0917-888-7323</dd>
                                     </div>
-                                </div>
-
-
+                                    <div className="flex items-baseline justify-between gap-4 py-3">
+                                        <dt className="text-xs font-semibold text-neutral-700 shrink-0">Amount to pay</dt>
+                                        <dd className="text-base font-extrabold tabular-nums text-orange-600 text-right">
+                                            ₱{Number(activeOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </dd>
+                                    </div>
+                                </dl>
 
                                 {/* Reference Screenshot Selection Input */}
-                                <div className="space-y-2 pt-1">
-                                    <label className="text-xs font-bold text-neutral-700 flex items-center justify-between">
-                                        <span>Upload GCash Reference Picture / Screenshot</span>
-                                        <span className="text-[11px] font-medium text-neutral-400">Proof of Payment</span>
-                                    </label>
+                                <div className="space-y-2.5">
+                                    <div className="flex items-baseline justify-between">
+                                        <span className="text-xs font-semibold text-neutral-800">
+                                            GCash payment screenshot
+                                        </span>
+                                        <span className="text-xs text-neutral-500">Required</span>
+                                    </div>
 
                                     {activeOrder.status === 'RECEIPT_REJECTED' && (
-                                        <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-2xl text-xs text-rose-800 font-semibold space-y-1">
-                                            <p className="font-extrabold text-rose-900">Reference Screenshot Rejected by Staff</p>
-                                            <p className="text-[11px] text-rose-700 leading-relaxed">{(activeOrder as any).rejectionReason || 'Invalid reference picture. Please re-upload a clear official GCash confirmation screenshot.'}</p>
-                                        </div>
-                                    )}
-
-                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (
-                                        <div className="bg-blue-50 border border-blue-200 p-4 rounded-2xl space-y-2">
-                                            <div className="flex items-center gap-2 text-blue-900 font-extrabold text-xs">
-                                                Payment Screenshot Submitted
-                                            </div>
-                                            {(activeOrder.paymentReference || gcashRefNumber) && (
-                                                <div className="bg-white border border-blue-200 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
-                                                    <span className="text-blue-700 font-bold">GCash Reference No:</span>
-                                                    <span className="font-mono font-black text-blue-950">{activeOrder.paymentReference || gcashRefNumber}</span>
-                                                </div>
-                                            )}
-                                            <p className="text-xs text-blue-800 leading-relaxed">
-                                                Your reference screenshot and reference number were received by staff. Please wait in billing while an assistant verifies payment and confirms your order to the kitchen.
+                                        <div role="alert" className="bg-rose-50 border border-rose-200 px-3.5 py-3 rounded-xl text-xs text-rose-900 space-y-1">
+                                            <p className="font-bold">Screenshot could not be verified</p>
+                                            <p className="text-rose-800 leading-relaxed">
+                                                {(activeOrder as any).rejectionReason || 'Invalid reference picture. Please upload a clear official GCash confirmation screenshot.'}
                                             </p>
                                         </div>
                                     )}
 
+                                    {activeOrder.status === 'RECEIPT_SUBMITTED' && !selectedReceiptPreview && (activeOrder.paymentReference || gcashRefNumber) && (
+                                        <div className="flex items-baseline justify-between rounded-xl border border-neutral-200 bg-neutral-50 px-3.5 py-2.5 text-xs">
+                                            <span className="text-neutral-500">Reference number</span>
+                                            <span className="font-mono font-semibold tabular-nums text-neutral-900">{activeOrder.paymentReference || gcashRefNumber}</span>
+                                        </div>
+                                    )}
+
                                     {selectedReceiptPreview ? (
-                                        <div className="bg-blue-50/80 border-2 border-blue-400 rounded-2xl p-4 space-y-3 animate-in fade-in duration-200 text-left">
-                                            <div className="flex items-center justify-between">
-                                                <span className="text-xs font-black text-blue-950 uppercase tracking-wider">Preview Reference Picture</span>
-                                                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded-full">Ready to Submit</span>
-                                            </div>
-                                            <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-200">
-                                                <img src={selectedReceiptPreview} alt="Selected GCash Receipt" className="w-16 h-16 object-cover rounded-lg border border-blue-300 shadow-2xs" />
-                                                <div className="space-y-1">
-                                                    <p className="text-xs font-bold text-neutral-800">GCash Payment Screenshot</p>
-                                                    <label className="text-[11px] font-bold text-blue-600 hover:underline cursor-pointer block">
-                                                        Change Selected Picture
+                                        <div className="space-y-3 animate-in fade-in duration-200">
+                                            <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+                                                <img
+                                                    src={selectedReceiptPreview}
+                                                    alt="Selected GCash receipt"
+                                                    className="w-14 h-14 object-cover rounded-lg border border-neutral-200 shrink-0"
+                                                />
+                                                <div className="min-w-0 flex-1 space-y-0.5">
+                                                    <p className="text-xs font-semibold text-neutral-900">Screenshot ready to submit</p>
+                                                    <label className="text-xs font-semibold text-orange-600 hover:text-orange-700 underline decoration-orange-300 underline-offset-4 cursor-pointer inline-block">
+                                                        Choose a different image
                                                         <input
                                                             type="file"
                                                             accept="image/*"
-                                                            className="hidden"
+                                                            className="sr-only"
                                                             onChange={(e) => {
                                                                 const file = e.target.files?.[0]
                                                                 if (file) {
@@ -4656,37 +4689,38 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                     </label>
                                                 </div>
                                             </div>
-                                            <div className="flex gap-2 pt-1">
+                                            <div className="flex gap-2">
                                                 <button
                                                     type="button"
                                                     onClick={handleSubmitReceipt}
                                                     disabled={isSubmittingReceipt}
-                                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
+                                                    className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors cursor-pointer"
                                                 >
-                                                    {isSubmittingReceipt ? 'Submitting...' : 'Submit Payment Receipt'}
+                                                    {isSubmittingReceipt ? 'Submitting…' : 'Submit payment receipt'}
                                                 </button>
                                                 <button
                                                     type="button"
                                                     onClick={() => setSelectedReceiptPreview(null)}
-                                                    className="px-4 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 font-bold py-3 rounded-xl text-xs transition-colors cursor-pointer"
+                                                    disabled={isSubmittingReceipt}
+                                                    className="px-4 border border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700 font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
                                                 >
                                                     Cancel
                                                 </button>
                                             </div>
                                         </div>
                                     ) : !activeOrder.paymentReceipt ? (
-                                        <label className="border border-neutral-300 bg-neutral-100 hover:bg-neutral-200/80 rounded-2xl py-8 px-4 cursor-pointer flex flex-col items-center justify-center gap-2 text-center transition-all shadow-2xs">
-                                            <svg className="w-10 h-10 text-neutral-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                                                <rect x="3" y="3" width="15" height="15" rx="2" stroke="currentColor" />
-                                                <path d="M7 14l3-3 4 4 2-2 2 2" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
-                                                <circle cx="8" cy="8" r="1.5" fill="currentColor" />
-                                                <path d="M21 8v11a2 2 0 01-2 2H8" stroke="currentColor" strokeLinecap="round" />
-                                            </svg>
-                                            <span className="text-xs font-semibold text-neutral-700 underline decoration-neutral-400 hover:decoration-neutral-700">Choose your media library</span>
+                                        <label className="border border-dashed border-neutral-300 bg-neutral-50/60 hover:border-orange-300 hover:bg-orange-50/40 rounded-xl py-6 px-4 cursor-pointer flex flex-col items-center justify-center gap-1.5 text-center transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-orange-500">
+                                            <OrderIcon name="camera" className="w-6 h-6 text-neutral-500" />
+                                            <span className="text-xs font-semibold text-neutral-800">
+                                                Choose screenshot from your device
+                                            </span>
+                                            <span className="text-[11px] text-neutral-500">
+                                                PNG or JPG of your GCash confirmation receipt
+                                            </span>
                                             <input
                                                 type="file"
                                                 accept="image/*"
-                                                className="hidden"
+                                                className="sr-only"
                                                 onChange={(e) => {
                                                     const file = e.target.files?.[0]
                                                     if (file) {
@@ -4698,20 +4732,24 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                             />
                                         </label>
                                     ) : (
-                                        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-3 text-left">
-                                            <div className="flex items-center gap-3">
-                                                <img src={activeOrder.paymentReceipt} alt="Reference Screenshot" className="w-16 h-16 object-cover rounded-xl border border-emerald-300 shadow-2xs" />
-                                                <div>
-                                                    <p className="text-xs font-black text-emerald-900">Reference Screenshot Placed</p>
-                                                    <p className="text-[10px] text-emerald-700 font-semibold">Submitted for Staff Inspection</p>
+                                        <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+                                            <div className="flex items-center gap-3 min-w-0">
+                                                <img
+                                                    src={activeOrder.paymentReceipt}
+                                                    alt="Uploaded reference screenshot"
+                                                    className="w-12 h-12 object-cover rounded-lg border border-neutral-200 shrink-0"
+                                                />
+                                                <div className="min-w-0">
+                                                    <p className="text-xs font-semibold text-neutral-900">Screenshot uploaded</p>
+                                                    <p className="text-xs text-neutral-500">Waiting for staff review</p>
                                                 </div>
                                             </div>
-                                            <label className="block w-full text-center bg-white border border-emerald-300 hover:bg-emerald-100 text-emerald-800 font-bold text-xs py-2 rounded-xl cursor-pointer transition-colors">
-                                                Change Reference Picture
+                                            <label className="shrink-0 text-xs font-semibold text-orange-600 hover:text-orange-700 underline decoration-orange-300 underline-offset-4 cursor-pointer">
+                                                Change image
                                                 <input
                                                     type="file"
                                                     accept="image/*"
-                                                    className="hidden"
+                                                    className="sr-only"
                                                     onChange={(e) => {
                                                         const file = e.target.files?.[0]
                                                         if (file) {
@@ -4725,72 +4763,86 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                         </div>
                                     )}
 
-                                    {/* Primary Action Button to submit Reference Number and/or Receipt */}
+                                    {/* Update button when receipt is already present and customer wants to re-send */}
                                     {!selectedReceiptPreview && activeOrder.paymentReceipt && (
-                                        <div className="pt-2">
-                                            <button
-                                                type="button"
-                                                onClick={handleSubmitReceipt}
-                                                disabled={isSubmittingReceipt}
-                                                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white font-extrabold py-3 rounded-xl text-xs shadow-md shadow-blue-600/20 active:scale-98 transition-all cursor-pointer flex items-center justify-center gap-2"
-                                            >
-                                                {isSubmittingReceipt ? 'Submitting to Database & Staff...' : '✓ Update Payment Receipt'}
-                                            </button>
-                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleSubmitReceipt}
+                                            disabled={isSubmittingReceipt}
+                                            className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                                        >
+                                            {isSubmittingReceipt ? 'Updating receipt…' : 'Update payment receipt'}
+                                        </button>
                                     )}
                                 </div>
                             </div>
                         )}
 
-
                         {/* Confirmed / Sent to Kitchen Status */}
                         {['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'].includes((activeOrder.status || '').toUpperCase()) && (
-                            <div className="bg-emerald-500 text-white rounded-2xl p-4 text-center space-y-2 shadow-md">
-                                <p className="font-extrabold text-sm">Order Confirmed & Approved by Staff!</p>
-                                <p className="text-xs text-emerald-100">Your order is now being prepared in the kitchen.</p>
+                            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left space-y-3">
+                                <div>
+                                    <p className="font-bold text-sm text-emerald-950">Order confirmed by staff</p>
+                                    <p className="text-xs text-emerald-800 mt-0.5">Your order is now being prepared in the kitchen.</p>
+                                </div>
                                 <button
+                                    type="button"
                                     onClick={() => {
                                         dismissVerificationModal()
                                         setActiveTab('tracking')
                                     }}
-                                    className="bg-white text-emerald-900 font-extrabold text-xs px-4 py-2 rounded-xl mt-2 cursor-pointer shadow-xs hover:bg-emerald-50 transition-all"
+                                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-semibold text-xs px-4 py-2.5 rounded-xl cursor-pointer transition-colors"
                                 >
-                                    View Kitchen & Delivery Tracker
+                                    View order tracker
                                 </button>
                             </div>
                         )}
 
-                        <div className="pt-2 flex gap-3">
+                        <div className="pt-1 border-t border-neutral-100">
                             <button
+                                type="button"
                                 onClick={dismissVerificationModal}
-                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-700 font-bold py-3 rounded-2xl text-xs transition-colors cursor-pointer"
+                                className="w-full bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 font-semibold py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
                             >
-                                Keep Waiting in Billing
+                                Keep waiting in billing
                             </button>
                         </div>
                     </div>
                 </div>
             )}
 
-                        {/* Minimal Confirm Order Verification Modal */}
+            {/* Minimal Confirm Order Verification Modal */}
             {isConfirmOrderModalOpen && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 animate-in fade-in duration-200"
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 animate-in fade-in duration-200"
                     onClick={() => !isSubmittingOrder && setIsConfirmOrderModalOpen(false)}
                 >
                     <div
-                        className="bg-white rounded-3xl max-w-sm w-full p-6 sm:p-7 shadow-2xl border border-neutral-100 text-center space-y-4"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="confirm-order-modal-title"
+                        className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-xl border border-neutral-200 text-left space-y-4"
                         onClick={(e) => e.stopPropagation()}
                     >
-                        <h3 className="text-lg font-black text-neutral-900">
-                            Confirm Order
-                        </h3>
+                        <div className="space-y-1">
+                            <h3 id="confirm-order-modal-title" className="text-base font-bold text-neutral-900">
+                                Confirm your order
+                            </h3>
+                            <p className="text-xs text-neutral-600 leading-relaxed">
+                                Please check your delivery details and total before sending your order to our assistant.
+                            </p>
+                        </div>
 
-                        <p className="text-xs text-neutral-600 leading-relaxed">
-                            Please verify and confirm you are sure about your order details before proceeding to the assistant.
-                        </p>
+                        <div className="rounded-xl border border-neutral-200 bg-neutral-50/70 px-4 py-3 flex items-baseline justify-between gap-4">
+                            <span className="text-xs font-medium text-neutral-600">
+                                Total amount to pay
+                            </span>
+                            <span className="text-base font-extrabold text-orange-600 tabular-nums">
+                                ₱{total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                        </div>
 
-                        <div className="flex flex-col gap-2 pt-2">
+                        <div className="flex flex-col gap-2 pt-1">
                             <button
                                 type="button"
                                 disabled={isSubmittingOrder}
@@ -4798,15 +4850,15 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                     await handlePlaceOrder()
                                     setIsConfirmOrderModalOpen(false)
                                 }}
-                                className="w-full bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-xl text-sm transition-all shadow-md shadow-orange-500/20 active:scale-98 cursor-pointer"
+                                className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors cursor-pointer"
                             >
-                                {isSubmittingOrder ? 'Submitting Order...' : 'Submit Order'}
+                                {isSubmittingOrder ? 'Submitting order…' : 'Submit order'}
                             </button>
                             <button
                                 type="button"
                                 disabled={isSubmittingOrder}
                                 onClick={() => setIsConfirmOrderModalOpen(false)}
-                                className="w-full bg-neutral-100 hover:bg-neutral-200 text-neutral-600 font-bold py-2.5 px-4 rounded-xl text-xs transition-all cursor-pointer"
+                                className="w-full bg-neutral-100 hover:bg-neutral-200/80 text-neutral-700 font-semibold py-2.5 px-4 rounded-xl text-xs transition-colors cursor-pointer"
                             >
                                 Cancel
                             </button>

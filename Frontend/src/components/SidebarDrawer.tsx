@@ -7,8 +7,6 @@ interface SidebarDrawerProps {
   isOpen: boolean
   onClose: () => void
   role?: string
-  /** When true, renders as a permanently docked left sidebar (no backdrop, no X button, no scroll lock). */
-  persistent?: boolean
 }
 
 interface NavItem {
@@ -29,7 +27,7 @@ const ROLE_LABELS: Record<string, string> = {
   customer: 'Customer',
 }
 
-export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, role, persistent = false }) => {
+export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, role }) => {
   const location = useLocation()
   const navigate = useNavigate()
   const currentUser = getActiveUser()
@@ -45,9 +43,8 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
   // Determine active role: Prioritize logged-in user role if available, otherwise fall back to role prop
   const activeRole = (currentUser?.role || role || 'customer').toLowerCase()
 
-  // Lock body scroll when sidebar is open as a modal drawer (never lock for persistent layout sidebar)
+  // Lock body scroll when sidebar is open
   useEffect(() => {
-    if (persistent) return
     if (isOpen) {
       document.body.style.overflow = 'hidden'
     } else {
@@ -56,18 +53,18 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
     return () => {
       document.body.style.overflow = ''
     }
-  }, [isOpen, persistent])
+  }, [isOpen])
 
-  // Move focus into the panel when it opens as a modal drawer
+  // Move focus into the panel when it opens, so keyboard and screen-reader users land inside it
   useEffect(() => {
-    if (persistent || !isOpen) return
+    if (!isOpen) return
     const firstLink = panelRef.current?.querySelector<HTMLElement>('a[href], button:not([disabled])')
     firstLink?.focus()
-  }, [isOpen, persistent])
+  }, [isOpen])
 
-  // Escape closes; Tab is trapped inside the panel only while open as a modal drawer
+  // Escape closes; Tab is trapped inside the panel while it is open
   useEffect(() => {
-    if (persistent || !isOpen) return
+    if (!isOpen) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -96,7 +93,7 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, persistent])
+  }, [isOpen, onClose])
 
   const handleLogout = () => {
     clearSession()
@@ -326,49 +323,42 @@ export const SidebarDrawer: React.FC<SidebarDrawerProps> = ({ isOpen, onClose, r
 
   return (
     <>
-      {/* Backdrop — only rendered for non-persistent slide-over drawers */}
-      {!persistent && (
-        <div
-          className={`fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-300 ease-out ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-            }`}
-          onClick={onClose}
-          aria-hidden="true"
-        />
-      )}
+      {/* Backdrop */}
+      <div
+        className={`fixed inset-0 z-50 bg-slate-900/45 backdrop-blur-[2px] transition-opacity duration-300 ease-out ${isOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          }`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
 
-      {/* Sidebar Panel — persistent docked column for Admin, slide-over drawer for other roles */}
+      {/* Slide-over Drawer Panel */}
       <aside
         ref={panelRef}
-        role={persistent ? undefined : 'dialog'}
-        aria-modal={persistent ? undefined : 'true'}
+        role="dialog"
+        aria-modal="true"
         aria-label="Sidebar Navigation"
-        inert={!persistent && !isOpen}
-        className={
-          persistent
-            ? 'fixed top-0 left-0 bottom-0 z-40 flex w-72 flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 shadow-[1px_0_3px_rgba(15,23,42,0.03)] print:hidden'
-            : `fixed top-0 left-0 bottom-0 z-50 flex w-[21rem] max-w-[86vw] flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 shadow-[8px_0_48px_-16px_rgba(15,23,42,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] transform-gpu will-change-transform motion-reduce:transition-none ${isOpen ? 'translate-x-0' : '-translate-x-full'}`
-        }
+        inert={!isOpen}
+        className={`fixed top-0 left-0 bottom-0 z-50 flex w-[21rem] max-w-[86vw] flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50 shadow-[8px_0_48px_-16px_rgba(15,23,42,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] transform-gpu will-change-transform motion-reduce:transition-none ${isOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
       >
         {/* Drawer Header */}
         <div className="flex items-center justify-between gap-3 px-4 py-4">
           <BrandLogo
             to="/"
-            onClick={persistent ? undefined : onClose}
+            onClick={onClose}
             size="md"
             subtitle="System Navigator"
           />
-          {!persistent && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-[color,background-color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-[0.94] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2"
-              aria-label="Close Sidebar"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 transition-[color,background-color,transform] duration-150 ease-out hover:bg-slate-100 hover:text-slate-700 active:scale-[0.94] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50 focus-visible:ring-offset-2"
+            aria-label="Close Sidebar"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
 
         {/* Branch / Shift Status Banner */}

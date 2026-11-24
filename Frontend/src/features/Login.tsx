@@ -1438,13 +1438,23 @@ return () => {
                       type="text"
                       required
                       autoComplete="address-line1"
+                      aria-describedby="register-street-hint"
                       placeholder="Blk 5 Lot 12, Phase 2, Langit Road"
                       value={streetAddress}
                       onChange={(e) => handleStreetAddressChange(e.target.value)}
                       className={`${FIELD_BASE} ${FIELD_IDLE}`}
                     />
-                    <p className={`${FIELD_HINT} mt-1.5`}>
-                      Your rider delivers to this exact spot, so keep it complete.
+                    <p id="register-street-hint" className={`${FIELD_HINT} mt-1.5`}>
+                      Your rider delivers to this exact spot, so keep it complete. Make sure the address you enter matches{' '}
+                      {selectedBarangay ? (
+                        <>
+                          your selected dropdown area (<strong className="font-semibold text-neutral-600">{selectedBarangay.name}</strong>).
+                        </>
+                      ) : (
+                        <>
+                          the <strong className="font-semibold text-neutral-600">Barangay / Delivery area</strong> you selected in the dropdown above.
+                        </>
+                      )}
                     </p>
                   </div>
                 </FormSection>
@@ -2035,13 +2045,23 @@ return () => {
                       type="text"
                       required
                       autoComplete="address-line1"
+                      aria-describedby="mobile-register-street-hint"
                       placeholder="Blk 5 Lot 12, Phase 2, Langit Road"
                       value={streetAddress}
                       onChange={(e) => handleStreetAddressChange(e.target.value)}
                       className={`${MFIELD_BASE} ${MFIELD_IDLE}`}
                     />
-                    <p className={`${MFIELD_HINT} mt-1`}>
-                      Your rider delivers to this exact spot, so keep it complete.
+                    <p id="mobile-register-street-hint" className={`${MFIELD_HINT} mt-1`}>
+                      Your rider delivers to this exact spot, so keep it complete. Make sure the address you enter matches{' '}
+                      {selectedBarangay ? (
+                        <>
+                          your selected dropdown area (<strong className="font-semibold text-neutral-600">{selectedBarangay.name}</strong>).
+                        </>
+                      ) : (
+                        <>
+                          the <strong className="font-semibold text-neutral-600">Barangay / Delivery area</strong> you selected in the dropdown above.
+                        </>
+                      )}
                     </p>
                   </div>
                 </FormSection>

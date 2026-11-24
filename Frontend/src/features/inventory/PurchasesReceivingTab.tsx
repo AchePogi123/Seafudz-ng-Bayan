@@ -19,6 +19,8 @@ import {
   Card,
   EmptyState,
   Field,
+  FilterSelect,
+  Icon,
   IconButton,
   Modal,
   Notice,
@@ -476,47 +478,66 @@ export const PurchasesReceivingTab: React.FC<PurchasesReceivingTabProps> = ({
               setCurrentPage(1)
             }}
           />
-          <Segmented
-            label="Order status"
-            value={statusFilter}
-            onChange={(v) => {
-              setStatusFilter(v)
-              setCurrentPage(1)
-            }}
-            options={[
-              { value: 'ALL', label: 'All', count: scopedPOs.length },
-              { value: 'PENDING', label: 'Pending', count: countBy('PENDING') },
-              { value: 'PARTIALLY_RECEIVED', label: 'Partial', count: countBy('PARTIALLY_RECEIVED') },
-              { value: 'FULLY_RECEIVED', label: 'Received', count: countBy('FULLY_RECEIVED') },
-            ]}
-          />
-          <select
-            aria-label="Supplier"
-            className="inv-select w-full sm:w-auto"
-            value={activeSupplier}
-            onChange={(e) => applySupplierFilter(e.target.value)}
-          >
-            <option value="ALL">All suppliers</option>
-            {suppliers.map((sup) => (
-              <option key={sup.id} value={sup.id}>
-                {sup.name}
-                {sup.status === 'INACTIVE' ? ' (inactive)' : ''}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label="Item type"
-            className="inv-select w-full sm:w-auto"
-            value={typeFilter}
-            onChange={(e) => {
-              setTypeFilter(e.target.value as 'ALL' | InventoryItemType)
-              setCurrentPage(1)
-            }}
-          >
-            <option value="ALL">Food and packaging</option>
-            <option value="FOOD">Contains food</option>
-            <option value="PACKAGING">Contains packaging</option>
-          </select>
+          <div className="inv-filters">
+            <FilterSelect
+              label="Supplier"
+              value={activeSupplier}
+              neutralValue="ALL"
+              onChange={(v) => applySupplierFilter(v)}
+              options={[
+                { value: 'ALL', label: 'All' },
+                ...suppliers.map((sup) => ({
+                  value: sup.id,
+                  label: `${sup.name}${sup.status === 'INACTIVE' ? ' (inactive)' : ''}`,
+                })),
+              ]}
+            />
+            <FilterSelect<'ALL' | InventoryItemType>
+              label="Type"
+              value={typeFilter}
+              neutralValue="ALL"
+              onChange={(v) => {
+                setTypeFilter(v)
+                setCurrentPage(1)
+              }}
+              options={[
+                { value: 'ALL', label: 'All' },
+                { value: 'FOOD', label: 'Food' },
+                { value: 'PACKAGING', label: 'Packaging' },
+              ]}
+            />
+            {(Boolean(searchQuery) || statusFilter !== 'ALL' || typeFilter !== 'ALL' || activeSupplier !== 'ALL') && (
+              <button
+                type="button"
+                className="inv-filter-reset"
+                onClick={() => {
+                  setSearchQuery('')
+                  setStatusFilter('ALL')
+                  setTypeFilter('ALL')
+                  clearSupplierFilter()
+                }}
+              >
+                <Icon name="close" className="h-3.5 w-3.5" />
+                Clear
+              </button>
+            )}
+            <span className="inv-filters-sep" aria-hidden="true" />
+            <Segmented
+              label="Order status"
+              size="sm"
+              value={statusFilter}
+              onChange={(v) => {
+                setStatusFilter(v)
+                setCurrentPage(1)
+              }}
+              options={[
+                { value: 'ALL', label: 'All', count: scopedPOs.length },
+                { value: 'PENDING', label: 'Pending', count: countBy('PENDING') },
+                { value: 'PARTIALLY_RECEIVED', label: 'Partial', count: countBy('PARTIALLY_RECEIVED') },
+                { value: 'FULLY_RECEIVED', label: 'Received', count: countBy('FULLY_RECEIVED') },
+              ]}
+            />
+          </div>
         </Toolbar>
 
         {paginatedPOs.length === 0 ? (

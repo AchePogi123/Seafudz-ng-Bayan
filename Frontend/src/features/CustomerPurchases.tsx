@@ -160,11 +160,12 @@ export const CustomerPurchases: React.FC = () => {
 
   // Reorder items from completed order and redirect to billing
   const handleOrderAgain = (order: CustomerOrder) => {
-    // One order at a time: reordering while something is still in progress would only land the
-    // customer on a checkout screen that refuses to submit, so send them to that order instead.
+    // One unsettled order at a time: reordering while an earlier order still needs paying for or
+    // verifying would only land the customer on a checkout screen that refuses to submit, so send
+    // them to that order instead. A confirmed order does not stand in the way.
     const ongoing = activeOrders.find((o) => blocksNewOrder(o.status))
     if (ongoing) {
-      alert(`You already have an ongoing order (#${ongoing.id}). You can order again once it has been delivered or picked up.`)
+      alert(`Your order #${ongoing.id} still needs to be paid for and verified. You can order again once the assistant has confirmed it.`)
       navigate(`/customer?orderId=${encodeURIComponent(String(ongoing.id))}&tab=tracking`)
       return
     }

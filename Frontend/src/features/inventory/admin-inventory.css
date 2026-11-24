@@ -486,7 +486,7 @@ button.inv-stat:focus-visible { outline: none; box-shadow: var(--inv-focus); bor
   pointer-events: none;
 }
 .inv-filter-label { color: var(--inv-text-3); }
-.inv-filter-value { font-weight: 600; color: var(--inv-text); }
+.inv-filter-value { font-weight: 600; color: var(--inv-text); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .inv-filter-caret { color: var(--inv-text-3); flex: none; }
 
 .inv-filter--on {
@@ -1461,6 +1461,26 @@ select.inv-input-suffix:focus-visible {
 }
 .kds-ticket-customer { font-size: 15px; font-weight: 500; color: var(--inv-text-2); }
 
+/*
+ * One customer, more than one ticket on the board. A marker only: the tickets keep their own
+ * place in the queue and are never merged, so this has to read at a glance from standing distance
+ * without making the card look like a different kind of ticket.
+ */
+.kds-same-customer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: -2px;
+}
+.kds-same-customer-refs {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--inv-text-3);
+}
+
 /* Ticket age: the board's one self-changing signal. */
 .kds-timer {
   font-size: 26px;
@@ -1689,4 +1709,36 @@ select.inv-input-suffix:focus-visible {
 @keyframes inv-ssel-in-up {
   from { opacity: 0; transform: translateY(calc(-100% + 4px)); }
   to { opacity: 1; transform: translateY(-100%); }
+}
+
+/* The recipe cell in the dish list: a badge that opens the dish's recipe. */
+.inv-recipe-cell { display: inline-flex; border-radius: 999px; cursor: pointer; }
+.inv-recipe-cell:hover { filter: brightness(0.97); }
+.inv-recipe-cell:focus-visible { outline: none; box-shadow: var(--inv-focus); }
+
+/* The recipe sheet's subtitle: the dish's own details, then its live yield. */
+.inv-recipe-sheet-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+.inv-recipe-sheet-yield { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* An ingredient that is the bottleneck, but not out: worth a look, not an alarm. */
+.inv-table tbody tr.is-attention { background: #fffcf5; }
+.inv-table tbody tr.is-attention:hover { background: #fff8ec; }
+
+/* The no-recipe warning names each dish and carries the button that sets its recipe up. */
+.inv-norecipe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.inv-norecipe-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--inv-border);
+  border-radius: var(--inv-radius);
+  background: var(--inv-surface);
 }

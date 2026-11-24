@@ -34,30 +34,48 @@ function itemDeletedError(name) {
 }
 
 /**
- * The statuses that give a customer their one order slot back.
+ * The statuses that still hold a customer back from ordering again.
  *
- * COMPLETED and CANCELLED are the obvious ones. CANCEL_REQUESTED counts too: by then the kitchen
- * ticket is already cancelled and the stock already returned, so the order will never be cooked
- * or delivered — only the refund paperwork is outstanding, and that is the assistant's job, not a
- * reason to shut the customer out of the store for hours.
+ * A customer is only blocked while an order is UNSETTLED: placed but not paid for, paid but not
+ * yet verified by the assistant, or bounced back to them. The moment the assistant verifies the
+ * GCash receipt the order becomes CONFIRMED — the money is in, the kitchen ticket is cut, and the
+ * order is the restaurant's problem rather than a reason to keep the customer out of the store.
+ * From there they may order again, with no limit on how many confirmed orders they have cooking.
  *
- * Everything else — awaiting payment, awaiting the assistant, cooking, ready, out for delivery —
- * is still their one ongoing order.
+ * OUT_OF_STOCK is listed because the kitchen is stalled waiting on that customer's replacement or
+ * refund decision: they should answer it before starting something new.
+ *
+ * This is an allowlist of blocking statuses rather than a list of freeing ones, because the
+ * pre-confirmation states are a small closed set while everything after confirmation is
+ * open-ended. A status nobody enumerated here lets the customer order instead of locking them out,
+ * which is the safer way to be wrong.
+ *
+ * Mirrored by `blocksNewOrder()` in `Frontend/src/features/OnlineCustomer.tsx`.
  */
-export const ORDER_SLOT_FREED_STATUSES = ['COMPLETED', 'CANCELLED', 'CANCEL_REQUESTED'];
+export const STATUSES_BLOCKING_NEW_ORDER = [
+  'PENDING',                    // column default; vestigial for online orders
+  'GCASH_AUTHORIZED',           // placed, nothing paid yet
+  'GCASH_PENDING_APPROVAL',     // vestigial, still allowed by the CHECK constraint
+  'RECEIPT_SUBMITTED',          // paid, waiting on the assistant
+  'RECEIPT_REJECTED',           // assistant refused the proof; customer must re-upload
+  'OUT_OF_STOCK',               // waiting on the customer's replacement/refund choice
+  'FLAGGED',                    // vestigial
+  'AWAITING_KITCHEN_APPROVAL',  // vestigial (requiresKitchenApproval is hard-coded false)
+  'KITCHEN_REJECTED',
+];
 
 /**
- * Finds the ongoing online order an identified customer already has, so they cannot place a
- * second one until the first is delivered/picked up or cancelled.
+ * Finds the unsettled online order an identified customer already has, so they cannot place a
+ * second one until that one is paid for and verified by the assistant.
  *
  * Only applies to a customer we can actually name: a guest whose details did not resolve to a
  * `customers` row (no sign-in, no phone, no name) cannot be attributed orders at all, and the
  * checkout screen requires a signed-in account before it reaches this point.
  *
  * `inMemoryOrders` is consulted too, because a status set in memory can be a moment ahead of the
- * orders table — an order the app already considers finished must not keep the customer blocked.
+ * orders table — an order the app already considers confirmed must not keep the customer blocked.
  */
-export async function findOngoingCustomerOrder(client, { customerId, excludeOrderId }) {
+export async function findUnsettledCustomerOrder(client, { customerId, excludeOrderId }) {
   if (!customerId) return null;
 
   const { rows } = await client.query(
@@ -66,15 +84,15 @@ export async function findOngoingCustomerOrder(client, { customerId, excludeOrde
       WHERE customer_id = $1
         AND COALESCE(order_type, 'ONLINE') = 'ONLINE'
         AND id <> $2
-        AND UPPER(status) <> ALL($3::text[])
+        AND UPPER(status) = ANY($3::text[])
       ORDER BY created_at ASC`,
-    [customerId, String(excludeOrderId || ''), ORDER_SLOT_FREED_STATUSES]
+    [customerId, String(excludeOrderId || ''), STATUSES_BLOCKING_NEW_ORDER]
   );
 
   for (const row of rows) {
     const cached = inMemoryOrders.get(String(row.id));
     const liveStatus = String(cached?.status || row.status || '').toUpperCase();
-    if (!ORDER_SLOT_FREED_STATUSES.includes(liveStatus)) return row;
+    if (STATUSES_BLOCKING_NEW_ORDER.includes(liveStatus)) return row;
   }
 
   return null;
@@ -1150,7 +1168,13 @@ export async function handleCreateCustomerFlowOrder(req, res) {
     }
 
     const rawOrderType = (req.body.orderType || req.body.type || '').toString().trim().toUpperCase();
-    const isPos = Boolean(
+
+    // A POS ticket is the cashier's: rung up and paid at the counter, so it is exempt from the
+    // one-unsettled-order rule and from the GCash-only rule below. All of that is claimed by the
+    // request body alone, which anybody can send to this endpoint — so the claim is only honoured
+    // for a request actually authenticated as counter staff. The real POS screen does not come
+    // through here at all: it posts to `POST /orders`, which is already behind requireRole.
+    const claimsPos = Boolean(
       req.body.isPosOrder ||
       req.body.is_pos_order ||
       (requestedOrderId && String(requestedOrderId).startsWith('POS-')) ||
@@ -1158,6 +1182,18 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       rawOrderType.includes('TAKE') ||
       rawOrderType.includes('ON_SITE')
     );
+    const requesterRole = String(req.user?.role || '').toLowerCase();
+    const isCounterStaff = req.user?.type === 'employee' || ['admin', 'cashier'].includes(requesterRole);
+    if (claimsPos && !isCounterStaff) {
+      // Refused rather than quietly treated as an online order: a silent downgrade would put
+      // GCash prepayment rules on a ticket the sender meant to settle in cash.
+      return res.status(403).json({
+        success: false,
+        error: 'POS_REQUIRES_STAFF',
+        message: 'Only a signed-in cashier or admin can place a counter order. Please place this as an online order.',
+      });
+    }
+    const isPos = claimsPos;
 
     // Pay in Store is gone: every online order — delivery AND store pick-up — is prepaid by
     // GCash, so a pick-up can no longer be placed now and settled at the counter later.
@@ -1349,10 +1385,11 @@ export async function handleCreateCustomerFlowOrder(req, res) {
 
         orderRecord.customer_id = validCustomerId;
 
-        // One ongoing order per online customer. Checked inside this transaction, right after the
-        // customer is resolved, so a double-submitted checkout cannot slip a second order past it.
+        // One UNSETTLED order per online customer. Checked inside this transaction, right after
+        // the customer is resolved, so a double-submitted checkout cannot slip a second order
+        // past it. A confirmed order does not block anything.
         if (!isPos) {
-          const ongoing = await findOngoingCustomerOrder(client, {
+          const ongoing = await findUnsettledCustomerOrder(client, {
             customerId: validCustomerId,
             excludeOrderId: orderId,
           });
@@ -1361,7 +1398,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
             return res.status(409).json({
               success: false,
               error: 'ACTIVE_ORDER_EXISTS',
-              message: `You already have an ongoing order (${ongoing.id}). Please wait until it is delivered or picked up before placing another one.`,
+              message: `You have an order (${ongoing.id}) that still needs to be paid for and verified. Please settle that one before placing another.`,
               data: {
                 id: ongoing.id,
                 status: ongoing.status,
@@ -1524,7 +1561,7 @@ export async function handleCreateCustomerFlowOrder(req, res) {
       inMemoryOrders.set(orderId, orderRecord);
     } catch (poolErr) {
       console.warn('Database connection unavailable, falling back to in-memory store:', poolErr.message);
-      // With no database there is no `customers` row to resolve, so the one-ongoing-order rule
+      // With no database there is no `customers` row to resolve, so the one-unsettled-order rule
       // falls back to matching the phone number already attached to this session's orders.
       if (!isPos) {
         const digits = (value) => String(value || '').replace(/\D/g, '');
@@ -1534,14 +1571,14 @@ export async function handleCreateCustomerFlowOrder(req, res) {
               String(order.id) !== String(orderId)
               && !order.is_pos_order
               && digits(order.customer_phone || order.phone) === thisPhone
-              && !ORDER_SLOT_FREED_STATUSES.includes(String(order.status || '').toUpperCase())
+              && STATUSES_BLOCKING_NEW_ORDER.includes(String(order.status || '').toUpperCase())
             ))
           : null;
         if (ongoing) {
           return res.status(409).json({
             success: false,
             error: 'ACTIVE_ORDER_EXISTS',
-            message: `You already have an ongoing order (${ongoing.id}). Please wait until it is delivered or picked up before placing another one.`,
+            message: `You have an order (${ongoing.id}) that still needs to be paid for and verified. Please settle that one before placing another.`,
             data: { id: ongoing.id, status: ongoing.status },
           });
         }

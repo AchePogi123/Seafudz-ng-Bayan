@@ -922,7 +922,7 @@ const SalesReportAdmin: React.FC = () => {
     const activePeriodLabel = PERIOD_OPTIONS.find((o) => o.value === activeTab)?.label ?? activeTab
 
     return (
-        <div className="inv-scope min-h-screen pl-72 pb-16 antialiased print:pl-0" style={{ background: 'var(--inv-bg)' }}>
+        <div className="inv-scope min-h-screen pb-16 antialiased" style={{ background: 'var(--inv-bg)' }}>
             <div className="print:hidden">
                 <NavbarAdmin />
             </div>

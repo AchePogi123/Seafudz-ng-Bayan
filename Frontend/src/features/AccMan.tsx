@@ -741,14 +741,34 @@ export const AccMan: React.FC = () => {
 
     // Reorder items from order history into cart and go to billing
     const handleOrderAgain = (order: CustomerOrder) => {
-        // One order at a time. Checkout refuses a second order anyway, so catch it here and send
-        // the customer to the one still in progress rather than to a checkout that cannot submit.
+        // One UNSETTLED order at a time. Checkout refuses a second unsettled order anyway, so
+        // catch it here and send the customer to the one still needing payment rather than to a
+        // checkout that cannot submit.
+        //
+        // The whole stored list is scanned, not just the single `activeOrder` slot: a customer may
+        // now hold several live orders at once, so that slot can easily be pointing at a confirmed
+        // one while an unsettled order sits elsewhere in the list.
         try {
-            const stored = localStorage.getItem(getActiveOrderKey(getActiveUser()))
-            const ongoing = stored ? JSON.parse(stored) : null
-            if (ongoing?.id && blocksNewOrder(ongoing.status)) {
-                alert(`You already have an ongoing order (#${ongoing.id}). You can order again once it has been delivered or picked up.`)
-                navigate(`/customer?orderId=${encodeURIComponent(String(ongoing.id))}&tab=tracking`)
+            const user = getActiveUser()
+            const seen = new Map<string, any>()
+            for (const key of [getOrdersKey(user), 'seafudz_orders']) {
+                const list = JSON.parse(localStorage.getItem(key) || '[]')
+                if (Array.isArray(list)) {
+                    for (const o of list) {
+                        const id = String(o?.id || o?.ref || '')
+                        if (id && !seen.has(id)) seen.set(id, o)
+                    }
+                }
+            }
+            const activeRaw = localStorage.getItem(getActiveOrderKey(user))
+            const active = activeRaw ? JSON.parse(activeRaw) : null
+            const activeId = String(active?.id || active?.ref || '')
+            if (activeId && !seen.has(activeId)) seen.set(activeId, active)
+
+            const unsettled = [...seen.values()].find((o: any) => blocksNewOrder(o?.status))
+            if (unsettled?.id) {
+                alert(`Your order #${unsettled.id} still needs to be paid for and verified. You can order again once the assistant has confirmed it.`)
+                navigate(`/customer?orderId=${encodeURIComponent(String(unsettled.id))}&tab=tracking`)
                 return
             }
         } catch { }
@@ -1020,7 +1040,7 @@ export const AccMan: React.FC = () => {
     }
 
     return (
-        <div className={`inv-scope min-h-screen pb-16 antialiased ${userRole === 'admin' ? 'pl-72 print:pl-0' : ''}`} style={{ background: 'var(--inv-bg)' }}>
+        <div className={"inv-scope min-h-screen pb-16 antialiased"} style={{ background: 'var(--inv-bg)' }}>
             <div className="sticky top-0 z-40 print:hidden">
                 {renderNavbar()}
             </div>

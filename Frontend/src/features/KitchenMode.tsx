@@ -49,7 +49,7 @@ const escapeHtml = (value: unknown) =>
  * whose order is this? So the name and the ticket code are the biggest things
  * on it, and the item list is there to check the tray against.
  */
-const generateKitchenSlipHtml = (order: KitchenOrder): string => {
+const generateKitchenSlipHtml = (order: KitchenOrder, sameCustomer?: SameCustomerMark): string => {
   const items = (order.items || []).filter(
     (item) =>
       !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
@@ -106,6 +106,12 @@ const generateKitchenSlipHtml = (order: KitchenOrder): string => {
     <div>
       <div class="label">CUSTOMER</div>
       <div class="name">${escapeHtml(order.customer || 'Walk-in')}</div>
+      ${sameCustomer
+        ? `<div class="row" style="margin-top:6px;"><span>Also has</span><span>${escapeHtml(
+            sameCustomer.siblingIds.map(ticketLabel).join(', ')
+          )}</span></div>
+           <div class="row"><span>This is</span><span>${sameCustomer.position} OF ${sameCustomer.total}</span></div>`
+        : ''}
     </div>
 
     <div class="divider"></div>
@@ -162,12 +168,67 @@ export interface KitchenOrder {
   status: 'Pending' | 'Preparing' | 'Ready' | 'Completed' | string
   items: OrderItem[]
   customer?: string
+  /** Who placed it, for spotting a customer with more than one ticket on the board. */
+  customerId?: string
+  customerPhone?: string
   notes?: string
   total?: number
   createdAt?: string
   paymentMethod?: string
   startTime?: number | null
   completedTimeElapsed?: string
+}
+
+/**
+ * Identity key for "these two tickets are the same customer", or '' when the ticket cannot be
+ * attributed to anyone. The account id is used when there is one, the phone number otherwise.
+ *
+ * The display name is deliberately NOT a fallback: the backend coalesces it to the literal
+ * 'Customer' and this screen falls back to 'Online Customer' / 'Store Pick-Up Customer', so
+ * matching on it would group unrelated people under the same marker. Same approach as the rider
+ * board's companion matching in rideRoleDemo.tsx.
+ */
+const customerIdentityKey = (order: KitchenOrder): string => {
+  const id = String(order.customerId || '').trim().toLowerCase()
+  if (id) return `id:${id}`
+  const digits = String(order.customerPhone || '').replace(/\D/g, '')
+  return digits.length >= 7 ? `tel:${digits}` : ''
+}
+
+/** What a ticket needs to show about the customer's other live tickets. */
+interface SameCustomerMark {
+  position: number
+  total: number
+  siblingIds: string[]
+}
+
+/**
+ * Finds the customers who have more than one ticket live on the board, and returns a per-order
+ * marker. Deliberately does NOT reorder or group anything: the queue keeps its first-come order
+ * and the tickets stay separate, they just carry a flag so the kitchen knows to bag them together.
+ */
+const findSameCustomerTickets = (orders: KitchenOrder[]): Map<string, SameCustomerMark> => {
+  const byCustomer = new Map<string, KitchenOrder[]>()
+  for (const order of orders) {
+    const key = customerIdentityKey(order)
+    if (!key) continue
+    const bucket = byCustomer.get(key)
+    if (bucket) bucket.push(order)
+    else byCustomer.set(key, [order])
+  }
+
+  const marks = new Map<string, SameCustomerMark>()
+  for (const group of byCustomer.values()) {
+    if (group.length < 2) continue
+    group.forEach((order, idx) => {
+      marks.set(String(order.id), {
+        position: idx + 1,
+        total: group.length,
+        siblingIds: group.filter((o) => o.id !== order.id).map((o) => String(o.id)),
+      })
+    })
+  }
+  return marks
 }
 
 export const KitchenMode: React.FC = () => {
@@ -322,6 +383,8 @@ export const KitchenMode: React.FC = () => {
             category: formatCategory,
             status: mappedStatus,
             customer: customerName,
+            customerId: o.customerId || o.customer_id || o.userId || undefined,
+            customerPhone: o.phone || o.customerPhone || o.customer_phone || undefined,
             total: calcTotal,
             items: parsedItems,
             notes: o.notes || '',
@@ -410,6 +473,8 @@ export const KitchenMode: React.FC = () => {
                   category: formatCategory,
                   status: norm,
                   customer: customerName,
+                  customerId: o.customer_id || o.customerId || undefined,
+                  customerPhone: o.customer_phone || o.customerPhone || undefined,
                   total: calcTotal,
                   items: (o.items || [])
                     .filter((item: any) => !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(String(item.item_status || item.itemStatus || '').toUpperCase()))
@@ -492,6 +557,14 @@ export const KitchenMode: React.FC = () => {
           }
           if (localItem.customer && !existingApi.customer) {
             existingApi.customer = localItem.customer
+          }
+          // Identity, so a ticket the server could not attribute can still be matched to the
+          // customer's other tickets on the board.
+          if (localItem.customerId && !existingApi.customerId) {
+            existingApi.customerId = localItem.customerId
+          }
+          if (localItem.customerPhone && !existingApi.customerPhone) {
+            existingApi.customerPhone = localItem.customerPhone
           }
         }
       })
@@ -681,6 +754,17 @@ export const KitchenMode: React.FC = () => {
     [orders]
   )
 
+  /**
+   * Which tickets on the board right now belong to a customer who has more than one.
+   *
+   * Scoped to the two live columns — a ticket that is already done is not something the kitchen
+   * still has to bag together. Note this changes nothing about the order of either column.
+   */
+  const sameCustomerMarks = useMemo(
+    () => findSameCustomerTickets([...queueOrders, ...processingOrders]),
+    [queueOrders, processingOrders]
+  )
+
   const formatRealWorldTime = (dateStr?: string) => {
     if (!dateStr) return '—'
     const d = new Date(dateStr)
@@ -744,7 +828,7 @@ export const KitchenMode: React.FC = () => {
       return
     }
     void updateOrderStatus(order.id, 'Ready')
-    executeReceiptPrint(generateKitchenSlipHtml(order))
+    executeReceiptPrint(generateKitchenSlipHtml(order, sameCustomerMarks.get(String(order.id))))
   }
 
   /**
@@ -756,6 +840,7 @@ export const KitchenMode: React.FC = () => {
     const mins = elapsedMinutes(order, now)
     const tone = ageTone(mins)
     const isPickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
+    const sameCustomer = sameCustomerMarks.get(String(order.id))
     const liveItems = order.items.filter(
       (item) =>
         !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
@@ -787,6 +872,25 @@ export const KitchenMode: React.FC = () => {
               </span>
             )}
           </span>
+
+          {/*
+            This customer has more than one ticket on the board. The tickets stay separate and in
+            their own place in the queue — this only tells the kitchen to bag them together.
+          */}
+          {sameCustomer && (
+            <span className="kds-same-customer">
+              <Badge
+                tone="warning"
+                dot
+                title={`Same customer also has: ${sameCustomer.siblingIds.map(ticketLabel).join(', ')}`}
+              >
+                Same customer · {sameCustomer.position} of {sameCustomer.total}
+              </Badge>
+              <span className="kds-same-customer-refs">
+                also {sameCustomer.siblingIds.map(ticketLabel).join(' · ')}
+              </span>
+            </span>
+          )}
 
           <ul className="kds-items">
             {liveItems.map((item, idx) => (
@@ -953,6 +1057,20 @@ export const KitchenMode: React.FC = () => {
                 <div>
                   <h4 className="text-xs font-bold text-neutral-400 uppercase tracking-wider mb-1">Customer</h4>
                   <div className="text-sm font-semibold text-neutral-900">{selectedOrder.customer}</div>
+                  {(() => {
+                    const same = sameCustomerMarks.get(String(selectedOrder.id))
+                    if (!same) return null
+                    return (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <Badge tone="warning" dot>
+                          Order {same.position} of {same.total} for this customer
+                        </Badge>
+                        <span className="text-xs text-neutral-500">
+                          Also on the board: {same.siblingIds.map(ticketLabel).join(' · ')}
+                        </span>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
 

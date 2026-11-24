@@ -452,7 +452,8 @@ export const Notice: React.FC<{ tone?: 'danger' | 'warning' | 'info' | 'success'
       name={tone === 'success' ? 'checkCircle' : tone === 'info' ? 'info' : 'alertCircle'}
       className="mt-px h-4 w-4 shrink-0"
     />
-    <div className="min-w-0">{children}</div>
+    {/* flex-1 so a notice can hold block content (a list, a row of actions) at full width */}
+    <div className="min-w-0 flex-1">{children}</div>
   </div>
 )
 

@@ -1,11 +1,23 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import NavbarAdmin from '../components/NavbarAdmin'
-import { CLIENT_MENU_ITEMS } from '../components/MenuCard'
+import { CLIENT_MENU_ITEMS, LOW_SERVINGS_THRESHOLD } from '../components/MenuCard'
 import { API_BASE_URL, getAuthHeaders } from '../utils/api'
 import { subscribeOrderSync, subscribeProductCatalogSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
+import { useMenuAvailability } from '../utils/menuAvailability'
 import { countsAsSale } from '../utils/salesRecognition'
+
+interface StockAlertItem {
+    id: string
+    name: string
+    itemType: 'FOOD' | 'PACKAGING'
+    category: string
+    unit: string
+    currentStock: number
+    minStockLevel: number
+    status: 'LOW_STOCK' | 'OUT_OF_STOCK'
+}
 
 export interface LiveOrderRecord {
     id: string
@@ -65,6 +77,26 @@ const parseOrderDate = (dateStr?: string, createdAtRaw?: string): Date => {
 const AdminDashboard: React.FC = () => {
     const navigate = useNavigate()
     const { menuItems, refresh: refreshProductImages } = useProductImages()
+    const { isAvailable, getRemainingServings } = useMenuAvailability()
+
+    // Stock & Inventory Alerts State
+    const [stockAlerts, setStockAlerts] = useState<StockAlertItem[]>([])
+    const [showAllStockAlerts, setShowAllStockAlerts] = useState(false)
+
+    const fetchStockAlerts = useCallback(async () => {
+        try {
+            const authHeaders = await getAuthHeaders()
+            const res = await fetch(`${API_BASE_URL}/inventory/alerts`, { headers: authHeaders })
+            if (res.ok) {
+                const json = await res.json()
+                if (Array.isArray(json.data)) {
+                    setStockAlerts(json.data)
+                }
+            }
+        } catch {
+            // Silent fallback if offline
+        }
+    }, [])
 
     // Global Time Filter State
     const [timeRange, setTimeRange] = useState<TimeRangeOption>('ALL')
@@ -332,20 +364,24 @@ const AdminDashboard: React.FC = () => {
 
     useEffect(() => {
         void fetchLiveOrders()
+        void fetchStockAlerts()
 
         const unsubscribe = subscribeOrderSync(() => {
             void fetchSummary()
             void fetchLiveOrders(true)
+            void fetchStockAlerts()
         })
 
         const unsubscribeCatalog = subscribeProductCatalogSync(() => {
             void refreshProductImages()
+            void fetchStockAlerts()
         })
 
         // Relaxed periodic background heartbeat (30s) - instant updates are pushed via SSE (subscribeOrderSync)
         const interval = setInterval(() => {
             void fetchSummary()
             void fetchLiveOrders()
+            void fetchStockAlerts()
         }, 30000)
 
         return () => {
@@ -353,7 +389,7 @@ const AdminDashboard: React.FC = () => {
             unsubscribeCatalog()
             clearInterval(interval)
         }
-    }, [fetchLiveOrders, fetchSummary, refreshProductImages])
+    }, [fetchLiveOrders, fetchSummary, fetchStockAlerts, refreshProductImages])
 
     // --- GLOBAL TIME RANGE FILTERED ORDERS ---
     const dateFilteredOrders = useMemo(() => {
@@ -849,6 +885,36 @@ const AdminDashboard: React.FC = () => {
         { value: 'CUSTOM', label: 'Custom' },
     ]
 
+    const outOfStockIngredients = useMemo(
+        () => stockAlerts.filter((item) => item.status === 'OUT_OF_STOCK' || item.currentStock <= 0),
+        [stockAlerts]
+    )
+    const lowStockIngredients = useMemo(
+        () => stockAlerts.filter((item) => item.status === 'LOW_STOCK' && item.currentStock > 0),
+        [stockAlerts]
+    )
+
+    const dishStockAlerts = useMemo(() => {
+        const outOfStockDishes: Array<{ id: string; name: string }> = []
+        const lowServingsDishes: Array<{ id: string; name: string; remaining: number }> = []
+
+        menuItems.forEach((dish) => {
+            const avail = isAvailable(dish.id)
+            const left = getRemainingServings(dish.id)
+            if (!avail || left === 0) {
+                outOfStockDishes.push({ id: dish.id, name: dish.name })
+            } else if (left !== null && left > 0 && left <= LOW_SERVINGS_THRESHOLD) {
+                lowServingsDishes.push({ id: dish.id, name: dish.name, remaining: left })
+            }
+        })
+
+        return { outOfStockDishes, lowServingsDishes }
+    }, [menuItems, isAvailable, getRemainingServings])
+
+    const totalOutCount = outOfStockIngredients.length + dishStockAlerts.outOfStockDishes.length
+    const totalLowCount = lowStockIngredients.length + dishStockAlerts.lowServingsDishes.length
+    const hasAnyStockNotice = totalOutCount > 0 || totalLowCount > 0
+
     return (
         <div className="min-h-screen bg-slate-50 text-slate-800 pb-16">
             <div className="print:hidden">
@@ -912,7 +978,10 @@ const AdminDashboard: React.FC = () => {
                         )}
 
                         <button
-                            onClick={fetchLiveOrders}
+                            onClick={() => {
+                                void fetchLiveOrders(true)
+                                void fetchStockAlerts()
+                            }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
                             title="Refresh orders"
                         >
@@ -923,6 +992,120 @@ const AdminDashboard: React.FC = () => {
                         </button>
                     </div>
                 </div>
+
+                {/* Clean, minimal stock notice */}
+                {hasAnyStockNotice && (() => {
+                    const isCritical = totalOutCount > 0
+                    const combinedItems = [
+                        ...outOfStockIngredients.map((item) => ({
+                            key: `ing-out-${item.id}`,
+                            name: item.name,
+                            meta: `0 ${item.unit}`,
+                            severity: 'OUT' as const,
+                            targetUrl: `/admin-inventory?tab=ingredients&status=OUT_OF_STOCK&q=${encodeURIComponent(item.name)}`,
+                        })),
+                        ...dishStockAlerts.outOfStockDishes.map((dish) => ({
+                            key: `dish-out-${dish.id}`,
+                            name: dish.name,
+                            meta: 'No stock',
+                            severity: 'OUT' as const,
+                            targetUrl: `/admin-inventory?tab=menu`,
+                        })),
+                        ...lowStockIngredients.map((item) => ({
+                            key: `ing-low-${item.id}`,
+                            name: item.name,
+                            meta: `${item.currentStock.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${item.unit}`,
+                            severity: 'LOW' as const,
+                            targetUrl: `/admin-inventory?tab=ingredients&status=LOW_STOCK&q=${encodeURIComponent(item.name)}`,
+                        })),
+                        ...dishStockAlerts.lowServingsDishes.map((dish) => ({
+                            key: `dish-low-${dish.id}`,
+                            name: dish.name,
+                            meta: `${dish.remaining} left`,
+                            severity: 'LOW' as const,
+                            targetUrl: `/admin-inventory?tab=menu`,
+                        })),
+                    ]
+                    const visibleItems = showAllStockAlerts ? combinedItems : combinedItems.slice(0, 5)
+                    const primaryTarget =
+                        outOfStockIngredients.length > 0
+                            ? '/admin-inventory?tab=ingredients&status=OUT_OF_STOCK'
+                            : lowStockIngredients.length > 0
+                            ? '/admin-inventory?tab=ingredients&status=LOW_STOCK'
+                            : '/admin-inventory?tab=menu'
+
+                    return (
+                        <section
+                            role="region"
+                            aria-label="Stock notice"
+                            className="bg-white rounded-xl border border-slate-200/80 px-4 py-3 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between"
+                        >
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 min-w-0">
+                                <div className="inline-flex items-center gap-2 text-xs font-semibold text-slate-900 shrink-0">
+                                    <span
+                                        className={`h-2 w-2 rounded-full ${
+                                            isCritical ? 'bg-rose-500' : 'bg-amber-500'
+                                        }`}
+                                    />
+                                    <span>Stock alert</span>
+                                    <span className="font-normal text-slate-400 tabular-nums">
+                                        {[
+                                            totalOutCount > 0 ? `${totalOutCount} no stock` : null,
+                                            totalLowCount > 0 ? `${totalLowCount} low` : null,
+                                        ]
+                                            .filter(Boolean)
+                                            .join(' · ')}
+                                    </span>
+                                </div>
+
+                                <span className="hidden sm:inline text-slate-200">|</span>
+
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    {visibleItems.map((entry) => (
+                                        <button
+                                            key={entry.key}
+                                            type="button"
+                                            onClick={() => navigate(entry.targetUrl)}
+                                            className="inline-flex items-center gap-1.5 rounded-md bg-slate-50 hover:bg-slate-100 border border-slate-200/70 px-2 py-0.5 text-[11px] text-slate-700 transition-colors cursor-pointer"
+                                        >
+                                            <span
+                                                className={`h-1.5 w-1.5 rounded-full ${
+                                                    entry.severity === 'OUT' ? 'bg-rose-500' : 'bg-amber-500'
+                                                }`}
+                                            />
+                                            <span className="font-medium text-slate-800">{entry.name}</span>
+                                            <span
+                                                className={`tabular-nums ${
+                                                    entry.severity === 'OUT' ? 'text-rose-600 font-medium' : 'text-slate-400'
+                                                }`}
+                                            >
+                                                {entry.meta}
+                                            </span>
+                                        </button>
+                                    ))}
+
+                                    {combinedItems.length > 5 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAllStockAlerts((prev) => !prev)}
+                                            className="px-1.5 py-0.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 cursor-pointer tabular-nums"
+                                        >
+                                            {showAllStockAlerts ? 'Show less' : `+${combinedItems.length - 5} more`}
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() => navigate(primaryTarget)}
+                                className="text-xs font-medium text-orange-600 hover:text-orange-700 transition-colors shrink-0 self-start sm:self-center cursor-pointer"
+                            >
+                                View inventory →
+                            </button>
+                        </section>
+                    )
+                })()}
 
                 {/* KPI row: 4 metric cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

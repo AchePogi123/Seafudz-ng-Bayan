@@ -178,8 +178,6 @@ export const POS: React.FC = () => {
   const [pickupFilter, setPickupFilter] = useState<'all' | 'ready' | 'pending' | 'completed'>('all')
   const [pickupPage, setPickupPage] = useState<number>(1)
   const PICKUP_PAGE_SIZE = 10
-  const [handoverModalOrder, setHandoverModalOrder] = useState<any | null>(null)
-  const [cashTendered, setCashTendered] = useState<string>('')
   const [isSubmittingHandover, setIsSubmittingHandover] = useState(false)
 
   // Pagination states (10 transactions per page)
@@ -807,7 +805,7 @@ export const POS: React.FC = () => {
     }
   }
 
-  const handlePickupHandover = async (order: any, cashTenderedVal?: number) => {
+  const handlePickupHandover = async (order: any) => {
     const orderId = order.id || order.ref
     const statusNorm = (order.status || '').toUpperCase()
     if (statusNorm !== 'READY') {
@@ -823,7 +821,7 @@ export const POS: React.FC = () => {
         body: JSON.stringify({
           cashierId: currentUser?.id,
           paymentMethod: 'GCASH',
-          cashReceived: cashTenderedVal !== undefined ? cashTenderedVal : (order.total || 0),
+          cashReceived: order.total || 0,
         }),
       }).catch(() => null)
 
@@ -850,8 +848,6 @@ export const POS: React.FC = () => {
       )
 
       notifyOrderSync()
-      setHandoverModalOrder(null)
-      setCashTendered('')
       setPosNotification(`Order #${orderId} marked as Picked Up & successfully handed over!`)
     } catch (err: any) {
       alert(`Failed to complete handover: ${err?.message || 'Network error'}`)
@@ -2007,15 +2003,23 @@ export const POS: React.FC = () => {
                             {items.length === 0 ? (
                               <span className="text-xs text-neutral-400 italic">No item details</span>
                             ) : (
-                              items.map((it: any, iIdx: number) => (
-                                <span
-                                  key={iIdx}
-                                  className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
-                                >
-                                  <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
-                                  <span className="font-mono font-bold text-orange-600">x{it.quantity || 1}</span>
-                                </span>
-                              ))
+                              items.map((it: any, iIdx: number) => {
+                                const unitPrice = Number(it.price ?? it.unit_price ?? 0)
+                                return (
+                                  <span
+                                    key={iIdx}
+                                    className="inline-flex items-center gap-1 bg-neutral-100 border border-neutral-200/70 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-neutral-700"
+                                  >
+                                    <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
+                                    <span className="font-mono font-bold text-orange-600">x{it.quantity || 1}</span>
+                                    {unitPrice > 0 && (
+                                      <span className="font-mono text-[10px] text-neutral-500">
+                                        (₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                      </span>
+                                    )}
+                                  </span>
+                                )
+                              })
                             )}
                           </div>
                         </div>
@@ -2082,7 +2086,7 @@ export const POS: React.FC = () => {
                   <PosIcon name="bag" className="h-5 w-5 text-orange-500" /> Online Store Pick-Up Orders
                 </h2>
                 <p className="text-xs text-neutral-500 font-medium">
-                  Manage store pick-ups, collect counter cash payments, print receipts, and hand over completed orders
+                  Manage store pick-ups, print receipts, and hand over completed orders
                 </p>
               </div>
 
@@ -2275,15 +2279,23 @@ export const POS: React.FC = () => {
                             {items.length === 0 ? (
                               <span className="text-xs text-neutral-400 italic">No dishes itemized</span>
                             ) : (
-                              items.map((it: any, i: number) => (
-                                <span
-                                  key={i}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-md text-[11px] font-bold text-neutral-800 transition-colors"
-                                >
-                                  <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
-                                  <span className="font-mono font-bold text-emerald-700">x{it.quantity || 1}</span>
-                                </span>
-                              ))
+                              items.map((it: any, i: number) => {
+                                const unitPrice = Number(it.price ?? it.unit_price ?? 0)
+                                return (
+                                  <span
+                                    key={i}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-neutral-100 hover:bg-neutral-200 border border-neutral-200/80 rounded-md text-[11px] font-bold text-neutral-800 transition-colors"
+                                  >
+                                    <span className="truncate max-w-[120px]">{it.name || it.product_name_snapshot || 'Dish'}</span>
+                                    <span className="font-mono font-bold text-emerald-700">x{it.quantity || 1}</span>
+                                    {unitPrice > 0 && (
+                                      <span className="font-mono text-[10px] text-neutral-500">
+                                        (₱{unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                      </span>
+                                    )}
+                                  </span>
+                                )
+                              })
                             )}
                           </div>
                         </div>
@@ -2525,152 +2537,6 @@ export const POS: React.FC = () => {
                 className="px-4 py-2 text-xs font-bold text-neutral-700 bg-white border border-neutral-300 rounded-lg hover:bg-neutral-50 shadow-xs cursor-pointer"
               >
                 Close Preview
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cash Collection & Handover Modal for Pay-in-Store Pickups */}
-      {handoverModalOrder && (
-        <div
-          className="fixed inset-0 z-50 bg-neutral-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in"
-          onClick={() => setHandoverModalOrder(null)}
-        >
-          <div
-            className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-neutral-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="bg-amber-500 text-white p-4 sm:p-5 flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
-                  <PosIcon name="cash" className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-base leading-tight">Collect Cash & Hand Over</h3>
-                  <p className="text-xs text-amber-100 font-medium mt-0.5">
-                    Store Pick-Up Order #{handoverModalOrder.id || handoverModalOrder.ref}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setHandoverModalOrder(null)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white font-bold cursor-pointer transition-colors"
-              >
-                <PosIcon name="close" className="h-3.5 w-3.5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-5 space-y-4">
-              <div className="bg-neutral-50 rounded-xl p-3 border border-neutral-200/80 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">Customer</span>
-                  <p className="text-sm font-bold text-neutral-900">{handoverModalOrder.customerName || handoverModalOrder.customer || 'Online Customer'}</p>
-                  <p className="mt-0.5 inline-flex items-center gap-1 text-xs font-mono font-semibold text-neutral-500"><PosIcon name="phone" className="h-3 w-3 shrink-0" /> {handoverModalOrder.phone || 'N/A'}</p>
-                </div>
-                <div className="text-right">
-                  <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider block">Total Due</span>
-                  <p className="text-xl font-bold font-mono text-amber-600">
-                    ₱{Number(handoverModalOrder.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                </div>
-              </div>
-
-              {/* Cash Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-neutral-700 block">
-                  Cash Tendered (₱) *
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-2.5 text-base font-bold text-neutral-400">₱</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    autoFocus
-                    value={cashTendered}
-                    onChange={(e) => setCashTendered(e.target.value)}
-                    placeholder="Enter cash amount received"
-                    className="w-full pl-8 pr-4 py-2.5 bg-neutral-50 text-neutral-900 border border-neutral-300 rounded-xl text-base font-bold font-mono focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
-                  />
-                </div>
-              </div>
-
-              {/* Quick Cash Buttons */}
-              <div className="grid grid-cols-4 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCashTendered(String(handoverModalOrder.total || 0))}
-                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
-                >
-                  Exact
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCashTendered('500')}
-                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
-                >
-                  ₱500
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCashTendered('1000')}
-                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
-                >
-                  ₱1,000
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCashTendered('2000')}
-                  className="px-2 py-1.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-bold rounded-lg border border-neutral-200 cursor-pointer transition-colors"
-                >
-                  ₱2,000
-                </button>
-              </div>
-
-              {/* Change Calculation */}
-              {Number(cashTendered) > 0 && (
-                <div className={`rounded-xl p-3 border flex items-center justify-between ${
-                  Number(cashTendered) >= Number(handoverModalOrder.total || 0)
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                    : 'bg-rose-50 border-rose-200 text-rose-950'
-                }`}>
-                  <span className="text-xs font-bold">
-                    {Number(cashTendered) >= Number(handoverModalOrder.total || 0) ? 'Change to Return:' : 'Insufficient Amount:'}
-                  </span>
-                  <span className="text-base font-bold font-mono">
-                    ₱{Math.abs(Number(cashTendered) - Number(handoverModalOrder.total || 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 bg-neutral-50 border-t border-neutral-200 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setHandoverModalOrder(null)}
-                className="px-4 py-2.5 text-xs font-semibold text-neutral-600 hover:text-neutral-800 bg-white border border-neutral-300 rounded-xl cursor-pointer hover:bg-neutral-100 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmittingHandover || !cashTendered || Number(cashTendered) < Number(handoverModalOrder.total || 0)}
-                onClick={() => handlePickupHandover(handoverModalOrder, Number(cashTendered))}
-                className="px-5 py-2.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl cursor-pointer shadow-md shadow-amber-600/20 transition-all flex items-center gap-1.5"
-              >
-                {isSubmittingHandover ? (
-                  <span>Processing...</span>
-                ) : (
-                  <>
-                    <PosIcon name="check" className="h-3.5 w-3.5" />
-                    <span>Confirm Payment & Hand Over</span>
-                  </>
-                )}
               </button>
             </div>
           </div>

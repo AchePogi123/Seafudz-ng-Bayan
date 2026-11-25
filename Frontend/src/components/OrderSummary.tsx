@@ -170,6 +170,16 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
       {/* Pricing Summary Card & Confirm Button */}
       <div className="space-y-3 flex-shrink-0 pt-2 border-t border-neutral-100">
         <div className="space-y-1.5 text-xs font-medium text-neutral-500">
+          {cartItems.map((ci) => (
+            <div key={ci.item.id} className="flex items-center justify-between gap-2">
+              <span className="truncate">
+                {cartItems.length === 1 ? 'Unit Price' : `Unit Price (${ci.item.name})`}
+              </span>
+              <span className="font-semibold text-neutral-700 shrink-0">
+                ₱{ci.item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          ))}
           <div className="flex items-center justify-between">
             <span>Subtotal</span>
             <span className="font-semibold text-neutral-700">₱{rawSubtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>

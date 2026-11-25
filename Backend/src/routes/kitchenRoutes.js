@@ -16,7 +16,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
              COALESCE(ko.status, o.status) AS status,
              o.notes, o.created_at, o.updated_at,
              t.name AS table_name,
-             COALESCE(NULLIF(c.fullname, ''), 'Customer') AS customer_name,
+             COALESCE(NULLIF(o.customer_name, ''), NULLIF(c.fullname, ''), 'Customer') AS customer_name,
              c.phone AS customer_phone,
              COALESCE(
                json_agg(
@@ -54,7 +54,7 @@ router.get('/kitchen/orders', optionalAuth, async (req, res) => {
       AND UPPER(COALESCE(ko.status, o.status)) NOT IN ('AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED', 'APPROVED_BY_KITCHEN')
       AND UPPER(o.status) NOT IN ('AWAITING_KITCHEN_APPROVAL', 'KITCHEN_REJECTED', 'APPROVED_BY_KITCHEN')
       AND COALESCE(o.kitchen_approval_status, 'APPROVED') != 'PENDING'
-      GROUP BY o.id, ko.status, t.name, c.fullname, c.phone
+      GROUP BY o.id, o.customer_name, ko.status, t.name, c.fullname, c.phone
       ORDER BY o.created_at ASC
     `;
     let dbOrders = [];

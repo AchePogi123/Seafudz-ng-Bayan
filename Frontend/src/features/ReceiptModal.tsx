@@ -182,7 +182,10 @@ export const generateReceiptHtml = (orderDetails: ReceiptOrderDetails | null): s
               .map(
                 (ci) => `
               <tr>
-                <td>${escapeHtml(ci.item.name)}</td>
+                <td>
+                  <div>${escapeHtml(ci.item.name)}</div>
+                  <div style="font-size: 10px; color: #555;">Unit Price: ₱${ci.item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                </td>
                 <td class="text-center">x${escapeHtml(ci.quantity)}</td>
                 <td class="text-right">₱${(ci.item.price * ci.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
               </tr>
@@ -278,6 +281,9 @@ export const executeReceiptPrint = (html: string, onComplete?: () => void) => {
       } catch (err) {
         console.error('Iframe print error:', err)
       } finally {
+        try {
+          window.focus()
+        } catch {}
         setTimeout(() => {
           try {
             document.body.removeChild(iframe)
@@ -285,7 +291,7 @@ export const executeReceiptPrint = (html: string, onComplete?: () => void) => {
           onComplete?.()
         }, 800)
       }
-    }, 250)
+    }, 50)
   } catch (err) {
     console.error('executeReceiptPrint failed:', err)
     onComplete?.()
@@ -453,8 +459,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ isOpen, onClose, onP
             {/* Items List */}
             <div className="space-y-1.5 py-1">
               {cartItems.map((item, idx) => (
-                <div key={idx} className="flex justify-between text-[11px] font-semibold text-neutral-700 leading-tight">
-                  <span className="w-[55%] truncate">{item.item.name}</span>
+                <div key={idx} className="flex justify-between items-start text-[11px] font-semibold text-neutral-700 leading-tight">
+                  <div className="w-[55%] min-w-0 pr-1">
+                    <div className="truncate">{item.item.name}</div>
+                    <div className="text-[10px] font-medium text-neutral-400 mt-0.5">
+                      Unit Price: ₱{item.item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                  </div>
                   <span className="w-[15%] text-center text-neutral-400">x{item.quantity}</span>
                   <span className="w-[30%] text-right text-neutral-800">
                     ₱{(item.item.price * item.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

@@ -1407,10 +1407,11 @@ select.inv-input-suffix:focus-visible {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px;
+  padding: 16px 14px 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
+  background: #f3f0e8;
   scrollbar-width: thin;
   scrollbar-color: var(--inv-border-strong) transparent;
 }
@@ -1425,15 +1426,115 @@ select.inv-input-suffix:focus-visible {
 /* ------------------------------------------------------------- Ticket */
 
 .kds-ticket {
-  /* A ticket keeps its own height. Without this it is a flex item whose
-     `overflow: hidden` resolves its automatic minimum size to 0, so a full
-     lane shrinks every card and each one slices off its own items. */
+  /* A ticket keeps its own height. Paper-slip materiality with a top push-pin
+     and serrated bottom receipt edge. */
+  position: relative;
   flex-shrink: 0;
-  border: 1px solid var(--inv-border);
-  border-radius: var(--inv-radius);
-  background: var(--inv-surface);
-  overflow: hidden;
-  transition: border-color 0.2s, background-color 0.2s;
+  margin-top: 6px;
+  border: 1px solid #dfd7c4;
+  border-radius: 4px 4px 6px 6px;
+  background-color: #fffdf7;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.75) 0%, rgba(250, 245, 232, 0.45) 100%),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0px,
+      transparent 27px,
+      rgba(180, 166, 137, 0.14) 27px,
+      rgba(180, 166, 137, 0.14) 28px
+    );
+  box-shadow:
+    0 6px 14px -4px rgba(28, 25, 23, 0.11),
+    0 2px 4px -1px rgba(28, 25, 23, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  overflow: visible;
+  transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s, transform 0.15s;
+}
+.kds-ticket:hover {
+  box-shadow:
+    0 10px 18px -5px rgba(28, 25, 23, 0.15),
+    0 3px 6px -2px rgba(28, 25, 23, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+/* Subtle bottom paper-slip serrated shadow edge */
+.kds-ticket::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -4px;
+  height: 4px;
+  background: #f5efe0;
+  border: 1px solid #dfd7c4;
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Push-pin / kitchen tack holding the paper slip at top center */
+.kds-ticket-pin {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  pointer-events: none;
+}
+/* Pin puncture hole & cast shadow on the paper */
+.kds-ticket-pin::before {
+  content: '';
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 7px;
+  border-radius: 9999px;
+  background: rgba(28, 25, 23, 0.22);
+  filter: blur(1.5px);
+}
+/* Metallic needle stem into the paper */
+.kds-ticket-pin::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 6px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #64748b 0%, #cbd5e1 50%, #334155 100%);
+}
+.kds-ticket-pin-head {
+  position: relative;
+  z-index: 1;
+  width: 17px;
+  height: 17px;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 35% 30%, #fb923c 0%, #ea580c 55%, #9a3412 100%);
+  border: 1px solid rgba(124, 45, 18, 0.65);
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.28),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.55);
+}
+.kds-ticket--cooking .kds-ticket-pin-head {
+  background: radial-gradient(circle at 35% 30%, #34d399 0%, #059669 55%, #064e3b 100%);
+  border-color: rgba(6, 78, 59, 0.65);
+}
+.kds-ticket--cooking.kds-age-warn .kds-ticket-pin-head {
+  background: radial-gradient(circle at 35% 30%, #fbbf24 0%, #d97706 55%, #78350f 100%);
+  border-color: rgba(120, 53, 15, 0.65);
+}
+.kds-ticket--cooking.kds-age-late .kds-ticket-pin-head {
+  background: radial-gradient(circle at 35% 30%, #f87171 0%, #dc2626 55%, #7f1d1d 100%);
+  border-color: rgba(127, 29, 29, 0.65);
 }
 
 .kds-ticket-body {
@@ -1441,16 +1542,24 @@ select.inv-input-suffix:focus-visible {
   flex-direction: column;
   gap: 8px;
   width: 100%;
-  padding: 14px 16px;
+  padding: 18px 16px 12px;
   text-align: left;
   background: none;
   border: 0;
+  border-radius: 4px 4px 0 0;
   cursor: pointer;
 }
-.kds-ticket-body:hover { background: var(--inv-surface-2); }
+.kds-ticket-body:hover { background: rgba(235, 226, 204, 0.25); }
 .kds-ticket-body:focus-visible { outline: none; box-shadow: var(--inv-focus); }
 
-.kds-ticket-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kds-ticket-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #d6ccb4;
+}
 .kds-ticket-no {
   font-size: 26px;
   font-weight: 700;

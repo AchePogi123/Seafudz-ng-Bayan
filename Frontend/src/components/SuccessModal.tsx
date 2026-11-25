@@ -408,13 +408,18 @@ export const SuccessModal: React.FC<SuccessModalProps> = ({
         {/* Items Breakdown List */}
         <div className="w-full max-h-[140px] overflow-y-auto mb-5 pr-1 space-y-2 custom-scrollbar border-b border-neutral-100 pb-3">
           {orderDetails.cartItems.map((cartItem) => (
-            <div key={cartItem.item.id} className="flex justify-between items-center text-xs text-neutral-600 font-medium">
-              <span className="truncate max-w-[220px]">
-                {cartItem.item.name} <span className="font-bold text-neutral-400">x{cartItem.quantity}</span>
-                {!isItemAvailable(cartItem.item.id) && (
-                  <span className="ml-1 rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black text-white">Out of Stock</span>
-                )}
-              </span>
+            <div key={cartItem.item.id} className="flex justify-between items-start text-xs text-neutral-600 font-medium">
+              <div className="min-w-0 max-w-[220px]">
+                <div className="truncate">
+                  {cartItem.item.name} <span className="font-bold text-neutral-400">x{cartItem.quantity}</span>
+                  {!isItemAvailable(cartItem.item.id) && (
+                    <span className="ml-1 rounded-full bg-rose-600 px-2 py-0.5 text-[9px] font-black text-white">Out of Stock</span>
+                  )}
+                </div>
+                <div className="text-[11px] text-neutral-400">
+                  Unit Price: ₱{cartItem.item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              </div>
               <span className="font-bold text-neutral-900">
                 ₱{(cartItem.item.price * cartItem.quantity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>

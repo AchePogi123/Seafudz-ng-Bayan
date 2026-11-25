@@ -86,7 +86,7 @@ export const OrderItemRow: React.FC<OrderItemRowProps> = ({
             </span>
           )}
           <p className="text-[11px] text-neutral-400 font-medium mt-0.5">
-            ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            Unit Price: ₱{item.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </p>
         </div>
       </div>

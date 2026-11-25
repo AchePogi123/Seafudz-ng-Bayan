@@ -304,25 +304,32 @@ const wrap = (handler) => async (req, res) => {
 
 /* -------------------------------------------------------------- routes */
 
-// Read-only list of what is running low, for the kitchen / cashier screens
+// Read-only list of what is running low, for the kitchen / cashier / admin screens
 router.get('/inventory/alerts', requireAuth, requireRole(['admin', 'kitchen', 'cashier', 'assistant']), wrap(async (_req, res) => {
   const data = await withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT id, name, item_type, category, base_unit, current_stock, min_stock_level, status
          FROM inventory_ingredients
         WHERE status IN ('LOW_STOCK', 'OUT_OF_STOCK')
-        ORDER BY (status = 'OUT_OF_STOCK') DESC, current_stock / NULLIF(min_stock_level, 0) ASC NULLS FIRST, name`
+           OR current_stock <= 0
+           OR (min_stock_level > 0 AND current_stock <= min_stock_level)
+        ORDER BY (status = 'OUT_OF_STOCK' OR current_stock <= 0) DESC, current_stock / NULLIF(min_stock_level, 0) ASC NULLS FIRST, name`
     );
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      itemType: r.item_type,
-      category: r.category,
-      unit: r.base_unit,
-      currentStock: num(r.current_stock),
-      minStockLevel: num(r.min_stock_level),
-      status: r.status,
-    }));
+    return rows.map((r) => {
+      const currentStock = num(r.current_stock);
+      const minStockLevel = num(r.min_stock_level);
+      const computedStatus = currentStock <= 0 || r.status === 'OUT_OF_STOCK' ? 'OUT_OF_STOCK' : 'LOW_STOCK';
+      return {
+        id: r.id,
+        name: r.name,
+        itemType: r.item_type,
+        category: r.category,
+        unit: r.base_unit,
+        currentStock,
+        minStockLevel,
+        status: computedStatus,
+      };
+    });
   });
   res.json({ success: true, data });
 }));

@@ -901,7 +901,7 @@ const SalesReportAdmin: React.FC = () => {
             label: 'Cash',
             value: summaryData.breakdown.cash.total,
             count: summaryData.breakdown.cash.count,
-            note: 'Counter and pick-up cash',
+            note: 'Counter cash',
         },
         {
             key: 'GCash',

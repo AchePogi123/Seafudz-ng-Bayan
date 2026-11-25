@@ -939,7 +939,7 @@ const SalesReportCashier: React.FC = () => {
                 <div className="text-2xl font-medium text-slate-900 tracking-tight tabular-nums">
                   ₱{summaryData.breakdown.cash.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <p className="text-xs text-slate-500 mt-1">Counter &amp; pick-up cash</p>
+                <p className="text-xs text-slate-500 mt-1">Counter cash</p>
               </div>
             </div>
 

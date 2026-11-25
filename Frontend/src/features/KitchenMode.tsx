@@ -7,7 +7,7 @@ import { AdminEditTransactionModal } from '../components/AdminEditTransactionMod
 import { notifyOrderSync, subscribeOrderSync } from '../utils/orderSync'
 import { useProductImages } from '../utils/useProductImages'
 import KitchenStockPanel from '../components/KitchenStockPanel'
-import { executeReceiptPrint, getPrintedByLabel } from './ReceiptModal'
+import { executeReceiptPrint } from './ReceiptModal'
 import { Badge, Button, Icon } from './inventory/ui'
 import './inventory/admin-inventory.css'
 
@@ -42,12 +42,25 @@ const escapeHtml = (value: unknown) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string
   )
 
+const formatFormalTimestamp = (dateInput?: string | Date): string => {
+  const d = dateInput ? new Date(dateInput) : new Date()
+  if (isNaN(d.getTime())) return String(dateInput || '—')
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
 /**
- * The slip that goes out with the food.
+ * Formal Kitchen Order Dispatch & Ownership Slip.
  *
- * It answers the one question the cashier has when a tray lands on the pass:
- * whose order is this? So the name and the ticket code are the biggest things
- * on it, and the item list is there to check the tray against.
+ * Structured as an official kitchen pass manifest (rather than a cash register
+ * sales receipt) containing complete ownership, reference, timestamp, and
+ * itemized dish details.
  */
 const generateKitchenSlipHtml = (order: KitchenOrder, sameCustomer?: SameCustomerMark): string => {
   const items = (order.items || []).filter(
@@ -56,90 +69,326 @@ const generateKitchenSlipHtml = (order: KitchenOrder, sameCustomer?: SameCustome
         String(item.itemStatus || (item as any).item_status || '').toUpperCase()
       )
   )
-  const pickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
+  const totalUnits = items.reduce((sum, item) => sum + Number(item.quantity || 1), 0)
+  const ownerName = (order.customer || '').trim() || 'Walk-In Customer'
+  const ticketNo = ticketLabel(order.queue)
+  const placedAt = order.createdAt ? formatFormalTimestamp(order.createdAt) : '—'
+  const releasedAt = formatFormalTimestamp(new Date())
+  const contactPhone = (order.customerPhone || '').trim()
+  const notesText = (order.notes || '').trim()
 
   return `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Order ready - ${escapeHtml(ticketLabel(order.queue))}</title>
+    <title>Kitchen Dispatch Slip - #${escapeHtml(ticketNo)} (${escapeHtml(ownerName)})</title>
     <style>
       @page { size: 80mm auto; margin: 0; }
-      @media print { html, body { width: 80mm; margin: 0 !important; padding: 8px !important; } }
-      body {
-        font-family: 'Courier New', Courier, monospace;
-        width: 280px; margin: 0 auto; padding: 10px;
-        color: #000; font-size: 12px; line-height: 1.4;
+      @media print {
+        html, body {
+          width: 80mm;
+          margin: 0 !important;
+          padding: 4px !important;
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+        }
       }
-      .center { text-align: center; }
-      .divider { border-top: 1px dashed #000; margin: 8px 0; }
-      .eyebrow { font-size: 10px; letter-spacing: 2px; }
-      .ticket { font-size: 40px; font-weight: bold; line-height: 1.1; letter-spacing: 2px; }
-      .name { font-size: 20px; font-weight: bold; line-height: 1.2; word-break: break-word; }
-      .label { font-size: 10px; letter-spacing: 1px; }
-      .row { display: flex; justify-content: space-between; gap: 8px; }
-      .row span:first-child { white-space: nowrap; }
-      .ref { font-size: 11px; word-break: break-all; line-height: 1.3; }
-      .row span:last-child { text-align: right; word-break: break-all; }
-      .items { width: 100%; border-collapse: collapse; margin-top: 4px; }
-      .items td { font-size: 13px; padding: 3px 0; vertical-align: top; }
-      .items td.qty { width: 34px; font-weight: bold; }
-      .note { font-size: 12px; font-weight: bold; border: 1px solid #000; padding: 6px; margin-top: 6px; }
-      .foot { font-size: 10px; margin-top: 8px; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, 'Helvetica Neue', Arial, sans-serif;
+        width: 288px;
+        margin: 0 auto;
+        padding: 8px;
+        color: #0f172a;
+        background: #ffffff;
+        font-size: 11px;
+        line-height: 1.4;
+        font-variant-numeric: tabular-nums;
+      }
+      .manifest {
+        border: 1.5px solid #0f172a;
+        background: #ffffff;
+      }
+      .doc-header {
+        background: #0f172a;
+        color: #ffffff;
+        padding: 10px 12px;
+        text-align: center;
+        border-bottom: 1.5px solid #0f172a;
+      }
+      .doc-title {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      .doc-sub {
+        margin: 2px 0 0;
+        font-size: 10px;
+        font-weight: 500;
+        color: #cbd5e1;
+      }
+      .owner-grid {
+        display: table;
+        width: 100%;
+        border-bottom: 1.5px solid #0f172a;
+      }
+      .owner-cell {
+        display: table-cell;
+        vertical-align: top;
+        padding: 10px 12px;
+      }
+      .ticket-cell {
+        display: table-cell;
+        vertical-align: top;
+        width: 92px;
+        padding: 10px 12px;
+        text-align: right;
+        background: #f8fafc;
+        border-left: 1px solid #cbd5e1;
+      }
+      .field-label {
+        display: block;
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #475569;
+      }
+      .owner-name {
+        display: block;
+        margin-top: 2px;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1.2;
+        color: #0f172a;
+        word-break: break-word;
+      }
+      .owner-phone {
+        display: block;
+        margin-top: 3px;
+        font-size: 10px;
+        font-weight: 500;
+        color: #334155;
+      }
+      .ticket-num {
+        display: block;
+        margin-top: 2px;
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 1.15;
+        color: #0f172a;
+      }
+      .companion-bar {
+        padding: 7px 12px;
+        background: #f8fafc;
+        border-bottom: 1px solid #0f172a;
+        font-size: 10px;
+        font-weight: 600;
+        color: #0f172a;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .meta-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-bottom: 1.5px solid #0f172a;
+      }
+      .meta-table td {
+        padding: 5px 12px;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 10px;
+        vertical-align: top;
+      }
+      .meta-table tr:last-child td {
+        border-bottom: none;
+      }
+      .meta-key {
+        width: 42%;
+        font-weight: 600;
+        color: #475569;
+        white-space: nowrap;
+      }
+      .meta-val {
+        width: 58%;
+        font-weight: 600;
+        color: #0f172a;
+        text-align: right;
+        word-break: break-all;
+      }
+      .items-table {
+        width: 100%;
+        border-collapse: collapse;
+        border-bottom: 1.5px solid #0f172a;
+      }
+      .items-table th {
+        background: #f8fafc;
+        padding: 6px 12px;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #334155;
+        text-align: left;
+        border-bottom: 1px solid #0f172a;
+      }
+      .items-table th.col-no {
+        width: 26px;
+        padding-right: 4px;
+      }
+      .items-table th.col-qty {
+        width: 48px;
+        text-align: right;
+      }
+      .items-table td {
+        padding: 6px 12px;
+        font-size: 11px;
+        border-bottom: 1px solid #e2e8f0;
+        vertical-align: top;
+      }
+      .items-table td.col-no {
+        padding-right: 4px;
+        color: #64748b;
+        font-weight: 600;
+      }
+      .items-table td.col-item {
+        font-weight: 600;
+        color: #0f172a;
+      }
+      .items-table td.col-qty {
+        text-align: right;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .items-table tfoot td {
+        background: #f8fafc;
+        padding: 6px 12px;
+        font-size: 10px;
+        font-weight: 700;
+        color: #0f172a;
+        border-top: 1px solid #0f172a;
+        border-bottom: none;
+      }
+      .notes-block {
+        padding: 8px 12px;
+        border-bottom: 1.5px solid #0f172a;
+      }
+      .notes-body {
+        margin-top: 3px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #0f172a;
+        word-break: break-word;
+      }
+      .notes-empty {
+        margin-top: 2px;
+        font-size: 10px;
+        font-weight: 500;
+        color: #64748b;
+      }
+      .doc-footer {
+        padding: 8px 12px;
+        background: #f8fafc;
+        text-align: center;
+      }
+      .doc-footer-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .doc-footer-sub {
+        margin-top: 2px;
+        font-size: 9px;
+        font-weight: 500;
+        color: #475569;
+      }
     </style>
   </head>
   <body>
-    <div class="center">
-      <div style="font-size:14px;font-weight:bold;">SEAFUDZ NG BAYAN</div>
-      <div class="eyebrow">ORDER READY</div>
-    </div>
+    <div class="manifest">
+      <header class="doc-header">
+        <h1 class="doc-title">Seafudz ng Bayan</h1>
+        <p class="doc-sub">Kitchen Order Dispatch &amp; Ownership Slip &middot; Caloocan Hub</p>
+      </header>
 
-    <div class="divider"></div>
+      <section class="owner-grid">
+        <div class="owner-cell">
+          <span class="field-label">Order Owner / Customer</span>
+          <span class="owner-name">${escapeHtml(ownerName)}</span>
+          ${contactPhone ? `<span class="owner-phone">Contact: ${escapeHtml(contactPhone)}</span>` : ''}
+        </div>
+        <div class="ticket-cell">
+          <span class="field-label">Ticket No.</span>
+          <span class="ticket-num">#${escapeHtml(ticketNo)}</span>
+        </div>
+      </section>
 
-    <div class="center">
-      <div class="label">TICKET</div>
-      <div class="ticket">${escapeHtml(ticketLabel(order.queue))}</div>
-    </div>
-
-    <div class="divider"></div>
-
-    <div>
-      <div class="label">CUSTOMER</div>
-      <div class="name">${escapeHtml(order.customer || 'Walk-in')}</div>
       ${sameCustomer
-        ? `<div class="row" style="margin-top:6px;"><span>Also has</span><span>${escapeHtml(
-            sameCustomer.siblingIds.map(ticketLabel).join(', ')
-          )}</span></div>
-           <div class="row"><span>This is</span><span>${sameCustomer.position} OF ${sameCustomer.total}</span></div>`
+        ? `<div class="companion-bar">
+             <span>Multi-Order Package ${sameCustomer.position} of ${sameCustomer.total}</span>
+             <span>Companion: #${escapeHtml(sameCustomer.siblingIds.map(ticketLabel).join(', #'))}</span>
+           </div>`
         : ''}
+
+      <table class="meta-table">
+        <tbody>
+          <tr>
+            <td class="meta-key">Order Reference</td>
+            <td class="meta-val">${escapeHtml(order.queue)}</td>
+          </tr>
+          <tr>
+            <td class="meta-key">Order Placed</td>
+            <td class="meta-val">${escapeHtml(placedAt)}</td>
+          </tr>
+          <tr>
+            <td class="meta-key">Dispatched At</td>
+            <td class="meta-val">${escapeHtml(releasedAt)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th class="col-no">#</th>
+            <th>Prepared Dish Description</th>
+            <th class="col-qty">Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items
+            .map(
+              (item, idx) =>
+                `<tr>
+                  <td class="col-no">${idx + 1}</td>
+                  <td class="col-item">${escapeHtml(item.name)}</td>
+                  <td class="col-qty">${escapeHtml(item.quantity)}</td>
+                </tr>`
+            )
+            .join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="2">Total Prepared (${items.length} ${items.length === 1 ? 'line item' : 'line items'})</td>
+            <td class="col-qty">${totalUnits} ${totalUnits === 1 ? 'unit' : 'units'}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <section class="notes-block">
+        <span class="field-label">Kitchen &amp; Preparation Instructions</span>
+        ${notesText
+          ? `<div class="notes-body">${escapeHtml(notesText)}</div>`
+          : `<div class="notes-empty">No special preparation instructions recorded.</div>`}
+      </section>
+
+      <footer class="doc-footer">
+        <div class="doc-footer-title">Official Kitchen Pass &amp; Ownership Record</div>
+        <div class="doc-footer-sub">Attach this dispatch manifest securely to the customer&#39;s order package.</div>
+      </footer>
     </div>
-
-    <div class="divider"></div>
-
-    <div>
-      <div class="label">ORDER ID</div>
-      <div class="ref">${escapeHtml(order.queue)}</div>
-      <div class="row" style="margin-top:6px;"><span>Type</span><span>${pickup ? 'STORE PICK-UP' : 'DELIVERY'}</span></div>
-      <div class="row"><span>Ready at</span><span>${escapeHtml(new Date().toLocaleString())}</span></div>
-      <div class="row"><span>Printed by</span><span>${escapeHtml(getPrintedByLabel())}</span></div>
-    </div>
-
-    <div class="divider"></div>
-
-    <div class="label">ITEMS</div>
-    <table class="items">
-      ${items
-        .map(
-          (item) =>
-            `<tr><td class="qty">${escapeHtml(item.quantity)}x</td><td>${escapeHtml(item.name)}</td></tr>`
-        )
-        .join('')}
-    </table>
-
-    ${order.notes ? `<div class="note">NOTE: ${escapeHtml(order.notes)}</div>` : ''}
-
-    <div class="divider"></div>
-    <div class="center foot">Attach this slip to the order.</div>
   </body>
 </html>`
 }
@@ -229,6 +478,127 @@ const findSameCustomerTickets = (orders: KitchenOrder[]): Map<string, SameCustom
     })
   }
   return marks
+}
+
+interface TicketCardProps {
+  order: KitchenOrder
+  mode: 'queued' | 'cooking'
+  now: number
+  sameCustomer?: SameCustomerMark
+  onSelectOrder: (orderId: string) => void
+  onTicketAction: (order: KitchenOrder, mode: 'queued' | 'cooking') => void
+}
+
+const formatPrepTimeDisplay = (order: KitchenOrder, now: number) => {
+  if (order.status === 'Preparing' && order.startTime) {
+    const elapsedSec = Math.floor((now - order.startTime) / 1000)
+    const mins = Math.floor(elapsedSec / 60)
+    const secs = elapsedSec % 60
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`
+  }
+  if (order.completedTimeElapsed) {
+    return order.completedTimeElapsed
+  }
+  return '--'
+}
+
+/**
+ * Top-level ticket card component.
+ *
+ * Kept outside KitchenMode so the 1-second timer tick (`now`) updates the timer
+ * text in-place instead of unmounting and remounting the card and its action
+ * button on every tick.
+ */
+const TicketCard: React.FC<TicketCardProps> = ({
+  order,
+  mode,
+  now,
+  sameCustomer,
+  onSelectOrder,
+  onTicketAction,
+}) => {
+  const mins = elapsedMinutes(order, now)
+  const tone = ageTone(mins)
+  const isPickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
+  const prepTime = formatPrepTimeDisplay(order, now)
+  const liveItems = order.items.filter(
+    (item) =>
+      !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
+        String(item.itemStatus || (item as any).item_status || '').toUpperCase()
+      )
+  )
+
+  return (
+    <article className={`kds-ticket kds-ticket--${mode} kds-age-${tone}`}>
+      <span className="kds-ticket-pin" aria-hidden="true">
+        <span className="kds-ticket-pin-head" />
+      </span>
+      <button type="button" className="kds-ticket-body" onClick={() => onSelectOrder(order.id)}>
+        <span className="kds-ticket-top">
+          <span className="kds-ticket-no" title={`Order ${order.queue}`}>
+            {ticketLabel(order.queue)}
+          </span>
+          {mode === 'cooking' ? (
+            <span className="kds-timer" aria-label={`Cooking for ${prepTime}`}>
+              {prepTime}
+            </span>
+          ) : (
+            isPickup && <Badge tone="success">Pick-up</Badge>
+          )}
+        </span>
+
+        <span className="kds-ticket-customer">
+          {order.customer || 'Customer'}
+          {mode === 'cooking' && isPickup && (
+            <span className="ml-2 align-middle">
+              <Badge tone="success">Pick-up</Badge>
+            </span>
+          )}
+        </span>
+
+        {sameCustomer && (
+          <span className="kds-same-customer">
+            <Badge
+              tone="warning"
+              dot
+              title={`Same customer also has: ${sameCustomer.siblingIds.map(ticketLabel).join(', ')}`}
+            >
+              Same customer · {sameCustomer.position} of {sameCustomer.total}
+            </Badge>
+            <span className="kds-same-customer-refs">
+              also {sameCustomer.siblingIds.map(ticketLabel).join(' · ')}
+            </span>
+          </span>
+        )}
+
+        <ul className="kds-items">
+          {liveItems.map((item, idx) => (
+            <li key={idx}>
+              <span className="kds-item-qty">{item.quantity}×</span>
+              <span className="kds-item-name">{item.name}</span>
+            </li>
+          ))}
+        </ul>
+
+        {order.notes && (
+          <span className="kds-note">
+            <Icon name="alertCircle" className="h-5 w-5 shrink-0" />
+            <span>{order.notes}</span>
+          </span>
+        )}
+      </button>
+
+      <div className="kds-actions">
+        <button
+          type="button"
+          className={`kds-btn ${mode === 'queued' ? 'kds-btn--start' : 'kds-btn--done'}`}
+          onClick={() => onTicketAction(order, mode)}
+        >
+          {mode === 'queued' ? 'Start cooking' : 'Mark done'}
+        </button>
+      </div>
+    </article>
+  )
 }
 
 export const KitchenMode: React.FC = () => {
@@ -620,20 +990,6 @@ export const KitchenMode: React.FC = () => {
 
   const selectedOrder = orders.find((o) => o.id === selectedOrderId)
 
-  const getPrepTimeDisplay = (order: KitchenOrder) => {
-    if (order.status === 'Preparing' && order.startTime) {
-      const elapsedSec = Math.floor((now - order.startTime) / 1000)
-      const mins = Math.floor(elapsedSec / 60)
-      const secs = elapsedSec % 60
-      // mm:ss — the stray "s" suffix made this read as "6 minutes 0 seconds seconds".
-      return `${mins}:${secs < 10 ? '0' : ''}${secs}`
-    }
-    if (order.completedTimeElapsed) {
-      return order.completedTimeElapsed
-    }
-    return '--'
-  }
-
   // Persistent Status Update Logic
   const updateOrderStatus = async (id: string, newStatus: string) => {
     const upperStatus = newStatus.toUpperCase()
@@ -707,18 +1063,11 @@ export const KitchenMode: React.FC = () => {
 
     // 3. Persist update in Express Backend API and notify sync only once completed
     try {
-      await Promise.allSettled([
-        fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: normalizedTarget }),
-        }),
-        fetch(`${API_BASE_URL}/user-flow/orders/${id}/status`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: normalizedTarget }),
-        }),
-      ])
+      await fetch(`${API_BASE_URL}/kitchen/orders/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: normalizedTarget }),
+      })
     } catch (err) {
       console.warn('[KITCHEN] Note on updating status with backend:', err)
     } finally {
@@ -730,7 +1079,12 @@ export const KitchenMode: React.FC = () => {
 
   const handleStatusFromModal = (newStatus: string) => {
     if (selectedOrderId) {
-      updateOrderStatus(selectedOrderId, newStatus)
+      const targetOrder = orders.find((o) => o.id === selectedOrderId || o.queue === selectedOrderId)
+      const sameCustomer = sameCustomerMarks.get(String(selectedOrderId))
+      void updateOrderStatus(selectedOrderId, newStatus)
+      if (newStatus === 'Ready' && targetOrder) {
+        executeReceiptPrint(generateKitchenSlipHtml(targetOrder, sameCustomer))
+      }
       setSelectedOrderId(null)
     }
   }
@@ -827,99 +1181,9 @@ export const KitchenMode: React.FC = () => {
       void updateOrderStatus(order.id, 'Preparing')
       return
     }
-    void updateOrderStatus(order.id, 'Ready')
-    executeReceiptPrint(generateKitchenSlipHtml(order, sameCustomerMarks.get(String(order.id))))
-  }
-
-  /**
-   * Queue and cooking tickets differ only in their headline metric and their
-   * action, so they are one card with two modes rather than two near-identical
-   * eighty-line blocks.
-   */
-  const TicketCard: React.FC<{ order: KitchenOrder; mode: 'queued' | 'cooking' }> = ({ order, mode }) => {
-    const mins = elapsedMinutes(order, now)
-    const tone = ageTone(mins)
-    const isPickup = String(order.category || order.type || '').toUpperCase().includes('PICKUP')
     const sameCustomer = sameCustomerMarks.get(String(order.id))
-    const liveItems = order.items.filter(
-      (item) =>
-        !['REPLACED', 'REFUNDED', 'CANCELLED'].includes(
-          String(item.itemStatus || (item as any).item_status || '').toUpperCase()
-        )
-    )
-
-    return (
-      <article className={`kds-ticket kds-ticket--${mode} kds-age-${tone}`}>
-        <button type="button" className="kds-ticket-body" onClick={() => setSelectedOrderId(order.id)}>
-          <span className="kds-ticket-top">
-            <span className="kds-ticket-no" title={`Order ${order.queue}`}>
-              {ticketLabel(order.queue)}
-            </span>
-            {mode === 'cooking' ? (
-              <span className="kds-timer" aria-label={`Cooking for ${getPrepTimeDisplay(order)}`}>
-                {getPrepTimeDisplay(order)}
-              </span>
-            ) : (
-              isPickup && <Badge tone="success">Pick-up</Badge>
-            )}
-          </span>
-
-          <span className="kds-ticket-customer">
-            {order.customer || 'Customer'}
-            {mode === 'cooking' && isPickup && (
-              <span className="ml-2 align-middle">
-                <Badge tone="success">Pick-up</Badge>
-              </span>
-            )}
-          </span>
-
-          {/*
-            This customer has more than one ticket on the board. The tickets stay separate and in
-            their own place in the queue — this only tells the kitchen to bag them together.
-          */}
-          {sameCustomer && (
-            <span className="kds-same-customer">
-              <Badge
-                tone="warning"
-                dot
-                title={`Same customer also has: ${sameCustomer.siblingIds.map(ticketLabel).join(', ')}`}
-              >
-                Same customer · {sameCustomer.position} of {sameCustomer.total}
-              </Badge>
-              <span className="kds-same-customer-refs">
-                also {sameCustomer.siblingIds.map(ticketLabel).join(' · ')}
-              </span>
-            </span>
-          )}
-
-          <ul className="kds-items">
-            {liveItems.map((item, idx) => (
-              <li key={idx}>
-                <span className="kds-item-qty">{item.quantity}×</span>
-                <span className="kds-item-name">{item.name}</span>
-              </li>
-            ))}
-          </ul>
-
-          {order.notes && (
-            <span className="kds-note">
-              <Icon name="alertCircle" className="h-5 w-5 shrink-0" />
-              <span>{order.notes}</span>
-            </span>
-          )}
-        </button>
-
-        <div className="kds-actions">
-          <button
-            type="button"
-            className={`kds-btn ${mode === 'queued' ? 'kds-btn--start' : 'kds-btn--done'}`}
-            onClick={() => handleTicketAction(order, mode)}
-          >
-            {mode === 'queued' ? 'Start cooking' : 'Mark done'}
-          </button>
-        </div>
-      </article>
-    )
+    void updateOrderStatus(order.id, 'Ready')
+    executeReceiptPrint(generateKitchenSlipHtml(order, sameCustomer))
   }
 
   return (
@@ -958,7 +1222,17 @@ export const KitchenMode: React.FC = () => {
               {queueOrders.length === 0 ? (
                 <p className="kds-empty">Nothing waiting. New tickets land here.</p>
               ) : (
-                queueOrders.map((order) => <TicketCard key={order.id} order={order} mode="queued" />)
+                queueOrders.map((order) => (
+                  <TicketCard
+                    key={order.id}
+                    order={order}
+                    mode="queued"
+                    now={now}
+                    sameCustomer={sameCustomerMarks.get(String(order.id))}
+                    onSelectOrder={setSelectedOrderId}
+                    onTicketAction={handleTicketAction}
+                  />
+                ))
               )}
             </div>
           </section>
@@ -973,7 +1247,17 @@ export const KitchenMode: React.FC = () => {
               {processingOrders.length === 0 ? (
                 <p className="kds-empty">Nothing on the pass right now.</p>
               ) : (
-                processingOrders.map((order) => <TicketCard key={order.id} order={order} mode="cooking" />)
+                processingOrders.map((order) => (
+                  <TicketCard
+                    key={order.id}
+                    order={order}
+                    mode="cooking"
+                    now={now}
+                    sameCustomer={sameCustomerMarks.get(String(order.id))}
+                    onSelectOrder={setSelectedOrderId}
+                    onTicketAction={handleTicketAction}
+                  />
+                ))
               )}
             </div>
           </section>

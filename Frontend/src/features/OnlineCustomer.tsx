@@ -1854,7 +1854,14 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
 
 
+    const categoryBarRef = useRef<HTMLDivElement>(null)
+    // A pill click scrolls the page, which would otherwise make the scroll spy below
+    // light up every row the smooth scroll passes through. It stands down until the
+    // scroll has settled on the row the customer actually asked for.
+    const spySuspendedUntilRef = useRef(0)
+
     const handleCategoryClick = (cat: string) => {
+        spySuspendedUntilRef.current = Date.now() + 1000
         setSelectedCategory(cat)
         if (cat === 'All Menu') {
             const el = document.getElementById('menu-display-area')
@@ -1867,6 +1874,7 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
             }
         }
     }
+
 
     // Menu Display Price = the catalog price as-is (VAT already included, e.g. ₱199).
     // basePrice is the VAT-exclusive (net) amount behind it.
@@ -1892,6 +1900,77 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
         })
         return ordered
     }, [allEffectiveItems])
+
+    // The category bar follows the menu rather than only driving it: whichever row sits
+    // under the filter bar is the pill that reads as selected, so the customer always
+    // knows where in the menu they are. Searching replaces the rows with one result set,
+    // so there is nothing to track then.
+    useEffect(() => {
+        if (activeTab !== 'menu' || searchQuery.trim().length > 0) return
+
+        // Matches the scroll-mt-28 (112px) the rows park themselves at after a pill click.
+        const ROW_LINE = 124
+
+        const syncCategoryToScroll = () => {
+            if (Date.now() < spySuspendedUntilRef.current) return
+
+            const area = document.getElementById('menu-display-area')
+            if (!area) return
+
+            let current = 'All Menu'
+            // Still above the first row: the menu as a whole is what is on screen.
+            if (area.getBoundingClientRect().top <= ROW_LINE) {
+                for (const cat of availableCategories) {
+                    const el = document.getElementById(`category-section-${cat.replace(/\s+/g, '-').toLowerCase()}`)
+                    if (!el) continue
+                    if (el.getBoundingClientRect().top > ROW_LINE) break
+                    current = cat
+                }
+            }
+
+            // The last row is usually too short to ever reach the line on its own, so the
+            // bottom of the page counts as having arrived at it.
+            const atPageBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 8
+            if (atPageBottom && availableCategories.length > 0) {
+                current = availableCategories[availableCategories.length - 1]
+            }
+
+            setSelectedCategory((prev) => (prev === current ? prev : current))
+        }
+
+        let frame = 0
+        const onScroll = () => {
+            if (frame) return
+            frame = requestAnimationFrame(() => {
+                frame = 0
+                syncCategoryToScroll()
+            })
+        }
+
+        onScroll()
+        window.addEventListener('scroll', onScroll, { passive: true })
+        window.addEventListener('resize', onScroll)
+        return () => {
+            if (frame) cancelAnimationFrame(frame)
+            window.removeEventListener('scroll', onScroll)
+            window.removeEventListener('resize', onScroll)
+        }
+    }, [activeTab, searchQuery, availableCategories])
+
+    // On a narrow screen the bar itself scrolls, so keep the selected pill in view when
+    // scrolling the menu moves the selection somewhere off to the side.
+    useEffect(() => {
+        const bar = categoryBarRef.current
+        if (!bar) return
+        const pill = bar.querySelector<HTMLElement>(`[data-category-pill="${selectedCategory.replace(/"/g, '\\"')}"]`)
+        if (!pill) return
+        if (bar.scrollWidth <= bar.clientWidth + 8) return
+        // Measured against the lane itself: offsetLeft answers to the nearest positioned
+        // ancestor, which is not this scroller, and would push the pill out of view.
+        const offsetInLane = pill.getBoundingClientRect().left - bar.getBoundingClientRect().left + bar.scrollLeft
+        const target = offsetInLane - (bar.clientWidth - pill.clientWidth) / 2
+        bar.scrollTo({ left: Math.max(0, Math.min(target, bar.scrollWidth - bar.clientWidth)), behavior: 'smooth' })
+    }, [selectedCategory])
 
     const filteredItems = useMemo(() => {
         return allEffectiveItems.filter((item) => {
@@ -2673,42 +2752,35 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
 
                         {/* Filter and search bar stuck directly to the bottom of the welcome banner */}
                         <div className="sticky top-0 z-30 -mx-4 -mt-5 border-b border-neutral-200 bg-white/95 px-5 py-2.5 shadow-sm shadow-neutral-900/5 backdrop-blur-sm sm:px-7 lg:-mx-6 lg:px-10">
-                            <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
-                                <div className="flex min-w-0 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                                    {categories.map((cat) => {
-                                        const { label } = getCategoryPillData(cat)
-                                        const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
-                                        return (
-                                            <button
-                                                key={cat}
-                                                type="button"
-                                                onClick={() => handleCategoryClick(cat)}
-                                                aria-current={isSelected ? 'true' : undefined}
-                                                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
-                                                    isSelected
-                                                        ? 'bg-neutral-900 text-white'
-                                                        : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
-                                                }`}
-                                            >
-                                                {label}
-                                            </button>
-                                        )
-                                    })}
-                                </div>
-
-                                <div className="shrink-0 sm:ml-auto sm:w-56 lg:w-64">
-                                    <div className="flex items-center gap-2 rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 transition-colors focus-within:border-orange-400 focus-within:bg-white">
+                            <div className="flex items-center gap-2.5 sm:gap-3">
+                                {/*
+                                  Finding one dish by name is the steady entry point, so it holds a
+                                  fixed lane at the start and never moves. The categories take
+                                  whatever width is left and scroll inside it — on a wide screen that
+                                  stops the search drifting out to the window edge, and on a phone it
+                                  keeps the whole bar to one row above the food.
+                                */}
+                                <div
+                                    className={`shrink-0 transition-[width] duration-200 ease-out motion-reduce:transition-none sm:w-56 sm:focus-within:w-56 lg:w-64 lg:focus-within:w-64 ${
+                                        searchQuery ? 'w-full' : 'w-10 focus-within:w-full'
+                                    }`}
+                                >
+                                    <label
+                                        htmlFor="menu-dish-search"
+                                        className="flex cursor-text items-center gap-2 overflow-hidden rounded-full border border-neutral-200 bg-neutral-50 px-3 py-1.5 transition-colors focus-within:bg-white"
+                                    >
                                         <svg className="h-4 w-4 shrink-0 text-neutral-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                                             <circle cx="11" cy="11" r="7" />
                                             <path d="M20 20l-4.3-4.3" />
                                         </svg>
                                         <input
+                                            id="menu-dish-search"
                                             type="text"
                                             value={searchQuery}
                                             onChange={(e) => setSearchQuery(e.target.value)}
                                             placeholder="Search dishes"
                                             aria-label="Search dishes"
-                                            className="w-full border-none bg-transparent text-sm text-neutral-900 placeholder-neutral-500 outline-none"
+                                            className="w-full min-w-0 border-none bg-transparent text-sm text-neutral-900 placeholder-neutral-500 outline-none"
                                         />
                                         {searchQuery && (
                                             <button
@@ -2723,7 +2795,33 @@ const [activeTab, setActiveTab] = useState<'menu' | 'billing' | 'tracking'>(() =
                                                 </svg>
                                             </button>
                                         )}
-                                    </div>
+                                    </label>
+                                </div>
+
+                                {/* Two different ways in, kept visibly apart */}
+                                <div className="h-5 w-px shrink-0 bg-neutral-200" aria-hidden="true" />
+
+                                <div ref={categoryBarRef} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                    {categories.map((cat) => {
+                                        const { label } = getCategoryPillData(cat)
+                                        const isSelected = selectedCategory === cat || (cat === 'All Menu' && selectedCategory === 'All Menu')
+                                        return (
+                                            <button
+                                                key={cat}
+                                                type="button"
+                                                data-category-pill={cat}
+                                                onClick={() => handleCategoryClick(cat)}
+                                                aria-current={isSelected ? 'true' : undefined}
+                                                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                                                    isSelected
+                                                        ? 'bg-neutral-900 text-white'
+                                                        : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                                                }`}
+                                            >
+                                                {label}
+                                            </button>
+                                        )
+                                    })}
                                 </div>
                             </div>
                         </div>

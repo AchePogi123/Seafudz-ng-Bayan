@@ -205,6 +205,19 @@ export const isOrderCompleted = (status?: string): boolean => {
 }
 
 /**
+ * A finished, cancelled or expired stop has to keep saying so after bundling. The board reads
+ * these exact words to decide what a stop still offers, so the many spellings the backend uses
+ * for "handed over" collapse to one here.
+ */
+export const normalizeBundleStatus = (status?: string): string => {
+  const s = String(status || '').toLowerCase().trim()
+  if (s === 'completed' || s === 'delivered' || s === 'served') return 'Completed'
+  if (s === 'cancelled') return 'Cancelled'
+  if (s === 'expired') return 'Expired'
+  return String(status || '')
+}
+
+/**
  * Robust parser for order timestamps supporting:
  * - ISO strings (e.g., "2026-11-04T12:25:58.394Z")
  * - PostgreSQL timestamps (e.g., "2026-10-31 17:33:24.227264+00")
@@ -395,11 +408,19 @@ export function groupDeliveriesIntoBundles(deliveries: DeliveryJob[]): DeliveryB
     const allOutForDelivery = outForDeliveryCount === group.length
     const allReady = readyCount === group.length
 
-    let bundleStatus = primary.status
+    // Anything still to do outranks the record: a group with a packed package is Ready even if
+    // another package in it is already handed over. Only when nothing is left to carry does the
+    // group keep the state it actually finished in — otherwise a delivered stop came back as
+    // "Ready" and offered to be delivered a second time.
+    let bundleStatus: string
     if (allOutForDelivery) {
       bundleStatus = 'Out for Delivery'
-    } else {
+    } else if (readyCount > 0) {
       bundleStatus = 'Ready'
+    } else if (outForDeliveryCount > 0) {
+      bundleStatus = 'Out for Delivery'
+    } else {
+      bundleStatus = normalizeBundleStatus(primary.status)
     }
     const hasPreparing = false
     const preparingCount = 0
@@ -450,7 +471,7 @@ export const RideRoleDemo: React.FC = () => {
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false)
   const [routingUnavailable, setRoutingUnavailable] = useState(false)
   const [customerDetailsOrder, setCustomerDetailsOrder] = useState<DeliveryJob | null>(null)
-  const [activeTab, setActiveTab] = useState<'Ready' | 'All' | 'Out for Delivery' | 'Past'>('Ready')
+  const [activeTab, setActiveTab] = useState<'Ready' | 'Out for Delivery' | 'Past'>('Ready')
   const [notification, setNotification] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -1221,11 +1242,6 @@ export const RideRoleDemo: React.FC = () => {
     const source = activeTab === 'Past' ? pastBundles : bundledDeliveries
     const list = source.filter((b) => {
       const matchesTab = (() => {
-        if (activeTab === 'All') {
-          // "All" tab represents all active deliveries (Ready and Out for Delivery).
-          // Once an order is completed, it is gone from the active rider board!
-          return !isOrderCompleted(b.status)
-        }
         if (activeTab === 'Ready') {
           return b.status.toLowerCase() === 'ready' || (b.isBundle && b.readyCount > 0)
         }
@@ -1315,14 +1331,13 @@ export const RideRoleDemo: React.FC = () => {
 
   /**
    * The number on each tab has to agree with what that tab will actually show, so it is counted
-   * with the same rules `filteredBundles` uses: hidden stops are dropped, "Ready" includes a
-   * bundle with any packed package, and "All" means every stop still in play.
+   * with the same rules `filteredBundles` uses: hidden stops are dropped, and "Ready" includes a
+   * bundle with any packed package.
    */
   const tabCounts = useMemo(() => {
     const visible = bundledDeliveries
     return {
       Ready: visible.filter((b) => b.status.toLowerCase() === 'ready' || (b.isBundle && b.readyCount > 0)).length,
-      All: visible.filter((b) => !isOrderCompleted(b.status)).length,
       'Out for Delivery': visible.filter((b) => b.status.toLowerCase() === 'out for delivery').length,
       Past: pastBundles.length,
     }
@@ -1422,7 +1437,7 @@ export const RideRoleDemo: React.FC = () => {
         {/* Filter, search and order — the same bar language the rest of the staff app uses. */}
         <section className="space-y-2.5 rounded-2xl border border-neutral-200 bg-white p-2.5">
           <div className="flex items-center gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {(['Ready', 'Out for Delivery', 'Past', 'All'] as const).map((tab) => {
+            {(['Ready', 'Out for Delivery', 'Past'] as const).map((tab) => {
               const isSelected = activeTab === tab
               const count = tabCounts[tab]
               return (
@@ -1436,13 +1451,7 @@ export const RideRoleDemo: React.FC = () => {
                   }`}
                 >
                   <span>
-                    {tab === 'Out for Delivery'
-                      ? 'On the way'
-                      : tab === 'Past'
-                        ? 'Delivered'
-                        : tab === 'Ready'
-                          ? 'Ready'
-                          : 'All'}
+                    {tab === 'Out for Delivery' ? 'On the way' : tab === 'Past' ? 'Delivered' : 'Ready'}
                   </span>
                   <span className={`text-[11px] tabular-nums ${isSelected ? 'text-white/70' : 'text-neutral-400'}`}>{count}</span>
                 </button>
@@ -1778,14 +1787,30 @@ export const RideRoleDemo: React.FC = () => {
                   </div>
                   <div className="divide-y divide-neutral-100">
                     {activeBundle.orders.map((ord, idx) => {
+                      // "Cooking" is only the right word for a package the kitchen still holds.
+                      // A finished or cancelled one keeps its own, or the chip ends up telling the
+                      // rider a delivered package is still on the stove.
+                      const ordState = normalizeBundleStatus(ord.status)
                       const ordLabel =
-                        ord.status === 'Ready' ? 'Ready' : ord.status === 'Out for Delivery' ? 'On the way' : 'Cooking'
+                        ordState === 'Completed'
+                          ? 'Delivered'
+                          : ordState === 'Cancelled'
+                            ? 'Cancelled'
+                            : ordState === 'Expired'
+                              ? 'Closed'
+                              : ord.status === 'Ready'
+                                ? 'Ready'
+                                : ord.status === 'Out for Delivery'
+                                  ? 'On the way'
+                                  : 'Cooking'
                       const ordTone =
-                        ord.status === 'Ready'
+                        ordState === 'Completed' || ord.status === 'Ready'
                           ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : ord.status === 'Out for Delivery'
-                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                          : ordState === 'Cancelled' || ordState === 'Expired'
+                            ? 'bg-neutral-100 text-neutral-500 border-neutral-300'
+                            : ord.status === 'Out for Delivery'
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : 'bg-amber-50 text-amber-800 border-amber-200'
 
                       const groupedItems = consolidateOrderItems(ord)
                       const modalListKey = `modal:${ord.id}`

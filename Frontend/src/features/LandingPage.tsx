@@ -806,27 +806,6 @@ export const LandingPage: React.FC = () => {
               );
             })}
           </div>
-
-          {/* Promotional Advertisement Callout Banner */}
-          <div className="mt-14 bg-gradient-to-r from-orange-600 via-orange-500 to-amber-600 rounded-3xl p-6 sm:p-9 text-white shadow-md relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="space-y-2 text-center md:text-left z-10">
-              <span className="inline-block bg-white/20 backdrop-blur-xs text-white text-[11px] font-extrabold uppercase tracking-widest px-3 py-1 rounded-full">
-                🔥 Hot Feasting Promotion
-              </span>
-              <h3 className="text-xl sm:text-2xl font-black tracking-tight">
-                Complimentary Metro Manila Delivery on Orders Above ₱3,000
-              </h3>
-              <p className="text-orange-100 text-xs sm:text-sm max-w-xl leading-relaxed">
-                Enjoy free delivery in temperature-sealed thermal packaging. Keep your mud crabs and butter garlic prawns piping hot until your feast begins.
-              </p>
-            </div>
-            <button
-              onClick={handleOrderOnline}
-              className="z-10 bg-white hover:bg-orange-50 text-orange-600 font-bold text-xs sm:text-sm px-7 py-3.5 rounded-xl shadow-xs hover:shadow-md transition-all active:scale-95 cursor-pointer uppercase tracking-wider shrink-0"
-            >
-              Order Online Storefront
-            </button>
-          </div>
         </div>
       </section>
 
@@ -1125,37 +1104,53 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* 10. CALL TO ACTION BANNER */}
-      <section className="py-16 bg-white">
+      <section className="py-20 bg-white border-t border-slate-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-[#FF6900] rounded-3xl p-8 sm:p-12 lg:p-16 text-center text-[#2b180c] shadow-lg">
-            <div className="max-w-2xl mx-auto space-y-4">
-              <span className="text-xs font-bold uppercase tracking-wider bg-white/20 px-3.5 py-1.5 rounded-full inline-block">
-                Hot & Fresh Delivery
-              </span>
+          <div className="rounded-2xl bg-slate-50 text-slate-900 p-8 sm:p-10 lg:p-12 border border-slate-200/80">
+            <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8">
+              <div className="max-w-xl">
+                <h2 className="text-3xl sm:text-4xl font-medium tracking-[-0.02em] leading-[1.15] text-slate-900">
+                  Order direct from the Caloocan kitchen
+                </h2>
+                <p className="mt-3 text-sm sm:text-base font-normal text-slate-600 leading-relaxed">
+                  Every bilao and boil is cooked to order, then sealed in thermal carriers so it
+                  reaches you at serving temperature.
+                </p>
+              </div>
 
-              <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tight leading-tight">
-                Ready for a Seafood Feast?
-              </h2>
-
-              <p className="text-sm sm:text-base text-black/75 leading-relaxed">
-                Order your favorite Seafood Bilao Feast or Cajun Boils now. We prepare each platter fresh upon ordering and deliver it hot to your door.
-              </p>
-
-              <div className="pt-4 flex flex-wrap items-center justify-center gap-4">
+              <div className="flex flex-wrap items-center gap-3 shrink-0">
                 <button
                   onClick={handleOrderOnline}
-                  className="bg-white hover:bg-orange-50 text-orange-600 font-bold text-sm sm:text-base px-8 py-4 rounded-xl shadow-xs transition-colors cursor-pointer uppercase tracking-wider"
+                  className="h-11 px-5 rounded-[10px] bg-orange-600 hover:bg-orange-700 text-white font-medium text-sm sm:text-[15px] shadow-[0_1px_2px_rgba(0,0,0,0.05)] transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-600 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50"
                 >
-                  {isEmployee && employeeModule ? `Go to ${employeeModule.shortLabel}` : 'Order Now'}
+                  {isEmployee && employeeModule ? `Go to ${employeeModule.shortLabel}` : 'Order now'}
                 </button>
                 <a
                   href="tel:0288887323"
-                  className="bg-orange-700 hover:bg-orange-800 text-white font-bold text-sm sm:text-base px-7 py-4 rounded-xl border border-white/20 transition-colors"
+                  className="h-11 px-5 rounded-[10px] bg-white hover:bg-orange-50/50 border border-slate-200 hover:border-orange-300 text-slate-700 hover:text-orange-600 font-medium text-sm sm:text-[15px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[background-color,border-color,color,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-[0.98] inline-flex items-center justify-center tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50"
                 >
-                  Call Hotline: (02) 8888-SEAFOOD
+                  (02) 8888-7323
                 </a>
               </div>
             </div>
+
+            <dl className="mt-8 pt-6 border-t border-slate-200/80 grid grid-cols-1 sm:grid-cols-3 gap-6">
+              <div>
+                <dt className="text-xs font-normal text-slate-500 leading-4">Kitchen hours</dt>
+                <dd className="mt-1 text-sm font-medium text-slate-900 leading-5 inline-flex items-center gap-2 tabular-nums">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 shrink-0" aria-hidden="true" />
+                  <span>Open 24/7, daily</span>
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-normal text-slate-500 leading-4">Delivery window</dt>
+                <dd className="mt-1 text-sm font-medium text-slate-900 leading-5 tabular-nums">30 to 45 minutes, Metro Manila</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-normal text-slate-500 leading-4">Free delivery</dt>
+                <dd className="mt-1 text-sm font-medium text-slate-900 leading-5 tabular-nums">On orders above ₱3,000</dd>
+              </div>
+            </dl>
           </div>
         </div>
       </section>
